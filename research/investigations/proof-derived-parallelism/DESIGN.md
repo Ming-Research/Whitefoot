@@ -23,21 +23,24 @@ approved until the branch merges.
 
 ## 0. Charter
 
-Owner direction (2026-08-21, verbatim, chartering this branch under the
-merge-boundary process):
+Owner direction (2026-08-21, translated from Chinese, chartering this branch
+under the merge-boundary process):
 
-> 你研究完了就开始实现吧。像我之前让你改的流程一样,开一个worktree然后直接
-> 开始修订和实现。不要block。明天我起来我要看到所有结果。再说一遍,你在自己
-> 的worktree和branch上实现这个并行化能力,所以任何情况都不要block住。另外
-> 记得用Opus5来写代码,只有最最复杂的事情才可以交给Fable。
+> Once your research is done, start implementing. As in the process I had you
+> change before, open a worktree and go straight to revising and implementing.
+> Do not block. When I get up tomorrow I want to see all the results. Once
+> more: you implement this parallelization capability on your own worktree and
+> branch, so do not block under any circumstances. [A last sentence names the
+> AI models to use for writing the code.]
 
 Plus the two design rulings of the same night:
 
 1. **Claim doctrine.** A claim is an always-true lemma bridging checker
    incompleteness; it is not an assert and cannot fail on an admissible
    input; a fully reviewed program cannot trap. Therefore traps under
-   overlap are an *audit* problem, not a semantics problem: "如果程序的trap
-   只可能由审计失败的程序产生……我们应该不需要考虑这种情况。"
+   overlap are an *audit* problem, not a semantics problem: "if a program's
+   trap can only come from a program that failed its audit... we should not
+   need to consider this case" (translated from Chinese).
 2. **Frame.** Permission from proofs on ordinary code; actualization is the
    runtime's; resources (threads, cores) are never language concepts;
    markers, if any, never gate legality (PAL §3.4/§6).

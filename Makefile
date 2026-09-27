@@ -112,6 +112,8 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
+	@perl .github/check-english.pl --self-test
+	@perl .github/check-english.pl
 	@test -s AGENTS.md || { echo "AGENTS.md missing" >&2; exit 1; }
 	@mac_home="$$(printf '/%s/' Users)"; \
 	linux_home="$$(printf '/%s/' home)"; \

@@ -466,7 +466,8 @@ ledgered lifecycle, under an untrusted-writer governance frame.
    fail loudly at compile time.**
 
 Owner's stated concern to keep honest: the discussion may overfit to itself —
-"到真实场景里面试一下发现根本不work." The validation plan exists to answer
+"try it in a real scenario and find that it does not work at all" (translated
+from Chinese). The validation plan exists to answer
 exactly that before any spec motion.
 
 ## 8. Spec-revision entry points (added 2026-08-06, all falsifiers green)
