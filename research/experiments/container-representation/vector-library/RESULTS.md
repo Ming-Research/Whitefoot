@@ -485,6 +485,21 @@ spread qualifications. Scalar suffix-2 direct-C comparisons at populations
 take/swap C control is also unstable (26.958%). They support no attribution.
 All sub-millisecond observations occur in the unranked suffix-zero control.
 
+After merging main at
+[`549ec5597fd90e60ac5da6a6fc62bb6426c9b94a`](https://github.com/mbbill/Whitefoot/tree/549ec5597fd90e60ac5da6a6fc62bb6426c9b94a),
+the unchanged candidate rebuilt with `BUILD=.build/main-fastpath` has image
+SHA-256 `514a7cc2ec3e936151229a486c022621fcfcfe169780b8c0681749cd361b9d9d`.
+Direct Mach-O section comparison establishes byte-identical executable text,
+stubs, constants, data, TLS and unwind information, with identical section
+addresses, extents and zero-fill layouts. The 691,784-byte text section has
+SHA-256 `c7f075ff93bc8859cc3648d29ae32326a3bc972dd26bef5697270faa8b52360b`
+in both images. Every file-byte difference belongs to symbol strings and
+their offsets, the string-table size, UUID or code signature; the only
+resolved-symbol differences are six debug object paths changing
+`append-fastpath` to `main-fastpath`. Thus the code observations above also
+describe the merged-main build. This comparison adds no timing samples;
+the preceding measurements retain their original revision and image identity.
+
 ### Next source discriminator: one placement with a small capacity guard
 
 Keep append's single placement from the first helper candidate, and separate
