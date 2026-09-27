@@ -138,7 +138,7 @@ At minimum the following priority order is needed:
 3. run compute frames that must also complete within the same structured window;
 4. run at most one unrelated steal, then go back to step 1.
 
-Even so, a non-preemptible `U` can still run for an arbitrary length of time. To preserve the source program's liveness, an I/O join must not execute an arbitrary unrelated frame; it may only help with a frame that, within the same window, must already be joined before exit.
+Even so, a non-preemptible `U` can still run for an arbitrary length of time. To preserve the source program's liveness, an I/O join should not execute an arbitrary unrelated frame; it may only help with a frame that, within the same window, must already be joined before exit.
 
 ### 2.2 A steal inside join recursively grows the lane stack
 
@@ -317,7 +317,7 @@ Therefore what [DESIGN §5](/research/investigations/io-model/DESIGN.md:204) say
 3. **The stack resource record can change.** 0079 has measured that for the same recursion, the overlapped clone costs 48 B/level while the sequential clone costs 16 B/level. [0079-exhaustion-floor.md](/docs/ongoing/0079-exhaustion-floor.md:475)  
    Once `W=1` switches to selecting the overlapped clone, a program that previously completed may change to `{"resource":"stack"}`. Under the current specification this is an allowed-to-vary resource condition, but it is indeed a change in the process result and in stderr.
 
-A correct `W=1` should not create a new compute pthread. The existing worker count includes the calling thread itself; lane 0 should reuse the 1 GiB entry stack that `wf__floor_run` already provides. The waiter and the disk pool are TCB threads and must not execute writer code.
+A correct `W=1` should not create a new compute pthread. The existing worker count includes the calling thread itself; lane 0 should reuse the 1 GiB entry stack that `wf__floor_run` already provides. The waiter and the disk pool are TCB threads and should not execute writer code.
 
 ## 5. in-flight buffers, floor, and abort
 
