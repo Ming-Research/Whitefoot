@@ -1549,6 +1549,16 @@ These changes keep the same encoded key bytes and current-input guards. Use
 the preceding grouped binary as their ablation; do not infer a final gain from
 the work counters or from the earlier single-pass costs.
 
+The current container reader validates the grouped field framing once, retains
+the source bytes and an index of key/payload ranges, and copies a payload only
+when a body import requests it. Newly produced bodies remain in a small update
+map and are folded into the complete container only at atomic publication.
+This removes eager payload copies without changing malformed-container misses,
+per-function structural keys, or the module-level invalidation boundary. The
+seven-pair indexed-container qualification preserves runtime/LLVM equality and
+zero unchanged-library walks, but remains slower than the merged baseline and
+therefore does not satisfy the cost condition for adopting the amendment.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

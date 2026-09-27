@@ -3,34 +3,90 @@
 use super::{BuildCache, CompilerLimits, Fields, reads};
 use crate::{ModuleId, ResolvedSyntaxUnit, SourceRole};
 use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 struct ModuleUnit {
     key: Vec<u8>,
+    raw: RefCell<Vec<u8>>,
+    offsets: BTreeMap<Vec<u8>, (usize, usize)>,
     bodies: RefCell<BTreeMap<Vec<u8>, Vec<u8>>>,
     changed: Cell<bool>,
 }
 
 impl ModuleUnit {
     fn open(cache: &BuildCache, key: Vec<u8>) -> Self {
-        let bodies = cache.load("module-bodies", &key).and_then(|bytes| {
-            let fields = Fields::parse(&bytes)?;
-            if fields.len() % 2 != 0 {
-                return None;
-            }
-            let mut bodies = BTreeMap::new();
-            for pair in fields.chunks(2) {
-                if bodies.insert(pair[0].to_vec(), pair[1].to_vec()).is_some() {
+        let (raw, offsets) = cache
+            .load("module-bodies", &key)
+            .and_then(|bytes| {
+                let fields = Fields::ranges(&bytes)?;
+                if fields.len() % 2 != 0 {
                     return None;
                 }
-            }
-            Some(bodies)
-        });
+                let mut offsets = BTreeMap::new();
+                for pair in fields.chunks(2) {
+                    let body_key = bytes[pair[0].0..pair[0].1].to_vec();
+                    if offsets.insert(body_key, pair[1]).is_some() {
+                        return None;
+                    }
+                }
+                Some((bytes, offsets))
+            })
+            .unwrap_or_default();
         Self {
             key,
-            bodies: RefCell::new(bodies.unwrap_or_default()),
+            raw: RefCell::new(raw),
+            offsets,
+            bodies: RefCell::default(),
             changed: Cell::new(false),
         }
+    }
+
+    fn publish_fields(&self) -> Fields {
+        let raw = self.raw.borrow();
+        let bodies = self.bodies.borrow();
+        let mut fields = Fields::default();
+        let mut stored = self.offsets.iter().peekable();
+        let mut updates = bodies.iter().peekable();
+        loop {
+            match (stored.peek(), updates.peek()) {
+                (None, None) => break,
+                (Some(stored_entry), None) => {
+                    let key = stored_entry.0;
+                    let (start, end) = *stored_entry.1;
+                    fields.push(key).push(&raw[start..end]);
+                    stored.next();
+                }
+                (None, Some(update_entry)) => {
+                    let key = update_entry.0;
+                    let body = update_entry.1;
+                    fields.push(key).push(body);
+                    updates.next();
+                }
+                (Some(stored_entry), Some(update_entry)) => {
+                    let stored_key = stored_entry.0;
+                    let (start, end) = *stored_entry.1;
+                    let update_key = update_entry.0;
+                    let body = update_entry.1;
+                    match stored_key.cmp(update_key) {
+                        Ordering::Less => {
+                            fields.push(stored_key).push(&raw[start..end]);
+                            stored.next();
+                        }
+                        Ordering::Equal => {
+                            fields.push(stored_key).push(body);
+                            stored.next();
+                            updates.next();
+                        }
+                        Ordering::Greater => {
+                            fields.push(update_key).push(body);
+                            updates.next();
+                        }
+                    }
+                }
+            }
+        }
+        fields
     }
 }
 
@@ -150,13 +206,11 @@ impl Drop for CheckProducts<'_> {
             .flatten()
             .filter(|unit| unit.changed.get())
         {
-            let mut fields = Fields::default();
-            for (key, body) in unit.bodies.borrow().iter() {
-                fields.push(key).push(body);
-            }
-            let _ = self
-                .cache
-                .store("module-bodies", &unit.key, &fields.into_bytes());
+            let _ = self.cache.store(
+                "module-bodies",
+                &unit.key,
+                &unit.publish_fields().into_bytes(),
+            );
         }
     }
 }
@@ -184,13 +238,12 @@ impl crate::semantic::ModuleProducts for CheckProducts<'_> {
             .is_some_and(Option::is_some)
     }
     fn load_body(&self, module: ModuleId, key: &[u8]) -> Option<Vec<u8>> {
-        self.modules
-            .get(module.index())?
-            .as_ref()?
-            .bodies
-            .borrow()
-            .get(key)
-            .cloned()
+        let unit = self.modules.get(module.index())?.as_ref()?;
+        if let Some(body) = unit.bodies.borrow().get(key) {
+            return Some(body.clone());
+        }
+        let &(start, end) = unit.offsets.get(key)?;
+        Some(unit.raw.borrow()[start..end].to_vec())
     }
     fn store_body(&self, module: ModuleId, key: &[u8], bytes: &[u8]) {
         if let Some(Some(unit)) = self.modules.get(module.index()) {

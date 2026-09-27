@@ -364,11 +364,30 @@ impl Fields {
         }
         Some(fields)
     }
+
+    /// The byte ranges occupied by each field, or `None` when the payload is
+    /// not exactly a sequence of complete fields.  Keeping offsets lets a
+    /// grouped product validate its container once and copy only a field that
+    /// a later consumer actually requests.
+    pub(crate) fn ranges(mut bytes: &[u8]) -> Option<Vec<(usize, usize)>> {
+        let mut ranges = Vec::new();
+        let mut offset = 0usize;
+        while !bytes.is_empty() {
+            let (field, rest) = length_prefixed(bytes)?;
+            let consumed = bytes.len().checked_sub(rest.len())?;
+            let start = offset.checked_add(8)?;
+            let end = start.checked_add(field.len())?;
+            ranges.push((start, end));
+            offset = offset.checked_add(consumed)?;
+            bytes = rest;
+        }
+        Some(ranges)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BuildCache;
+    use super::{BuildCache, Fields};
 
     fn directory(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -420,5 +439,21 @@ mod tests {
             Some(&b"payload"[..])
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn grouped_field_ranges_validate_without_copying_their_payloads() {
+        let mut fields = Fields::default();
+        fields.push(b"key").push(b"payload").push(b"last");
+        let bytes = fields.into_bytes();
+        let ranges = Fields::ranges(&bytes).expect("complete fields");
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|&(start, end)| &bytes[start..end])
+                .collect::<Vec<_>>(),
+            vec![&b"key"[..], &b"payload"[..], &b"last"[..]]
+        );
+        assert!(Fields::ranges(&bytes[..bytes.len() - 1]).is_none());
     }
 }
