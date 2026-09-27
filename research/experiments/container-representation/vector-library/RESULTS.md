@@ -2495,6 +2495,24 @@ target. The exact source-only body patch is retained in
 [`consumer-counter.patch`](consumer-counter.patch); no production lowering or
 specification rule is selected.
 
+### Next discriminator: expose the wide tail boundary
+
+The remaining wide suffix-one cost has one concrete boundary to test. The
+frozen actual-forward-hint LLVM has a call from the wide trace to
+`vector_library_tail_work`, and that helper calls the wide
+`grow_vector_truncate`. The next diagnostic will add one ordinary `inlinehint`
+to the wide `vector_library_tail_work` definition only. It keeps source, ABI,
+callback, allocation policy, native inputs and all scalar bodies fixed. The
+criterion is recorded before construction: optimized code must remove the
+wide trace-to-tail call without adding a payload snapshot, spill/reload or new
+per-owner transfer; the scalar trace and all native objects must retain
+normalized code identity. If that code criterion passes, both complete
+correctness/accounting images and one full 4,116-row-per-arm pair are required.
+Any useful-cell regression or new wide frame/placement cost rejects the
+candidate; a suffix-one improvement alone is insufficient. This tests the
+call/placement package, not a general inlining policy, and does not authorize a
+production change.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
