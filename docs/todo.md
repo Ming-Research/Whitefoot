@@ -1453,6 +1453,20 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+- **Build-cost runner can hide compiler failures.** In
+  [modular-build-cost/run.sh](../research/experiments/modular-build-cost/run.sh),
+  `measure` pipes compiler output through `tail` and suppresses failure with
+  `|| true`; `recheck` also suppresses the status. A timing row therefore does
+  not establish successful construction; this does not show that a published
+  build actually failed. Preserve the direct exit status,
+  complete diagnostic log and successful-build elapsed time separately from
+  explicitly expected recheck rejections. Validate with a successful build,
+  an injected failed build that must stop the measurement, and an expected
+  semantic rejection that must retain its classified status. Defer repair
+  from the read-only native-pipeline preparation; reopen before this harness
+  supplies compile-cost selection evidence. Until then use explicit guarded
+  commands with checked statuses, not these rows as success evidence.
+
 ## Code structure
 
 - **The entailment state module and its tests have outgrown one reader.**

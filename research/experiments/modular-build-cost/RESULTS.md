@@ -135,6 +135,13 @@ status) is identical in every mode.
 
 ## Limits
 
+- The current `run.sh` suppresses compiler exit statuses in `measure` and
+  `recheck`, so its timing rows alone cannot establish successful builds.
+  Results need independent exit-status validation; this observation does not
+  show that any dated build above failed. Until the
+  [planned runner repair](../../../docs/todo.md#modules-and-libraries), use
+  explicit commands with checked statuses and distinguish successful-build
+  elapsed time from expected recheck rejections.
 - Composition granularity: every build of an edited entry forms, resolves
   and type-checks the whole closure, which grows with the program; only the
   proof analyses are reused per function.

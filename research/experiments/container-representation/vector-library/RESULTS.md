@@ -639,7 +639,12 @@ do not yet assign causes to those remaining gaps.
 Scalar suffix-2/3 already inline their append, truncate and scalar digest
 calls. Their final loops still take/swap values and update length while the
 native adapters consume the suffix forward. The source difference is real;
-its elapsed contribution is unmeasured. The existing
+its elapsed contribution is unmeasured. A read-only alias audit finds that
+scalar length and digest already follow register/SSA recurrences; the matched
+take/swap C loop also retains a length store per pop. This rejects the
+stronger hypothesis that missing header/payload separation uniquely keeps
+WF length in memory. Whether alias facts could sink those stores remains
+unproved and is not grounds for a new metadata family. The existing
 [ordinary-representation refusals](#v061-copy-and-consumption-trial) and
 [selected consumption contract](../../../../design/language/data-model/vector-consumption.md)
 still rule out silently replacing the generic API with optional slots,
@@ -672,12 +677,197 @@ Construction took 0.612 s and both complete checksum checks took 1.665 s;
 each passed 1,260 configurations and 8,820 executions. No timing followed,
 no compiler change was selected, and this probe explains no runtime gap.
 
-A separate proposed wide-value probe would direct selected helper inlining
-late in optimization, compared with unchanged-source reoptimization alone,
-to test the remaining tail frame and repeated constant setup. It is
-independent of the scalar no-wrap probe and proposes no production inline
-rule. It has no measured result and changes none of the source selections
-reported above.
+### Directed late inlining: wide gain, useful scalar regressions
+
+This diagnostic also fails the no-useful-regression criterion. It improves
+wide suffix-1, but scalar reserved, growth and reuse at population 16 regress
+against the unchanged second-O3 control, with separated sample ranges in both
+cohorts. It selects no production inline rule and does not revise the source
+selections above.
+
+Freeze source C at `47f9f91b63a484ba7f4924a63b5863b1b8b6f289` and its
+native inputs. The prerecorded discriminator compares three images: the
+production C image, a second O3 pass over its already optimized LLVM, and
+that same second pass with `alwaysinline` added only to the wide definitions
+`wf_vector_library_tail_work$instance$c3abe4db44181f7a` and
+`wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd`.
+Before timing, require elimination of the wide tail/truncate boundaries and
+repeated constant setup without changing direct construction, complete
+checksum checks, then the unchanged full matrix and no useful-cell regression.
+This is a directed diagnostic, independent of the scalar no-wrap probe.
+
+The optimized input comes from `clang -O3 -Wno-override-module -x ir -S
+-emit-llvm` on C's frozen raw module. Its SHA-256 is
+`d2b6441c89e30f0df61c677885e072fd711e251d6877f2a12d60478f3f56a4aa`;
+the two-attribute variant is
+`c2d01ab4eb212c73a0940f6d751be02922040a35673cc23aace5863dd8c13156`.
+Removing those two attributes recovers every control byte. Compile each input
+with `clang -O3 -Wno-override-module -x ir -c`, then use the ecosystem link
+command and exactly C's frozen C driver, Rust archive, C++ and runtime
+objects. Both new images pass 1,260 configurations and 8,820 executions.
+The production/second-pass/late image hashes are respectively
+`ee6973459e4daaccc13b7df18b91563b86ea345b30f0389844ba5da17355ccab`,
+`540636491ea57d79068d6e0ccba28954060e745386d43772b630a1e17dc06977` and
+`125adf4238cf3a7ce5178403033c8261bce9fd0d3f1abdf16fbeb0c7a94e7034`.
+
+The unmodified second pass already inlines the wide tail. The directed
+variant additionally removes truncate calls, keeps the digest in registers
+and hoists constants outside suffix cycles; direct construction geometry is
+preserved. WF object text grows from 11,992 bytes in production C to 12,724
+in the second-pass control and 17,060 in the variant: 34.1% over its proper
+control. Scalar trace, work and round instructions are unchanged between
+the latter two images after branch-address normalization, but helper
+placement changes. For example, the 173-instruction scalar work function
+moves from address modulo 64 of 48 to 24. Placement is a possible explanation
+for scalar regressions, not an isolated cache effect or a changed algorithm.
+
+Fresh [production-C](ecosystem-append-late-production-samples.csv),
+[second-O3](ecosystem-append-second-o3-samples.csv) and
+[late-inline](ecosystem-append-late-inline-samples.csv) samples each contain
+4,116 rows, with identical keys, work, rounds, traces, checksums and sample
+IDs 0–6. Their SHA-256 values are respectively
+`3bd257f1c611a9a8beadd8fdd3e21cce9d1cf676693e520e48a4938618d7170d`,
+`07d8272b8ed457d29d3a5a6d2e3496e59c9162955fe39d86922853e99c27cb44` and
+`d4a8199cdfd00d4553096fa825238ae03d767d8b7addc0f55829fde426d9c4dd`.
+Sequential guarded `measure 1048576 7` runs took 80.462, 80.719 and
+79.941 s, all exit 0, separately from construction and checks. Image and
+native-input hashes were unchanged afterward. The earlier C timing samples
+are not pooled into these comparisons. No separate transformed accounting
+image was constructed for this diagnostic.
+
+Ranges below cover both cohort medians; every ratio compares complete traces.
+P denotes this fresh production-C run, S the unmodified second pass, and L
+the directed variant.
+
+| Bytes | Population | Path | P ms | S ms | L ms | S / P | L / S | L / P |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 16 | reserved | 3.638–3.658 | 3.601–3.659 | 3.870–3.883 | 0.990–1.000 | 1.058–1.078 | 1.058–1.067 |
+| 8 | 16 | growth | 10.773–10.808 | 10.806–10.963 | 11.296–11.340 | 1.003–1.014 | 1.030–1.049 | 1.045–1.053 |
+| 8 | 16 | reuse | 1.657–1.657 | 1.635–1.660 | 1.795–1.848 | 0.987–1.002 | 1.081–1.130 | 1.083–1.115 |
+| 256 | 4096 | suffix-0 control | 2.093–2.158 | 1.798–1.801 | 2.927–3.020 | 0.835–0.859 | 1.628–1.677 | 1.398–1.399 |
+| 256 | 4096 | suffix-1 | 22.718–22.780 | 17.043–17.092 | 16.055–16.091 | 0.748–0.752 | 0.939–0.944 | 0.706–0.707 |
+| 256 | 4096 | suffix-2 | 23.151–23.201 | 23.438–24.043 | 22.474–22.498 | 1.010–1.039 | 0.936–0.959 | 0.969–0.972 |
+| 256 | 4096 | suffix-3 | 26.623–27.141 | 34.966–35.012 | 26.144–26.147 | 1.290–1.313 | 0.747–0.748 | 0.963–0.982 |
+
+For the three scalar population-16 counterexamples, variant minima exceed
+control maxima by factors 1.013–1.055, 1.009–1.014 and 1.010–1.064,
+respectively. Reserved Rust/C++ median drift is 0.979–0.999 / 0.970–0.997,
+so a common host slowdown does not explain that regression. Against fresh
+production C, these three cells also have higher medians, but only reuse
+has separated ranges in both cohorts. Wide suffix-3's roughly 25% gain
+against S mostly recovers a regression introduced by S; it is not a fresh
+25% gain against P. Wide suffix-0 also worsens, but remains an unranked
+overhead control rather than a useful-target selection failure.
+
+Complete target reductions give P 12 passes / 11 deficits / 13 inconclusive,
+S 13 / 13 / 10, and L 14 / 7 / 15, each with six unranked controls. Across
+all 36 useful cells, L has lower medians in both cohorts in 21 cells against
+S, higher in six and mixed in nine; against P these counts are 20, seven
+and nine. At all three populations, wide suffix-1 reaches median ratios
+0.960–0.969 against the slower standard comparator, but remains inconclusive:
+at least one cohort's observed upper ratio is 1.002–1.010. There is no
+qualified wide suffix-1 pass or universal standard-library win.
+
+All sub-millisecond samples belong to suffix-0. P has no comparison above
+10% cohort-ratio spread. S does have unstable scalar suffix-1 comparisons
+(including Rust at population 256), scalar suffix-2 direct-C comparisons,
+and suffix-0 controls; L's remaining unstable comparisons are wide suffix-0
+take/swap C at 16/256 and scalar suffix-2 direct C at 4096. Inter-arm native
+drift is also cell-specific: S/P scalar suffix-1 at 4096 has Rust/C++ ratios
+1.303/1.210 in cohort 0, reversed by L/S ratios 0.769/0.833. Those cells
+support no unqualified timing attribution. The bounded wide result supports
+investigating optimizer scheduling, with code growth and the useful scalar
+regressions still preventing selection of this directed policy.
+
+### Fourth source discriminator: one cursor-driven consumption loop
+
+Fuse truncation's two loop controllers without changing its selected take/swap
+algorithm. A cursor starts at `retained`. Each iteration takes the rear owner;
+when the cursor is below the new length, exchange that owner with the cursor
+slot and advance the cursor, then consume the local through one shared
+callback site. The exchange condition holds for exactly the former first
+half, so the remaining owners are still consumed from the reversed tail in
+original order. This is ordinary factoring under the current consumption
+decision: unchanged O(removed) work, constant local storage, retained prefix,
+capacity, allocation policy and unconstrained linear owner type. There is no
+dispatch on benchmark count or payload type, and the initial empty header
+allocation remains unchanged.
+
+Before timing, require fewer scalar loop-control or descriptor operations
+and no extra wide owner transfers or snapshots; the shared callback's value
+merge could make wide lowering worse, which falsifies this candidate.
+Rebuild the compiler's gate profile with two jobs because it embeds the
+library. Reuse the complete behavior/accounting matrix and the formal vector
+program's existing empty, singleton, odd/even, prefix-preservation, callback
+order and owner-release observations. Accounting must remain byte-identical.
+If the code criterion passes, measure the unchanged full scalar/wide,
+three-population, seven-path matrix in both cohorts, comparing each cell
+with frozen C and the earlier source trials under the existing duration and
+spread qualifications. Any repeatable useful-cell regression prevents
+selection; a favorable suffix median alone is insufficient.
+
+### Fused consumption result: rejected before timing
+
+D fails the wide-transfer code criterion. Native disassembly of
+`grow_vector_truncate$instance$d6739d8f89f405bd` changes from C's frameless
+168 instructions with no stack accesses to 232 instructions and a 368-byte
+frame. The take block loads all 32 payload fields before testing whether to
+swap, spilling eleven fields (88 bytes) and reloading them for the digest.
+Even suffix-1 takes this path without a swap. The wide tail still calls
+truncate and preserves C's direct aligned append construction. Scalar
+truncate shrinks statically from 44 to 27 instructions, but this does not
+compensate for violating the recorded wide criterion. No D timing was run,
+and no runtime benefit or regression is claimed.
+
+For exact reproduction, start with C above and replace only the truncate
+body after its unchanged `doc` statement with the following. The function's
+signature, contracts and every other library function remain unchanged.
+
+```text
+  let cursor = retained;
+  loop @truncate (
+    invariant prefix: deref(values).storage.inner.len >= retained,
+    invariant cursor_lo: cursor >= retained
+  ) {
+    if deref(values).storage.inner.len <= retained {
+      invariant exhausted: deref(values).storage.inner.len == retained;
+      break @truncate;
+    }
+    let value = take_back(window: &deref(values).storage.inner);
+    if cursor < deref(values).storage.inner.len {
+      swap(first: &deref(values).storage.inner[cursor], second: &value);
+      set cursor = cursor + 1_u64;
+    }
+    VectorDrain::accept(env: env, value: move value);
+  }
+  return unit;
+```
+
+The rejected whole-library SHA-256 is
+`2372c33f036b4fc22615f11682b60a098df66d033737686241e6e0612d587c40`.
+Its gate compiler, timed image and timed LLVM hashes are respectively
+`fa8211c2edd57bc4ec9957a0525a11e9d3f0417290a959c26dfd41c53c583fde`,
+`df9b570ce76da5ae1a113def94c1a72940ec8f85da6036fa432927460f2d64fa` and
+`ead462e36ffa2f772a7ea5da365a76ce46155238f56982e8283cde46579d9306`.
+Build with `cargo build --manifest-path compiler/Cargo.toml --profile gate
+--bin whitefootc --locked --offline -j 2`, then the family ecosystem
+build/check/account targets with `BUILD=.build/fused-truncate` and the
+existing formal vector corpus test. Native inspection uses
+`llvm-objdump --macho --disassemble --no-show-raw-insn` on the timed image.
+
+The guarded run passed: compiler construction 7.819 s, ecosystem
+construction 4.866 s, behavior checks 1.730 s, accounting 0.233 s, formal
+corpus construction 0.547 s and execution 3.364 s. Both ecosystem images
+pass 1,260 configurations and 8,820 executions, including checksum/cleanup
+falsifiers. All 294 accounting rows and the C driver, Rust archive and C++
+object are byte-identical to C. The formal vector test passes both lowering
+modes with its unchanged 25-allocation expectation. These correctness
+observations do not override the failed performance discriminator.
+
+Only truncate was restored afterward, leaving the library byte-identical to
+C. The generated D compiler and `.build/fused-truncate` artifacts remain
+identified as rejected-candidate outputs; a subsequent C or compiler trial
+must rebuild the embedded library before using its compiler as a baseline.
 
 ## Historical source-composition evidence
 
@@ -1257,3 +1447,54 @@ The older [`measurements.csv`](measurements.csv) belongs to revision
 Reproduce its code at that revision. Its four WF/matched-C ratios were
 1.54/1.44 (ordinary reserve/growth) and 1.60/1.50 (retained); they are historical
 evidence and are not current performance or refusal coverage.
+
+## Contiguous Slots shift trial: criterion before implementation
+
+Preparation starts at `a04ec2d6ca554f2e3a2bac849dfeb02af9e282ec`, with the
+finalized source C from `47f9f91b63a484ba7f4924a63b5863b1b8b6f289` restored
+after the separate source D trial. Both arms compile exactly that C library,
+whose SHA-256 is
+`5d0deaa41004b15b1def9c458df575634303df527b74d738916c9ad92b520197`;
+the frozen control compiler and native image retain the identities in the
+single-placement result above. Record the changed compiler identity before
+measurement. The trial changes only the compiler's lowering of `Slots`
+insertion/removal shifts. The same Vector source, append placement,
+suffix-consumption algorithm, application
+caller, native adapters, flags and oracle must serve both compiler images.
+The candidate replaces the element walk by one overlapping transfer of the
+complete contiguous suffix, including target padding and owning elements.
+Ring keeps its logical walk; append, split and proved-empty release retain
+their existing lowering. The proposal remains pending in the design amendment
+until the owner rules on the evidence.
+
+Insertion moves `[index, len)` to `[index + 1, len + 1)`; removal first
+captures the removed value and then moves `[index + 1, len)` to
+`[index, len - 1)`. OP-10 bounds both extents within capacity, including a
+one-past pointer for a zero-count endpoint. The shared target-stride transfer
+includes inter-element padding; `memmove` admits overlap without asserting
+disjoint pointers. STOR-7 permits relocation of owning elements, and no call
+or release can observe the intermediate bytes. Positive-stride extents fit
+the already qualified complete allocation. Zero-stride pointers and byte
+counts normalize to zero while logical indices and length updates remain
+unchanged, even beyond the signed address domain.
+
+Before timing, inspect the final O3 native code for fewer contiguous suffix
+shift loops or per-element transfers in reserved/reuse. An unchanged final
+shift falsifies this mechanism's proposed benefit; a raw-LLVM `memmove` alone
+does not establish it. Pass fixed/runtime shape checks, zero-length endpoint
+shifts, padded owning-value order and exact allocation/release observations,
+and huge zero-byte logical counts with optional address facts both emitted
+and withheld. The ordinary Vector program and complete ecosystem correctness
+and accounting checks must remain valid before any measurement.
+
+Retain the full matched matrix at the original populations 16, 256 and 4096
+and payloads 8 and 256 bytes, with both order cohorts and unchanged native
+algorithms. Reserved/reuse are the primary affected cells; all useful
+mutating cells must be compared, with no repeatable regression accepted.
+Keep suffix-zero controls separately labelled. Require the existing duration
+and cohort-stability qualifications, preserve every baseline/candidate sample,
+and assess the owner's per-cell native target separately from a speedup over
+the compiler control. Wider shift populations may supplement this matrix to
+distinguish transfer setup from per-element work, but cannot replace or remove
+an original cell. This is a preregistered experiment, not a selected lowering
+or a measured performance claim.

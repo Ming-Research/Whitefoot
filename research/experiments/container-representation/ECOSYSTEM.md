@@ -465,3 +465,93 @@ Any emitted-code attribution must inspect optimized IR or final native code
 with the measured flags and use a same-source timing discriminator. Historical
 retained O2 observations have different visibility and allocator conditions
 and cannot supply causal percentages for these practical O3 gaps.
+
+## Generic native-pipeline pilot: preregistered, not run
+
+This preparation tests two optimization-order hypotheses. The
+[constitution's performance guidance](../../../docs/constitution.md#performance)
+permits compilation work for runtime gains while requiring practical iteration;
+it supplies no numeric budget. The provisional screens below are chosen now,
+with the directed Vector probe's 11,992 to 17,060 bytes of WF text (about 42%
+growth) known and neither general candidate measured. They are not
+owner-approved global policy. No source-name hints, early `alwaysinline`,
+ownership/ABI changes or benchmark-specific execution path is proposed.
+
+Start with three frozen inputs only: Vector source trial C's timed LLVM,
+`tests/programs/containers/hashmap.wf` with its fixed eight-slot probe, and
+`tests/programs/compute/records.wf` with the unchanged formal adapter binding
+and both execution worlds. The saved C compiler has SHA-256
+`02f18a296656c48f08e044fb635f06cab0871ce25ea75f57343434367959e21d`;
+the Vector input has SHA-256
+`4d6591a1eee0457b5edb2f46d312a03cd796b3d770c4ee9c04b71f3280ff4be6`.
+Hash the other inputs before emission; retain toolchain identity, commands,
+remarks, direct statuses, construction times and artifacts. Concurrent source
+trial D is excluded. Every arm uses Apple Clang O3:
+
+| Arm | Construction from the same raw LLVM | Role |
+| --- | --- | --- |
+| S | One ordinary O3 compilation directly to object | Stock control |
+| R | Ordinary O3 to optimized LLVM, then ordinary O3 to object | Reoptimization control |
+| L | R's first stage; second O3 adds `-mllvm -enable-module-inliner=true -mllvm -inline-priority-mode=cost` | Costed module inlining after prior simplification |
+| U | First O3 adds `-mllvm -unroll-full-max-count=0`; second O3 is ordinary | Postponed full-unroll hypothesis |
+
+L and U are the only alternatives. Keep ordinary inline thresholds. The host
+advertises these flags; verify their effect. U's first-stage fixed-eight loop
+must remain unexpanded to instantiate the deferral test. Inspection-only LLVM
+must never feed an extra optimization pass into an arm's native construction.
+
+Code criteria precede timing. L should remove the wide Vector truncate call
+beyond R, with fewer digest stack round trips or repeated constant setup and no extra
+owner transfers. For U, predict that compact `find` and `remove` inline into
+`map_trace` before full expansion. An absent baseline call makes that
+opportunity unreproduced. Preserve scalar behavior and both records ASCII
+loops; an absent stock loop leaves survival unqualified and requires the Linux
+counterexample. Preserve destination-body simplification before wrapper
+inlining. The early always-inline and merged-return forms in the
+[result-register investigation](../../investigations/result-registers/DESIGN.md#lowering)
+remain rejected. Unchanged target code, lost records structure or additional
+wide movement stops that candidate before runtime measurement.
+
+Screens compare candidates with S and report R separately. WF object text
+excludes the native libraries and runtime:
+
+- Summed WF text: at most 10% growth across the pilot; repeat over the full
+  corpus before selection.
+- Each module with at least 1,024 stock text bytes: at most 25% growth;
+  smaller modules: at most 256 added bytes. Report absolute deltas and
+  constant/unwind sections separately.
+- Isolated native optimization/codegen: at most twice stock construction
+  time. Charge both stages to R/L/U; exclude WF emission and inspection work.
+  Retain timing resolution; short or unstable ratios leave this unresolved.
+- Before production selection, cold and edited end-to-end builds may grow by
+  at most 25% on the maintained module workloads; report warm reuse and
+  source/native/link phases separately.
+
+These bounds permit modest duplication and one extra optimization stage while
+protecting iteration beyond one hot loop. Failure rejects this candidate under
+these screens, not every costed late-inlining policy. A changed tradeoff needs
+a new proposal before measurement, not a retrospective threshold increase.
+
+Only a positive code/size/cost pilot proceeds to correctness images and then
+timing, retaining Vector ownership/checksum/accounting, the map oracle and
+records' independent complete-result checks. Selection additionally requires
+the full program/container corpus, production O2, cached module/function
+ThinLTO, full LTO and formal paired compute with its identical-image control.
+`driver.rs`, `runtime.mk`, the formal performance Makefile and `ecosystem.mk`
+supply flags separately: a driver-only change would miss consumers. A selected
+pipeline must enter cache identity and receive a compiler design amendment;
+changed result-body ordering or stock ThinLTO planning reopens those decisions.
+No production or live-tree change is authorized here.
+
+Scratch inputs and exact first-stage commands are prepared at
+`/private/tmp/whitefoot-generic-pipeline-discriminator/`, with a hash manifest.
+After the shared heavy-command slot is granted, the bounded construction is:
+
+```sh
+WHITEFOOT_CHECK_TIMEOUT=60 perl .github/run-check.pl generic-pipeline-code \
+  bash /private/tmp/whitefoot-generic-pipeline-discriminator/build-code.sh
+```
+
+The command stops at code artifacts and construction times, without linking or
+execution. No pilot has run. Retire the one-shot scratch commands after
+recording the experiment's disposition.
