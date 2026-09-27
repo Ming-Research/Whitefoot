@@ -195,7 +195,9 @@ impl Input<'_, '_> {
             CapturedTerm::Literal(value) => value.to_string(),
             CapturedTerm::Binding(binding) => self.binding_name(binding),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
-            CapturedTerm::Opaque => "?".to_owned(),
+            // [REF-1] the binding's spelling names a later value than the one
+            // this index read, and no source spelling names that one.
+            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
         }
     }
 

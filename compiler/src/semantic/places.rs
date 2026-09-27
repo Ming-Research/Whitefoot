@@ -115,6 +115,9 @@ pub(crate) enum CapturedTerm {
     Literal(u64),
     /// The value a live `own` integer binding held at the formation.
     Binding(BindingId),
+    /// The value a binding held at the formation, once a later write of that
+    /// binding has made its spelling name another value [REF-1].
+    Superseded(BindingId),
     /// An in-scope const [CONST-1, CONST-2], fixed at instantiation [FN-2].
     Const(DeclarationId),
     /// A computed value: the fragment sees the goal, not a term this module
@@ -158,7 +161,8 @@ impl CapturedValue {
     /// A binding read uses its declaration/spelling identity here, with writes
     /// invalidating facts supported by that binding. Captured storage identity
     /// in [`Self::provably_same`] still distinguishes its evaluations. Only an
-    /// opaque offset keeps occurrence identity inside a goal datum.
+    /// opaque offset, and a binding's offset after a later write of that
+    /// binding, keep occurrence identity inside a goal datum.
     pub(crate) const fn goal_identity(self) -> Self {
         match self.term {
             CapturedTerm::Literal(_) | CapturedTerm::Const(_) => {
@@ -172,7 +176,9 @@ impl CapturedValue {
             // reads may still straddle a write when the question is which
             // storage each selects.
             CapturedTerm::Binding(_) => Self::new(SPELLING_DETERMINED_CAPTURE, self.term),
-            CapturedTerm::Opaque => self,
+            // The binding's spelling now names a later value, and only the
+            // occurrence still names the one this capture read.
+            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => self,
         }
     }
 
@@ -193,9 +199,10 @@ impl CapturedValue {
         match (self.term, other.term) {
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) => left == right,
             (CapturedTerm::Const(left), CapturedTerm::Const(right)) => left == right,
-            (CapturedTerm::Binding(left), CapturedTerm::Binding(right)) => {
-                left == right && self.capture == other.capture
-            }
+            (
+                CapturedTerm::Binding(left) | CapturedTerm::Superseded(left),
+                CapturedTerm::Binding(right) | CapturedTerm::Superseded(right),
+            ) => left == right && self.capture == other.capture,
             (CapturedTerm::Opaque, CapturedTerm::Opaque) => {
                 self.capture != UNKNOWN_CAPTURE && self.capture == other.capture
             }
@@ -214,12 +221,15 @@ impl CapturedValue {
     }
 
     /// The support one captured value contributes to every measure term of
-    /// the place it occurs in [ENT-5]: the binding it read, where it read
-    /// one.
+    /// the place it occurs in [ENT-5]: the binding it read, where the
+    /// binding's spelling still names that value.
     pub(crate) const fn support(self) -> Option<BindingId> {
         match self.term {
             CapturedTerm::Binding(binding) => Some(binding),
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Opaque => None,
         }
     }
 }
@@ -475,6 +485,66 @@ impl ResolvedPlace {
             }
         }
         Ok(carried)
+    }
+
+    /// The same path once `binding` has been written.
+    ///
+    /// An index this path captured from `binding` still holds the value the
+    /// binding had when the path was formed [REF-1], but the binding's
+    /// spelling now names another value, and an index term is interned by
+    /// that spelling [`CapturedValue::goal_identity`]. Such an index keeps
+    /// its occurrence, which still names the value it read, and loses the
+    /// spelling, so no fact about the binding's new value reaches a term over
+    /// this path. A range endpoint needs no conversion: its goal identity is
+    /// already its formation capture.
+    pub(crate) fn supersede_binding(&mut self, binding: BindingId) {
+        for step in &mut self.path {
+            if let PlaceStep::Index(index) = step
+                && index.term == CapturedTerm::Binding(binding)
+            {
+                *index = CapturedValue::new(index.capture, CapturedTerm::Superseded(binding));
+            }
+        }
+    }
+
+    /// The same path once the index `capture` read from `binding` is
+    /// superseded on another incoming edge of a join: the join cannot tell
+    /// the edges apart, so after it the spelling names that value on none
+    /// [`Self::supersede_binding`].
+    pub(crate) fn supersede_capture(&mut self, capture: CaptureId, binding: BindingId) {
+        for step in &mut self.path {
+            if let PlaceStep::Index(index) = step
+                && index.capture == capture
+                && index.term == CapturedTerm::Binding(binding)
+            {
+                *index = CapturedValue::new(capture, CapturedTerm::Superseded(binding));
+            }
+        }
+    }
+
+    /// The indices of this path whose binding's spelling still names them,
+    /// each as its capture and that binding, which a later write of the
+    /// binding supersedes [`Self::supersede_binding`].
+    pub(crate) fn spelled_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
+        self.path.iter().filter_map(|step| match step {
+            PlaceStep::Index(CapturedValue {
+                capture,
+                term: CapturedTerm::Binding(binding),
+            }) => Some((*capture, *binding)),
+            _ => None,
+        })
+    }
+
+    /// The indices of this path a write of their binding superseded, each as
+    /// its capture and that binding.
+    pub(crate) fn superseded_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
+        self.path.iter().filter_map(|step| match step {
+            PlaceStep::Index(CapturedValue {
+                capture,
+                term: CapturedTerm::Superseded(binding),
+            }) => Some((*capture, *binding)),
+            _ => None,
+        })
     }
 
     /// The identity this place carries as an [ENT-2] term.
@@ -1904,5 +1974,45 @@ mod tests {
         let run = place(0, &[frame]);
         assert!(run.may_be_prefix_of(&DENIED, &element, false));
         assert!(!element.may_be_prefix_of(&DENIED, &run, true));
+    }
+
+    /// [REF-1, ENT-2] after its binding is written, an index a path captured
+    /// keeps the evaluation it read and loses the binding's spelling: its goal
+    /// identity is its own occurrence, it is still the same value as that
+    /// occurrence, and it no longer depends on the binding. An index of
+    /// another binding keeps its spelling.
+    #[test]
+    fn a_written_binding_supersedes_the_index_a_path_captured_from_it() {
+        let mut path = place(
+            0,
+            &[
+                PlaceStep::Index(binding(0, 1)),
+                PlaceStep::Index(binding(1, 2)),
+            ],
+        );
+        assert_eq!(
+            path.spelled_indices().collect::<Vec<_>>(),
+            [
+                (CaptureId::source(0), BindingId(1)),
+                (CaptureId::source(1), BindingId(2))
+            ]
+        );
+        path.supersede_binding(BindingId(1));
+        let PlaceStep::Index(superseded) = path.path[0] else {
+            unreachable!("the first step is an index");
+        };
+        let PlaceStep::Index(kept) = path.path[1] else {
+            unreachable!("the second step is an index");
+        };
+        assert_eq!(superseded.term, CapturedTerm::Superseded(BindingId(1)));
+        assert_eq!(superseded.goal_identity(), superseded);
+        assert!(superseded.provably_same(binding(0, 1)));
+        assert_eq!(superseded.support(), None);
+        assert_eq!(kept, binding(1, 2));
+        assert_ne!(kept.goal_identity(), kept);
+        assert_eq!(
+            path.spelled_indices().collect::<Vec<_>>(),
+            [(CaptureId::source(1), BindingId(2))]
+        );
     }
 }

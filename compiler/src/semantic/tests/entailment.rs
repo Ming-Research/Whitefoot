@@ -1334,7 +1334,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                             CapturedTerm::Const(declaration) => {
                                 matches!(term, TermKind::ConstParameter(candidate, _) if *candidate == declaration)
                             }
-                            CapturedTerm::Binding(_) => matches!(
+                            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) => matches!(
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),
