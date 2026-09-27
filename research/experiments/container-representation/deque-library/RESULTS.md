@@ -1119,3 +1119,24 @@ through the same four Make targets took 0.27 seconds, and the shared
 WF module correspondence on the recorded Apple Clang 21 / arm64
 configuration. No native relink, execution, probe or timing was repeated;
 the v0.64 CSV remains the dated measured cohort, not a fresh v0.65 result.
+
+### Next scalar reverse-churn discriminator: precise endpoint effects
+
+The current optimized scalar reverse loop reloads `cap` and `head` around the
+`pop_back`/`push_front` pair even though the endpoint contracts leave capacity
+unchanged. The next source-only diagnostic narrows `deque_push_front` from
+`writes(values.inner)` to the fields it actually changes: `head`, `next` and
+`len`. Its algorithm, ownership transfer, public arguments, and checksums stay
+unchanged; `deque_pop_back` is untouched. The hypothesis is that the narrower
+row lets the emitter or LLVM retain the invariant capacity across the pair.
+
+Before timing, the rebuilt candidate must pass the full Deque correctness and
+allocation images. The optimized scalar reverse loop must show at least one
+fewer capacity load per inner iteration, with no new call, spill, frame growth,
+or extra payload transfer; forward, wide, rebase and cleanup bodies must be
+unchanged except for symbol/hash renaming. A code or ledger mismatch stops
+without timing. If the code criterion passes, run the complete ecosystem
+matrix with the existing 1 ms/10% stability qualification; any useful-cell
+regression rejects the row change. This experiment measures whether effect-row
+precision exposes an existing invariant; it does not amend the specification
+or promise a new operation.
