@@ -20,6 +20,7 @@ Nodes: language/ownership, language/ownership/reference-validity, language/surfa
 Owner-approved: The owner accepted decision cards 1 and 3 for PR #107, and requested an arrow comparison before ruling on card 2, on 2026-09-27.
 
 Summary: Add the approved rule requiring `move` for consuming uses of existing noncopy owned places, including match and propagation, with its refusal of implicit whole-owner consumption; remove the consumption-spelling amendment and retire the result-propagation node's conflicting implicit-consumption decision under the same ruling. Include named constants in the reference-validity root list and synchronize its ancestor summary and the pending spelling amendment with that same correction to match REF-1. The [ownership investigation](../research/investigations/contract-surface/OWNERSHIP.md#consumption-spelling) supplies the consumption comparison. The reference-access spelling remains pending; implementing the approved consumption rule and the selected access spelling together remains the follow-up recorded in docs/todo.md. This research change does not amend the specification or implement either syntax change.
+
 ## 2026-09-26 Share validation identities, typed syntax views and structured emission
 
 Nodes: compiler/generic-validation-scope, compiler/typed-syntax-access, compiler/structured-emission
