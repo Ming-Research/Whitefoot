@@ -17,18 +17,31 @@ compiler=$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-milliseconds() { date +%s%N | awk '{ printf "%d", $1 / 1000000 }'; }
+milliseconds() { perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1000'; }
 
 # One timed invocation: prints workload, mode, step, wall time and the last
 # report line.
 measure() {
     local workload=$1 mode=$2 step=$3
     shift 3
-    local start end report
+    local start end report status
     start=$(milliseconds)
-    report=$("$compiler" "$@" 2>&1 | tail -n 1) || true
+    if report=$("$compiler" "$@" 2>&1); then
+        status=0
+    else
+        status=$?
+        printf '%s\n%s/%s/%s: compiler exited %d; no timing sample recorded\n' \
+            "$report" "$workload" "$mode" "$step" "$status" >&2
+        return "$status"
+    fi
     end=$(milliseconds)
-    printf '%s\t%s\t%s\t%d\t%s\n' "$workload" "$mode" "$step" $((end - start)) "$report"
+    printf '%s\t%s\t%s\t%d\t%s\n' "$workload" "$mode" "$step" $((end - start)) "${report##*$'\n'}"
+}
+
+edit_record() {
+    local expression=$1 record=$2
+    sed "$expression" "$record" > "$scratch/edited-record"
+    mv "$scratch/edited-record" "$record"
 }
 
 # Build cost of one entry: cold, warm, then after a body edit the caller
@@ -46,7 +59,7 @@ builds() {
             -o "$scratch/$workload-$mode.bin" --cache "$cache" "${fragments[@]}" --report
         measure "$workload" "$mode" warm --graph modules.wfg --entry "$entry" \
             -o "$scratch/$workload-$mode.bin" --cache "$cache" "${fragments[@]}" --report
-        sed -i "$expression" "$edited"
+        edit_record "$expression" "$edited"
         measure "$workload" "$mode" body-edit --graph modules.wfg --entry "$entry" \
             -o "$scratch/$workload-$mode.bin" --cache "$cache" "${fragments[@]}" --report
         cd "$here"
@@ -71,9 +84,9 @@ checks() {
     measure "$workload" check none --graph modules.wfg --check-modules
     measure "$workload" check cold --graph modules.wfg --check-modules --cache "$cache"
     measure "$workload" check warm --graph modules.wfg --check-modules --cache "$cache"
-    sed -i "$body_expression" "$body"
+    edit_record "$body_expression" "$body"
     recheck "$workload" body-edit "$cache"
-    sed -i "$interface_expression" "$interface"
+    edit_record "$interface_expression" "$interface"
     recheck "$workload" interface-edit "$cache"
     cd "$here"
 }
@@ -81,9 +94,16 @@ checks() {
 # One cached check of every module and entry after an edit: its wall time and
 # how many of the verdicts it recomputed rather than reused.
 recheck() {
-    local workload=$1 step=$2 cache=$3 start end lines
+    local workload=$1 step=$2 cache=$3 start end lines status
     start=$(milliseconds)
-    lines=$("$compiler" --graph modules.wfg --check-modules --cache "$cache" --report 2>/dev/null || true)
+    if lines=$("$compiler" --graph modules.wfg --check-modules --cache "$cache" --report); then
+        status=0
+    else
+        status=$?
+        printf '%s\n%s/check/%s: compiler exited %d; no timing sample recorded\n' \
+            "$lines" "$workload" "$step" "$status" >&2
+        return "$status"
+    fi
     end=$(milliseconds)
     printf '%s\tcheck\t%s\t%d\trecomputed %s of %s\n' "$workload" "$step" $((end - start)) \
         "$(grep -c '"reused":false' <<<"$lines" || true)" "$(grep -c '"reused"' <<<"$lines" || true)"
@@ -232,9 +252,23 @@ for workload in rng crossing; do
         cd "$here"
         for run in 1 2 3 4 5; do
             start=$(milliseconds)
-            "$scratch/$workload-$mode.bin" || true
+            if "$scratch/$workload-$mode.bin"; then
+                status=0
+            else
+                status=$?
+            fi
             end=$(milliseconds)
-            printf '%s\t%s\trun-%d\t%d\t\n' "$workload" "$mode" "$run" $((end - start))
+            # These benchmarks return their computed low bits. Compare that
+            # observable result with the first mode before admitting a sample.
+            if [ "$mode" = none ] && [ "$run" = 1 ]; then
+                expected_status=$status
+            fi
+            if [ "$status" -ge 128 ] || [ "$status" -ne "$expected_status" ]; then
+                printf '%s/%s/run-%d: exit %d differs from expected %d\n' \
+                    "$workload" "$mode" "$run" "$status" "$expected_status" >&2
+                exit 1
+            fi
+            printf '%s\t%s\trun-%d\t%d\texit %d\n' "$workload" "$mode" "$run" $((end - start)) "$status"
         done
     done
 done

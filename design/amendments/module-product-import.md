@@ -1,0 +1,6 @@
+Node: compiler/incremental-compilation
+
+Decision: Retained module products keep a local identity table and are imported into the composition's existing inventories through resolution-minted declaration and occurrence keys and structurally keyed instances, with source-check inputs distinct from target/layout/permission inputs and current composition judgments retained, because the [product import assessment](../../research/investigations/modular-compilation/DESIGN.md#retained-product-import) identifies one existing checked-model consumer path that can reuse bodies and lowering without propagating compound module-local identities through every proof and backend consumer, instead of sharing dense ordinals across checks or replacing those consumers with a second view over several inventories. Import and retention costs remain subject to the recorded qualification; identity equality alone grants no judgment reuse.
+
+Rejected:
+- Treating a retained body or a module's source verdict as a complete composition or target verdict: rejected because current call components, proof availability, physical layouts, target inputs and parallel permissions can change without the module's source judgment changing.

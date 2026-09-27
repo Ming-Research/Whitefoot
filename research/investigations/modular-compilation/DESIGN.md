@@ -1385,7 +1385,7 @@ Qualification criteria, recorded before candidate measurements:
 
 - A second entry and an entry-body edit reuse unchanged library module
   products in a fresh invocation. Count actual source body formation and
-  lowering, independently of cache-hit labels; a repeated whole-closure walk
+  lowering, independently of cache-hit labels; a repeated whole-closure body walk
   or a cache containing only verdicts does not meet this criterion.
 - Cached and fresh builds agree on acceptance, diagnostics and executable
   behavior. Cover body edits with unchanged headers, changes in published and
@@ -1406,12 +1406,51 @@ Qualification criteria, recorded before candidate measurements:
   that the host can distinguish the claimed difference.
 - Keep the formal regression coverage in compiler/program/conformance test
   ownership and run the canonical gate. Research drivers are measurement
-  callers, never gate dependencies. The existing build-cost driver's swallowed
-  failures must be removed before its output can support new conclusions.
+  callers, never gate dependencies. The build-cost driver now propagates
+  compiler failures and compares runtime exit results; its discriminating
+  controls are recorded with the build-cost measurements.
 
 This section is maintained with this implementation and its findings. The
 existing build-cost experiment owns reproducible workloads and measurements;
 no parallel implementation plan or result ledger is introduced.
+
+#### Retained product import
+
+The implementation candidate imports retained module products into the
+composition's existing inventories. Each product has a local identity table;
+declarations and occurrences are rebound through the keys resolution mints,
+and nominal/callable instances through their declaration, arguments and formal
+boundary. Dense ordinals never leave that table as cross-check identities.
+The import restores required instances in discovery order, including those a
+body originally requested through operand-directed calls. Source locations
+are read from the current resolved occurrence, not an old file ordinal.
+
+Keep structural body formation separate from its later judgments. A retained
+structural body carries the products and dependencies of its completed walk;
+it does not grant entailment, summary publication, parallel permission or entry
+admission. The existing composition computes the current call components,
+heap closure and permission, and reuses a proof analysis only through the
+existing complete-input receipt key. Module checks still precede composition
+and keep MOD-8's interface-only dependency boundary. Lowered products have
+their additional target, physical representation, call-selection and permission
+inputs; a source module verdict alone never authorizes their reuse.
+
+This keeps one checked-model consumer path and permits incremental migration
+through ordinary misses. The alternative, giving every semantic and lowering
+consumer a view over several module-local inventories, would spread compound
+identity lookup through places, proofs, physical specialization and emission
+before any consumer needs that API. Importing costs translation and retained
+storage; the qualification above must show that avoided body/translation work
+justifies it. The candidate does not claim that parsing/resolving the current
+composition or global judgment scheduling becomes incremental in this step.
+
+The product encoding is compiler-private and follows the concrete Rust data
+types, with exhaustive construction and matching so a changed field or variant
+requires its encoding to be updated. It must preserve the checked tree and
+query-local proof inventories without parsing diagnostic `Debug` output.
+Missing, truncated or incompatible products take the ordinary computation path.
+This encoding serves retained compiler results only; no artifact ABI or
+independent proof replay is introduced.
 
 ## Recursive dependencies and generic instances
 

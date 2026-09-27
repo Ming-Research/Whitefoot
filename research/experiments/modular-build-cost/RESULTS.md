@@ -133,6 +133,27 @@ status) is identical in every mode.
 - No mode shows a repeatable loss at this noise level against `full`, the
   full link-time optimization of program and runtime together.
 
+## Driver qualification before module build unit measurements
+
+The module build unit follow-up uses the same workload home. Before measuring
+its candidate, the driver now reads the compiler exit status directly and
+admits no timing sample on failure. Runtime samples retain the program's exit
+result and require agreement with the first ordinary build; a signal-style
+exit is a failed run. The clock uses the host's monotonic clock, and record
+edits use portable `sed` output followed by replacement of the scratch copy.
+
+The actual `measure` and `recheck` helpers were exercised with a successful
+compiler control printing two verdict records and a failing control exiting
+23. The former produced one timing row, including the expected `recomputed
+1 of 2` count; the latter preserved exit 23, printed its diagnostic and emitted
+no timing row. The actual runtime loop admitted five rows for repeated exit 7
+in the ordinary and fragment modes, and rejected exit 8 against expected 7
+and signal-style exit 143 before emitting a row. A scratch-record edit
+retained its unchanged line and made only the requested replacement. These
+controls qualify the driver's observation, not compiler performance; new
+module build unit cost results are still pending. They do not retroactively
+supply successful-build evidence for a historical timing line.
+
 ## Limits
 
 - Composition granularity: every build of an edited entry forms, resolves
