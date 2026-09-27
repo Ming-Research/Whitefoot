@@ -1,10 +1,10 @@
 //! Lowering of the runtime-capacity `Array<T>` [TYPE-9] and its readers.
 //!
 //! The shape is one heap block `[len | elements]` reached only through the
-//! `Box` that owns it (compiler/storage-representation), so every root here
-//! is the block's *address*: `b.inner` is the cell's own pointer, a measure
-//! reads the `len` word at the head of the block, and an element address is
-//! one `inbounds` step past that header.
+//! `Box` that owns it (compiler/storage-representation). Every root retains
+//! that selected owner's pointer slot, so a previously formed content alias
+//! follows a complete-content exchange. Emission resolves the current block
+//! before reading its `len` or forming an element address past the header.
 
 use crate::semantic::{CheckedBufferRoot, CheckedExpression, CheckedTargetDomainObligation};
 
@@ -54,12 +54,12 @@ impl IrBuilder<'_> {
         )
     }
 
-    /// The address of the block one buffer place names [TYPE-9].
+    /// The selected owner slot one buffer place names [TYPE-9].
     ///
     /// A runtime-capacity shape is only ever `Box` content, so the path that
     /// reaches it carries that content step and the binding rooting it is
-    /// storage-backed; the cell's own pointer slot is loaded once and what
-    /// that yields is the block.
+    /// storage-backed. Preserve the slot until the content access resolves
+    /// its current allocation.
     pub(super) fn buffer_root(
         &mut self,
         root: &CheckedBufferRoot,

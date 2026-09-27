@@ -105,7 +105,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     fn run_storage(&mut self, run: IrValueId) -> Result<Option<String>, BackendFailure> {
         if matches!(self.value_type(run), Some(IrType::Address(_))) {
-            Ok(Some(self.value_name(run)))
+            self.addressed_storage_pointer(run).map(Some)
         } else if self.storage.slot(run).is_some() {
             self.value_place(run).map(Some)
         } else {

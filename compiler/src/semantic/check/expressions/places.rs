@@ -29,9 +29,9 @@ use super::super::super::places::{
 };
 use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
 
-/// [TYPE-9] the restructuring a `move` of a runtime-capacity content names.
-const TYPE9_NO_CONTENT_MOVE: &str =
-    "let the Box release it at scope exit, or empty it and call free_empty(move b) [OP-14]";
+/// [TYPE-9] runtime-capacity content has no owned value outside its Box.
+const TYPE9_KEEP_CONTENT_BOXED: &str =
+    "borrow the runtime-capacity content, or move the complete Box instead";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
@@ -234,6 +234,24 @@ impl<'unit> Checker<'_, 'unit> {
                     "the run a range reference names, which is read by `deref(p)[i]` or \
                      `deref(p).len` [REF-4, MSR-1]",
                 ),
+            );
+        }
+        // [TYPE-9] both copying and moving a complete runtime-capacity
+        // content would materialize an owned value outside its Box. Judge
+        // that placement separately from [OWN-1]'s capabilities: an Array
+        // content may be copy even though it cannot be an inline value.
+        // Borrow formation has its own path and never reaches this read.
+        if matches!(
+            place.ty,
+            CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }
+        ) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type9,
+                node,
+                SemanticIssueKind::InlineRuntimeCapacityShape {
+                    spelling: self.types.checked_type_name(place.ty)?,
+                    mechanical_fix: TYPE9_KEEP_CONTENT_BOXED,
+                },
             );
         }
         let copy = self.types.is_copy_type(check_context, place.ty)?;
@@ -907,9 +925,8 @@ impl<'unit> TypeContext<'unit> {
     /// the content is this expression's value. A cell has exactly one field,
     /// so no other part of the owner survives to take a derived release.
     ///
-    /// [TYPE-9] refuses the same spelling at a runtime-capacity content: its
-    /// block is the cell's heap object, and taking the window out of the cell
-    /// would leave a `Slots<T>` value in a position the rule admits nowhere.
+    /// The value-place boundary has already refused runtime-capacity content
+    /// [TYPE-9], whose block cannot become an inline owned value.
     #[allow(clippy::too_many_arguments)]
     fn check_box_unbox(
         &self,
@@ -925,19 +942,6 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if matches!(
-            referent,
-            CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }
-        ) {
-            return self.declarations.issue_node(
-                SemanticRule::Type9,
-                use_node,
-                SemanticIssueKind::InlineRuntimeCapacityShape {
-                    spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: TYPE9_NO_CONTENT_MOVE,
-                },
-            );
-        }
         let path = self.checked_owned_take_path(local.ty, resolved_path)?;
         let mut cleanup = Vec::new();
         for action in self.owned_take_cleanup(check_context, local.ty, &path)? {

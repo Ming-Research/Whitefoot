@@ -456,6 +456,13 @@ impl IrBuilder<'_> {
         if referent != other {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
+        if referent.is_runtime_content() {
+            self.define(
+                IrType::Unit,
+                IrOperation::RuntimeContentSwap { first, second },
+            )?;
+            return self.return_unit();
+        }
         let held_first = self.define(
             referent.ty(),
             IrOperation::Load {

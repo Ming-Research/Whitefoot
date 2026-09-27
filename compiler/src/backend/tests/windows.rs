@@ -1199,20 +1199,24 @@ fn main() -> status: std::process::ExitStatus pure {
     let captured = update
         .rfind(" = load ptr, ptr ")
         .expect("the projected Box pointer must be captured");
-    let pointer = update[..captured]
-        .lines()
-        .next_back()
-        .expect("captured pointer definition")
-        .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
     assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
-    let address = update[captured..rhs]
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_suffix(&format!(" = getelementptr i8, ptr {pointer}, i64 0"))
-        })
-        .expect("the captured pointer forms the array address before the RHS");
+    // Runtime-capacity content references retain the Box owner slot. The
+    // target resolves that slot once to the current allocation immediately
+    // before forming the element address; the length guard's earlier load is
+    // intentionally a separate access so an intervening content exchange
+    // would not silently reuse a stale backing pointer.
+    let target_line_start = update[..captured]
+        .rfind('\n')
+        .map_or(0, |newline| newline + 1);
+    let target_line_end = update[captured..rhs]
+        .find('\n')
+        .map_or(rhs, |newline| captured + newline);
+    let address = update[target_line_start..target_line_end]
+        .trim()
+        .split_once(" = ")
+        .map(|(result, _)| result)
+        .expect("the target allocation load has an SSA result");
     let element_projection = format!(
         " = getelementptr inbounds {{ i64, [0 x i16] }}, ptr {address}, i64 0, i32 1, i64 "
     );

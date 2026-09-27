@@ -1398,14 +1398,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         facts.push_str(" nonnull ");
         facts.push_str(NO_CAPTURE_ATTRIBUTE);
-        // The referent's own selected-target extent. A shape whose block
-        // extends past its statically typed header states only the header it
-        // is sure of, which is the direction `dereferenceable` needs.
+        // State the selected-target extent of the storage actually addressed.
+        // Runtime-content references address one Box pointer slot, not the
+        // dynamically sized allocation that the slot currently owns.
         if let Some(referent) = referent
             && let Ok(layout) = crate::target::validate_static_storage(
                 self.target,
                 self.program,
-                &crate::target::TargetStorageType::source(referent.ty()),
+                &crate::target::TargetStorageType::source(if referent.is_runtime_content() {
+                    IrType::Address(referent)
+                } else {
+                    referent.ty()
+                }),
             )
             && layout.size() > 0
         {
@@ -2193,6 +2197,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_project_address(result, ty, *address, projection),
             IrOperation::Load { address, referent } => {
                 self.emit_load(result, ty, *address, *referent)
+            }
+            IrOperation::RuntimeContentSwap { first, second } => {
+                self.emit_runtime_content_swap(result, ty, *first, *second)
             }
         }
     }

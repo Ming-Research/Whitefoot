@@ -967,16 +967,17 @@ impl CheckedNominal {
 ///
 /// Primitives have it. Every other type has it exactly when every part it
 /// owns has it and its declaration does not remove it: a struct's fields and
-/// an enum's variant payload fields are its parts, an `Array<T, N>` has the
-/// capabilities of its element, and `Slots`, `Ring`, `Box` and the host
+/// an enum's variant payload fields are its parts, either placement of `Array`
+/// has the capabilities of its element, and `Slots`, `Ring`, `Box` and the host
 /// handles are declared `nocopy` or `nodrop` [PRE-1, PRE-2]. `parameter` answers for
 /// a type parameter standing for itself, whose capabilities are the ones its
 /// written bound grants [PROV-6]. `None` reports a nominal or element handle
 /// the tables do not hold.
 ///
-/// A runtime-capacity `Array<T>` is never a value outside its `Box` [TYPE-9],
-/// so no bare read of one exists to be a copy and it answers false. An opaque
-/// nominal retains no fields, so its answer is its modifier's alone.
+/// [TYPE-9] separately restricts where runtime-capacity contents may be values;
+/// that placement rule does not remove an `Array` content's capability at
+/// [OP-11]'s written-bound judgment. An opaque nominal retains no fields, so
+/// its answer is its modifier's alone.
 pub(crate) fn type_has_copy_capability(
     ty: CheckedType,
     nominals: &[CheckedNominal],
@@ -998,10 +999,10 @@ pub(crate) fn type_has_copy_capability(
                     return Some(false);
                 }
             }
-            CheckedType::Array { element, .. } => {
+            CheckedType::Array { element, .. } | CheckedType::Buffer { element } => {
                 pending.push(*elements.get(element.index())?);
             }
-            CheckedType::Buffer { .. } | CheckedType::Window { .. } => return Some(false),
+            CheckedType::Window { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.

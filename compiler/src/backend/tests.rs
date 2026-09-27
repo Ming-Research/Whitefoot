@@ -62,6 +62,7 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod runtime_content_swap;
 mod stack_ledger;
 mod system;
 mod tail_calls;

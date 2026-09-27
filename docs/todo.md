@@ -857,9 +857,27 @@ rarely insert at the same place.
   same-place swaps, live aliases, nested/linear ownership, zero-stride and
   aligned payloads, and capture/linked-ABI checks. Use a padded or checked
   allocator oracle before executing the cap0 witness. Repair lowering without
-  narrowing accepted source or selecting shared empty backing. Defer only
-  until the current Vector candidate validation finishes; reopen before any
-  shared-empty optimization.
+  narrowing accepted source or selecting shared empty backing. The branch
+  now implements the owner-slot repair under the
+  [pending representation amendment](../design/amendments/runtime-content-references.md).
+  The maintained runtime-content tests pass ordinary and retained links in
+  both lowering modes, with exact concurrent release ledgers and a real worker
+  grant; the affected backend and reference filters also pass. Keep this item
+  open only for the separate performance attribution and any zero-stride
+  workload it may expose. Shared-empty optimization remains deferred until
+  that measurement.
+
+- **Runtime Array copy capability ignores the element type.** The same frozen
+  compiler accepts a direct `.inner` swap between two `box_array_filled::<u64>`
+  owners, contrary to OWN-1 and OP-11. Its blanket noncopy `Buffer`
+  classification also provides an accidental OWN-1 barrier to forbidden bare
+  runtime-content bindings. The branch repair derives runtime Array copy
+  capability from its element and checks TYPE-9 at the owned-value boundary
+  independently. Close this routine checker defect after direct and
+  copy-bound swaps reject, bare content values reject under TYPE-9, and an
+  unconstrained generic swap instantiated with `u64` remains admitted under
+  FN-2. The [runtime-content investigation](../research/investigations/containers-and-resources/X1-LIBRARY.md#runtime-capacity-content-references-and-exchange)
+  records why these source controls are separate from native exchange.
 
 ## Parallel lowering and runtime
 

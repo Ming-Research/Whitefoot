@@ -288,9 +288,10 @@ impl IrBuilder<'_> {
 
     /// Lowers the address carried by a checked borrowed-place expression.
     ///
-    /// In particular, dereferencing a Box owner slot follows the stored Box
-    /// pointer to its allocation. It never takes the address of the value
-    /// snapshot which an ordinary read materializes from that allocation.
+    /// A fixed-size Box referent follows the stored pointer to its allocation.
+    /// Runtime-capacity content retains the selected owner slot so exact
+    /// aliases follow content exchange. Neither path addresses a value
+    /// snapshot materialized by an ordinary read.
     pub(super) fn lower_borrowed_place_address(
         &mut self,
         expression: &CheckedExpression,

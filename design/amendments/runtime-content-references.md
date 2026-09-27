@@ -1,0 +1,10 @@
+Node: compiler/storage-representation
+
+Decision: Represent an inferred reference to runtime-capacity Array, Slots or Ring content by the address of its selected Box owner slot, resolving the current allocation at content access, because OP-11 exchanges the complete content while REF-2 preserves earlier exact-content aliases and a backing-pointer snapshot cannot satisfy both for unequal allocation extents, instead of exchanging headers, changing the thin Box layout or allocating a separate stable descriptor. This adds a reference-representation decision; the existing owner, header, range-reference and growth decisions remain unchanged. The [repair grounds and affected ABI](../../research/investigations/containers-and-resources/X1-LIBRARY.md#runtime-capacity-content-references-and-exchange) delimit the proposal and its required validation.
+
+Decision: Carry runtime-content exchange as one typed operation in the shared ordinary swap body, because the existing typed loads and stores materialize fixed-size referent values while runtime-capacity contents have no such owned value representation, instead of reinterpreting references as integers, recovering a Box nominal solely to cast the slot, or recognizing direct source calls. Fixed-size exchange keeps its existing lowering, and every generated or linked runtime-content reference boundary uses the same slot-pointer interpretation.
+
+Rejected:
+- Exchanging runtime headers at their current allocation addresses: rejected because unequal capacities require exchanging the complete allocation extent and payload, and a zero-capacity allocation cannot acquire a nonempty tail by a header store.
+- Rewriting only direct content-swap arguments to their owners: rejected because an earlier exact-content alias would still retain the old backing pointer and would observe the wrong place after exchange.
+- A separate stable descriptor allocation or a wider Box owner: rejected because the existing selected owner slot supplies the required indirection while preserving one-pointer owner transport and one allocation per Box.

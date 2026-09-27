@@ -170,6 +170,9 @@ macro_rules! operation_operands {
                 aggregate, value, ..
             } => vec![$value(aggregate), $value(value)],
             IrOperation::Load { address, .. } => vec![$value(address)],
+            IrOperation::RuntimeContentSwap { first, second } => {
+                vec![$value(first), $value(second)]
+            }
             IrOperation::ProjectAddress {
                 address,
                 projection,

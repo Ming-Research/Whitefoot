@@ -1,5 +1,119 @@
 # Containers over the x1 language
 
+## Runtime-capacity content references and exchange
+
+This pending implementation choice repairs the runtime-content exchange
+defect recorded in the [maintained TODO](../../../docs/todo.md), under unchanged
+OP-11, TYPE-9 and REF-2 rules. An implicit swap of `&empty.inner` and
+`&full.inner` is admitted even when the runtime Slots capacities are zero and
+one. The existing shared swap body loads and stores only the typed header,
+leaving both allocation pointers and payloads in place. Changing the empty
+header to length one does not create the element storage that length permits
+the program to access. The original invalid read was inspected in emitted
+IR and was not executed. The owning runtime Array witness
+`Box<Array<Box<u64>>>` is separately source-accepted but stops during lowering;
+its borrow parameter is represented as bare Buffer while its actual argument
+and shared swap body require an address.
+
+A separate frozen source check confirms a checker defect: constructing two
+`box_array_filled::<u64>` owners and swapping their `.inner` places is accepted,
+although OWN-1 makes these contents copy and OP-11 refuses that written swap.
+The checker classified every runtime Array as noncopy; this also caused bare
+content bindings to reject under OWN-1 rather than TYPE-9. The bounded routine
+repair derives either Array placement's capability from its element and
+enforces TYPE-9 independently at the owned-value read boundary. Borrowing the
+content and aliasing that reference remain admitted. OP-11 still judges the
+written bound only: an unconstrained `Array<T>` helper may instantiate with
+`u64`, while the direct and `T: copy` forms reject. These paired source controls
+must pass separately from the representation repair's native observations.
+
+The proposed reference is one pointer to the selected Box owner slot, using
+the existing distinction between `Address(Buffer)` or a runtime Window address
+and a fixed-size storage address. Projecting the runtime `.inner` retains that
+slot; measures, element access, window updates, range formation, byte probes
+and scheduling length observations load its current backing through one
+shared resolver. Exact-content aliases, their copies, joins and admitted
+captures therefore continue to name the same source place after a swap.
+Selected element and range references retain their existing representation and
+are invalidated by a proper-prefix content exchange under REF-2. A reference
+to `.inner` also does not survive `grow`'s declared `writes(cell)` boundary.
+
+The Box value remains one allocation pointer and its selected-target header,
+tail padding, alignment and complete-allocation qualification are unchanged.
+An ordinary `&Box<...>` still addresses that pointer word, and `&[T]` still
+passes an element pointer and count. The changed ABI interpretation is the
+implicit runtime-content reference: all materialized PRE-1 bodies, calls and
+any linked definitions of that same boundary must receive the owner-slot
+address, not the allocation address. Reference extent attributes must describe
+the slot actually addressed; swap retains its equal-place allowance and carries
+no `noalias`. TYPE-9's existing written-parameter and content-move refusals are
+unchanged. Shared empty backing and a new capacity policy are outside this
+repair.
+
+The structural choice is one typed runtime-content exchange operation in the
+existing shared swap body. It checks equal runtime-content reference types,
+loads both owner pointer words, then stores them exchanged; equal operands
+leave the owner unchanged. Existing `Load` and `Store` require values of the
+addressed referent type, so using them directly would still construct header
+values rather than represent complete runtime content. Treating those values
+as integers or untyped pointers would discard that invariant. A new inverse
+projection to a recovered Box nominal could reuse ordinary loads and stores,
+but would add the same new typed operation plus a nominal-recovery dependency
+solely for exchange. The bounded exchange operation avoids that dependency
+while leaving fixed-size swap's existing path intact. Its runtime operands
+participate in the existing capture, CFG and effect inventories.
+
+A direct-call rewrite is insufficient because previously formed aliases
+retain their old allocation address. In-place header or payload copying cannot
+fit an unequal source extent into the old destination allocation. A wider
+reference or a separate stable descriptor could carry owner provenance, but
+the existing selected owner slot supplies it without another word or allocation.
+The current parallel Box snapshot decision remains applicable: PAR-2 denies
+whole-content writes to captured enclosing storage. Iteration-local owners and
+owner slots selected through admitted disjoint ranges still need validation.
+
+Before treating the repair as established, require ordinary and retained-call
+execution of zero/one and unequal nonzero capacities, same-place exchange,
+earlier and later exact aliases, rebinding and joins, nested selected owner
+slots, Ring wrap/head order, zero-stride and aligned payloads, exact owning
+cleanup and explicit linear consumption. Exercise direct and generic Box
+reference helpers, a linked C oracle for owning runtime Arrays, and both
+sequential and parallel lowering. Reuse the maintained conformance and native
+test machinery; formal tests do not import this investigation. The first
+cap0 native falsifier uses padded scalar storage so the old header-only swap
+produces a deterministic wrong observation without an invalid read. Wrong
+payload, stale alias and missing or duplicate release observations must each
+fail. Retain the negative source controls for invalid descendant references,
+runtime-content values and moves, written unboxed runtime parameters, and
+OP-11's written-bound capability distinction. No performance
+claim follows from this correctness repair; target facts and code generation
+remain subject to their existing checks.
+
+The first negative observation ran against frozen compiler SHA-256
+`e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`.
+The [maintained zero/one-capacity oracle](../../../compiler/src/backend/tests/runtime_content_swap.rs)
+adds 64 bytes to each requested allocation and initializes the padding to
+`0xa5`, making the old header-only implementation's sole element read valid
+but observably wrong. With retained calls and Clang `-O2`, construction exits 0
+in 0.0831 seconds; execution exits 3, the wrong-element branch, in 0.2470 seconds.
+Its allocation log is `A1;A2;F2;F1;` with empty stderr. This falsifies the old
+exchange without executing the original out-of-bounds witness.
+
+The owner-slot repair now passes the maintained native observations on the
+working branch. `runtime_content_swap.rs` runs ordinary and retained-call
+links for zero-capacity, unequal-capacity, same-place, alias, join, nested and
+wrapped Ring cases in both lowering modes. Its owning observer checks every
+element and owner identity exactly once; an atomic test ledger permits only
+the interleaving that disjoint parallel drains can produce. A separate link
+uses the real worker-schedule and grant observer and requires a worker grant
+while the same owning cleanup ledger remains complete. The source controls
+cover direct and generic references, stale element/range descendants,
+runtime-content values and explicit moves, TYPE-9 and OP-11 capability
+boundaries. The affected backend filters (new runtime tests, owned places,
+windows, arrays, ranges, parallel, references and range references) pass in
+the gate profile. The remaining X1 obligation is performance attribution;
+this correctness repair makes no speed claim.
+
 ## Checked terminal consumption lowering candidate
 
 This is a pending compiler implementation choice under the unchanged source
