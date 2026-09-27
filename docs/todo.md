@@ -1496,24 +1496,22 @@ each is resolved by a discussion and a tree change.
   These language extensions are deferred because the selected ordinary
   local composition rule can be validated without widening the storage or
   predicate vocabulary.
-- **Ownership transfer and reference-access forms.** The
+- **Ownership transfer and reference-access forms.** The owner approved
+  explicit `move` at every consuming use of an existing noncopy owned place,
+  including match and propagation, on 2026-09-27. The
   [same-operation comparison](../research/investigations/contract-surface/OWNERSHIP.md)
-  proposes explicit `move` at every consuming use of an existing noncopy owned
-  place, including match and propagation, and postfix `.*` instead of
-  `deref(place)`. The proposals await selection; shorter paths and fewer
-  context-specific rules do not establish a writer-quality or performance gain.
-  Reopen implementation after the owner rules on these forms. Validate copy
-  and template-bound spelling, temporary and borrowed matches, whole-owner
-  cleanup, linear residuals, reference rebinding, entry paths, invalidation
-  and effect separation; retire superseded acceptance forms in the same
-  specification/compiler/conformance change. Keep the current container APIs
-  pending the replacement-and-measure work below: a weaker contract or loss
-  of `nodrop` support is not an equivalent reference interface.
-  The existing `language/ownership/reference-validity` decision and its pending
-  replacement omit named constants from the path roots that REF-1 already
-  admits. This understates the current language boundary; include named
-  constants when the owner rules on that review finding, without changing
-  source acceptance, and check the tree's root list against REF-1 then.
+  now compares `->` with postfix `.*` before reference-access spelling is
+  selected. The named-constant root omission is corrected in the tree and
+  pending amendment. Reopen the coordinated specification/compiler/conformance
+  implementation after access spelling is selected; the research PR does not
+  implement the approved consumption rule. Validate copy and template-bound
+  spelling, temporary and borrowed matches, whole-owner cleanup, linear
+  residuals, reference rebinding, entry paths, invalidation and effect
+  separation; retire superseded acceptance forms in the same change. Shorter
+  paths and fewer context-specific rules do not establish a writer-quality or
+  performance gain. Keep the current container APIs pending the replacement-
+  and-measure work below: a weaker contract or loss of `nodrop` support is not
+  an equivalent reference interface.
 - **Expression composition and canonical source policy.** Reassess mandatory
   three-address computation and intermediate names together with the ban on
   comments and rejection of noncanonical formatting. Compare authoring,

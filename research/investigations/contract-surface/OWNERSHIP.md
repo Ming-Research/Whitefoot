@@ -2,7 +2,9 @@
 
 This investigation compares the remaining ownership surface after signature
 `own` was removed. The first comparison used specification v0.69 at
-`0f22b026b`; its refresh uses v0.74 at `ad51e05df`. The concrete consumers
+`0f22b026b`; its source-probe refresh uses v0.74 at `ad51e05df`. The arrow comparison
+uses the v0.75 grammar at `126d201d6`; the earlier source measurements retain
+their recorded baseline. The concrete consumers
 are the maintained HashMap and Deque libraries and the owned-link cursor
 program. The active specification remains the language authority; candidate
 spellings below are not accepted syntax.
@@ -199,13 +201,13 @@ automatic borrow, or change to whole-owner cleanup.
 This requires retiring bare affine match and propagation acceptance, not merely
 encouraging a style. The affected rules are OWN-1, OWN-13 and ERR-3, with
 FN-2's generic qualification retained; conformance and examples would migrate
-with the implementation. The proposed tree addition is in
-[the consumption amendment](../../../design/amendments/consumption-spelling.md).
-It adds one decision and one refused alternative to `language/ownership`;
-existing decisions remain. The new decision replaces the implicit-context
-choice in OWN-13 and ERR-3 that the tree's existing explicit-move decision
-does not separately describe. It is awaiting a ruling and is not implemented
-in this research PR.
+with the implementation. The owner approved this choice on 2026-09-27. It is recorded in
+[language/ownership](../../../design/language/ownership.md) as one added
+decision and one refused alternative. The approved rule replaces the
+implicit-context choice in OWN-13 and ERR-3; the specification and compiler
+still implement those contexts. Their coordinated amendment with the selected
+reference-access spelling remains the implementation follow-up in
+[docs/todo.md](../../../docs/todo.md), outside this research-only PR.
 
 The v0.74 module and variant changes do not remove these implicit consuming
 contexts. GRAM-10 now also permits `..` in an arm: an owned match releases
@@ -289,11 +291,48 @@ spelling; its second adds the spelling's selection ground. The node's remaining
 decisions and refused alternatives are unchanged. It is awaiting a ruling and
 is not implemented in this research PR.
 
-The existing review finding remains open: the node's first decision and the
-proposed replacement list locals and parameters as roots but omit named
-constants, which REF-1 already admits. The recommended correction is to add
-named constants to that list; it changes no language permission. The amendment
-is unchanged pending owner direction on that finding.
+The owner approved the named-constant correction on 2026-09-27: the live
+reference-validity decision, its ancestor summary and the pending replacement
+now include named constants as REF-1 already does. This changes no language
+permission. The spelling proposal remains pending while arrow forms are compared.
+
+## Arrow comparison
+
+The owner requested `->` as an alternative to `.*` on 2026-09-27. Before
+running the grammar comparison, require each candidate to cover the same
+resolved paths: whole-referent reads and writes, field and measure selection,
+enum payloads, indices and ranges, `entry` projections, reference formation,
+rebinding and atomic replacement. Keep Box content at `.inner`, effect
+selectors unchanged, and ordinary ownership, visibility and proof rules.
+
+Compare the current prefix form, the proposed dot-star step, an arrow step
+with an ordinary following dot, arrow member selection with prefix access for
+the whole referent, and a generalized arrow covering both selection and the
+whole referent. Every candidate must have one grammar-selected spelling per
+path: accepting both `p->field` and `p->.field`, or both `p->field` and
+`deref(p).field`, is not an acceptable simplification under the surface-form
+decision. Record the complete factored productions before running the native
+strong-LL(2) generator; reject a prediction conflict, and include a deliberately
+conflicting grammar as a negative control. Grammar success establishes only
+parsing feasibility, not writer preference, semantic implementation or speed.
+
+The comparison includes whole-reference match/assignment, a reference to a
+Box, a range reference, and a proof path starting at `entry`. Member spelling
+alone cannot settle the choice. Reuse of the signature token `->` must be
+checked against the full grammar, not treated as an assumed ambiguity.
+
+The reproducible [native driver](../../experiments/reference-access-grammar/main.rs)
+lives under the existing experiments home because it selects a grammar for
+reference access. This section is its caller; retire it when the adopted
+syntax and formal conformance cases supersede the comparison. It changes only
+`place`, `pbase` and `psuffix` in memory and calls the unchanged compiler
+generator on the full specification. The candidates and their complete
+production replacements are fixed in that driver before measurement.
+
+```sh
+perl .github/run-check.pl reference-access-build rustc --edition=2024 research/experiments/reference-access-grammar/main.rs -o /tmp/whitefoot-reference-access-grammar
+perl .github/run-check.pl reference-access-grammar /tmp/whitefoot-reference-access-grammar spec/kernel-spec.md
+```
 
 ## Validation and remaining uncertainty
 
