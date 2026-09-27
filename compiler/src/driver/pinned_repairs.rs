@@ -2844,6 +2844,37 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // -------------------------------------------------------------------
+    // [WAIT-1] a waiting call in a function that does not wait. The repair
+    // declares the enclosing function waiting; its caller is the entry,
+    // which may wait, so the chain ends there.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "waiting-call-outside-a-waiting-function.wf",
+        rejected: br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) {
+  std::fs::close_directory(factory: factory, directory: move directory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "WAIT-1",
+        sentences: &[
+            "]: WaitingCallOutsideWaitingFunction\n",
+            "\n  mechanical_fix: write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits\n",
+        ],
+        repaired: &[br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
+  std::fs::close_directory(factory: factory, directory: move directory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
     RepairPair {
         name: "bound-function-exceeds-the-formal-row.wf",
         rejected: br#"interface Disposer {

@@ -1,0 +1,16 @@
+struct Counter {
+  value: u64;
+}
+
+fn bump(counter: &Counter, value: u64) -> result: unit writes(counter) {
+  set deref(counter).value = value;
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let counter = Counter(value: 0_u64);
+  mustpar bump(counter: &counter, value: 1_u64);
+  std::fs::close_directory(factory: &factory, directory: move cwd);
+  return std::process::exit_status(code: 0_u8);
+}
