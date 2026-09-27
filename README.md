@@ -370,7 +370,7 @@ start from the examples above:
 9. The trusted base — what is trusted, and the plan to shrink it.
 10. [Where the speed comes from](docs/articles/where-the-speed-comes-from.md) —
     every way the proofs are used.
-11. I/O without async — ordinary calls that the compiler overlaps.
+11. I/O without async — ordinary calls, and when they may overlap.
 12. A layout engine — the first large program.
 13. How this project is built with agents.
 

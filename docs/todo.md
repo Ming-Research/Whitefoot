@@ -1435,9 +1435,8 @@ rarely insert at the same place.
   third list. `lib.rs` re-exports modules by glob, so no public item is ever
   reported unused, and the driver's fifteen entry points come in cached and
   uncached twins that drop options: `--graph --check` without `--entry`
-  ignores `--cache`. `--no-overlap` now selects the default lowering while its
-  help text says the default actualizes completion I/O. One library module for
-  native construction and one request type (the
+  ignores `--cache`. One library module for native construction and one
+  request type (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p5-driver-and-api)'s P5.1 and P5.2)
   remove the copies. Validate with identical executables and verdicts from the
   CLI and every harness. Reopen when a runtime unit or entry point is
