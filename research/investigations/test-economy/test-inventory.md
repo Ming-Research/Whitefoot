@@ -148,7 +148,7 @@ cargo test --profile gate --all-targets --no-run --locked --offline
 
 The guarded equivalents are `make -C compiler build` and
 `make -C compiler test-build`. Recipes in the categories below describe the
-underlying construction; the [verification entry points](../../../README.md#verification)
+underlying construction; the [verification entry points](../../../docs/workflow.md#checks)
 own bounded local invocation.
 
 | Operation | Gate construction | Dev/default-test construction |
