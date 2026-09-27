@@ -10,10 +10,10 @@ fn window_sum(start: u64, end: u64) -> result: u64 pure contract {
   doc "An index expression inside a path is evaluated when the reference is formed, so assigning to the binding that supplied an endpoint cannot retarget the range [REF-1, OWN-7].";
   let view = &values[start..end];
   set start = end;
-  let count = deref(view).len;
+  let count = view^.len;
   let total = 0_u64;
   for (i in 0_u64..count) {
-    let value = deref(view)[i];
+    let value = view^[i];
     set total = total +wrap value;
   }
   return total;

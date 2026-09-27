@@ -16,7 +16,7 @@ struct Wrapped<A, B> {
 
 fn second_value(wrapped: &Wrapped<Slots<u8, 1>, Slots<u8, 2>>) -> value: u64 reads(wrapped.pair.second.value) {
   doc "The reader's parameter type writes both arguments and the place reaches the field through `deref` and ordinary field steps [GRAM-5, REF-1].";
-  return deref(wrapped).pair.second.value;
+  return wrapped^.pair.second.value;
 }
 
 fn main() -> status: ExitStatus pure {

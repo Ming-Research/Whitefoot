@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push(values: &Slots<u64, 4>, value: u64) -> result: unit writes(values.next), writes(values.len) contract {
-  requires deref(values).len < deref(values).cap;
-  ensures deref(values).len == deref(values).len + 1_u64;
+  requires values^.len < values^.cap;
+  ensures values^.len == values^.len + 1_u64;
 } {
-  doc "Two occurrences of the same measure of a written reference parameter, deref(values).len, neither written as an entry term, denote the same exit term [MSR-3], so the declared equation states that one term is one greater than itself.";
+  doc "Two occurrences of the same measure of a written reference parameter, values^.len, neither written as an entry term, denote the same exit term [MSR-3], so the declared equation states that one term is one greater than itself.";
   place_back(window: values, value: value);
   return unit;
 }

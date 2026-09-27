@@ -10,9 +10,9 @@ struct Slot {
 }
 
 fn view(stored_entry: &Option<Entry>) -> result: u64 reads(stored_entry) {
-  match deref(stored_entry) {
+  match stored_entry^ {
     Some(value: present) => {
-      return deref(present).value;
+      return present^.value;
     }
     None() => {
       return 0_u64;
@@ -21,9 +21,9 @@ fn view(stored_entry: &Option<Entry>) -> result: u64 reads(stored_entry) {
 }
 
 fn lookup(slots: &Slots<Slot, 1>) -> result: u64 reads(slots) contract {
-  requires 1_u64 <= deref(slots).len;
+  requires 1_u64 <= slots^.len;
 } {
-  let found = view(stored_entry: &deref(slots)[0_u64].stored_entry);
+  let found = view(stored_entry: &slots^[0_u64].stored_entry);
   return found;
 }
 

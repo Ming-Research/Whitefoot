@@ -66,14 +66,14 @@ fn measure_words(words: &[f64], font: f64) -> result: f64 reads(words) {
   doc "Measures every word of the shared metric table at one font size. The walk is bounded by the range reference's own length, so its index obligation is discharged directly [REF-4, MSR-1].";
   let widest = 0.0_f64;
   let total = 0.0_f64;
-  let spare = deref(words).len;
+  let spare = words^.len;
   let k = 0_u64;
   loop @scan {
     let done = k >= spare;
     if done {
       break @scan;
     }
-    let raw = deref(words)[k];
+    let raw = words^[k];
     let scaled = fmul.strict(raw, font);
     let above = fgt(scaled, widest);
     if above {
@@ -89,14 +89,14 @@ fn measure_band(words: &[f64], count: u64, font: f64) -> result: f64 reads(words
   doc "The same walk over a caller-supplied prefix, clamped to the range it reads.";
   let widest = 0.0_f64;
   let total = 0.0_f64;
-  let spare = deref(words).len;
+  let spare = words^.len;
   let bounded_count = spare;
   let count_fits = count <= spare;
   if count_fits {
     set bounded_count = count;
   }
   for (k in 0_u64..bounded_count) {
-    let raw = deref(words)[k];
+    let raw = words^[k];
     let scaled = fmul.strict(raw, font);
     let above = fgt(scaled, widest);
     if above {
@@ -109,16 +109,16 @@ fn measure_band(words: &[f64], count: u64, font: f64) -> result: f64 reads(words
 
 fn layout(node: &Box<LNode>, words: &[f64], inh: f64) -> result: f64 reads(words), writes(node) {
   doc "Folds the box tree, writing each node's resolved height into its own slot. The two child calls are the permitted and overlappable pair: neither reads what the other defines, their substituted write paths are the two disjoint payload fields of one variant, and no exit of the first skips the second [OWN-7, EFF-5, PAR-1].";
-  match deref(node).inner {
+  match node^.inner {
     Leaf(w: lw, h: lh, out: lslot) => {
-      let v = cascade(inh: inh, w: deref(lw), h: deref(lh));
+      let v = cascade(inh: inh, w: lw^, h: lh^);
       let m = measure_words(words: words, font: v);
       let total = fadd.strict(v, m);
-      set deref(lslot) = total;
+      set lslot^ = total;
       return total;
     }
     Branch(left: l, right: r, w: bw, h: bh, out: bslot) => {
-      let own_h = cascade(inh: inh, w: deref(bw), h: deref(bh));
+      let own_h = cascade(inh: inh, w: bw^, h: bh^);
       let m = measure_words(words: words, font: own_h);
       let child_inh = fmul.strict(own_h, 0.5_f64);
       let a = layout(node: l, words: words, inh: child_inh);
@@ -126,7 +126,7 @@ fn layout(node: &Box<LNode>, words: &[f64], inh: f64) -> result: f64 reads(words
       let kids = fadd.strict(a, b);
       let mine = fadd.strict(own_h, m);
       let total = fadd.strict(kids, mine);
-      set deref(bslot) = total;
+      set bslot^ = total;
       return total;
     }
   }
@@ -134,16 +134,16 @@ fn layout(node: &Box<LNode>, words: &[f64], inh: f64) -> result: f64 reads(words
 
 fn layout_banded(node: &Box<LNode>, words: &[f64], count: u64, inh: f64) -> result: f64 reads(words), writes(node) {
   doc "The same fold whose per-node measure takes a caller-supplied band.";
-  match deref(node).inner {
+  match node^.inner {
     Leaf(w: lw, h: lh, out: lslot) => {
-      let v = cascade(inh: inh, w: deref(lw), h: deref(lh));
+      let v = cascade(inh: inh, w: lw^, h: lh^);
       let m = measure_band(words: words, count: count, font: v);
       let total = fadd.strict(v, m);
-      set deref(lslot) = total;
+      set lslot^ = total;
       return total;
     }
     Branch(left: l, right: r, w: bw, h: bh, out: bslot) => {
-      let own_h = cascade(inh: inh, w: deref(bw), h: deref(bh));
+      let own_h = cascade(inh: inh, w: bw^, h: bh^);
       let m = measure_band(words: words, count: count, font: own_h);
       let child_inh = fmul.strict(own_h, 0.5_f64);
       let a = layout_banded(node: l, words: words, count: count, inh: child_inh);
@@ -151,7 +151,7 @@ fn layout_banded(node: &Box<LNode>, words: &[f64], count: u64, inh: f64) -> resu
       let kids = fadd.strict(a, b);
       let mine = fadd.strict(own_h, m);
       let total = fadd.strict(kids, mine);
-      set deref(bslot) = total;
+      set bslot^ = total;
       return total;
     }
   }
@@ -179,10 +179,10 @@ fn spell_hex(destination: &[u8], at: u64, value: u64) -> result: u64 writes(dest
     }
     let shifted = irotl(rest, 4_u32);
     let digit = hex_digit(v: shifted);
-    let spare = deref(destination).len;
+    let spare = destination^.len;
     let writable = cursor < spare;
     if writable {
-      set deref(destination)[cursor] = digit;
+      set destination^[cursor] = digit;
     }
     set rest = shifted;
     set cursor = cursor +wrap 1_u64;

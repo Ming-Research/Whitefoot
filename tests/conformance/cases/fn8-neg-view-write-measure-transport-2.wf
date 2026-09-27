@@ -3,24 +3,24 @@ alias exit_status = std::process::exit_status;
 
 fn fill(destination: &Slots<u8, 64>, at: u64) -> result: u64 writes(destination) {
   doc "Writes one byte through the reference and returns the next position.";
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let inside = at < spare;
   if inside {
-    set deref(destination)[at] = 65_u8;
+    set destination^[at] = 65_u8;
   }
   let next = at +wrap 1_u64;
   return next;
 }
 
 fn emit(source: &Slots<u8, 64>, length: u64) -> result: u64 reads(source) contract {
-  define capacity = deref(source).len;
+  define capacity = source^.len;
   requires length <= capacity;
 } {
   doc "Consumes a prefix whose length the caller has proved.";
   let first = 0_u8;
   let present = 0_u64 < length;
   if present {
-    set first = deref(source)[0_u64];
+    set first = source^[0_u64];
   }
   return length;
 }

@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn touched_byte(limit: u64, xs: &[u8]) -> value: u8 reads(xs) contract {
-  define count = deref(xs).len;
+  define count = xs^.len;
   requires limit <= count;
   requires limit >= 1_u64;
 } {
@@ -16,7 +16,7 @@ fn touched_byte(limit: u64, xs: &[u8]) -> value: u8 reads(xs) contract {
     }
   }
   let last = cursor - 1_u64;
-  return deref(xs)[last];
+  return xs^[last];
 }
 
 fn main() -> status: ExitStatus pure {

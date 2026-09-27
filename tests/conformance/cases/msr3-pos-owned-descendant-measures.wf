@@ -20,7 +20,7 @@ fn main() -> status: ExitStatus pure {
   set holder.inner = Packet(first: move short, second: move long);
   let renamed = move holder;
   let selected = Some<Box<Packet>>(value: move renamed);
-  match selected {
+  match move selected {
     None() => {
       return exit_status(code: 3_u8);
     }

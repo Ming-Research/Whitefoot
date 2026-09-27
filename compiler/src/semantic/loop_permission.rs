@@ -38,12 +38,12 @@
 //!
 //! A **proved single-binder affine element write** is a `set_stmt` whose
 //! target is one direct `Array` or `Slots` subscript rooted in an own binding
-//! declared outside L, or reached through `deref` of a reference parameter
+//! declared outside L, or reached through `^` of a reference parameter
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
 //! `a` nonzero. Distinct binder values therefore select distinct elements.
 //! The `deref` needs no rule of its own here: it is an ordinary step of the
-//! resolved path [REF-1, TYPE-7], so `deref(b)[a*i + c]` is recognized
+//! resolved path [REF-1, TYPE-7], so `b^[a*i + c]` is recognized
 //! exactly as an inline subscript is, which is what keeps every
 //! runtime-capacity kernel in the family — [TYPE-9] admits a runtime-capacity
 //! shape only as `Box` content [checker-facts].

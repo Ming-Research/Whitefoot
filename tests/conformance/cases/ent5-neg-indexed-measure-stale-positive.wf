@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn examine(rows: &Slots<Slots<u8, 4>, 2>, index: u64, replacement: u64) -> result: u8 reads(rows) contract {
-  requires index < deref(rows).len;
-  requires replacement < deref(rows).len;
+  requires index < rows^.len;
+  requires replacement < rows^.len;
 } {
   doc "The positive goal over rows[index].len depends on index [ENT-5, MSR-2]. Replacing index kills it. The false branch of the repeated guard is reachable for row lengths one and zero, so its zero-offset read still owes OP-4.";
-  if deref(rows)[index].len == 1_u64 {
+  if rows^[index].len == 1_u64 {
     set index = replacement;
-    if deref(rows)[index].len == 1_u64 {
+    if rows^[index].len == 1_u64 {
     } else {
-      return deref(rows)[index][0_u64];
+      return rows^[index][0_u64];
     }
   }
   return 0_u8;

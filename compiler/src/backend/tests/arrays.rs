@@ -146,7 +146,7 @@ fn pass<T>(value: T) -> result: T pure {
 }
 
 fn change(pair: &Pair) -> result: unit writes(pair.values) {
-  set deref(pair).values[0_u64] = 9_u8;
+  set pair^.values[0_u64] = 9_u8;
   return unit;
 }
 
@@ -204,12 +204,12 @@ fn referenced_aggregate_writes_remain_typed_storage_copies() {
 }
 
 fn replace(target: &Record, value: Record) -> result: unit writes(target) {
-  set deref(target) = value;
+  set target^ = value;
   return unit;
 }
 
 fn append_record(target: &Slots<Record, 2>, value: Record) -> result: unit writes(target) contract {
-  requires deref(target).len < deref(target).cap;
+  requires target^.len < target^.cap;
 } {
   place_back(window: target, value: value);
   return unit;
@@ -275,20 +275,20 @@ fn ordinary_generic_readers_execute_inline_and_boxed_window_values() {
 
 fn checksum<const n: u64>(bytes: &SmallBytes<n>) -> result: u64 reads(bytes) {
   let result = 0_u64;
-  match deref(bytes) {
+  match bytes^ {
     Inline(values: run) => {
-      let length = deref(run).len;
+      let length = run^.len;
       for (index in 0_u64..length) {
-        let byte = deref(run)[index];
+        let byte = run^[index];
         let word = cvt::<u8, u64>(byte);
         let prefix = result *wrap 31_u64;
         set result = prefix +wrap word;
       }
     }
     Spilled(values: run) => {
-      let length = deref(run).inner.len;
+      let length = run^.inner.len;
       for (index in 0_u64..length) {
-        let byte = deref(run).inner[index];
+        let byte = run^.inner[index];
         let word = cvt::<u8, u64>(byte);
         let prefix = result *wrap 31_u64;
         set result = prefix +wrap word;
@@ -368,17 +368,17 @@ fn read(values: &Array<Entry, 2>, outer: u64, row: u64, column: u64) -> result: 
   requires row < 2_u64;
   requires column < 2_u64;
 } {
-  return deref(values)[outer].samples[row][column];
+  return values^[outer].samples[row][column];
 }
 
 fn read_row(values: &Array<u64, 2>, index: u64) -> result: u64 reads(values) contract {
   requires index < 2_u64;
 } {
-  return deref(values)[index];
+  return values^[index];
 }
 
 fn read_entry(value: &Entry) -> result: u64 reads(value.tag) {
-  return deref(value).tag;
+  return value^.tag;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -543,7 +543,7 @@ fn relay<T: drop>(values: T) -> result: T pure {
 fn read(values: &Array<Record, 3>, index: u64) -> result: u64 reads(values) contract {
   requires index < 3_u64;
 } {
-  return deref(values)[index].payload[7_u64];
+  return values^[index].payload[7_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1397,7 +1397,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// The v0.59 case placed the array with a fallible `heap_box` and observed the
 /// returned array on refusal; [STOR-8] makes allocation total, so that arm
 /// retired with the `Result` the source can no longer write. Its exchange was
-/// `let previous = replace deref(storage)[0_u64] = e;` delivered through a
+/// `let previous = replace storage^[0_u64] = e;` delivered through a
 /// two-place `set`. [SET-2] and [LIV-2] both retire, because [SET-1] writes exactly
 /// one place, and [OP-11] `swap` is the successor that still hands the
 /// displaced owner back.
@@ -1421,7 +1421,7 @@ fn relay<T: drop>(value: T) -> result: T pure {
 fn read(storage: &Box<Array<Record, 2>>, index: u64) -> result: u64 reads(storage) contract {
   requires index < 2_u64;
 } {
-  return deref(storage).inner[index].payload[7_u64];
+  return storage^.inner[index].payload[7_u64];
 }
 
 fn pass_box(value: Box<Array<Record, 2>>) -> result: Box<Array<Record, 2>> pure {
@@ -1431,7 +1431,7 @@ fn pass_box(value: Box<Array<Record, 2>>) -> result: Box<Array<Record, 2>> pure 
 fn update(storage: &Box<Array<Record, 2>>, index: u64, replacement: &Record) -> result: unit writes(storage.inner[index]), writes(replacement) contract {
   requires index < 2_u64;
 } {
-  swap(first: &deref(storage).inner[index], second: replacement);
+  swap(first: &storage^.inner[index], second: replacement);
   return unit;
 }
 
@@ -1499,13 +1499,13 @@ fn runtime_arrays_preserve_nested_fixed_array_storage_and_release() {
 }
 
 fn read(rows: &[Array<u64, 2>], index: u64) -> result: u64 reads(rows) contract {
-  requires index < deref(rows).len;
+  requires index < rows^.len;
 } {
-  return deref(rows)[index][1_u64];
+  return rows^[index][1_u64];
 }
 
 fn update(row: &Array<u64, 2>) -> result: unit writes(row) {
-  set deref(row)[1_u64] = 19_u64;
+  set row^[1_u64] = 19_u64;
   return unit;
 }
 
@@ -1617,9 +1617,9 @@ fn zero_stride_large_logical_indices_use_representable_address_operands() {
 }
 
 fn inspect(values: &[Empty]) -> result: Empty reads(values) contract {
-  requires deref(values).len == 1_u64;
+  requires values^.len == 1_u64;
 } {
-  return deref(values)[0_u64];
+  return values^[0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {

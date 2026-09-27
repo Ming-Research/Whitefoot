@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn total(first: &u64, part: &[u64]) -> result: u64 reads(first), reads(part) contract {
-  requires deref(part).len > 0_u64;
+  requires part^.len > 0_u64;
 } {
   doc "TYPE-8: a reference kind appears as a parameter kind and as a let-bound local, never inside a value.";
   let a = first;
-  let b = deref(part)[0_u64];
-  let sum = deref(a) +wrap b;
+  let b = part^[0_u64];
+  let sum = a^ +wrap b;
   return sum;
 }
 

@@ -7,7 +7,7 @@ struct Counter {
 
 fn recomputed(current: u64, holder: &Box<Counter>) -> result: u64 writes(holder) {
   doc "OP-12 refuses this callee at the update site: its declared row writes a proper prefix of the target place.";
-  set deref(holder).inner = Counter(value: 0_u64);
+  set holder^.inner = Counter(value: 0_u64);
   return current;
 }
 

@@ -27,7 +27,7 @@ enum SearchStep {
 }
 
 fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return Probe::Stop();
     }
@@ -35,7 +35,7 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
       return Probe::Skip();
     }
     Occupied(key: present_key, payload: present_payload) => {
-      if deref(present_key) == key {
+      if present_key^ == key {
         return Probe::Match();
       }
       return Probe::Miss();
@@ -44,7 +44,7 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
 }
 
 fn search_step(slot: &Slot, key: u64) -> result: SearchStep reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return SearchStep::SearchStop();
     }
@@ -52,8 +52,8 @@ fn search_step(slot: &Slot, key: u64) -> result: SearchStep reads(slot) {
       return SearchStep::SearchContinue();
     }
     Occupied(key: present_key, payload: present_payload) => {
-      if deref(present_key) == key {
-        return SearchStep::Found(value: deref(present_payload).inner);
+      if present_key^ == key {
+        return SearchStep::Found(value: present_payload^.inner);
       }
       return SearchStep::SearchContinue();
     }
@@ -158,7 +158,7 @@ fn find(slots: &Array<Slot, 8>, key: u64) -> result: Option<u64> reads(slots) {
   for (step in 0_u64..8_u64) {
     let advanced = home +wrap step;
     let index = advanced % 8_u64;
-    let action = search_step(slot: &deref(slots)[index], key: key);
+    let action = search_step(slot: &slots^[index], key: key);
     match action {
       SearchStop() => {
         return None<u64>();

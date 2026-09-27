@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn first_of(table: &Slots<u32, 4>) -> value: u32 reads(table) contract {
-  requires deref(table).len > 0_u64;
+  requires table^.len > 0_u64;
 } {
-  doc "A &Slots<u32, 4> parameter is an ordinary shared reference: the run's storage is inline in its owner, the reference is a name for that path, and the window is reached through deref, which is a place form and not a read-through operation.";
-  return deref(table)[0_u64];
+  doc "A &Slots<u32, 4> parameter is an ordinary shared reference: the run's storage is inline in its owner, the reference is a name for that path, and the window is reached through postfix ^, which is a place form and not a read-through operation.";
+  return table^[0_u64];
 }
 
 fn main() -> status: ExitStatus pure {

@@ -3,37 +3,37 @@ alias exit_status = std::process::exit_status;
 
 fn fill(destination: &Slots<u8, 64>, at: u64) -> result: u64 writes(destination) {
   doc "Writes one byte through the reference and returns the next position.";
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let inside = at < spare;
   if inside {
-    set deref(destination)[at] = 65_u8;
+    set destination^[at] = 65_u8;
   }
   let next = at +wrap 1_u64;
   return next;
 }
 
 fn emit(source: &Slots<u8, 64>, length: u64) -> result: u64 reads(source) contract {
-  define capacity = deref(source).len;
+  define capacity = source^.len;
   requires length <= capacity;
 } {
   doc "Consumes a prefix whose length the caller has proved.";
   let first = 0_u8;
   let present = 0_u64 < length;
   if present {
-    set first = deref(source)[0_u64];
+    set first = source^[0_u64];
   }
   return length;
 }
 
 fn transport(line: &Slots<u8, 64>, at: u64) -> result: unit writes(line) contract {
-  requires at < deref(line).len;
+  requires at < line^.len;
 } {
   doc "Hoists the length above a call whose substituted row writes the whole run: that write kills the saved measure image [CALL-5, ENT-5]. The caller's line and offset are unknown at function entry, and the selected branch is reachable, but its comparison against the stale image establishes nothing about the current length required by emit.";
-  let spare = deref(line).len;
-  let end = fill(destination: &deref(line), at: at);
+  let spare = line^.len;
+  let end = fill(destination: &line^, at: at);
   let fits = end <= spare;
   if fits {
-    let sent = emit(source: &deref(line), length: end);
+    let sent = emit(source: &line^, length: end);
   }
   return unit;
 }

@@ -221,7 +221,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     value_node,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `deref(.)`",
+                        mechanical_fix: "write `p^`",
                     },
                 );
             }
@@ -436,7 +436,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 target_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(.)`",
+                    mechanical_fix: "write `p^`",
                 },
             );
         };

@@ -195,9 +195,9 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "entry-of-a-shared-parameter.wf",
         source: br#"fn record(destination: &[u8]) -> written: u64 reads(destination) contract {
-  ensures written == deref(entry(destination)).len;
+  ensures written == entry(destination)^.len;
 } {
-  return deref(destination).len;
+  return destination^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -320,7 +320,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // Regression for the range-root substitution: the goal must retain
         // the range holder's own `len` rather than becoming `header.len`
         // (ref4-neg-a-requirement-over-a-range-reference-is-the-ranges-length).
-        sentences: &["\n  instantiated_goal: wide <= deref(view).len\n"],
+        sentences: &["\n  instantiated_goal: wide <= view^.len\n"],
     },
     Probe {
         name: "bounds-residual.wf",
@@ -629,8 +629,8 @@ fn main() -> status: std::process::ExitStatus pure {
         // repeats a category.
         name: "repeated-effect-path.wf",
         source: br#"fn touch(left: &u64, right: &u64) -> out: u64 reads(left), reads(left), reads(right) {
-  let a = deref(left);
-  let b = deref(right);
+  let a = left^;
+  let b = right^;
   return a +wrap b;
 }
 
@@ -647,7 +647,7 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "effect-suffix-on-a-non-struct.wf",
         source: br#"fn touch(value: &u64) -> out: u64 reads(value.count) {
-  return deref(value);
+  return value^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -668,7 +668,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn touch(pair: &Pair) -> out: u64 reads(pair.middle) {
-  return deref(pair).left;
+  return pair^.left;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -684,7 +684,7 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "declared-row-is-narrower-than-the-body.wf",
         source: br#"fn touch(data: &[u8]) -> out: u64 pure {
-  return deref(data).len;
+  return data^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -708,8 +708,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn record(stats: &Stats) -> result: unit writes(stats.count), writes(stats.total) {
-  let old = deref(stats).count;
-  set deref(stats).count = old +wrap 1_u64;
+  let old = stats^.count;
+  set stats^.count = old +wrap 1_u64;
   return unit;
 }
 
@@ -725,8 +725,8 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "read-subsumed-by-a-write-of-the-same-path.wf",
         source: br#"fn bump(value: &u64) -> out: u64 reads(value), writes(value) {
-  let old = deref(value);
-  set deref(value) = old +wrap 1_u64;
+  let old = value^;
+  set value^ = old +wrap 1_u64;
   return old;
 }
 
@@ -748,7 +748,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn reset(pair: &Pair) -> result: unit writes(pair), writes(pair.first) {
-  set deref(pair) = Pair(first: 0_u8, second: 0_u8);
+  set pair^ = Pair(first: 0_u8, second: 0_u8);
   return unit;
 }
 
@@ -770,7 +770,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn inspect(pair: &Pair) -> result: u8 reads(pair), reads(pair.first) {
-  let whole = deref(pair);
+  let whole = pair^;
   return whole.second;
 }
 
@@ -846,7 +846,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // `&[u8]`: [TYPE-8] states that "`&T` and `&[T]` are reference kinds
         // and not types", and [REF-4] gives the formation `&digits[0..2]`
         // exactly that kind. The element type `u8` is the type of
-        // `deref(view)[i]` and of nothing at this argument position, so a
+        // `view^[i]` and of nothing at this argument position, so a
         // payload naming it describes a value the program does not contain.
         //
         // [TYPE-5] fixes that "argument types match declared parameter types
@@ -1073,7 +1073,7 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "goal-over-a-dereferenced-holder.wf",
         source: br#"fn need(names: &[u8], pos: u64) -> out: u64 pure contract {
-  define spare = deref(names).len;
+  define spare = names^.len;
   requires pos <= spare;
 } {
   return pos;
@@ -1089,10 +1089,10 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         rule: "FN-8",
-        // [OP-15] spells a measure read through a reference `deref(names).len`;
+        // [OP-15] spells a measure read through a reference `names^.len`;
         // the renderer currently drops the `deref`. The pinned sentence is the
         // specification spelling and stays failing until the renderer is fixed.
-        sentences: &["\n  instantiated_goal: 9_u64 <= deref(names).len\n"],
+        sentences: &["\n  instantiated_goal: 9_u64 <= names^.len\n"],
     },
     Probe {
         // A generic callee is named as a call writes it [FN-2], never by the

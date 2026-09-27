@@ -2,45 +2,45 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push(heap: &Slots<u64, 16>, value: u64) -> result: unit writes(heap) contract {
-  requires 1_u64 <= deref(heap).cap - deref(heap).len;
-  ensures deref(heap).len == deref(entry(heap)).len + 1_u64;
+  requires 1_u64 <= heap^.cap - heap^.len;
+  ensures heap^.len == entry(heap)^.len + 1_u64;
 } {
-  let at = deref(heap).len;
+  let at = heap^.len;
   place_back(window: heap, value: value);
   loop @rise (
-    invariant live: at < deref(heap).len
+    invariant live: at < heap^.len
   ) {
     if at == 0_u64 {
       break @rise;
     }
     let before = at - 1_u64;
     let parent = before / 2_u64;
-    let lower = deref(heap)[at];
-    let upper = deref(heap)[parent];
+    let lower = heap^[at];
+    let upper = heap^[parent];
     if upper <= lower {
       break @rise;
     }
-    set deref(heap)[parent] = lower;
-    set deref(heap)[at] = upper;
+    set heap^[parent] = lower;
+    set heap^[at] = upper;
     set at = parent;
   }
   return unit;
 }
 
 fn pop(heap: &Slots<u64, 16>) -> minimum: u64 writes(heap) contract {
-  requires deref(heap).len >= 1_u64;
-  ensures deref(heap).len == deref(entry(heap)).len - 1_u64;
+  requires heap^.len >= 1_u64;
+  ensures heap^.len == entry(heap)^.len - 1_u64;
 } {
-  let minimum = deref(heap)[0_u64];
+  let minimum = heap^[0_u64];
   let last = take_back(window: heap);
-  let count = deref(heap).len;
+  let count = heap^.len;
   if count == 0_u64 {
     return minimum;
   }
-  set deref(heap)[0_u64] = last;
+  set heap^[0_u64] = last;
   let at = 0_u64;
   loop @sink (
-    invariant live: at < deref(heap).len
+    invariant live: at < heap^.len
   ) {
     let doubled = at * 2_u64;
     let left = doubled + 1_u64;
@@ -50,19 +50,19 @@ fn pop(heap: &Slots<u64, 16>) -> minimum: u64 writes(heap) contract {
     let best = left;
     let right = left + 1_u64;
     if right < count {
-      let left_value = deref(heap)[left];
-      let right_value = deref(heap)[right];
+      let left_value = heap^[left];
+      let right_value = heap^[right];
       if right_value < left_value {
         set best = right;
       }
     }
-    let lower = deref(heap)[best];
-    let upper = deref(heap)[at];
+    let lower = heap^[best];
+    let upper = heap^[at];
     if upper <= lower {
       break @sink;
     }
-    set deref(heap)[at] = lower;
-    set deref(heap)[best] = upper;
+    set heap^[at] = lower;
+    set heap^[best] = upper;
     set at = best;
   }
   return minimum;

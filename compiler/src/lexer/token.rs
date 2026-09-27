@@ -124,6 +124,8 @@ pub enum TokenKind {
     ColonColon,
     /// `&`.
     Ampersand,
+    /// `^`.
+    Caret,
 }
 
 /// One validated token: the source range it covers and its shape.

@@ -32,10 +32,10 @@ fn fill_eight() -> total: u64 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "let-initializer match with give and a reference read through deref.";
+  doc "let-initializer match with give and a reference read through postfix ^.";
   let a = 40_i32;
   let p = &a;
-  let v = match deref(p) +checked 2_i32 {
+  let v = match p^ +checked 2_i32 {
     Ok(value: w) => {
       give w;
     }

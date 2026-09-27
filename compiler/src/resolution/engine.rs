@@ -839,15 +839,6 @@ fn bare_set_target_roles(
         if record.production != Production::Pbase || record.terminal_count != 1 {
             continue;
         }
-        // `pbase := IDENT | "deref" "(" place ")"`: a `deref` base owns a
-        // nested `place` child, and this role's spelling would then be that
-        // inner base's, so a base with any child is never a bare target.
-        if topology
-            .node_children(pbase)
-            .is_some_and(|children| !children.is_empty())
-        {
-            continue;
-        }
         let Some(place) = record.parent else {
             continue;
         };
@@ -857,8 +848,8 @@ fn bare_set_target_roles(
         if place_record.production != Production::Place {
             continue;
         }
-        // `place := pbase psuffix*`: a projected or subscripted target selects
-        // one component of a value that must already exist, so it declares
+        // `place := pbase psuffix*`: a projected, indexed or dereferenced
+        // target selects one component of a value that must already exist, so it declares
         // nothing.
         if topology.node_children(place).is_some_and(|children| {
             children.iter().any(|child| {

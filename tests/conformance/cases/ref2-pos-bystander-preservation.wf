@@ -8,7 +8,7 @@ struct BystanderRecord {
 fn overwrite_bystander(values: &Array<BystanderRecord, 4>, index: u64) -> result: unit writes(values[index]) contract {
   requires index < 4_u64;
 } {
-  set deref(values)[index] = BystanderRecord(value: 9_u8);
+  set values^[index] = BystanderRecord(value: 9_u8);
   return unit;
 }
 
@@ -30,17 +30,17 @@ fn inspect_requirement(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> re
   requires i < j;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[i].value;
+  let selected = &values^[i].value;
   overwrite_bystander(values: values, index: j);
-  return deref(selected);
+  return selected^;
 }
 
 fn inspect_guard(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) {
   if j < 4_u64 {
     if i < j {
-      let selected = &deref(values)[i].value;
+      let selected = &values^[i].value;
       overwrite_bystander(values: values, index: j);
-      return deref(selected);
+      return selected^;
     }
   }
   return 0_u8;
@@ -50,17 +50,17 @@ fn inspect_capture(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result
   requires i < j;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[i].value;
+  let selected = &values^[i].value;
   set i = j;
   overwrite_bystander(values: values, index: j);
-  return deref(selected);
+  return selected^;
 }
 
 fn inspect_unused(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: unit writes(values[j]) contract {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[i].value;
+  let selected = &values^[i].value;
   overwrite_bystander(values: values, index: j);
   return unit;
 }
@@ -70,14 +70,14 @@ fn inspect_join(values: &Array<BystanderRecord, 4>, i: u64, j: u64, k: u64, choo
   requires k < j;
   requires j < 4_u64;
 } {
-  let first = &deref(values)[i].value;
-  let second = &deref(values)[k].value;
+  let first = &values^[i].value;
+  let second = &values^[k].value;
   let selected = first;
   if choose {
-    set selected = &deref(second);
+    set selected = &second^;
   }
   overwrite_bystander(values: values, index: j);
-  return deref(selected);
+  return selected^;
 }
 
 fn inspect_loop(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: unit reads(values), writes(values[j]) contract {
@@ -85,10 +85,10 @@ fn inspect_loop(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u
   requires j < 4_u64;
   requires i < j;
 } {
-  let selected = &deref(values)[i].value;
+  let selected = &values^[i].value;
   let aliased = selected;
   for (round in 0_u64..2_u64) {
-    let observed = deref(aliased);
+    let observed = aliased^;
     overwrite_bystander(values: values, index: j);
   }
   return unit;
@@ -99,13 +99,13 @@ fn inspect_direct_write(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> r
   requires j < 4_u64;
   requires i < j;
 } {
-  let selected = &deref(values)[i].value;
-  set deref(values)[j] = BystanderRecord(value: 9_u8);
-  return deref(selected);
+  let selected = &values^[i].value;
+  set values^[j] = BystanderRecord(value: 9_u8);
+  return selected^;
 }
 
 fn replace_bystander_index(index: &u64, replacement: u64) -> result: BystanderRecord writes(index) {
-  set deref(index) = replacement;
+  set index^ = replacement;
   return BystanderRecord(value: 9_u8);
 }
 
@@ -113,8 +113,8 @@ fn inspect_rhs_capture(values: &Array<BystanderRecord, 4>, j: u64) -> result: u8
   requires 0_u64 < j;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[0_u64].value;
+  let selected = &values^[0_u64].value;
   let index = j;
-  set deref(values)[index] = replace_bystander_index(index: &index, replacement: 0_u64);
-  return deref(selected);
+  set values^[index] = replace_bystander_index(index: &index, replacement: 0_u64);
+  return selected^;
 }

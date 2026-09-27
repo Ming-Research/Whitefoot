@@ -18,10 +18,10 @@ fn bs_new() -> made: Box<Slots<u8>> pure contract {
 }
 
 fn bs_reserve(s: &Box<Slots<u8>>, total: u64) -> result: unit writes(s) contract {
-  requires total >= deref(s).inner.cap;
+  requires total >= s^.inner.cap;
   requires total <= 9223372036854775791_u64;
-  ensures deref(s).inner.cap == total;
-  ensures deref(s).inner.len == deref(entry(s)).inner.len;
+  ensures s^.inner.cap == total;
+  ensures s^.inner.len == entry(s)^.inner.len;
 } {
   doc "Grows the backing window to total slots, preserving element order. The native fixture's total bound leaves 16 descriptor bytes in the signed 64-bit allocation/address domain [STOR-6]. grow is defined on Box<Slots<T>> alone, remakes the cell's content whole, may reallocate in place, and carries the static allocation-size obligation, so there is no superseded run to release and no refusal arm [OP-10, STOR-8].";
   grow(cell: s, capacity: total);
@@ -31,9 +31,9 @@ fn bs_reserve(s: &Box<Slots<u8>>, total: u64) -> result: unit writes(s) contract
 fn digest(run: &Box<Slots<u8>>, status: u64) -> result: u64 reads(run) {
   doc "Folds the window into one word, most significant byte first.";
   let result = status;
-  let length = deref(run).inner.len;
+  let length = run^.inner.len;
   for (index in 0_u64..length) {
-    let byte = deref(run).inner[index];
+    let byte = run^.inner[index];
     let word = cvt::<u8, u64>(byte);
     let prefix = result *wrap 131_u64;
     set result = prefix +wrap word;
@@ -196,7 +196,7 @@ fn main() -> status: ExitStatus pure {
     invariant held_hi: held.inner.len <= at + 1_u64,
     invariant spare_left: held.inner.cap - held.inner.len + at + 1_u64 >= 8_u64
   ) {
-    let byte = deref(source)[at];
+    let byte = source^[at];
     place_back(window: &held.inner, value: byte);
   }
   let stored = held.inner.len;

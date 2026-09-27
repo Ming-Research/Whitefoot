@@ -6,8 +6,8 @@ This investigation compares the remaining ownership surface after signature
 use the v0.75 grammar at `126d201d6`; the earlier source measurements retain
 their recorded baseline. The concrete consumers
 are the maintained HashMap and Deque libraries and the owned-link cursor
-program. The active specification remains the language authority; candidate
-spellings below are not accepted syntax. The owner selected postfix `^`;
+program. The active specification remains the language authority. Historical
+candidates below retain their baseline spelling. The owner selected postfix `^`;
 see [the settled spelling](#selected-postfix-caret) for the grammar and
 implementation boundary.
 
@@ -207,10 +207,9 @@ with the implementation. The owner approved this choice on 2026-09-27. It is rec
 [language/ownership](../../../design/language/ownership.md) as one added
 decision and one refused alternative; the dependent result-propagation node's
 implicit-consumption decision is retired under the same ruling. The approved rule replaces the
-implicit-context choice in OWN-13 and ERR-3; the specification and compiler
-still implement those contexts. Their coordinated amendment with the selected
-reference-access spelling remains the implementation follow-up in
-[docs/todo.md](../../../docs/todo.md), outside this research-only PR.
+implicit-context choice in OWN-13 and ERR-3. The v0.76 amendment implements it
+with the selected reference-access spelling; the preceding measurements remain
+observations of their named baselines.
 
 The v0.74 module and variant changes do not remove these implicit consuming
 contexts. GRAM-10 now also permits `..` in an arm: an owned match releases
@@ -318,10 +317,11 @@ Box, a range reference, and a proof path starting at `entry`. Member spelling
 alone cannot settle the choice. Reuse of the signature token `->` must be
 checked against the full grammar, not treated as an assumed ambiguity.
 
-The reproducible [native driver](../../experiments/reference-access-grammar/main.rs)
-lives under the existing experiments home because it selects a grammar for
-reference access. This section is its caller; retire it when the adopted
-syntax and formal conformance cases supersede the comparison. It changes only
+The [retired native driver](../../../archive/experiments/reference-access-grammar/main.rs)
+selected a grammar for reference access. The v0.76 compiler and formal cases
+supersede that probe. Reproduce the commands below in a checkout of
+`44032cac693afe4246cf9e9b872ddf40c2491945`, where the driver and imported generator
+retain their original paths and fixed-terminal inventory. It changes only
 `place`, `pbase` and `psuffix` in memory and calls the unchanged compiler
 generator on the full specification. The candidates and their complete
 production replacements are fixed in that driver before measurement.
@@ -492,8 +492,8 @@ and the reference-parameter rendering clause in
 [reference-validity](../../../design/language/ownership/reference-validity.md).
 Their reference/Box distinction, typed root-and-step representation and single
 canonical diagnostic renderer remain unchanged. Historical rejected examples
-retain the old spelling. The resolved access amendment is removed; the
-coordinated source implementation remains in the grouped ownership-surface TODO.
+retain the old spelling. The resolved access amendment is removed; v0.76
+carries the coordinated source implementation.
 
 ## Selected postfix caret
 
@@ -664,11 +664,12 @@ the latter's module and qualified-call productions. Compile the driver with
 `rustc --edition=2024` under the ordinary command guard. This uses the native
 generator, not another parser or a revised language implementation.
 
-The approved consumption rule and selected caret access have no
-lexer/parser/checker/formatter implementation in this PR yet.
-Adoption must check old-form refusal and new-form acceptance, copy and generic
+The v0.76 amendment implements the approved consumption rule and selected
+caret access in the lexer, parser, checker and formatter. Its validation covers old-form refusal and new-form acceptance, copy and generic
 controls, whole-owner partial consumption, linear residuals, borrowed matches,
 entry projections, effect overlap and reference invalidation. The source
 boundary and Deque failures above are concrete evidence; error-rate improvement,
 generated-writer performance, equal machine code and compile-time change remain
-unmeasured. Full `make check` was not run for this research-only change.
+unmeasured. The grammar comparison itself ran no full repository gate;
+implementation validation is reported against the implementation revision in
+the PR.

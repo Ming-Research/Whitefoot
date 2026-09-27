@@ -6,8 +6,8 @@ struct Cell {
 }
 
 fn pick(a: &Cell, b: &Cell) -> result: i32 reads(a.value), reads(b.value) {
-  let seen = deref(a).value +wrap deref(b).value;
-  return &deref(a).value;
+  let seen = a^.value +wrap b^.value;
+  return &a^.value;
 }
 
 fn main() -> status: ExitStatus pure {

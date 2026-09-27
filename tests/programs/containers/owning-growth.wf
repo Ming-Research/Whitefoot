@@ -42,7 +42,7 @@ struct Rehash {
 }
 
 fn occupied(slot: &Slot) -> full: Bool reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Occupied(fingerprint: tag, key: present, payload: owner) => {
       return True();
     }
@@ -56,9 +56,9 @@ fn occupied(slot: &Slot) -> full: Bool reads(slot) {
 }
 
 fn slot_key(slot: &Slot) -> key: u64 reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Occupied(fingerprint: tag, key: present, payload: owner) => {
-      return deref(present);
+      return present^;
     }
     Vacant() => {
       return 0_u64;
@@ -117,7 +117,7 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 }
 
 fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return Probe::Stop();
     }
@@ -125,7 +125,7 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
       return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
-      if deref(present) == key {
+      if present^ == key {
         return Probe::Match();
       }
       return Probe::Miss();
@@ -134,40 +134,40 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
 }
 
 fn fill_slots(slots: &Box<Slots<Slot>>, count: u64) -> result: unit writes(slots) contract {
-  requires deref(slots).inner.len == 0_u64;
-  requires count <= deref(slots).inner.cap - deref(slots).inner.len;
-  ensures deref(slots).inner.len == count;
+  requires slots^.inner.len == 0_u64;
+  requires count <= slots^.inner.cap - slots^.inner.len;
+  ensures slots^.inner.len == count;
 } {
   doc "One vacant slot per position, under a counted header that carries the length and the remaining free slots.";
   for (
     index in 0_u64..count,
-    invariant filled: deref(slots).inner.len >= index,
-    invariant bounded: deref(slots).inner.len <= index,
-    invariant spare: deref(slots).inner.cap - deref(slots).inner.len + index >= count
+    invariant filled: slots^.inner.len >= index,
+    invariant bounded: slots^.inner.len <= index,
+    invariant spare: slots^.inner.cap - slots^.inner.len + index >= count
   ) {
     let vacant = Slot::Vacant();
-    place_back(window: &deref(slots).inner, value: move vacant);
+    place_back(window: &slots^.inner, value: move vacant);
   }
-  invariant complete_min: deref(slots).inner.len >= count;
-  invariant complete_max: deref(slots).inner.len <= count;
+  invariant complete_min: slots^.inner.len >= count;
+  invariant complete_max: slots^.inner.len <= count;
   return unit;
 }
 
 fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: PutOutcome writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   doc "The installation is swap: the offered occupant goes into the slot and the binding comes back holding the slot's previous value, so no program point sees a hole.";
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let first_deleted = count;
   for (step in 0_u64..count) {
     let home = key % count;
     let index = probe_index(home: home, step: step, count: count);
-    let action = probe(slot: &deref(slots).inner[index], key: key);
+    let action = probe(slot: &slots^.inner[index], key: key);
     match action {
       Match() => {
         let tag = fingerprint(key: key);
         let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
-        swap(first: &deref(slots).inner[index], second: &offered);
+        swap(first: &slots^.inner[index], second: &offered);
         match move offered {
           Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
             return PutOutcome::Replaced(previous: move old_payload);
@@ -192,7 +192,7 @@ fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: P
         }
         let tag = fingerprint(key: key);
         let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
-        swap(first: &deref(slots).inner[destination], second: &offered);
+        swap(first: &slots^.inner[destination], second: &offered);
         match move offered {
           Vacant() => {
             return PutOutcome::Inserted();
@@ -212,7 +212,7 @@ fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: P
   if first_deleted < count {
     let tag = fingerprint(key: key);
     let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
-    swap(first: &deref(slots).inner[first_deleted], second: &offered);
+    swap(first: &slots^.inner[first_deleted], second: &offered);
     match move offered {
       Vacant() => {
         return PutOutcome::Inserted();
@@ -241,7 +241,7 @@ fn begin(source: Box<Slots<Slot>>, count: u64) -> result: Rehash pure contract {
 }
 
 fn read_slot(slot: &Slot) -> (control: u8, key: u64, id: u64) reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return 128_u8, 0_u64, 0_u64;
     }
@@ -249,19 +249,19 @@ fn read_slot(slot: &Slot) -> (control: u8, key: u64, id: u64) reads(slot) {
       return 254_u8, 0_u64, 0_u64;
     }
     Occupied(fingerprint: saved_tag, key: saved_key, payload: owner) => {
-      return deref(saved_tag), deref(saved_key), deref(owner).inner.id;
+      return saved_tag^, saved_key^, owner^.inner.id;
     }
   }
 }
 
 fn find(slots: &Box<Slots<Slot>>, key: u64) -> (found: Option<u64>, examined: u64) reads(slots) {
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let tag = fingerprint(key: key);
   for (offset in 0_u64..count) {
     let home = key % count;
     let index = probe_index(home: home, step: offset, count: count);
     let work = offset + 1_u64;
-    let (control, present_key, present_id) = read_slot(slot: &deref(slots).inner[index]);
+    let (control, present_key, present_id) = read_slot(slot: &slots^.inner[index]);
     if control == 128_u8 {
       return None<u64>(), work;
     }
@@ -275,21 +275,21 @@ fn find(slots: &Box<Slots<Slot>>, key: u64) -> (found: Option<u64>, examined: u6
 }
 
 fn remove(slots: &Box<Slots<Slot>>, key: u64) -> removed: Option<Box<Resource>> writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let tag = fingerprint(key: key);
   for (offset in 0_u64..count) {
     let home = key % count;
     let index = probe_index(home: home, step: offset, count: count);
-    let (control, present_key, present_id) = read_slot(slot: &deref(slots).inner[index]);
+    let (control, present_key, present_id) = read_slot(slot: &slots^.inner[index]);
     if control == 128_u8 {
       return None<Box<Resource>>();
     }
     if control == tag {
       if present_key == key {
         let deleted = Slot::Deleted();
-        swap(first: &deref(slots).inner[index], second: &deleted);
+        swap(first: &slots^.inner[index], second: &deleted);
         match move deleted {
           Vacant() => {
             return None<Box<Resource>>();
@@ -308,7 +308,7 @@ fn remove(slots: &Box<Slots<Slot>>, key: u64) -> removed: Option<Box<Resource>> 
 }
 
 fn allocate_put(slots: &Box<Slots<Slot>>, key: u64, id: u64) -> outcome: PutOutcome writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   doc "Allocation is total, so one owner is built for every offered insertion.";
   let data0 = id *wrap 17_u64;
@@ -351,11 +351,11 @@ fn check_put(outcome: PutOutcome, kind: u64, expected: u64) -> code: u8 pure {
 }
 
 fn digest(slots: &Box<Slots<Slot>>) -> result: u64 reads(slots) {
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let start = ixor(1469598103934665603_u64, count);
   let hash = start *wrap 1099511628211_u64;
   for (index in 0_u64..count) {
-    let (control, key, id) = read_slot(slot: &deref(slots).inner[index]);
+    let (control, key, id) = read_slot(slot: &slots^.inner[index]);
     let wide = cvt::<u8, u64>(control);
     let with_tag = ixor(hash, wide);
     set hash = with_tag *wrap 1099511628211_u64;
@@ -376,9 +376,9 @@ fn cleanup(state: Rehash) -> result: unit pure {
 
 fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Progress, budget: u64) -> (examined: u64, moved: u64) writes(source), writes(target), writes(progress.held), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
   doc "Each transfer is two exchanges: the source slot's occupant goes into the held field and the held occupant goes into its target slot, so the displaced vacant value is released by the ordinary scope exit.";
-  let source_cursor = deref(progress).source_next;
-  let probe_cursor = deref(progress).next_probe;
-  let phase = deref(progress).phase;
+  let source_cursor = progress^.source_next;
+  let probe_cursor = progress^.next_probe;
+  let phase = progress^.phase;
   let inspected = 0_u64;
   let transfers = 0_u64;
   if phase < 2_u8 {
@@ -389,37 +389,37 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
       invariant moved_bound: transfers <= inspected
     ) {
       if phase == 0_u8 {
-        let count = deref(source).inner.len;
+        let count = source^.inner.len;
         if source_cursor >= count {
           set phase = 3_u8;
           break;
         }
         let index = source_cursor;
         set source_cursor = source_cursor + 1_u64;
-        let full = occupied(slot: &deref(source).inner[index]);
+        let full = occupied(slot: &source^.inner[index]);
         if full {
           let held_slot = Slot::Deleted();
-          swap(first: &deref(source).inner[index], second: &held_slot);
-          swap(first: &deref(progress).held, second: &held_slot);
+          swap(first: &source^.inner[index], second: &held_slot);
+          swap(first: &progress^.held, second: &held_slot);
           set probe_cursor = 0_u64;
           set phase = 1_u8;
         }
       } else {
-        let count = deref(target).inner.len;
+        let count = target^.inner.len;
         if probe_cursor >= count {
           set phase = 2_u8;
           break;
         }
-        let key = slot_key(slot: &deref(progress).held);
+        let key = slot_key(slot: &progress^.held);
         let home = key % count;
         let index = probe_index(home: home, step: probe_cursor, count: count);
         set probe_cursor = probe_cursor + 1_u64;
-        let full = occupied(slot: &deref(target).inner[index]);
+        let full = occupied(slot: &target^.inner[index]);
         if full {
         } else {
           let held_slot = Slot::Vacant();
-          swap(first: &deref(progress).held, second: &held_slot);
-          swap(first: &deref(target).inner[index], second: &held_slot);
+          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &target^.inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
           set phase = 0_u8;
         }
@@ -427,21 +427,21 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
       set inspected = inspected + 1_u64;
     }
     if phase == 0_u8 {
-      let source_count = deref(source).inner.len;
+      let source_count = source^.inner.len;
       if source_cursor == source_count {
         set phase = 3_u8;
       }
     }
   }
-  set deref(progress).source_next = source_cursor;
-  set deref(progress).next_probe = probe_cursor;
-  set deref(progress).phase = phase;
+  set progress^.source_next = source_cursor;
+  set progress^.next_probe = probe_cursor;
+  set progress^.phase = phase;
   return inspected, transfers;
 }
 
 fn rehash_all(slots: &Box<Slots<Slot>>, count: u64) -> (code: u8, examined: u64, moved: u64) writes(slots) contract {
-  requires deref(slots).inner.len <= 1048576_u64;
-  requires count >= deref(slots).inner.len;
+  requires slots^.inner.len <= 1048576_u64;
+  requires count >= slots^.inner.len;
   requires count <= 2097152_u64;
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
@@ -451,7 +451,7 @@ fn rehash_all(slots: &Box<Slots<Slot>>, count: u64) -> (code: u8, examined: u64,
   fill_slots(slots: &target, count: count);
   let (work, moved) = advance(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64);
   let phase = progress.phase;
-  set deref(slots) = move target;
+  set slots^ = move target;
   return phase, work, moved;
 }
 
@@ -471,16 +471,16 @@ fn checked_insert(slots: &Box<Slots<Slot>>, key: u64, id: u64, kind: u64, expect
 }
 
 fn state_hash(state: &Rehash) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.held), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
-  let source = digest(slots: &deref(state).source);
-  let target = digest(slots: &deref(state).target);
-  let (control, key, id) = read_slot(slot: &deref(state).progress.held);
+  let source = digest(slots: &state^.source);
+  let target = digest(slots: &state^.target);
+  let (control, key, id) = read_slot(slot: &state^.progress.held);
   let first = source *wrap 131_u64;
   let second = first +wrap target;
   let third = second *wrap 131_u64;
-  let fourth = third +wrap deref(state).progress.source_next;
+  let fourth = third +wrap state^.progress.source_next;
   let fifth = fourth *wrap 131_u64;
-  let sixth = fifth +wrap deref(state).progress.next_probe;
-  let phase = cvt::<u8, u64>(deref(state).progress.phase);
+  let sixth = fifth +wrap state^.progress.next_probe;
+  let phase = cvt::<u8, u64>(state^.progress.phase);
   let seventh = sixth *wrap 131_u64;
   let eighth = seventh +wrap phase;
   let ninth = eighth *wrap 131_u64;

@@ -474,10 +474,9 @@ impl<'unit> Checker<'_, 'unit> {
         // [TYPE-5] a `propagate_let_rhs` binder is derived from the
         // propagated Ok payload [ERR-3], so the operand carries no
         // expectation and the payload is read off its Result type below.
-        let value =
-            self.check_consuming_expression(context, expression_node, bindings, scope.loops.len())?;
+        let value = self.check_expression(context, expression_node, bindings, scope.loops.len())?;
         // [REF-1] a reference variable denotes the reference, and the storage
-        // it names is reached only through `deref`, so a bare holder written
+        // it names is reached only through `^`, so a bare holder written
         // here is that missing step. A `Box` is not one of these at v0.60:
         // its content is the ordinary field `inner` [TYPE-9], so a `Box`
         // operand is [ERR-3]'s own wrong-operand rejection below.
@@ -486,13 +485,13 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }
         // [ERR-3] propagation is a consuming context, and [OWN-1] admits a
         // consume only for a place rooted in a live own-mode binding, which a
-        // place written under a `deref` is not.
+        // place written under a `^` is not.
         if !self
             .types
             .is_copy_type(check_context, value.expression.ty())?
@@ -753,7 +752,7 @@ impl<'unit> DeclarationInventory<'unit> {
         for suffix in self.tree.children_with(place, Production::Psuffix)? {
             element |= self.tree.subscript_offset(suffix)?.is_some();
         }
-        if self.tree.place_base(pbase)?.is_dereference() {
+        if self.tree.place_has_dereference(place)? {
             return Ok(ConsumedPlace {
                 owned: false,
                 spelling,
@@ -778,7 +777,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let rest = spelling.strip_prefix(root.as_str()).unwrap_or_default();
         Ok(ConsumedPlace {
             owned: false,
-            spelling: format!("deref({root}){rest}"),
+            spelling: format!("{root}^{rest}"),
         })
     }
     /// [TYPE-5] the destructuring consume's operand is not a value of the
@@ -814,7 +813,7 @@ impl<'unit> DeclarationInventory<'unit> {
             },
         )
     }
-    /// Whether one written `expr` is a place whose `pbase` is a `deref`,
+    /// Whether one written `expr` is a place with a reference suffix,
     /// which [REF-1] makes the storage a reference names rather than a place
     /// this function owns.
     fn operand_is_written_under_deref(&self, expression: NodeId) -> Result<bool, CheckStop> {
@@ -824,10 +823,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(place) = self.tree.first_child_with(atom, Production::Place)? else {
             return Ok(false);
         };
-        let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
-            return Ok(false);
-        };
-        Ok(self.tree.place_base(pbase)?.is_dereference())
+        Ok(self.tree.place_has_dereference(place)?)
     }
     fn invalid_propagation<ResultValue>(&self, node: NodeId) -> Result<ResultValue, CheckStop> {
         self.issue_node(
@@ -906,7 +902,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }

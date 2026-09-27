@@ -318,7 +318,7 @@ pub(crate) enum PlaceStep {
     /// One struct field selection, by source ordinal.
     Field(u32),
     /// `deref` of `Box` content [TYPE-7]. It is an ordinary path step and is
-    /// not erased: `deref(h).value` and `deref(h.value)` are two paths.
+    /// not erased: `h^.value` and `h.value^` are two paths.
     Deref,
     /// One enum payload step, available under the refinement fact that the
     /// enum currently holds this variant [REF-1, ENT-3.S15].
@@ -1172,7 +1172,7 @@ pub(crate) enum NamingForm {
     /// A binding named whole: a reference names its referent, any other
     /// binding its own storage.
     Binding(BindingId),
-    /// `deref(r)`, a field projection or a Box-content take, reading the
+    /// `r^`, a field projection or a Box-content take, reading the
     /// storage it names.
     Read,
     /// A `borrow_expr` written at the expression, a range element's included

@@ -209,12 +209,12 @@ impl Input<'_, '_> {
                 {
                     // [REF-1, OP-15] a reference variable names a path and is
                     // not storage of its own, so the storage it names is
-                    // reached only through `deref`. A term over a reference
+                    // reached only through `^`. A term over a reference
                     // anchors at the binding and carries no step of its own,
                     // so the spelling the writer reads puts the step back.
                     let name = self.binding_name(binding);
                     if reference_root {
-                        format!("deref({name})")
+                        format!("{name}^")
                     } else {
                         name
                     }
@@ -299,7 +299,7 @@ impl Input<'_, '_> {
         if boxed {
             rendered.push_str(".inner");
         } else {
-            *rendered = format!("deref({rendered})");
+            *rendered = format!("{rendered}^");
         }
         *ty = ty.and_then(|current| self.deref_type(current));
     }
@@ -383,18 +383,14 @@ impl Input<'_, '_> {
                 let ty = self.summary(*root).and_then(|summary| summary.ty);
                 // [REF-1, OP-15] a reference variable names a path and is not
                 // storage of its own, so every place that goes through one is
-                // written under a `deref` step: `deref(p)`, `deref(p).field`,
-                // `deref(part).len`. A term rooted at a reference anchors at
+                // written under a `^` step: `p^`, `p^.field`,
+                // `part^.len`. A term rooted at a reference anchors at
                 // that binding and carries no step of its own — the parameter
                 // name *is* the path inside the body — so rendering puts that
                 // source wrapper back while retaining every concrete step
                 // below the referent.
                 let reference = self.places.is_reference(*root);
-                let base = if reference {
-                    format!("deref({base})")
-                } else {
-                    base
-                };
+                let base = if reference { format!("{base}^") } else { base };
                 self.render_goal_projections(base, ty, projections)
             }
             // Source cannot name this datum: render its structural source
@@ -618,7 +614,7 @@ impl Input<'_, '_> {
                 fields.clone(),
             )),
             CheckedExpression::DerefAddressed { binding, .. } => {
-                format!("deref({})", self.binding_name(*binding))
+                format!("{}^", self.binding_name(*binding))
             }
             CheckedExpression::BoxDeref { value, .. } => {
                 format!("{}.inner", self.render_expression(value))
@@ -765,7 +761,7 @@ impl Reasoning<'_, '_, '_> {
                 for projection in projections {
                     match projection {
                         PlaceStep::Descendant(_) => place.push_str(".**"),
-                        PlaceStep::Deref => place = format!("deref({place})"),
+                        PlaceStep::Deref => place = format!("{place}^"),
                         PlaceStep::Field(field) => {
                             place = format!("{place}.{field}");
                         }

@@ -42,15 +42,15 @@ fn main() -> status: ExitStatus pure {
   let changed_second = original;
   let untouched = original;
   let original_ref = &original;
-  match deref(original_ref) {
+  match original_ref^ {
     Packed(record: payload) => {
-      set deref(payload).values[0_u64] = 9_u8;
+      set payload^.values[0_u64] = 9_u8;
     }
   }
   let second_ref = &changed_second;
-  match deref(second_ref) {
+  match second_ref^ {
     Packed(record: payload) => {
-      set deref(payload).values[1_u64] = 8_u8;
+      set payload^.values[1_u64] = 8_u8;
     }
   }
   let original_first = first(value: original);

@@ -2,13 +2,13 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn inspect(value: &u64) -> result: u64 reads(value) {
-  doc "A reference parameter denotes the reference; the storage it names is read through deref.";
-  return deref(value);
+  doc "A reference parameter denotes the reference; the storage it names is read through postfix ^.";
+  return value^;
 }
 
 fn decide(value: &u64) -> result: Option<u64> reads(value) {
   doc "The reference argument is read once and lasts only through this call.";
-  let seen = deref(value);
+  let seen = value^;
   let raised = seen +wrap 4_u64;
   return Some<u64>(value: raised);
 }

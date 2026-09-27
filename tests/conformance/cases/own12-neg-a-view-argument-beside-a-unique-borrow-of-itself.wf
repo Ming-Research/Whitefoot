@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn take(window: &[u8], other: &[u8]) -> size: u64 reads(other), writes(window) contract {
-  requires deref(window).len > 0_u64;
+  requires window^.len > 0_u64;
 } {
   doc "Two positions over one storage, one of them written.";
-  set deref(window)[0_u64] = 0_u8;
-  return deref(other).len;
+  set window^[0_u64] = 0_u8;
+  return other^.len;
 }
 
 fn caller(input: &[u8]) -> size: u64 writes(input) contract {
-  requires deref(input).len > 0_u64;
+  requires input^.len > 0_u64;
 } {
   doc "A range-reference parameter is its own binding rather than an unknown overlapping every position: the two arguments here resolve to that one binding and one of them is written, so the call's own substituted effects are not disjoint.";
   let seen = take(window: input, other: input);

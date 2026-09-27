@@ -3,9 +3,9 @@ alias exit_status = std::process::exit_status;
 
 fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
   doc "Writes the length of the range src into the first element of the range dst.";
-  let n = deref(src).len;
-  if 0_u64 < deref(dst).len {
-    set deref(dst)[0_u64] = n;
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
   }
   return unit;
 }
@@ -17,11 +17,11 @@ fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> resul
   requires d <= 8_u64;
 } {
   doc "Passes the run 0..2 of the frame values[a..b] and the run 2..4 of the frame values[c..d], frames nothing proves apart.";
-  let left = &deref(values)[a..b];
-  let right = &deref(values)[c..d];
-  if 2_u64 <= deref(left).len {
-    if 4_u64 <= deref(right).len {
-      copy_len(src: &deref(left)[0_u64..2_u64], dst: &deref(right)[2_u64..4_u64]);
+  let left = &values^[a..b];
+  let right = &values^[c..d];
+  if 2_u64 <= left^.len {
+    if 4_u64 <= right^.len {
+      copy_len(src: &left^[0_u64..2_u64], dst: &right^[2_u64..4_u64]);
     }
   }
   return unit;

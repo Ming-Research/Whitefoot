@@ -48,7 +48,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// `&uniq rows[0_u64]` were the permission marker, which is gone: there is no
 /// marker on a reference [REF-1], and [CONST-2] admits reading a const
 /// through `&` so that a const table may be passed to a consumer.
-/// `set deref(target)[..] = 5_u64;` through a reference to a const cited
+/// `set target^[..] = 5_u64;` through a reference to a const cited
 /// [OWN-5], whose successors are [REF-1], [REF-2] and [EFF-5]; none of the
 /// three states a const-target rule of its own, so the case retires here and
 /// the writability of a const root stays [CONST-2]'s, asserted directly
@@ -99,7 +99,7 @@ fn a_const_array_is_read_through_a_reference() {
         br#"const table: Array<u64, 2> =[7_u64, 9_u64];
 
 fn read(values: &Array<u64, 2>) -> result: u64 reads(values) {
-  return deref(values)[1_u64];
+  return values^[1_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -269,7 +269,7 @@ fn generic_struct_constants_preserve_function_arguments() {
 }
 
 fn read_value(value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 binding ReadWord : Read<u64> {
@@ -440,7 +440,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     with_semantics(
         br#"fn read(values: &Array<u64, 2>) -> result: u64 reads(values) {
-  return deref(values)[0_u64];
+  return values^[0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -472,7 +472,7 @@ fn relay(values: Array<Box<u64>, 2>) -> result: Array<Box<u64>, 2> pure {
 }
 
 fn read(values: &Array<Record, 2>) -> result: u64 reads(values) {
-  return deref(values)[0_u64].value;
+  return values^[0_u64].value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -546,7 +546,7 @@ fn full_arrays_keep_their_inline_layout_boundaries() {
 /// follows the allocation rather than measuring the pointer slot or a copied
 /// window value.
 ///
-/// v0.59 wrote the same place as `len_of(deref(block))`. Both the former and
+/// v0.59 wrote the same place as `len_of(block^)`. Both the former and
 /// the `deref` route to a cell are retired [OP-15, TYPE-7].
 #[test]
 fn a_cell_content_is_an_admitted_measured_place() {
@@ -579,7 +579,7 @@ fn a_cell_content_is_an_admitted_measured_place() {
 
 // Retired with its subject: `a_bare_owned_box_still_requires_explicit_dereference_to_measure_its_referent`
 // asserted [TYPE-7]'s implicit read through a cell holder, `cap_of(block)`
-// against `cap_of(deref(block))`. v0.60 retires the `deref` route to a cell
+// against `cap_of(block^)`. v0.60 retires the `deref` route to a cell
 // outright — a cell's content is its field `inner` [TYPE-9] and `deref` of a
 // `Box` is itself a TYPE-7 rejection — so the successor case is
 // `cells::deref_of_a_cell_is_a_type7_rejection_naming_the_field_inner`, and
@@ -984,7 +984,7 @@ struct Outer {
 }
 
 fn observe(value: &Outer) -> result: u8 reads(value.marker) {
-  return deref(value).marker;
+  return value^.marker;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

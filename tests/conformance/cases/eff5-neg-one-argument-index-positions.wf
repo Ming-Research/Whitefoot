@@ -6,8 +6,8 @@ fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(valu
   requires j < 4_u64;
 } {
   doc "EFF-5: one argument supplies both entries, but whether values[i] and values[j] overlap depends on the index values, so the call compares them.";
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 

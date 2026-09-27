@@ -7,8 +7,8 @@ struct Cell {
 
 fn pick(a: &Cell, b: &Cell) -> result: i32 reads(a.value), reads(b.value) {
   doc "Both parameters are ordinary references with the same row authority, so nothing distinguishes them, and the question this case asked before - which input the returned reference comes from - has no form here: a function returns owned values only [FN-1] and REF-3 refuses the returned reference at the declaration. No caller appears in this program, because the declaration alone is the error.";
-  let seen = deref(a).value +wrap deref(b).value;
-  return &deref(a).value;
+  let seen = a^.value +wrap b^.value;
+  return &a^.value;
 }
 
 fn main() -> status: ExitStatus pure {

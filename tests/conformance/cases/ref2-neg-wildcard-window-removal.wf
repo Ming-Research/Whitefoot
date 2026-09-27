@@ -7,19 +7,19 @@ struct Node {
 }
 
 fn inspect(rows: &Slots<Node, 2>) -> result: u64 writes(rows) {
-  if deref(rows).len != 0_u64 {
-    let cursor = &deref(rows)[0_u64];
+  if rows^.len != 0_u64 {
+    let cursor = &rows^[0_u64];
     for (i in 0_u64..2_u64) {
-      match deref(cursor).next {
+      match cursor^.next {
         Some(value: child) => {
-          set cursor = &deref(child).inner;
+          set cursor = &child^.inner;
         }
         None() => {
         }
       }
     }
     let removed = take_back(window: rows);
-    return deref(cursor).value;
+    return cursor^.value;
   }
   return 0_u64;
 }

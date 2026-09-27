@@ -3,9 +3,9 @@ alias exit_status = std::process::exit_status;
 
 fn find_byte(input: &[u8], needle: u8) -> function_result: Option<u64> reads(input) {
   doc "Scans a range reference and returns an owned index, never a reference [REF-3].";
-  let length = deref(input).len;
+  let length = input^.len;
   for (offset in 0_u64..length) {
-    let byte = deref(input)[offset];
+    let byte = input^[offset];
     let found = byte == needle;
     if found {
       return Some<u64>(value: offset);

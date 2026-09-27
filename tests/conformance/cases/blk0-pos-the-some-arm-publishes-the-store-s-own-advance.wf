@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "A window operation publishes what it did to both windows as well as the elements it moved: append states deref(destination).len == deref(entry(destination)).len + deref(entry(source)).len and deref(source).len == 0_u64, so the caller reads both new lengths from the record and from nothing else.";
+  doc "A window operation publishes what it did to both windows as well as the elements it moved: append states destination^.len == entry(destination)^.len + entry(source)^.len and source^.len == 0_u64, so the caller reads both new lengths from the record and from nothing else.";
   let source = slots_new::<u8, 4>();
   place_back(window: &source, value: 1_u8);
   place_back(window: &source, value: 2_u8);

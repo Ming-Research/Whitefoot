@@ -7,19 +7,19 @@ struct Cell {
 
 fn choose(cell: &Cell) -> result: Option<u64> writes(cell.value) {
   doc "Writes the cell and returns a payload result.";
-  set deref(cell).value = 9_u64;
+  set cell^.value = 9_u64;
   return Some<u64>(value: 7_u64);
 }
 
 fn decide(cell: &Cell) -> result: Bool writes(cell.value) {
   doc "Writes the cell and selects the true branch.";
-  set deref(cell).value = 11_u64;
+  set cell^.value = 11_u64;
   return True();
 }
 
 fn refuse(cell: &Cell) -> result: Bool writes(cell.value) {
   doc "Writes the cell and selects the false branch.";
-  set deref(cell).value = 17_u64;
+  set cell^.value = 17_u64;
   return False();
 }
 
@@ -30,12 +30,12 @@ fn through_holder(cell: &Cell) -> result: u64 writes(cell.value) {
       return 0_u64;
     }
     Some(value: chosen) => {
-      set deref(cell).value = chosen;
+      set cell^.value = chosen;
       if decide(cell: cell) {
-        let bumped = deref(cell).value +wrap 1_u64;
-        set deref(cell).value = bumped;
+        let bumped = cell^.value +wrap 1_u64;
+        set cell^.value = bumped;
       }
-      return deref(cell).value;
+      return cell^.value;
     }
   }
 }

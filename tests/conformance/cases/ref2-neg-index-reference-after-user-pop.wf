@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn pop(window: &Slots<u64, 4>) -> value: u64 writes(window.last), writes(window.len) contract {
-  requires deref(window).len > 0_u64;
+  requires window^.len > 0_u64;
 } {
   doc "Takes the last element back. Its row writes window.last, so a call may lower window.len below the index a reference into the window was formed under.";
   let v = take_back(window: window);
@@ -16,6 +16,6 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &r, value: 2_u64);
   let e = &r[1_u64];
   let x = pop(window: &r);
-  let seen = deref(e);
+  let seen = e^;
   return exit_status(code: 0_u8);
 }

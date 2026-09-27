@@ -477,7 +477,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// every declared entry is exhibited in that sense, and every exhibited
     /// access lies under some declared entry." That is a covering relation
     /// and not equality of path sets: a row declaring a whole reference
-    /// parameter covers the measure read `deref(p).len` below it [OP-15],
+    /// parameter covers the measure read `p^.len` below it [OP-15],
     /// while a row declaring only a field is not covered by an access to the
     /// whole.
     ///
@@ -767,46 +767,21 @@ impl<'unit> Checker<'_, 'unit> {
         // decides the judgment.
         //
         // [REF-1] a place that goes through a reference variable is written
-        // under that step — `&deref(p)`, `&deref(p)[i]` — and resolving the
+        // under that step — `&p^`, `&p^[i]` — and resolving the
         // step replaces it with the path the reference names. The root of the
         // complete path is therefore that reference variable itself, which is
         // what the reference-root replacement below already reads, so the two
         // spellings reach one judgment and one representation.
-        let written_deref = self
+        let suffixes = self
             .types
             .declarations
             .tree
-            .place_base(pbase)?
-            .is_dereference();
-        let pbase = if written_deref {
-            let inner = self
-                .types
-                .declarations
-                .tree
-                .dereferenced_place(pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            if !self
-                .types
-                .declarations
-                .tree
-                .children_with(inner, Production::Psuffix)?
-                .is_empty()
-            {
-                // A reference is never stored in an aggregate [REF-3], so the
-                // only place a `deref` step names is a bare reference
-                // variable; anything else is a form this walk cannot root.
-                return self
-                    .types
-                    .declarations
-                    .unsupported(UnsupportedSemanticFeature::ReferenceFormation, place_node);
-            }
-            self.types
-                .declarations
-                .tree
-                .first_child_with(inner, Production::Pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?
+            .children_with(place_node, Production::Psuffix)?;
+        let written_deref = self.types.declarations.tree.reference_step(&suffixes)? == Some(0);
+        let suffixes = if written_deref {
+            &suffixes[1..]
         } else {
-            pbase
+            suffixes.as_slice()
         };
         let root_use =
             self.types
@@ -880,11 +855,35 @@ impl<'unit> Checker<'_, 'unit> {
                     .unsupported(UnsupportedSemanticFeature::ReferenceFormation, place_node);
             }
         };
-        let suffixes = self
-            .types
-            .declarations
-            .tree
-            .children_with(place_node, Production::Psuffix)?;
+        // [REF-1, TYPE-7] forming another reference still writes the step
+        // through a reference holder; resolving the path grants no omission.
+        if !written_deref
+            && !suffixes.is_empty()
+            && root_binding
+                .as_ref()
+                .is_some_and(|local| local.mode.is_reference())
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type7,
+                place_node,
+                SemanticIssueKind::MissingDereference {
+                    mechanical_fix: "write `p^` before selecting a member or element",
+                },
+            );
+        }
+        if written_deref
+            && !root_binding
+                .as_ref()
+                .is_some_and(|local| local.mode.is_reference())
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type7,
+                place_node,
+                SemanticIssueKind::MissingDereference {
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                },
+            );
+        }
         // [REF-4] `&x[lo..hi]` forms a range reference. The range step is the
         // whole of the formation and selects no element place, so it is
         // resolved here rather than by the ordinary storage walk, and it is
@@ -894,7 +893,7 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .tree
-            .range_suffix_position(&suffixes)?
+            .range_suffix_position(suffixes)?
         {
             if position + 1 != suffixes.len() {
                 return self
@@ -998,7 +997,7 @@ impl<'unit> Checker<'_, 'unit> {
             });
         }
         let (path, ty, carried) =
-            self.resolve_storage_path(context, &suffixes, root_type, bindings, loop_depth, true)?;
+            self.resolve_storage_path(context, suffixes, root_type, bindings, loop_depth, true)?;
         let place = ResolvedPlace {
             root,
             path: path.iter().map(CheckedPlaceStep::place_step).collect(),
@@ -1528,8 +1527,8 @@ impl<'unit> TypeContext<'unit> {
     /// cell to satisfy the position it stands in.
     ///
     /// There is no implicit read through a reference or through a cell, so a
-    /// reference or `Box` binding written where a value of its referent type
-    /// is expected is a hard error whose mechanical fix is `deref(.)`.
+    /// reference binding written where its referent type is expected needs
+    /// `p^`; a Box instead exposes its ordinary `inner` field [TYPE-9].
     pub(super) fn reads_implicitly_through_holder(
         &self,
         holds_reference: bool,

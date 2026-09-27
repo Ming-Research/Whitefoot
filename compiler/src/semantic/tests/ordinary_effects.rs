@@ -40,7 +40,7 @@ struct Outer {
 }
 
 fn read_nested(cell: &Box<Outer>) -> result: u64 pure {
-  return deref(cell).inner.next.len;
+  return cell^.inner.next.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -226,11 +226,11 @@ fn referencing_one_struct_field_projects_only_that_field_effect() {
 }
 
 fn length(value: &Slots<u8, 4>) -> result: u64 reads(value) {
-  return deref(value).len;
+  return value^.len;
 }
 
 fn read_second(pair: &Pair) -> result: unit reads(pair.second) {
-  let count = length(value: &deref(pair).second);
+  let count = length(value: &pair^.second);
   return unit;
 }
 
@@ -279,7 +279,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_nonreturning_helper_keeps_its_structural_read_effect() {
     let source = r#"fn unclosed(value: &u64) -> result: u64 reads(value) {
-  let observed = deref(value);
+  let observed = value^;
   let next = unclosed(value: value);
   return next;
 }
@@ -299,7 +299,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn an_assignment_through_a_cell_uses_only_target_storage_effects() {
     let source = r#"fn exchange(target: &Box<u64>, incoming: Box<u64>) -> result: unit writes(target) {
-  set deref(target) = move incoming;
+  set target^ = move incoming;
   return unit;
 }
 
@@ -383,7 +383,7 @@ struct Progress {
 }
 
 fn occupied(slot: &Slot) -> full: Bool reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Occupied(fingerprint: tag, key: present, payload: owner) => {
       return True();
     }
@@ -412,31 +412,31 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 
 fn advance(source: &Array<Slot, 4>, progress: &Progress, budget: u64) -> examined: u64 reads(source), writes(progress) {
   let inspected = 0_u64;
-  if deref(progress).phase < 2_u8 {
+  if progress^.phase < 2_u8 {
     for (
       tick in 0_u64..budget,
       invariant work_min: inspected >= tick,
       invariant work_max: inspected <= tick
     ) {
-      let count = deref(source).len;
-      if deref(progress).source_next >= count {
-        set deref(progress).phase = 3_u8;
+      let count = source^.len;
+      if progress^.source_next >= count {
+        set progress^.phase = 3_u8;
         break;
       }
-      let index = deref(progress).source_next;
-      set deref(progress).source_next = deref(progress).source_next + 1_u64;
+      let index = progress^.source_next;
+      set progress^.source_next = progress^.source_next + 1_u64;
       let key = probe_index(home: index, step: index, count: count);
-      let full = occupied(slot: &deref(source)[key]);
+      let full = occupied(slot: &source^[key]);
       if full {
-        set deref(progress).next_probe = 0_u64;
-        set deref(progress).phase = 1_u8;
+        set progress^.next_probe = 0_u64;
+        set progress^.phase = 1_u8;
       }
       set inspected = inspected + 1_u64;
     }
-    if deref(progress).phase == 0_u8 {
-      let source_count = deref(source).len;
-      if deref(progress).source_next == source_count {
-        set deref(progress).phase = 3_u8;
+    if progress^.phase == 0_u8 {
+      let source_count = source^.len;
+      if progress^.source_next == source_count {
+        set progress^.phase = 3_u8;
       }
     }
   }
@@ -485,7 +485,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_recursive_exchange_of_two_linear_owners_uses_swap() {
-    // v0.59 wrote `let previous = replace deref(target) = move incoming;` and
+    // v0.59 wrote `let previous = replace target^ = move incoming;` and
     // returned the displaced owner. [WIN-3] refuses an assignment over a
     // linear owned place because a linear value has no release, and [OP-11]
     // `swap` is the exchange that exists precisely because no source body can
@@ -578,15 +578,15 @@ fn dynamic_slot_reads_do_not_import_the_placement_inputs_history() {
 }
 
 fn read_key(slot: &Slot) -> result: u64 reads(slot.key) {
-  return deref(slot).key;
+  return slot^.key;
 }
 
 fn read_payload(slot: &Slot) -> result: u64 reads(slot.payload) {
-  return deref(slot).payload.inner;
+  return slot^.payload.inner;
 }
 
 fn observe(values: &Slots<Slot, 2>, spare: &Box<u64>, first: Box<u64>, second: Box<u64>, index: u64) -> result: u64 writes(values) contract {
-  requires deref(values).len == 0_u64;
+  requires values^.len == 0_u64;
   requires index < 2_u64;
 } {
   let left = Slot(key: 7_u64, payload: move first);
@@ -601,9 +601,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     for observation in [
-        "deref(values)[index].key",
-        "read_key(slot: &deref(values)[index])",
-        "read_payload(slot: &deref(values)[index])",
+        "values^[index].key",
+        "read_key(slot: &values^[index])",
+        "read_payload(slot: &values^[index])",
     ] {
         let accepted = source.replace("OBSERVE", observation);
         assert_complete(accepted.as_bytes());
@@ -628,12 +628,12 @@ struct Nested {
 }
 
 fn exchange(target: &Box<u64>, incoming: Box<u64>) -> result: unit writes(target) {
-  set deref(target) = move incoming;
+  set target^ = move incoming;
   return unit;
 }
 
 fn inspect(holder: &Holder, incoming: Box<u64>) -> result: unit writes(holder.value) {
-  exchange(target: &deref(holder).value, incoming: move incoming);
+  exchange(target: &holder^.value, incoming: move incoming);
   return unit;
 }
 
@@ -652,7 +652,7 @@ fn an_assignment_projects_only_the_selected_ordinary_field() {
         FIELD_ASSIGNMENT
             .replace("holder: &Holder", "holder: &Nested")
             .replace("holder.value", "holder.holder.value")
-            .replace("deref(holder).value", "deref(holder).holder.value")
+            .replace("holder^.value", "holder^.holder.value")
             .as_bytes(),
     );
 }
@@ -701,7 +701,7 @@ fn exchange(target: &std::fs::ReadFile, incoming: &std::fs::ReadFile) -> result:
 }
 
 fn inspect(holder: &Holder, spare: &std::fs::ReadFile) -> result: unit writes(holder.value), writes(spare) {
-  exchange(target: &deref(holder).value, incoming: spare);
+  exchange(target: &holder^.value, incoming: spare);
   return unit;
 }
 
@@ -811,7 +811,7 @@ fn record_counter(row: &str, body: &str) -> String {
 fn a_read_the_same_rows_write_subsumes_is_an_eff1_rejection() {
     let source = record_counter(
         "reads(stats.count), writes(stats.count)",
-        "let old = deref(stats).count;\n  set deref(stats).count = old +wrap 1_u64;",
+        "let old = stats^.count;\n  set stats^.count = old +wrap 1_u64;",
     );
     assert_rule_kind(source.as_bytes(), SemanticRule::Eff1, |kind| {
         matches!(kind, SemanticIssueKind::SubsumedEffectEntry { entry, covering }
@@ -822,7 +822,7 @@ fn a_read_the_same_rows_write_subsumes_is_an_eff1_rejection() {
     assert_complete(
         record_counter(
             "reads(stats.total), writes(stats.count)",
-            "let old = deref(stats).total;\n  set deref(stats).count = old;",
+            "let old = stats^.total;\n  set stats^.count = old;",
         )
         .as_bytes(),
     );
@@ -834,7 +834,7 @@ fn a_read_the_same_rows_write_subsumes_is_an_eff1_rejection() {
 /// then an EFF-5 self-overlap at every call.
 #[test]
 fn the_suggested_row_for_a_read_modify_write_is_the_write_alone() {
-    let body = "let old = deref(stats).count;\n  set deref(stats).count = old +wrap 1_u64;";
+    let body = "let old = stats^.count;\n  set stats^.count = old +wrap 1_u64;";
     let (expected, missing, extra) = effect_mismatch(&record_counter(
         "writes(stats.count), writes(stats.total)",
         body,
@@ -852,14 +852,14 @@ fn the_suggested_row_for_a_read_modify_write_is_the_write_alone() {
 fn a_missing_entry_is_named_by_the_suggested_entry_covering_it() {
     let (expected, missing, extra) = effect_mismatch(&record_counter(
         "writes(stats.count)",
-        "let seen = deref(stats).total;\n  let old = deref(stats).count;\n  set deref(stats).count = seen +wrap old;",
+        "let seen = stats^.total;\n  let old = stats^.count;\n  set stats^.count = seen +wrap old;",
     ));
     assert_eq!(expected, "reads(stats.total), writes(stats.count)");
     assert_eq!(missing, ["reads(stats.total)"]);
     assert!(extra.is_empty(), "{extra:?}");
     let (expected, missing, extra) = effect_mismatch(&record_counter(
         "writes(stats.count)",
-        "let whole = deref(stats);\n  set deref(stats).count = whole.total;",
+        "let whole = stats^;\n  set stats^.count = whole.total;",
     ));
     assert_eq!(expected, "reads(stats), writes(stats.count)");
     assert_eq!(missing, ["reads(stats)"]);
@@ -873,12 +873,12 @@ fn a_missing_entry_is_named_by_the_suggested_entry_covering_it() {
 }
 
 fn reset(stats: &Stats) -> result: unit writes(stats) {
-  set deref(stats) = Stats(count: 0_u64, total: 0_u64);
+  set stats^ = Stats(count: 0_u64, total: 0_u64);
   return unit;
 }
 
 fn record(stats: &Stats) -> result: u64 reads(stats.count) {
-  let seen = deref(stats).count;
+  let seen = stats^.count;
   reset(stats: stats);
   return seen;
 }
@@ -902,19 +902,19 @@ fn main() -> status: std::process::ExitStatus pure {
 fn the_suggested_row_is_the_exhibited_row_without_covered_entries() {
     for (body, suggested) in [
         (
-            "let whole = deref(stats);\n  set deref(stats).count = whole.total;",
+            "let whole = stats^;\n  set stats^.count = whole.total;",
             "reads(stats), writes(stats.count)",
         ),
         (
-            "let seen = deref(stats).count;\n  set deref(stats) = Stats(count: seen, total: 0_u64);",
+            "let seen = stats^.count;\n  set stats^ = Stats(count: seen, total: 0_u64);",
             "writes(stats)",
         ),
         (
-            "let seen = deref(stats).total;\n  set deref(stats).count = seen;",
+            "let seen = stats^.total;\n  set stats^.count = seen;",
             "reads(stats.total), writes(stats.count)",
         ),
         (
-            "let first = deref(stats).count;\n  let second = deref(stats).total;",
+            "let first = stats^.count;\n  let second = stats^.total;",
             "reads(stats.count), reads(stats.total)",
         ),
     ] {
@@ -935,11 +935,11 @@ fn the_suggested_row_is_the_exhibited_row_without_covered_entries() {
 #[test]
 fn the_suggested_row_keeps_positions_a_call_can_separate() {
     let source = r#"fn copy_within(window: &Slots<u8, 2>, spare: &u64, from: u64, to: u64) -> result: unit ROW {
-  let length = deref(window).len;
+  let length = window^.len;
   if from < length {
     if to < length {
-      let old = deref(window)[from];
-      set deref(window)[to] = old;
+      let old = window^[from];
+      set window^[to] = old;
     }
   }
   return unit;

@@ -7,7 +7,7 @@ enum StepError {
 
 fn forward(holder: Box<Result<i32, StepError>>) -> function_result: Result<i32, StepError> pure {
   doc "ERR-3: propagate requires an operand of own Result type, and a Box holder is not one; the enclosed Result is the field inner, so the operand is written holder.inner [TYPE-9].";
-  let value = propagate holder;
+  let value = propagate move holder;
   return Ok<i32, StepError>(value: value);
 }
 

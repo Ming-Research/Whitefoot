@@ -1,6 +1,6 @@
 fn write_read(x: &u64, y: &u64) -> result: unit reads(y), writes(x) {
-  set deref(x) = 9_u64;
-  let observed = deref(y);
+  set x^ = 9_u64;
+  let observed = y^;
   return unit;
 }
 

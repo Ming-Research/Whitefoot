@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn touch(a: &Slots<u64, 4>, b: &Slots<u64, 4>, j: u64) -> result: unit writes(a.next), writes(a.len), writes(b[j]) contract {
-  requires deref(a).len < deref(a).cap;
-  requires j < deref(b).len;
+  requires a^.len < a^.cap;
+  requires j < b^.len;
 } {
   doc "Appends through a and overwrites element j through b.";
   place_back(window: a, value: 1_u64);
-  set deref(b)[j] = 5_u64;
+  set b^[j] = 5_u64;
   return unit;
 }
 

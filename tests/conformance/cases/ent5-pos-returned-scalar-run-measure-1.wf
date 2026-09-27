@@ -14,7 +14,7 @@ fn main() -> status: ExitStatus pure {
   let second = Row(left: 5_u64, right: 6_u64);
   place_back(window: &rows, value: second);
   let changed = &rows[1_u64];
-  set deref(changed).right = 9_u64;
+  set changed^.right = 9_u64;
   let observed = rows[0_u64].left;
   return exit_status(code: 0_u8);
 }

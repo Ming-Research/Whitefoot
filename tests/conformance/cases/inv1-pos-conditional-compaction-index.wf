@@ -3,16 +3,16 @@ alias exit_status = std::process::exit_status;
 
 fn compact(buf: &[u8]) -> result: u64 writes(buf) {
   doc "The sum<=i header proves each conditional destination index below the current input binder.";
-  let n = deref(buf).len;
+  let n = buf^.len;
   let sum = 0_u64;
   for (
     i in 0_u64..n,
     invariant sum_bound: sum <= i
   ) {
-    let byte = deref(buf)[i];
+    let byte = buf^[i];
     let keep = byte >= 128_u8;
     if keep {
-      set deref(buf)[sum] = byte;
+      set buf^[sum] = byte;
       set sum = sum + 1_u64;
     }
   }

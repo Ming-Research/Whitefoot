@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill(target: &Slots<u8, 4>) -> result: unit pure contract {
-  requires deref(target).len < deref(target).cap;
+  requires target^.len < target^.cap;
 } {
   doc "The body places one value into the window behind its reference parameter, which exhibits writes(target.next) and writes(target.len), and declares the empty row instead [EFF-2, OP-10].";
   place_back(window: target, value: 7_u8);

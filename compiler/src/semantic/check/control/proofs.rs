@@ -565,13 +565,9 @@ impl<'unit> Checker<'_, 'unit> {
         // IDENT does, except that it names a live own-mode value of measured
         // type *or a live reference whose referent is reached through*
         // `deref` [REF-1, TYPE-7], which is how section 16's example writes
-        // `deref(p).len`. A bare `deref(p)` naming no measure is still no
+        // `p^.len`. A bare `p^` naming no measure is still no
         // affine atom, and the refusal for it stands below.
-        let dereferenced = self
-            .types
-            .declarations
-            .tree
-            .has_fixed(pbase, crate::syntax::terminal::FixedTerminal::Deref)?;
+        let dereferenced = self.types.declarations.tree.place_has_dereference(place)?;
         // [INV-1, OP-15] one `place` formed from an admitted measure place by
         // one measure-member `psuffix`. The relation evaluates nothing and
         // reads no storage, so the factor reaches the resolved place and the

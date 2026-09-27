@@ -1647,7 +1647,7 @@ fn collect_operand_reads(
             footprint,
             places.resolve(PlaceRoot::Binding(*binding), &field_steps(fields)),
         ),
-        // `deref(p)` is the path `p` names [TYPE-7, REF-1], which is what
+        // `p^` is the path `p` names [TYPE-7, REF-1], which is what
         // resolving its root through the reference summary produces.
         CheckedExpression::DerefAddressed { binding, .. } => {
             read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));

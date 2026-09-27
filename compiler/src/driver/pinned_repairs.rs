@@ -243,9 +243,9 @@ fn small(x: u64) -> result: u64 pure contract {
 }
 
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
-  requires 1_u64 <= deref(view).len;
+  requires 1_u64 <= view^.len;
 } {
-  let r = small(x: deref(view)[0_u64].count);
+  let r = small(x: view^[0_u64].count);
   return r;
 }
 
@@ -269,9 +269,9 @@ fn small(x: u64) -> result: u64 pure contract {
 }
 
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
-  requires 1_u64 <= deref(view).len;
+  requires 1_u64 <= view^.len;
 } {
-  let c = deref(view)[0_u64].count;
+  let c = view^[0_u64].count;
   if c < 10_u64 {
     let r = small(x: c);
     return r;
@@ -287,7 +287,7 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "call-requirement-over-a-range-formed-at-the-call.wf",
         rejected: br#"fn need(v: &[u64]) -> result: u64 pure contract {
-  requires 2_u64 <= deref(v).len;
+  requires 2_u64 <= v^.len;
 } {
   return 0_u64;
 }
@@ -312,7 +312,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
         ],
         repaired: &[br#"fn need(v: &[u64]) -> result: u64 pure contract {
-  requires 2_u64 <= deref(v).len;
+  requires 2_u64 <= v^.len;
 } {
   return 0_u64;
 }
@@ -321,7 +321,7 @@ fn caller(k: u64) -> result: u64 pure {
   let values = array_filled::<u64, 4>(value: 0_u64);
   if k <= 4_u64 {
     let part = &values[0_u64..k];
-    if 2_u64 <= deref(part).len {
+    if 2_u64 <= part^.len {
       let r = need(v: part);
       return r;
     }
@@ -586,15 +586,15 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         // [ENT-5] a write kills facts on its own path only: the arm that
-        // writes `deref(p)` comes first, and the goal in its sibling still
+        // writes `p^` comes first, and the goal in its sibling still
         // reads the entry value, which a requirement describes.
         name: "integer-domain-in-the-arm-after-a-sibling-write.wf",
         rejected: br#"fn bump(p: &u64, flag: Bool) -> result: u64 writes(p) {
   if flag {
-    set deref(p) = 0_u64;
+    set p^ = 0_u64;
     return 0_u64;
   } else {
-    let v = deref(p) + 1_u64;
+    let v = p^ + 1_u64;
     return v;
   }
 }
@@ -606,16 +606,16 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires deref(p) +defined 1_u64;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if deref(p) +defined 1_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: add `requires p^ +defined 1_u64;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if p^ +defined 1_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
         repaired: &[br#"fn bump(p: &u64, flag: Bool) -> result: u64 writes(p) contract {
-  requires deref(p) +defined 1_u64;
+  requires p^ +defined 1_u64;
 } {
   if flag {
-    set deref(p) = 0_u64;
+    set p^ = 0_u64;
     return 0_u64;
   } else {
-    let v = deref(p) + 1_u64;
+    let v = p^ + 1_u64;
     return v;
   }
 }
@@ -631,10 +631,10 @@ fn main() -> status: std::process::ExitStatus pure {
         name: "integer-domain-in-the-arm-before-a-sibling-write.wf",
         rejected: br#"fn bump(p: &u64, flag: Bool) -> result: u64 writes(p) {
   if flag {
-    let v = deref(p) + 1_u64;
+    let v = p^ + 1_u64;
     return v;
   } else {
-    set deref(p) = 0_u64;
+    set p^ = 0_u64;
     return 0_u64;
   }
 }
@@ -646,16 +646,16 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires deref(p) +defined 1_u64;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if deref(p) +defined 1_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: add `requires p^ +defined 1_u64;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if p^ +defined 1_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
         repaired: &[br#"fn bump(p: &u64, flag: Bool) -> result: u64 writes(p) contract {
-  requires deref(p) +defined 1_u64;
+  requires p^ +defined 1_u64;
 } {
   if flag {
-    let v = deref(p) + 1_u64;
+    let v = p^ + 1_u64;
     return v;
   } else {
-    set deref(p) = 0_u64;
+    set p^ = 0_u64;
     return 0_u64;
   }
 }
@@ -738,7 +738,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // [ENT-3].
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  let y = deref(values)[0_u64] + 1_u8;
+  let y = values^[0_u64] + 1_u8;
   return y;
 }
 
@@ -749,11 +749,11 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `deref(values)[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if deref(values)[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: `values^[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
         repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  if deref(values)[0_u64] +defined 1_u8 {
-    let y = deref(values)[0_u64] + 1_u8;
+  if values^[0_u64] +defined 1_u8 {
+    let y = values^[0_u64] + 1_u8;
     return y;
   }
   return 0_u8;
@@ -993,7 +993,7 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "bounds-over-parameters.wf",
         rejected: br#"fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1003,13 +1003,13 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires i < deref(b).len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < deref(b).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"fn get(b: &[u8], i: u64) -> result: u8 reads(b) contract {
-  requires i < deref(b).len;
+  requires i < b^.len;
 } {
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1017,8 +1017,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
             br#"fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
-  if i < deref(b).len {
-    return deref(b)[i];
+  if i < b^.len {
+    return b^[i];
   }
   return 0_u8;
 }
@@ -1037,7 +1037,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   let k = widen(x: i);
-  return deref(b)[k];
+  return b^[k];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1047,7 +1047,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `k < deref(b).len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); when the callee whose result it reads can prove the bound, state it in that callee's `ensures`; or guard the access with `if k < deref(b).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `k < b^.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); when the callee whose result it reads can prove the bound, state it in that callee's `ensures`; or guard the access with `if k < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[br#"fn widen(x: u64) -> result: u64 pure {
   return x;
@@ -1055,8 +1055,8 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   let k = widen(x: i);
-  if k < deref(b).len {
-    return deref(b)[k];
+  if k < b^.len {
+    return b^[k];
   }
   return 0_u8;
 }
@@ -1071,9 +1071,9 @@ fn main() -> status: std::process::ExitStatus pure {
         // bound names terms alone, so no condition over it establishes one.
         name: "bounds-over-an-element-offset.wf",
         rejected: br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
-  requires j < deref(order).len;
+  requires j < order^.len;
 } {
-  return deref(lens)[deref(order)[j]];
+  return lens^[order^[j]];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1083,14 +1083,14 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `deref(order)[j] < deref(lens).len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
+            "\n  mechanical_fix: `order^[j] < lens^.len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
         ],
         repaired: &[br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
-  requires j < deref(order).len;
+  requires j < order^.len;
 } {
-  let k = deref(order)[j];
-  if k < deref(lens).len {
-    return deref(lens)[k];
+  let k = order^[j];
+  if k < lens^.len {
+    return lens^[k];
   }
   return 0_u8;
 }
@@ -1107,9 +1107,9 @@ fn main() -> status: std::process::ExitStatus pure {
         // can skip a clause.
         name: "bounds-of-a-place-a-requirement-forms.wf",
         rejected: br#"fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
-  requires k < deref(rows)[i].len;
+  requires k < rows^[i].len;
 } {
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1118,14 +1118,14 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  residual: i < deref(rows).len\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires i < deref(rows).len;` to the `contract` of `pick` ahead of the requirement that forms this place, which each caller then establishes\n",
+            "\n  residual: i < rows^.len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: add `requires i < rows^.len;` to the `contract` of `pick` ahead of the requirement that forms this place, which each caller then establishes\n",
         ],
         repaired: &[br#"fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
-  requires i < deref(rows).len;
-  requires k < deref(rows)[i].len;
+  requires i < rows^.len;
+  requires k < rows^[i].len;
 } {
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1139,10 +1139,10 @@ fn main() -> status: std::process::ExitStatus pure {
         // it are what fix the index.
         name: "bounds-refuted-in-a-place-a-requirement-forms.wf",
         rejected: br#"fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
-  requires i == deref(rows).len;
-  requires k < deref(rows)[i].len;
+  requires i == rows^.len;
+  requires k < rows^[i].len;
 } {
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1151,14 +1151,14 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  residual: i < deref(rows).len\n  disposition: Refuted\n",
-            "\n  mechanical_fix: `i < deref(rows).len` is false where this place is formed: index within the storage, or change the requirements before this one that fix the index\n",
+            "\n  residual: i < rows^.len\n  disposition: Refuted\n",
+            "\n  mechanical_fix: `i < rows^.len` is false where this place is formed: index within the storage, or change the requirements before this one that fix the index\n",
         ],
         repaired: &[br#"fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
-  requires i < deref(rows).len;
-  requires k < deref(rows)[i].len;
+  requires i < rows^.len;
+  requires k < rows^[i].len;
 } {
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1327,7 +1327,7 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "range-formation-over-parameters.wf",
         rejected: br#"fn part(values: &[u64], hi: u64) -> result: u64 pure {
-  let view = &deref(values)[0_u64..hi];
+  let view = &values^[0_u64..hi];
   return 0_u64;
 }
 
@@ -1338,13 +1338,13 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "REF-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires hi <= deref(values).len;` to the `contract` of `part`, which each caller then establishes; or guard the range with `if hi <= deref(values).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: add `requires hi <= values^.len;` to the `contract` of `part`, which each caller then establishes; or guard the range with `if hi <= values^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"fn part(values: &[u64], hi: u64) -> result: u64 pure contract {
-  requires hi <= deref(values).len;
+  requires hi <= values^.len;
 } {
-  let view = &deref(values)[0_u64..hi];
+  let view = &values^[0_u64..hi];
   return 0_u64;
 }
 
@@ -1353,8 +1353,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
             br#"fn part(values: &[u64], hi: u64) -> result: u64 reads(values.len) {
-  if hi <= deref(values).len {
-    let view = &deref(values)[0_u64..hi];
+  if hi <= values^.len {
+    let view = &values^[0_u64..hi];
   }
   return 0_u64;
 }
@@ -1373,7 +1373,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn part(values: &[u64], hi: u64) -> result: u64 pure {
   let h = widen(x: hi);
-  let view = &deref(values)[0_u64..h];
+  let view = &values^[0_u64..h];
   return 0_u64;
 }
 
@@ -1384,7 +1384,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "REF-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `h <= deref(values).len` is not proved here: when facts that reach the range imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); when the callee whose result it reads can prove the bound, state it in that callee's `ensures`; or guard the range with `if h <= deref(values).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `h <= values^.len` is not proved here: when facts that reach the range imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); when the callee whose result it reads can prove the bound, state it in that callee's `ensures`; or guard the range with `if h <= values^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[br#"fn widen(x: u64) -> result: u64 pure {
   return x;
@@ -1392,8 +1392,8 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn part(values: &[u64], hi: u64) -> result: u64 reads(values.len) {
   let h = widen(x: hi);
-  if h <= deref(values).len {
-    let view = &deref(values)[0_u64..h];
+  if h <= values^.len {
+    let view = &values^[0_u64..h];
   }
   return 0_u64;
 }
@@ -1691,7 +1691,7 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "declared-row-is-narrower-than-the-body.wf",
         rejected: br#"fn touch(data: &[u8]) -> out: u64 pure {
-  return deref(data).len;
+  return data^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1703,7 +1703,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"fn touch(data: &[u8]) -> out: u64 reads(data.len) {
-  return deref(data).len;
+  return data^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1721,9 +1721,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -1743,9 +1743,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -1765,8 +1765,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn record(stats: &Stats) -> result: unit writes(stats.count), reads(stats.count) {
-  let old = deref(stats).count;
-  set deref(stats).count = old +wrap 1_u64;
+  let old = stats^.count;
+  set stats^.count = old +wrap 1_u64;
   return unit;
 }
 
@@ -1786,8 +1786,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn record(stats: &Stats) -> result: unit writes(stats.count) {
-  let old = deref(stats).count;
-  set deref(stats).count = old +wrap 1_u64;
+  let old = stats^.count;
+  set stats^.count = old +wrap 1_u64;
   return unit;
 }
 
@@ -2104,7 +2104,7 @@ nocopy struct Token {
 }
 
 fn peek(cell: &Box<Token>) -> result: u64 reads(cell) {
-  let Box(inner: token) = move deref(cell);
+  let Box(inner: token) = move cell^;
   return token.value;
 }
 
@@ -2114,7 +2114,7 @@ fn main() -> status: ExitStatus pure {
 "#,
         rule: "TYPE-2",
         sentences: &[
-            "\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9], and nothing moves out of a cell a reference or an element reaches [OWN-1, WIN-3]: when `token` is never moved, remove this statement and write `deref(cell).inner` where `token` is used\n",
+            "\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9], and nothing moves out of a cell a reference or an element reaches [OWN-1, WIN-3]: when `token` is never moved, remove this statement and write `cell^.inner` where `token` is used\n",
         ],
         repaired: &[
             br#"alias ExitStatus = std::process::ExitStatus;
@@ -2125,7 +2125,7 @@ nocopy struct Token {
 }
 
 fn peek(cell: &Box<Token>) -> result: u64 reads(cell) {
-  return deref(cell).inner.value;
+  return cell^.inner.value;
 }
 
 fn main() -> status: ExitStatus pure {
@@ -2201,7 +2201,7 @@ fn main() -> status: ExitStatus pure {
 "#],
     },
     RepairPair {
-        // [TYPE-2, TYPE-7] a reference variable written bare is read through `deref`.
+        // [TYPE-2, TYPE-7] a reference variable written bare is read through `^`.
         name: "cell-through-a-bare-reference-taken-apart.wf",
         rejected: br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
@@ -2217,13 +2217,13 @@ fn main() -> status: ExitStatus pure {
 "#,
         rule: "TYPE-2",
         sentences: &[
-            "\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9]: replace this statement with `let inside = deref(cell).inner;`\n",
+            "\n  mechanical_fix: a cell's content is its member `inner` [TYPE-9]: replace this statement with `let inside = cell^.inner;`\n",
         ],
         repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn peek(cell: &Box<u64>) -> result: u64 reads(cell) {
-  let inside = deref(cell).inner;
+  let inside = cell^.inner;
   return inside;
 }
 
@@ -2240,7 +2240,7 @@ alias DirectoryRead = std::fs::DirectoryRead;
 alias exit_status = std::process::exit_status;
 
 fn discard(directory: &DirectoryRead) -> result: unit pure {
-  let DirectoryRead() = move deref(directory);
+  let DirectoryRead() = move directory^;
   return unit;
 }
 
@@ -2275,10 +2275,10 @@ fn main() -> status: ExitStatus pure {
 fn exchange(rows: &Array<Node, 2>, i: u64, j: u64) -> result: unit writes(rows) {
   if i < 2_u64 {
     if j < 2_u64 {
-      let parent = &deref(rows)[j];
-      match deref(parent).next {
+      let parent = &rows^[j];
+      match parent^.next {
         Some(value: child) => {
-          swap(first: &deref(rows)[i], second: &deref(child).inner);
+          swap(first: &rows^[i], second: &child^.inner);
         }
         None() => {
         }
@@ -2304,10 +2304,10 @@ fn main() -> status: std::process::ExitStatus pure {
 fn exchange(rows: &Array<Node, 2>, i: u64, j: u64) -> result: unit writes(rows) {
   if i < j {
     if j < 2_u64 {
-      let parent = &deref(rows)[j];
-      match deref(parent).next {
+      let parent = &rows^[j];
+      match parent^.next {
         Some(value: child) => {
-          swap(first: &deref(rows)[i], second: &deref(child).inner);
+          swap(first: &rows^[i], second: &child^.inner);
         }
         None() => {
         }

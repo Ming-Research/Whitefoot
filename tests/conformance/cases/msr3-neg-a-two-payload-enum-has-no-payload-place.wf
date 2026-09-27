@@ -6,7 +6,7 @@ fn main() -> status: ExitStatus pure {
   let block = slots_new::<u8, 4>();
   place_back(window: &block, value: 1_u8);
   let slot = Ok<Slots<u8, 4>, u8>(value: move block);
-  match slot {
+  match move slot {
     Ok(value: back) => {
       place_back(window: &back, value: 2_u8);
       let seen = back[0_u64];

@@ -11,7 +11,7 @@ fn main() -> return_value: ExitStatus pure {
   doc "OWN-11: a binding declared outside a loop may not be moved inside it.";
   let s = Sign::Pos();
   loop @l {
-    match s {
+    match move s {
       Neg(mag: m) => {
       }
       Zero() => {

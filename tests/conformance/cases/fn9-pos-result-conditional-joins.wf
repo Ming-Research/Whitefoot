@@ -46,9 +46,9 @@ fn earlier(value: i32, narrow: Bool) -> (outcome: Result<i32, u8>, stamp: u8) pu
 }
 
 fn length(window: &Slots<u8, 4>) -> result: Result<u64, u8> reads(window) contract {
-  ensures when Ok(value: size): size == deref(window).len;
+  ensures when Ok(value: size): size == window^.len;
 } {
-  let size = deref(window).len;
+  let size = window^.len;
   return Ok<u64, u8>(value: size);
 }
 
@@ -59,12 +59,12 @@ fn same_length(left: u64, right: u64) -> result: unit pure contract {
 }
 
 fn element_write(window: &Slots<u8, 4>) -> result: Result<unit, u8> writes(window) contract {
-  requires deref(window).len > 0_u64;
+  requires window^.len > 0_u64;
 } {
   let outcome = length(window: window);
-  set deref(window)[0_u64] = 7_u8;
+  set window^[0_u64] = 7_u8;
   let size = propagate outcome;
-  same_length(left: size, right: deref(window).len);
+  same_length(left: size, right: window^.len);
   return Ok<unit, u8>(value: unit);
 }
 

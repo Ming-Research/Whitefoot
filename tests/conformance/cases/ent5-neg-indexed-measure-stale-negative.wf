@@ -3,20 +3,20 @@ alias exit_status = std::process::exit_status;
 
 fn write(target: &u64, value: u64) -> result: unit writes(target) {
   doc "The ordinary declared write projects onto the caller's index binding [EFF-2].";
-  set deref(target) = value;
+  set target^ = value;
   return unit;
 }
 
 fn examine(rows: &Slots<Slots<u8, 4>, 2>, index: u64, replacement: u64) -> result: u8 reads(rows) contract {
-  requires index < deref(rows).len;
-  requires replacement < deref(rows).len;
+  requires index < rows^.len;
+  requires replacement < rows^.len;
 } {
   doc "The negative goal over rows[index].len depends on index [ENT-5, MSR-2]. A call that replaces index kills it. The true branch of the repeated zero-length guard is reachable, so reading its empty row rejects under OP-4.";
-  if deref(rows)[index].len == 0_u64 {
+  if rows^[index].len == 0_u64 {
   } else {
     write(target: &index, value: replacement);
-    if deref(rows)[index].len == 0_u64 {
-      return deref(rows)[index][0_u64];
+    if rows^[index].len == 0_u64 {
+      return rows^[index][0_u64];
     }
   }
   return 0_u8;

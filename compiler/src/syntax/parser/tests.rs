@@ -159,7 +159,7 @@ fn window(run: &Slots<i32, 4>, part: &[i32], node: &Tree, lo: u64, hi: u64)
 {
 let whole = &run[lo..hi];
 let element = &run[lo];
-let through = &deref(node).left;
+let through = &node^.left;
 let payload = node.Some.value;
 let rest = run[lo..hi];
 let Tree(left: kept, ..) = move taken;
@@ -675,7 +675,7 @@ let selected = match ordinary { Some(value: payload) => { give payload; } }
 let made = Name<T>(value: ordinary);
 let moved = move ordinary;
 let borrowed = &ordinary;
-let field_borrow = &deref(pointer).field;
+let field_borrow = &pointer^.field;
 let range_borrow = &run[ordinary..moved];
 let payload_read = made.Some.value;
 let entry_read = entry(directory).len;
@@ -683,7 +683,7 @@ let loaded = table[ordinary];
 let compared = ordinary < moved;
 let least = imin(ordinary, moved);
 let chosen = if compared { give ordinary; } else { give moved; }
-set deref(pointer).field = ordinary;
+set pointer^.field = ordinary;
 user::<T, 2>(arg: ordinary);
 library::helper(value: ordinary);
 pkg::library::nested::helper::<T>(value: ordinary);

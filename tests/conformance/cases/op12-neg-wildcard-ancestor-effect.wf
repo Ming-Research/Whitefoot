@@ -7,7 +7,7 @@ struct Node {
 }
 
 fn update(value: Node, root: &Node) -> result: Node writes(root.next) {
-  set deref(root).next = None<Box<Node>>();
+  set root^.next = None<Box<Node>>();
   return move value;
 }
 
@@ -15,16 +15,16 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
   doc "An atomic update cannot reach a possible ancestor of its unknown-depth target.";
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
       }
     }
   }
-  set deref(cursor) = update(value: move deref(cursor), root: root);
+  set cursor^ = update(value: move cursor^, root: root);
   return 0_u64;
 }
 

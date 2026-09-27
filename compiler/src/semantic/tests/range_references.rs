@@ -7,7 +7,7 @@
 //! - [VIEW-1] view formation and the `slice_of` / `mut_slice_of` formers
 //!   retire. The successor is [REF-4]'s `&x[lo..hi]`, a place form under the
 //!   obligation `lo <= hi` and `hi <= x.len`, and re-slicing
-//!   `&deref(part)[a..b]`.
+//!   `&part^[a..b]`.
 //! - [VIEW-2] range separation retires as a judgment of its own. The successor
 //!   is [OWN-7]'s range-step relation, whose four non-strict orderings are
 //!   submitted by [EFF-5] at a call and reported as
@@ -76,15 +76,15 @@ fn a_range_reference_over_a_ring_is_refused() {
 #[test]
 fn a_range_element_measure_is_an_ordinary_subscripted_measure_place() {
     let source = br#"fn direct(items: &[Slots<u64, 2>]) -> length: u64 reads(items) contract {
-  requires 0_u64 < deref(items).len;
+  requires 0_u64 < items^.len;
 } {
-  return deref(items)[0_u64].len;
+  return items^[0_u64].len;
 }
 
 fn nested(items: &[Box<Slots<u64, 2>>]) -> length: u64 reads(items) contract {
-  requires 0_u64 < deref(items).len;
+  requires 0_u64 < items^.len;
 } {
-  return deref(items)[0_u64].inner.len;
+  return items^[0_u64].inner.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -101,14 +101,14 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn nested_range_element_subscripts_are_complete_places() {
     let source = br#"fn exercise(rows: &[Array<u64, 2>], outer: u64, inner: u64) -> result: u64 writes(rows) contract {
-  requires outer < deref(rows).len;
+  requires outer < rows^.len;
   requires inner < 2_u64;
 } {
-  let before = deref(rows)[outer][inner];
+  let before = rows^[outer][inner];
   let changed = before +wrap 1_u64;
-  set deref(rows)[outer][inner] = changed;
-  let selected = &deref(rows)[outer][inner];
-  return deref(selected);
+  set rows^[outer][inner] = changed;
+  let selected = &rows^[outer][inner];
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -124,9 +124,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn an_out_of_bounds_outer_nested_range_index_is_an_op4_rejection() {
     let source = br#"fn invalid(rows: &[Array<u64, 2>]) -> result: u64 reads(rows) contract {
-  requires deref(rows).len == 1_u64;
+  requires rows^.len == 1_u64;
 } {
-  return deref(rows)[1_u64][0_u64];
+  return rows^[1_u64][0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -143,9 +143,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn an_out_of_bounds_inner_nested_range_index_is_an_op4_rejection() {
     let source = br#"fn invalid(rows: &[Array<u64, 2>]) -> result: u64 reads(rows) contract {
-  requires 0_u64 < deref(rows).len;
+  requires 0_u64 < rows^.len;
 } {
-  return deref(rows)[0_u64][2_u64];
+  return rows^[0_u64][2_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -169,8 +169,8 @@ fn a_nested_range_element_path_preserves_joined_origins() {
   } else {
     give right;
   }
-  if deref(rows).len > 0_u64 {
-    return deref(rows)[0_u64][1_u64];
+  if rows^.len > 0_u64 {
+    return rows^[0_u64][1_u64];
   }
   return 0_u64;
 }
@@ -190,15 +190,15 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn incoming_range_bounds_do_not_invent_a_joined_holder_length_fact() {
     let source = br#"fn inspect(left: &[Array<u64, 2>], right: &[Array<u64, 2>], flag: Bool) -> result: u64 reads(left), reads(right) contract {
-  requires 0_u64 < deref(left).len;
-  requires 0_u64 < deref(right).len;
+  requires 0_u64 < left^.len;
+  requires 0_u64 < right^.len;
 } {
   let rows = if flag {
     give left;
   } else {
     give right;
   }
-  return deref(rows)[0_u64][1_u64];
+  return rows^[0_u64][1_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -216,12 +216,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn replacing_a_range_element_invalidates_a_nested_element_reference() {
     let source = br#"fn invalid(rows: &[Array<u64, 2>]) -> result: u64 writes(rows) contract {
-  requires 0_u64 < deref(rows).len;
+  requires 0_u64 < rows^.len;
 } {
-  let selected = &deref(rows)[0_u64][0_u64];
+  let selected = &rows^[0_u64][0_u64];
   let replacement = array_filled::<u64, 2>(value: 9_u64);
-  set deref(rows)[0_u64] = replacement;
-  return deref(selected);
+  set rows^[0_u64] = replacement;
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -237,9 +237,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn an_out_of_bounds_range_element_measure_is_an_op4_rejection() {
     let source = br#"fn invalid(items: &[Slots<u64, 2>]) -> length: u64 reads(items) contract {
-  requires deref(items).len == 1_u64;
+  requires items^.len == 1_u64;
 } {
-  return deref(items)[1_u64].len;
+  return items^[1_u64].len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -289,11 +289,11 @@ fn main() -> status: std::process::ExitStatus pure {{
         )
     };
     let guarded = source(
-        "  if 0_u64 < deref(items).len {\n    let observed = deref(items)[0_u64].len;\n    if observed == 1_u64 {\n      let answer = needs_one(value: deref(items)[0_u64].len);\n    }\n  }",
+        "  if 0_u64 < items^.len {\n    let observed = items^[0_u64].len;\n    if observed == 1_u64 {\n      let answer = needs_one(value: items^[0_u64].len);\n    }\n  }",
     );
     assert_accepts(guarded.as_bytes());
     let conflicting = source(
-        "  if 0_u64 < deref(items).len {\n    if left[0_u64].len == 1_u64 {\n      if right[0_u64].len == 0_u64 {\n        let answer = needs_one(value: deref(items)[0_u64].len);\n      }\n    }\n  }",
+        "  if 0_u64 < items^.len {\n    if left[0_u64].len == 1_u64 {\n      if right[0_u64].len == 0_u64 {\n        let answer = needs_one(value: items^[0_u64].len);\n      }\n    }\n  }",
     );
     assert_rule_kind(conflicting.as_bytes(), SemanticRule::Fn8, |kind| {
         matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
@@ -315,7 +315,7 @@ fn a_range_element_measure_dies_on_a_write_through_an_alias() {
 
 fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
-  set deref(window) = move empty;
+  set window^ = move empty;
   return unit;
 }
 
@@ -325,10 +325,10 @@ fn main() -> status: std::process::ExitStatus pure {
   let outer = slots_new::<Slots<u64, 2>, 1>();
   place_back(window: &outer, value: move row);
   let items = &outer[0_u64..1_u64];
-  if deref(items)[0_u64].len == 1_u64 {
-    let aliased = &deref(items)[0_u64];
+  if items^[0_u64].len == 1_u64 {
+    let aliased = &items^[0_u64];
     let cleared = clear(window: aliased);
-    let invalid = needs_one(value: deref(items)[0_u64].len);
+    let invalid = needs_one(value: items^[0_u64].len);
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -347,7 +347,7 @@ fn an_endpoint_above_the_length_leaves_the_formation_undischarged() {
   let a = array_filled::<u64, 4>(value: 0_u64);
   let hi = 9_u64;
   let part = &a[0_u64..hi];
-  let seen = deref(part).len;
+  let seen = part^.len;
   if seen == 9_u64 {
   } else {
     return std::process::exit_status(code: 1_u8);
@@ -391,7 +391,7 @@ fn assert_cells_read_unproved(source: &[u8]) {
 }
 
 /// [CALL-3, EFF-5] a range formed at the call, `&rows[1..3]` or the re-slice
-/// `&deref(view)[1..3]`, names its source's path extended by the formation's
+/// `&view^[1..3]`, names its source's path extended by the formation's
 /// own range step, the path a bound range reference names. Its projected write
 /// therefore kills the guarded measure of an element the range may contain,
 /// and the rejection lands on the read that measure bounded.
@@ -415,10 +415,10 @@ fn an_index_outside_a_written_range_is_separated_from_it() {
     let body = |call: &str| {
         format!(
             "fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {{
-  requires at < deref(part).len;
+  requires at < part^.len;
 }} {{
   let fresh = slots_new::<u64, 8>();
-  set deref(part)[at] = move fresh;
+  set part^[at] = move fresh;
   return unit;
 }}
 
@@ -465,25 +465,25 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn overlapping_range_element_writes_preserve_each_formed_length() {
     let source = br#"fn needs_two(part: &[u8]) -> result: unit reads(part) contract {
-  requires deref(part).len == 2_u64;
+  requires part^.len == 2_u64;
 } {
-  let observed = deref(part).len;
+  let observed = part^.len;
   return unit;
 }
 
 fn write_first(part: &[u8]) -> result: unit writes(part) contract {
-  requires 0_u64 < deref(part).len;
+  requires 0_u64 < part^.len;
 } {
-  set deref(part)[0_u64] = 9_u8;
+  set part^[0_u64] = 9_u8;
   return unit;
 }
 
 fn exercise(values: &Slots<u8, 4>) -> result: unit writes(values) contract {
-  requires deref(values).len == 3_u64;
+  requires values^.len == 3_u64;
 } {
-  let wider = &deref(values)[0_u64..3_u64];
-  let narrower = &deref(values)[1_u64..3_u64];
-  set deref(wider)[1_u64] = 7_u8;
+  let wider = &values^[0_u64..3_u64];
+  let narrower = &values^[1_u64..3_u64];
+  set wider^[1_u64] = 7_u8;
   let after_direct = needs_two(part: narrower);
   let written = write_first(part: wider);
   let after_call = needs_two(part: narrower);
@@ -498,17 +498,17 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 const CONDITIONAL_RANGE_SEPARATION_HELPERS: &str = r#"fn touch(left: &[Slots<u64, 2>], right: &[Slots<u64, 2>]) -> result: unit writes(left), writes(right) contract {
-  requires 0_u64 < deref(left).len;
-  requires 0_u64 < deref(right).len;
+  requires 0_u64 < left^.len;
+  requires 0_u64 < right^.len;
 } {
-  clear(window: &deref(left)[0_u64]);
-  clear(window: &deref(right)[0_u64]);
+  clear(window: &left^[0_u64]);
+  clear(window: &right^[0_u64]);
   return unit;
 }
 
 fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
-  set deref(window) = move empty;
+  set window^ = move empty;
   return unit;
 }
 "#;
@@ -525,8 +525,8 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: unit w
   requires hi <= 2_u64;
   requires lo <= 1_u64;
 }} {{
-  let left = &deref(values)[0_u64..hi];
-  let right = &deref(values)[lo..2_u64];
+  let left = &values^[0_u64..hi];
+  let right = &values^[lo..2_u64];
   if hi <= lo {{
     touch(left: left, right: right);
   }}
@@ -553,15 +553,15 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   requires hi <= 2_u64;
   requires lo <= 1_u64;
 }} {{
-  let left = &deref(values)[0_u64..hi];
-  let right = &deref(values)[lo..2_u64];
+  let left = &values^[0_u64..hi];
+  let right = &values^[lo..2_u64];
   if hi <= lo {{
     touch(left: left, right: right);
   }}
-  let selected = &deref(left)[0_u64];
-  if deref(selected).len == 1_u64 {{
-    clear(window: &deref(right)[0_u64]);
-    return deref(selected)[0_u64];
+  let selected = &left^[0_u64];
+  if selected^.len == 1_u64 {{
+    clear(window: &right^[0_u64]);
+    return selected^[0_u64];
   }}
   return 0_u64;
 }}
@@ -585,15 +585,15 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   requires hi <= 2_u64;
   requires lo <= 1_u64;
 }} {{
-  let left = &deref(values)[0_u64..hi];
-  let right = &deref(values)[lo..2_u64];
+  let left = &values^[0_u64..hi];
+  let right = &values^[lo..2_u64];
   if hi <= lo {{
     touch(left: left, right: right);
   }} else {{
-    let selected = &deref(left)[0_u64];
-    if deref(selected).len == 1_u64 {{
-      clear(window: &deref(right)[0_u64]);
-      return deref(selected)[0_u64];
+    let selected = &left^[0_u64];
+    if selected^.len == 1_u64 {{
+      clear(window: &right^[0_u64]);
+      return selected^[0_u64];
     }}
   }}
   return 0_u64;
@@ -618,17 +618,17 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64, count: u64) -> re
   requires hi <= 2_u64;
   requires lo <= 1_u64;
 }} {{
-  let left = &deref(values)[0_u64..hi];
-  let right = &deref(values)[lo..2_u64];
+  let left = &values^[0_u64..hi];
+  let right = &values^[lo..2_u64];
   for (i in 0_u64..count) {{
     if hi <= lo {{
       touch(left: left, right: right);
     }}
   }}
-  let selected = &deref(left)[0_u64];
-  if deref(selected).len == 1_u64 {{
-    clear(window: &deref(right)[0_u64]);
-    return deref(selected)[0_u64];
+  let selected = &left^[0_u64];
+  if selected^.len == 1_u64 {{
+    clear(window: &right^[0_u64]);
+    return selected^[0_u64];
   }}
   return 0_u64;
 }}
@@ -651,7 +651,7 @@ fn growing_the_backing_window_preserves_a_formed_range_length() {
   place_back(window: &values, value: 11_u8);
   let part = &values[0_u64..1_u64];
   place_back(window: &values, value: 22_u8);
-  let first = deref(part)[0_u64];
+  let first = part^[0_u64];
   return std::process::exit_status(code: first);
 }
 "#;
@@ -680,20 +680,20 @@ fn proved_distinct_indices_do_not_overlap() {
 ///
 /// [REF-4]: a range reference's "one measure is `len`, equal to `hi - lo`
 /// [MSR-1]". [MSR-1] gives `&[T]` its own row, `len` = "range elements,
-/// exact", and [OP-15] spells the read `deref(part).len`. So at every call the
+/// exact", and [OP-15] spells the read `part^.len`. So at every call the
 /// requirement is instantiated over the actual range's own length and never
 /// over the length of the storage that range was formed from: the range
 /// `a[2..4]` of a four-element array has two elements, and an offset judged
 /// against `a.len` would be admitted and would read outside the range.
 const RANGE_OFFSET_CALLEE: &str = r#"fn at(part: &[u8], offset: u64) -> result: u8 reads(part) contract {
-  requires offset < deref(part).len;
+  requires offset < part^.len;
 } {
-  return deref(part)[offset];
+  return part^[offset];
 }
 "#;
 
 /// A range a binding names: the requirement is that binding's own `len`, and
-/// the goal names the place the writer wrote, `deref(view)` [REF-1, OP-15].
+/// the goal names the place the writer wrote, `view^` [REF-1, OP-15].
 #[test]
 fn a_requirement_over_a_bound_range_is_that_ranges_length() {
     let body = |offset: &str| {
@@ -712,7 +712,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < deref(view).len",
+        "3_u64 < view^.len",
     );
 }
 
@@ -745,8 +745,8 @@ fn main() -> status: std::process::ExitStatus pure {{
     );
 }
 
-/// [REF-4]: "Re-slicing is admitted: `&deref(part)[a..b]` under
-/// `a <= b <= deref(part).len`." The inner range's `len` is its own `b - a`,
+/// [REF-4]: "Re-slicing is admitted: `&part^[a..b]` under
+/// `a <= b <= part^.len`." The inner range's `len` is its own `b - a`,
 /// not the outer range's and not the array's.
 #[test]
 fn a_requirement_over_a_reslice_is_the_inner_ranges_length() {
@@ -756,7 +756,7 @@ fn a_requirement_over_a_reslice_is_the_inner_ranges_length() {
 fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 1_u8);
   let view = &a[0_u64..4_u64];
-  let sub = &deref(view)[2_u64..4_u64];
+  let sub = &view^[2_u64..4_u64];
   let x = at(part: sub, offset: {offset});
   return std::process::exit_status(code: x);
 }}
@@ -767,7 +767,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < deref(sub).len",
+        "3_u64 < sub^.len",
     );
 }
 
@@ -782,7 +782,7 @@ fn a_requirement_over_a_forwarded_range_is_the_forwarded_ranges_length() {
         format!(
             "{RANGE_OFFSET_CALLEE}
 fn forward(part: &[u8]) -> result: u8 reads(part) contract {{
-  requires deref(part).len == 2_u64;
+  requires part^.len == 2_u64;
 }} {{
   return at(part: part, offset: {offset});
 }}
@@ -800,12 +800,12 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < deref(part).len",
+        "3_u64 < part^.len",
     );
 }
 
 /// [ENT-3.S6]: "`let part = &P[lo..hi];` for a tracked P establishes
-/// `deref(part).len = hi - lo` after [REF-4]'s domain goals discharge, over
+/// `part^.len = hi - lo` after [REF-4]'s domain goals discharge, over
 /// the exact current-value images captured where the endpoints are evaluated."
 /// It is an ordinary fact of the state, so a caller that has just formed the
 /// range discharges an equality over its length and refutes a different one.
@@ -815,9 +815,9 @@ fn a_range_formation_establishes_its_length_equality() {
     let body = |length: &str| {
         format!(
             "fn expects(part: &[u8]) -> result: u64 reads(part.len) contract {{
-  requires deref(part).len == {length};
+  requires part^.len == {length};
 }} {{
-  return deref(part).len;
+  return part^.len;
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{
@@ -833,7 +833,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("32_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "deref(view).len == 32_u64",
+        "view^.len == 32_u64",
     );
 }
 
@@ -842,9 +842,9 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn dynamic_inline_range_length_discharge_uses_its_endpoint_ordering() {
     let source = br#"fn nonempty(part: &[u8]) -> result: u64 reads(part.len) contract {
-  requires 0_u64 < deref(part).len;
+  requires 0_u64 < part^.len;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -887,7 +887,7 @@ fn rebinding_a_range_reference_does_not_retain_the_old_length() {
   let a = array_filled::<u8, 2>(value: 0_u8);
   let part = &a[0_u64..1_u64];
   set part = &a[0_u64..0_u64];
-  let first = deref(part)[0_u64];
+  let first = part^[0_u64];
   return std::process::exit_status(code: first);
 }
 "#;
@@ -901,9 +901,9 @@ fn a_bound_range_keeps_the_endpoint_images_captured_at_formation() {
     let body = |length: &str| {
         format!(
             "fn expects(part: &[u8]) -> result: u64 reads(part.len) contract {{
-  requires deref(part).len == {length};
+  requires part^.len == {length};
 }} {{
-  return deref(part).len;
+  return part^.len;
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{
@@ -923,7 +923,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("6_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "deref(part).len == 6_u64",
+        "part^.len == 6_u64",
     );
 }
 
@@ -932,15 +932,15 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn inline_ranges_separated_by_endpoint_mutation_keep_distinct_lengths() {
     let source = br#"fn below_three(part: &[u8]) -> result: u64 reads(part.len) contract {
-  requires deref(part).len < 3_u64;
+  requires part^.len < 3_u64;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 
 fn above_three(part: &[u8]) -> result: u64 reads(part.len) contract {
-  requires deref(part).len > 3_u64;
+  requires part^.len > 3_u64;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -971,10 +971,10 @@ fn a_reference_outside_a_written_range_survives_the_write() {
 }}
 
 fn zero(part: &[Pair], at: u64) -> result: unit writes(part) contract {{
-  requires at < deref(part).len;
+  requires at < part^.len;
 }} {{
   let fresh = Pair(x: 0_u64, y: 0_u64);
-  set deref(part)[at] = fresh;
+  set part^[at] = fresh;
   return unit;
 }}
 
@@ -983,9 +983,9 @@ fn run(values: &Array<Pair, 8>, lo: u64, hi: u64, k: u64) -> result: u64 writes(
   requires {bound};
   requires k < 8_u64;
 }} {{
-  let held = &deref(values)[k].x;
-  zero(part: &deref(values)[lo..hi], at: 0_u64);
-  let seen = deref(held);
+  let held = &values^[k].x;
+  zero(part: &values^[lo..hi], at: 0_u64);
+  let seen = held^;
   return seen;
 }}
 

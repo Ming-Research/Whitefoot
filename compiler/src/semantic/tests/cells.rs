@@ -6,7 +6,7 @@
 //! is one heap [STOR-8], so a cell carries no store brand and no region, its
 //! allocation is total and returns no `Result`, and there is no `allocates`
 //! row to declare. `box_new::<T>(value: v)` is the [OP-13] construction
-//! record, the content is read as `b.inner` and never through `deref`
+//! record, the content is read as `b.inner` and never through `^`
 //! [TYPE-7], it is written with `set b.inner = v` [SET-1], and
 //! `let n = move b.inner;` consumes the cell, yields its content and frees it
 //! [WIN-3].
@@ -120,7 +120,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// [TYPE-9, WIN-3] `let n = move b.inner;` consumes the cell, yields its
 /// content and frees the cell.
 ///
-/// This replaces the retired `move deref(owner)` capability stop: the v0.59
+/// This replaces the retired `move owner^` capability stop: the v0.59
 /// checker answered an affine referent move with
 /// `UnsupportedSemanticFeature::BoxReferentMove`, and v0.60 states the
 /// unboxing outright. The one remaining refusal — a move of a
@@ -441,18 +441,18 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
-/// [TYPE-7] `deref(place)` where `place` is not a reference, a `Box`
+/// [TYPE-7] `place^` where `place` is not a reference, a `Box`
 /// included, is a hard error at the complete `place`, and its restructuring
 /// names the field step that reaches a cell's content.
 ///
 /// This case is new in the v0.60 port: v0.59 reached a cell's referent
-/// through `deref` and so had no such refusal to state.
+/// through `^` and so had no such refusal to state.
 #[test]
 fn deref_of_a_cell_is_a_type7_rejection_naming_the_field_inner() {
     assert_rule_kind(
         br#"fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 41_u64);
-  let loaded = deref(owner);
+  let loaded = owner^;
   return std::process::exit_status(code: 0_u8);
 }
 "#,

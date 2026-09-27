@@ -7,9 +7,9 @@ struct Cell {
 
 fn either(a: &Cell, b: &Cell) -> result: i32 reads(b.value), writes(a.value) {
   doc "The two parameters differ only in what the row grants [EFF-1]: the callee may write `a` and may only read `b`. Neither difference makes either one a candidate to hand back, because a reference never leaves the frame that formed it; REF-3 refuses the returned reference itself and names the restructuring `return an index and let the caller form the reference`.";
-  let seen = deref(b).value;
-  set deref(a).value = seen;
-  return &deref(b).value;
+  let seen = b^.value;
+  set a^.value = seen;
+  return &b^.value;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -10,7 +10,7 @@ fn main() -> status: ExitStatus pure {
   doc "One coin is matched twice through two references, each match giving a score, proving that reference-mode matching leaves the scrutinee live for the second read while the scores accumulate to a checked total [OWN-13, GIVE-1, OP-1, SCOPE-3].";
   let c = Coin::Heads();
   let p = &c;
-  let first = match deref(p) {
+  let first = match p^ {
     Heads() => {
       give 3_i32;
     }
@@ -19,7 +19,7 @@ fn main() -> status: ExitStatus pure {
     }
   }
   let q = &c;
-  let second = match deref(q) {
+  let second = match q^ {
     Heads() => {
       give 10_i32;
     }

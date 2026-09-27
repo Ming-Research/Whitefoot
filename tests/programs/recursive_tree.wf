@@ -22,7 +22,7 @@ fn boxed_branch(left: Box<Tree>, right: Box<Tree>) -> made: Box<Tree> pure {
 
 fn count(tree: &Box<Tree>) -> result: Result<u64, Overflow> reads(tree) {
   doc "The recursive walk over a cell-linked tree. A Box's content is its field inner, and matching through a reference binds each payload as a reference naming the scrutinee path [TYPE-9, OWN-13]. PROV-6 admits a release graph with a cycle, and this is the type whose release is one action per node entering itself.";
-  match deref(tree).inner {
+  match tree^.inner {
     Leaf() => {
       return Ok<u64, Overflow>(value: 1_u64);
     }

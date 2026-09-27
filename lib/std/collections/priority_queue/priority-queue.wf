@@ -9,38 +9,38 @@ fn priority_queue_new<T, const ceiling: u64>() -> made: PriorityQueue<T, ceiling
 }
 
 fn priority_queue_len<T, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>) -> length: u64 reads(queue.storage) contract {
-  ensures length == deref(queue).storage.inner.len;
+  ensures length == queue^.storage.inner.len;
 } {
-  return deref(queue).storage.inner.len;
+  return queue^.storage.inner.len;
 }
 
 fn priority_queue_reserve<T, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, total: u64) -> capacity: u64 writes(queue.storage) contract {
   requires total <= ceiling;
-  ensures capacity == deref(queue).storage.inner.cap;
+  ensures capacity == queue^.storage.inner.cap;
   ensures capacity >= total;
-  ensures deref(queue).storage.inner.cap >= deref(entry(queue)).storage.inner.cap;
-  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
+  ensures queue^.storage.inner.cap >= entry(queue)^.storage.inner.cap;
+  ensures queue^.storage.inner.len == entry(queue)^.storage.inner.len;
 } {
   doc "Reserve preserves the initialized heap and raises capacity only when necessary. The caller-proved ceiling bounds each concrete allocation site; allocation itself has no source-visible refusal outcome.";
-  let current = deref(queue).storage.inner.cap;
+  let current = queue^.storage.inner.cap;
   if current >= total {
     return current;
   }
-  grow(cell: &deref(queue).storage, capacity: total);
+  grow(cell: &queue^.storage, capacity: total);
   return total;
 }
 
 fn priority_queue_make_room<T, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>) -> result: unit writes(queue.storage) contract {
-  requires deref(queue).storage.inner.len < ceiling;
-  ensures deref(queue).storage.inner.cap > deref(queue).storage.inner.len;
-  ensures deref(queue).storage.inner.cap >= deref(entry(queue)).storage.inner.cap;
-  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
+  requires queue^.storage.inner.len < ceiling;
+  ensures queue^.storage.inner.cap > queue^.storage.inner.len;
+  ensures queue^.storage.inner.cap >= entry(queue)^.storage.inner.cap;
+  ensures queue^.storage.inner.len == entry(queue)^.storage.inner.len;
 } {
-  let spare = deref(queue).storage.inner.cap - deref(queue).storage.inner.len;
+  let spare = queue^.storage.inner.cap - queue^.storage.inner.len;
   if spare > 0_u64 {
     return unit;
   }
-  let current = deref(queue).storage.inner.cap;
+  let current = queue^.storage.inner.cap;
   if current == 0_u64 {
     let opened = priority_queue_reserve::<T, ceiling>(queue: queue, total: 1_u64);
     return unit;
@@ -57,21 +57,21 @@ fn priority_queue_make_room<T, const ceiling: u64>(queue: &PriorityQueue<T, ceil
 }
 
 fn priority_queue_sift_rise_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, start: u64, count: u64, order_env: &E, position_env: &P) -> result: unit reads(order_env), writes(queue.storage), writes(position_env) contract {
-  requires deref(queue).storage.inner.len >= count;
-  requires deref(queue).storage.inner.len <= count;
+  requires queue^.storage.inner.len >= count;
+  requires queue^.storage.inner.len <= count;
   requires start < count;
-  ensures deref(queue).storage.inner.len == count;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == count;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Each continuing iteration moves to a strictly smaller parent index. Comparison can stop a sift but cannot change its direction or extend its logarithmic path. Each exchange reports both resident positions through a separate callback whose state is disjoint from the heap.";
-  let capacity = deref(queue).storage.inner.cap;
+  let capacity = queue^.storage.inner.cap;
   let at = start;
   loop @rise (
     invariant live: at < count,
-    invariant length_low: deref(queue).storage.inner.len >= count,
-    invariant length_high: deref(queue).storage.inner.len <= count,
-    invariant capacity_low: deref(queue).storage.inner.cap >= capacity,
-    invariant capacity_high: deref(queue).storage.inner.cap <= capacity
+    invariant length_low: queue^.storage.inner.len >= count,
+    invariant length_high: queue^.storage.inner.len <= count,
+    invariant capacity_low: queue^.storage.inner.cap >= capacity,
+    invariant capacity_high: queue^.storage.inner.cap <= capacity
   ) {
     if at == 0_u64 {
       return unit;
@@ -79,24 +79,24 @@ fn priority_queue_sift_rise_indexed<interface PriorityOrder<T, E>, P, fn placed(
     let before = at - 1_u64;
     let parent = before / 2_u64;
     invariant progress: parent < at;
-    let order = PriorityOrder::compare(env: order_env, left: &deref(queue).storage.inner[parent], right: &deref(queue).storage.inner[at]);
+    let order = PriorityOrder::compare(env: order_env, left: &queue^.storage.inner[parent], right: &queue^.storage.inner[at]);
     if order <= 0_i32 {
       return unit;
     }
-    swap(first: &deref(queue).storage.inner[parent], second: &deref(queue).storage.inner[at]);
-    placed(env: position_env, value: &deref(queue).storage.inner[parent], index: parent);
-    placed(env: position_env, value: &deref(queue).storage.inner[at], index: at);
+    swap(first: &queue^.storage.inner[parent], second: &queue^.storage.inner[at]);
+    placed(env: position_env, value: &queue^.storage.inner[parent], index: parent);
+    placed(env: position_env, value: &queue^.storage.inner[at], index: at);
     set at = parent;
   }
   return unit;
 }
 
 fn priority_queue_sift_rise<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, count: u64, env: &E) -> result: unit reads(env), writes(queue.storage) contract {
-  requires deref(queue).storage.inner.len >= count;
-  requires deref(queue).storage.inner.len <= count;
+  requires queue^.storage.inner.len >= count;
+  requires queue^.storage.inner.len <= count;
   requires count >= 1_u64;
-  ensures deref(queue).storage.inner.len == count;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == count;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   let start = count - 1_u64;
   let positions = unit;
@@ -105,14 +105,14 @@ fn priority_queue_sift_rise<interface PriorityOrder<T, E>, const ceiling: u64>(q
 }
 
 fn priority_queue_child<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, left: u64, env: &E) -> selected: u64 reads(env), reads(queue.storage) contract {
-  requires left < deref(queue).storage.inner.len;
+  requires left < queue^.storage.inner.len;
   ensures selected >= left;
-  ensures selected < deref(queue).storage.inner.len;
+  ensures selected < queue^.storage.inner.len;
 } {
   doc "The mutable selected-index form joins child offsets one and two and loses the right-child presence condition. Each return here proves its strict bound, which the ordinary integer-result contract publishes to the caller. The left child is present; its successor is representable and is compared only when it is present too.";
   let right = left + 1_u64;
-  if right < deref(queue).storage.inner.len {
-    let order = PriorityOrder::compare(env: env, left: &deref(queue).storage.inner[right], right: &deref(queue).storage.inner[left]);
+  if right < queue^.storage.inner.len {
+    let order = PriorityOrder::compare(env: env, left: &queue^.storage.inner[right], right: &queue^.storage.inner[left]);
     if order < 0_i32 {
       return right;
     }
@@ -121,22 +121,22 @@ fn priority_queue_child<interface PriorityOrder<T, E>, const ceiling: u64>(queue
 }
 
 fn priority_queue_sift_sink_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, start: u64, count: u64, order_env: &E, position_env: &P) -> result: unit reads(order_env), writes(queue.storage), writes(position_env) contract {
-  requires deref(queue).storage.inner.len >= count;
-  requires deref(queue).storage.inner.len <= count;
+  requires queue^.storage.inner.len >= count;
+  requires queue^.storage.inner.len <= count;
   requires start < count;
-  ensures deref(queue).storage.inner.len == count;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == count;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Exactly the indices below count / 2 have children. The leaf test precedes child arithmetic, and its quotient bound proves both children fit u64 even for zero-byte elements and the largest capacity. Each continuing iteration selects a strictly larger child below count, independently of comparator consistency, and reports both positions after each exchange.";
-  let capacity = deref(queue).storage.inner.cap;
+  let capacity = queue^.storage.inner.cap;
   let parents = count / 2_u64;
   let at = start;
   loop @sink (
     invariant live: at < count,
-    invariant length_low: deref(queue).storage.inner.len >= count,
-    invariant length_high: deref(queue).storage.inner.len <= count,
-    invariant capacity_low: deref(queue).storage.inner.cap >= capacity,
-    invariant capacity_high: deref(queue).storage.inner.cap <= capacity
+    invariant length_low: queue^.storage.inner.len >= count,
+    invariant length_high: queue^.storage.inner.len <= count,
+    invariant capacity_low: queue^.storage.inner.cap >= capacity,
+    invariant capacity_high: queue^.storage.inner.cap <= capacity
   ) {
     if at >= parents {
       return unit;
@@ -149,24 +149,24 @@ fn priority_queue_sift_sink_indexed<interface PriorityOrder<T, E>, P, fn placed(
     let left = doubled + 1_u64;
     let best = priority_queue_child::<PriorityOrder<T, E>, ceiling>(queue: queue, left: left, env: order_env);
     invariant progress: best > at;
-    let order = PriorityOrder::compare(env: order_env, left: &deref(queue).storage.inner[at], right: &deref(queue).storage.inner[best]);
+    let order = PriorityOrder::compare(env: order_env, left: &queue^.storage.inner[at], right: &queue^.storage.inner[best]);
     if order <= 0_i32 {
       return unit;
     }
-    swap(first: &deref(queue).storage.inner[at], second: &deref(queue).storage.inner[best]);
-    placed(env: position_env, value: &deref(queue).storage.inner[at], index: at);
-    placed(env: position_env, value: &deref(queue).storage.inner[best], index: best);
+    swap(first: &queue^.storage.inner[at], second: &queue^.storage.inner[best]);
+    placed(env: position_env, value: &queue^.storage.inner[at], index: at);
+    placed(env: position_env, value: &queue^.storage.inner[best], index: best);
     set at = best;
   }
   return unit;
 }
 
 fn priority_queue_sift_sink<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, start: u64, count: u64, env: &E) -> result: unit reads(env), writes(queue.storage) contract {
-  requires deref(queue).storage.inner.len >= count;
-  requires deref(queue).storage.inner.len <= count;
+  requires queue^.storage.inner.len >= count;
+  requires queue^.storage.inner.len <= count;
   requires start < count;
-  ensures deref(queue).storage.inner.len == count;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == count;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   let positions = unit;
   priority_queue_sift_sink_indexed::<PriorityOrder<T, E>, unit, fn priority_queue_ignore_position::<T>, ceiling>(queue: queue, start: start, count: count, order_env: env, position_env: &positions);
@@ -174,18 +174,18 @@ fn priority_queue_sift_sink<interface PriorityOrder<T, E>, const ceiling: u64>(q
 }
 
 fn priority_queue_repair_at_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, count: u64, order_env: &E, position_env: &P) -> result: unit reads(order_env), writes(queue.storage), writes(position_env) contract {
-  requires deref(queue).storage.inner.len >= count;
-  requires deref(queue).storage.inner.len <= count;
+  requires queue^.storage.inner.len >= count;
+  requires queue^.storage.inner.len <= count;
   requires index < count;
-  ensures deref(queue).storage.inner.len == count;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == count;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Only the selected entry has changed relative to a previously ordered heap. Compare its parent once to choose a rise or sink; either selected path has bounded progress for every returning comparator and reporter. Ordering and correct reverse metadata are protocol properties, never premises for an access bound.";
   if index > 0_u64 {
     let before = index - 1_u64;
     let parent = before / 2_u64;
     invariant bounded_parent: parent < index;
-    let order = PriorityOrder::compare(env: order_env, left: &deref(queue).storage.inner[parent], right: &deref(queue).storage.inner[index]);
+    let order = PriorityOrder::compare(env: order_env, left: &queue^.storage.inner[parent], right: &queue^.storage.inner[index]);
     if order > 0_i32 {
       priority_queue_sift_rise_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, start: index, count: count, order_env: order_env, position_env: position_env);
       return unit;
@@ -197,48 +197,48 @@ fn priority_queue_repair_at_indexed<interface PriorityOrder<T, E>, P, fn placed(
 
 fn priority_queue_push<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, env: &E) -> result: Result<unit, T> reads(env), writes(queue.storage) {
   doc "Returns the offered owner unchanged in Err when the length has reached the ceiling. Otherwise the backing grows geometrically, saturating at the ceiling, and the inserted value rises into place. Every mutation borrows the queue rather than returning its owner.";
-  let entering = deref(queue).storage.inner.len;
+  let entering = queue^.storage.inner.len;
   if entering >= ceiling {
     return Err<unit, T>(error: move value);
   }
   priority_queue_make_room::<T, ceiling>(queue: queue);
   let count = entering + 1_u64;
-  place_back(window: &deref(queue).storage.inner, value: move value);
+  place_back(window: &queue^.storage.inner, value: move value);
   priority_queue_sift_rise::<PriorityOrder<T, E>, ceiling>(queue: queue, count: count, env: env);
   return Ok<unit, T>(value: unit);
 }
 
 fn priority_queue_peek<T, F, R, fn observe(env: &F, value: &T) -> result: R reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, env: &F) -> result: R reads(queue.storage), writes(env) contract {
-  requires deref(queue).storage.inner.len > 0_u64;
+  requires queue^.storage.inner.len > 0_u64;
 } {
   doc "A proved nonempty queue lends the root only for this callback. Its environment must be disjoint from the queue, and its ordinary owned result cannot contain a reference.";
-  let observed = observe(env: env, value: &deref(queue).storage.inner[0_u64]);
+  let observed = observe(env: env, value: &queue^.storage.inner[0_u64]);
   return move observed;
 }
 
 fn priority_queue_pop<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, env: &E) -> removed: T reads(env), writes(queue.storage) contract {
-  requires deref(queue).storage.inner.len > 0_u64;
-  ensures deref(queue).storage.inner.len + 1_u64 == deref(entry(queue)).storage.inner.len;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  requires queue^.storage.inner.len > 0_u64;
+  ensures queue^.storage.inner.len + 1_u64 == entry(queue)^.storage.inner.len;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
-  let removed = take_back(window: &deref(queue).storage.inner);
-  let count = deref(queue).storage.inner.len;
+  let removed = take_back(window: &queue^.storage.inner);
+  let count = queue^.storage.inner.len;
   if count == 0_u64 {
     return move removed;
   }
-  swap(first: &deref(queue).storage.inner[0_u64], second: &removed);
+  swap(first: &queue^.storage.inner[0_u64], second: &removed);
   priority_queue_sift_sink::<PriorityOrder<T, E>, ceiling>(queue: queue, start: 0_u64, count: count, env: env);
   return move removed;
 }
 
 fn priority_queue_replace_top<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, env: &E) -> removed: T reads(env), writes(queue.storage) contract {
-  requires deref(queue).storage.inner.len > 0_u64;
-  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  requires queue^.storage.inner.len > 0_u64;
+  ensures queue^.storage.inner.len == entry(queue)^.storage.inner.len;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Exchanges the offered owner with the root and returns the previous root after one downward sift. Length and backing capacity stay unchanged.";
-  let count = deref(queue).storage.inner.len;
-  swap(first: &deref(queue).storage.inner[0_u64], second: &value);
+  let count = queue^.storage.inner.len;
+  swap(first: &queue^.storage.inner[0_u64], second: &value);
   priority_queue_sift_sink::<PriorityOrder<T, E>, ceiling>(queue: queue, start: 0_u64, count: count, env: env);
   return move value;
 }
@@ -267,51 +267,51 @@ fn priority_queue_heapify<interface PriorityOrder<T, E>, const ceiling: u64>(sto
 
 fn priority_queue_push_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, order_env: &E, position_env: &P) -> result: Result<unit, T> reads(order_env), writes(queue.storage), writes(position_env) {
   doc "Adds one entry and reports its initial resident position even when it does not rise. Every later swap reports both resident entries. Err returns the offered owner unchanged without invoking the reporter. The reporter's environment must be disjoint from the queue and order environment.";
-  let entering = deref(queue).storage.inner.len;
+  let entering = queue^.storage.inner.len;
   if entering >= ceiling {
     return Err<unit, T>(error: move value);
   }
   priority_queue_make_room::<T, ceiling>(queue: queue);
   let count = entering + 1_u64;
-  place_back(window: &deref(queue).storage.inner, value: move value);
-  placed(env: position_env, value: &deref(queue).storage.inner[entering], index: entering);
+  place_back(window: &queue^.storage.inner, value: move value);
+  placed(env: position_env, value: &queue^.storage.inner[entering], index: entering);
   priority_queue_sift_rise_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, start: entering, count: count, order_env: order_env, position_env: position_env);
   return Ok<unit, T>(value: unit);
 }
 
 fn priority_queue_peek_at<T, F, R, fn observe(env: &F, value: &T) -> result: R reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, env: &F) -> result: R reads(queue.storage), writes(env) contract {
-  requires index < deref(queue).storage.inner.len;
+  requires index < queue^.storage.inner.len;
 } {
   doc "Lends the entry currently at a caller-proved position. A position is not stable identity; a handle-based caller must check the observed entry before using that position for a later mutation. The result is ordinary owned data and cannot retain the reference.";
-  let observed = observe(env: env, value: &deref(queue).storage.inner[index]);
+  let observed = observe(env: env, value: &queue^.storage.inner[index]);
   return move observed;
 }
 
 fn priority_queue_remove_at_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, order_env: &E, position_env: &P) -> removed: T reads(order_env), writes(queue.storage), writes(position_env) contract {
-  requires index < deref(queue).storage.inner.len;
-  ensures deref(queue).storage.inner.len + 1_u64 == deref(entry(queue)).storage.inner.len;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  requires index < queue^.storage.inner.len;
+  ensures queue^.storage.inner.len + 1_u64 == entry(queue)^.storage.inner.len;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Returns the owner at the current position, replacing it with the last entry and repairing in one direction when necessary. Removing the last entry reports no placement. The caller explicitly retires the returned entry's membership; the reporter only receives entries still resident in the heap.";
-  let removed = take_back(window: &deref(queue).storage.inner);
-  let count = deref(queue).storage.inner.len;
+  let removed = take_back(window: &queue^.storage.inner);
+  let count = queue^.storage.inner.len;
   if index < count {
-    swap(first: &deref(queue).storage.inner[index], second: &removed);
-    placed(env: position_env, value: &deref(queue).storage.inner[index], index: index);
+    swap(first: &queue^.storage.inner[index], second: &removed);
+    placed(env: position_env, value: &queue^.storage.inner[index], index: index);
     priority_queue_repair_at_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, index: index, count: count, order_env: order_env, position_env: position_env);
   }
   return move removed;
 }
 
 fn priority_queue_replace_at_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, value: T, order_env: &E, position_env: &P) -> removed: T reads(order_env), writes(queue.storage), writes(position_env) contract {
-  requires index < deref(queue).storage.inner.len;
-  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  requires index < queue^.storage.inner.len;
+  ensures queue^.storage.inner.len == entry(queue)^.storage.inner.len;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Exchanges the offered owner with the selected entry, reports its placement and repairs upward or downward. A reschedule offers the same application identity with a new ordering key. Replacing a different identity requires the caller to retire the returned entry's old membership separately.";
-  let count = deref(queue).storage.inner.len;
-  swap(first: &deref(queue).storage.inner[index], second: &value);
-  placed(env: position_env, value: &deref(queue).storage.inner[index], index: index);
+  let count = queue^.storage.inner.len;
+  swap(first: &queue^.storage.inner[index], second: &value);
+  placed(env: position_env, value: &queue^.storage.inner[index], index: index);
   priority_queue_repair_at_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, index: index, count: count, order_env: order_env, position_env: position_env);
   return move value;
 }
@@ -342,17 +342,17 @@ fn priority_queue_heapify_indexed<interface PriorityOrder<T, E>, P, fn placed(en
 }
 
 fn priority_queue_drain<interface PriorityOrder<T, E>, F, fn consume(env: &F, value: T) -> result: unit writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, order_env: &E, consume_env: &F) -> result: unit reads(order_env), writes(queue.storage), writes(consume_env) contract {
-  ensures deref(queue).storage.inner.len == 0_u64;
-  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+  ensures queue^.storage.inner.len == 0_u64;
+  ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap;
 } {
   doc "Consumes in repeated-pop order in O(n log n), retaining capacity for reuse. The consumer receives only its disjoint environment and the removed owner.";
-  let capacity = deref(queue).storage.inner.cap;
+  let capacity = queue^.storage.inner.cap;
   loop @drain (
-    invariant capacity_low: deref(queue).storage.inner.cap >= capacity,
-    invariant capacity_high: deref(queue).storage.inner.cap <= capacity
+    invariant capacity_low: queue^.storage.inner.cap >= capacity,
+    invariant capacity_high: queue^.storage.inner.cap <= capacity
   ) {
-    if deref(queue).storage.inner.len == 0_u64 {
-      invariant kept_capacity: deref(queue).storage.inner.cap == capacity;
+    if queue^.storage.inner.len == 0_u64 {
+      invariant kept_capacity: queue^.storage.inner.cap == capacity;
       break @drain;
     }
     let value = priority_queue_pop::<PriorityOrder<T, E>, ceiling>(queue: queue, env: order_env);

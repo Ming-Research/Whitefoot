@@ -24,7 +24,7 @@
 //! - `formal_view_child_last_use_restores_parent_writes_across_retained_calls`
 //!   retired with [OWN-6] and [OWN-14]: there is no loan, no child view and no
 //!   suspension to restore from. [REF-1] makes a reference a name for a path
-//!   and re-slicing `&deref(part)[a..b]` [REF-4] another path, so a write
+//!   and re-slicing `&part^[a..b]` [REF-4] another path, so a write
 //!   through either reaches the same storage with nothing to hand back.
 //!
 //! Every compute case below keeps its own subject: the independent oracles and
@@ -292,25 +292,25 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
 fn runtime_array_helper_prices_use_only_original_readonly_reference_captures() {
     let mut source = String::from(
         r#"fn sum_owner(input: &Box<Array<u64>>) -> result: u64 reads(input) {
-  let count = deref(input).inner.len;
+  let count = input^.inner.len;
   let total = 0_u64;
   for (i in 0_u64..count) {
-    set total = total +wrap deref(input).inner[i];
+    set total = total +wrap input^.inner[i];
   }
   return total;
 }
 
 fn sum_range(input: &[u64]) -> result: u64 reads(input) {
-  let count = deref(input).len;
+  let count = input^.len;
   let total = 0_u64;
   for (i in 0_u64..count) {
-    set total = total +wrap deref(input)[i];
+    set total = total +wrap input^[i];
   }
   return total;
 }
 
 fn sum_other(input: &Box<u64>) -> result: u64 reads(input) {
-  let count = deref(input).inner;
+  let count = input^.inner;
   let total = 0_u64;
   for (i in 0_u64..count) {
     set total = total +wrap 7_u64;
@@ -348,7 +348,7 @@ fn sum_shared(first: &Box<Array<u64>>, second: &Box<Array<u64>>) -> result: u64 
             "mutable",
             "&Box<Array<u64>>",
             "writes(input)",
-            "  if deref(input).inner.len != 0_u64 {\n    set deref(input).inner[0_u64] = 7_u64;\n  }\n",
+            "  if input^.inner.len != 0_u64 {\n    set input^.inner[0_u64] = 7_u64;\n  }\n",
             "sum_owner(input: input)",
             "box_array_filled::<u64>(count: count, value: 7_u64)",
             "&input",
@@ -357,7 +357,7 @@ fn sum_shared(first: &Box<Array<u64>>, second: &Box<Array<u64>>) -> result: u64 
             "rebound",
             "&Box<Array<u64>>",
             "reads(input)",
-            "  let original_count = deref(input).inner.len;\n  let replacement = box_array_filled::<u64>(count: count, value: 7_u64);\n  let selected = input;\n  set selected = &replacement;\n",
+            "  let original_count = input^.inner.len;\n  let replacement = box_array_filled::<u64>(count: count, value: 7_u64);\n  let selected = input;\n  set selected = &replacement;\n",
             "sum_owner(input: selected)",
             "box_array_filled::<u64>(count: 1_u64, value: 7_u64)",
             "&input",
@@ -366,7 +366,7 @@ fn sum_shared(first: &Box<Array<u64>>, second: &Box<Array<u64>>) -> result: u64 
             "local",
             "&Box<Array<u64>>",
             "reads(input)",
-            "  let original_count = deref(input).inner.len;\n  let replacement = box_array_filled::<u64>(count: count, value: 7_u64);\n",
+            "  let original_count = input^.inner.len;\n  let replacement = box_array_filled::<u64>(count: count, value: 7_u64);\n",
             "sum_owner(input: &replacement)",
             "box_array_filled::<u64>(count: 1_u64, value: 7_u64)",
             "&input",
@@ -687,11 +687,7 @@ fn compute_oracle_rejects_wrong_values_and_missing_worker_observations() {
     );
     for corrupt in [true, false] {
         let program = if corrupt {
-            let changed = source.replacen(
-                "total +wrap deref(input)[i]",
-                "total -wrap deref(input)[i]",
-                1,
-            );
+            let changed = source.replacen("total +wrap input^[i]", "total -wrap input^[i]", 1);
             assert_ne!(
                 changed, source,
                 "the block-sum mutant must change the algorithm"
@@ -740,15 +736,15 @@ fn range_references_over_one_storage_write_the_original_array_and_window() {
 }
 
 fn fill(values: &STORAGE) -> result: unit writes(values) contract {
-  requires deref(values).len == 8_u64;
-  ensures deref(values).len == deref(entry(values)).len;
+  requires values^.len == 8_u64;
+  ensures values^.len == entry(values)^.len;
 } {
-  let left = &deref(values)[0_u64..4_u64];
-  let right = &deref(values)[4_u64..8_u64];
-  set deref(left)[0_u64] = 11_u64;
-  set deref(left)[3_u64] = 13_u64;
-  set deref(right)[0_u64] = 17_u64;
-  set deref(right)[3_u64] = 19_u64;
+  let left = &values^[0_u64..4_u64];
+  let right = &values^[4_u64..8_u64];
+  set left^[0_u64] = 11_u64;
+  set left^[3_u64] = 13_u64;
+  set right^[0_u64] = 17_u64;
+  set right^[3_u64] = 19_u64;
   return unit;
 }
 
@@ -1043,12 +1039,12 @@ fn formal_compute_quadrature_matches_postorder_and_analytic_oracles_on_a_worker(
 fn recursive_child_ranges_restore_parent_access() {
     let bound = include_str!("../../../../tests/programs/compute/range_split.wf");
     let inline = bound.replace(
-        "  let left = &deref(output)[0_u64..middle];\n  \
-         let right = &deref(output)[middle..count];\n  \
+        "  let left = &output^[0_u64..middle];\n  \
+         let right = &output^[middle..count];\n  \
          let a = fill_recursive(output: left, depth: remaining);\n  \
          let b = fill_recursive(output: right, depth: remaining);\n",
-        "  let a = fill_recursive(output: &deref(output)[0_u64..middle], depth: remaining);\n  \
-         let b = fill_recursive(output: &deref(output)[middle..count], depth: remaining);\n",
+        "  let a = fill_recursive(output: &output^[0_u64..middle], depth: remaining);\n  \
+         let b = fill_recursive(output: &output^[middle..count], depth: remaining);\n",
     );
     assert_ne!(inline, bound, "range_split.wf binds its child ranges first");
     let output = compile_and_run(&compile(bound.as_bytes()));
@@ -1088,9 +1084,9 @@ fn exclusive_range_references_write_original_local_and_field_storage() {
 }
 
 fn overwrite(view: &[u64], index: u64, value: u64) -> result: unit writes(view) contract {
-  requires index < deref(view).len;
+  requires index < view^.len;
 } {
-  set deref(view)[index] = value;
+  set view^[index] = value;
   return unit;
 }
 
@@ -1099,7 +1095,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let before0 = values[0_u64];
   let before2 = values[2_u64];
   let view = &values[0_u64..4_u64];
-  set deref(view)[0_u64] = 19_u64;
+  set view^[0_u64] = 19_u64;
   let done = overwrite(view: view, index: 2_u64, value: 31_u64);
   if values[0_u64] != 19_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -1142,13 +1138,13 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 12_u8);
   }
   let shared = &packet.bytes[0_u64..4_u64];
-  let seen = deref(shared)[1_u64];
+  let seen = shared^[1_u64];
   if seen != 41_u64 {
     return std::process::exit_status(code: 13_u8);
   }
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let nothing = &empty[0_u64..0_u64];
-  let length = deref(nothing).len;
+  let length = nothing^.len;
   if length != 0_u64 {
     return std::process::exit_status(code: 14_u8);
   }
@@ -1167,13 +1163,13 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 const RANGE_ALIAS_FACTS: &str = r#"fn add_into(dst: &[u32], src: &[u32]) -> result: unit reads(src), writes(dst) contract {
-  requires deref(dst).len <= deref(src).len;
+  requires dst^.len <= src^.len;
 } {
-  let n = deref(dst).len;
+  let n = dst^.len;
   for (i in 0_u64..n) {
-    let a = deref(dst)[i];
-    let b = deref(src)[i];
-    set deref(dst)[i] = a +wrap b;
+    let a = dst^[i];
+    let b = src^[i];
+    set dst^[i] = a +wrap b;
   }
   return unit;
 }
@@ -1283,11 +1279,11 @@ fn composite_range_elements_keep_nested_box_storage_and_descriptor_abi() {
 }
 
 fn rewrite(records: &[Record]) -> previous: u64 writes(records) contract {
-  requires 1_u64 <= deref(records).len;
+  requires 1_u64 <= records^.len;
 } {
-  let old = deref(records)[0_u64].cell.inner;
-  set deref(records)[0_u64].cell.inner = 99_u64;
-  set deref(records)[0_u64].marker = 23_u64;
+  let old = records^[0_u64].cell.inner;
+  set records^[0_u64].cell.inner = 99_u64;
+  set records^[0_u64].marker = 23_u64;
   return old;
 }
 
@@ -1329,13 +1325,13 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn nested_range_elements_read_write_and_borrow_the_selected_inner_array() {
     let source = br#"fn touch(rows: &[Array<u64, 2>], outer: u64, inner: u64, value: u64) -> result: u64 writes(rows) contract {
-  requires outer < deref(rows).len;
+  requires outer < rows^.len;
   requires inner < 2_u64;
 } {
-  let before = deref(rows)[outer][inner];
-  set deref(rows)[outer][inner] = value;
-  let cell = &deref(rows)[outer][inner];
-  let after = deref(cell);
+  let before = rows^[outer][inner];
+  set rows^[outer][inner] = value;
+  let cell = &rows^[outer][inner];
+  let after = cell^;
   let scaled = before *wrap 100_u64;
   return scaled +wrap after;
 }
@@ -1350,10 +1346,10 @@ fn nested_range_checksum() -> result: u64 pure {
   let part = &rows[0_u64..2_u64];
   let first = touch(rows: part, outer: 1_u64, inner: 0_u64, value: 71_u64);
   let second = touch(rows: part, outer: 0_u64, inner: 1_u64, value: 83_u64);
-  let first_row_first = deref(part)[0_u64][0_u64] *wrap 100000000_u64;
-  let first_row_second = deref(part)[0_u64][1_u64] *wrap 10000000000_u64;
-  let second_row_first = deref(part)[1_u64][0_u64] *wrap 1000000000000_u64;
-  let second_row_second = deref(part)[1_u64][1_u64] *wrap 100000000000000_u64;
+  let first_row_first = part^[0_u64][0_u64] *wrap 100000000_u64;
+  let first_row_second = part^[0_u64][1_u64] *wrap 10000000000_u64;
+  let second_row_first = part^[1_u64][0_u64] *wrap 1000000000000_u64;
+  let second_row_second = part^[1_u64][1_u64] *wrap 100000000000000_u64;
   let second_observation = second *wrap 10000_u64;
   let checksum0 = first +wrap second_observation;
   let checksum1 = checksum0 +wrap first_row_first;
@@ -1425,12 +1421,12 @@ fn loop_carried_references_execute_zero_trip_and_backedge_values() {
   let selected = &values[0_u64];
   let observed = 0_u64;
   for (i in 0_u64..count) {
-    let current = deref(selected);
+    let current = selected^;
     set observed = observed +wrap current;
     let next = i + 1_u64;
     set selected = &values[next];
   }
-  let final_value = deref(selected);
+  let final_value = selected^;
   let scaled = observed *wrap 100_u64;
   return scaled +wrap final_value;
 }
@@ -1446,9 +1442,9 @@ fn carried_range(count: u64) -> result: u64 pure contract {
   let selected = &values[0_u64..2_u64];
   let observed = 0_u64;
   for (i in 0_u64..count) {
-    let available = 0_u64 < deref(selected).len;
+    let available = 0_u64 < selected^.len;
     if available {
-      let current = deref(selected)[0_u64];
+      let current = selected^[0_u64];
       set observed = observed +wrap current;
     } else {
       return 1_u64;
@@ -1457,13 +1453,13 @@ fn carried_range(count: u64) -> result: u64 pure contract {
     let end = next + 2_u64;
     set selected = &values[next..end];
   }
-  let width = deref(selected).len;
+  let width = selected^.len;
   let has_first = 0_u64 < width;
   if has_first {
-    let first = deref(selected)[0_u64];
+    let first = selected^[0_u64];
     let has_second = 1_u64 < width;
     if has_second {
-      let second = deref(selected)[1_u64];
+      let second = selected^[1_u64];
       let observed_part = observed *wrap 1000000000_u64;
       let first_part = first *wrap 1000000_u64;
       let second_part = second *wrap 1000_u64;
@@ -1567,7 +1563,7 @@ fn a_measured_range_element_has_its_observable_inner_length() {
   let outer = slots_new::<Slots<u64, 2>, 1>();
   place_back(window: &outer, value: move inner);
   let items = &outer[0_u64..1_u64];
-  let observed = deref(items)[0_u64].len;
+  let observed = items^[0_u64].len;
   if observed != 1_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -1603,8 +1599,8 @@ fn joined_range_element_measures_select_each_runtime_target() {
   } else {
     give &right[0_u64..1_u64];
   }
-  if 0_u64 < deref(items).len {
-    let observed = deref(items)[0_u64].len;
+  if 0_u64 < items^.len {
+    let observed = items^[0_u64].len;
     if observed == expected {
       return 0_u8;
     }
@@ -1643,9 +1639,9 @@ fn const_local_and_heap_run_ranges_share_one_read_only_path() {
 
 fn sum(values: &[u8]) -> result: u64 reads(values) {
   let total = 0_u64;
-  let length = deref(values).len;
+  let length = values^.len;
   for (offset in 0_u64..length) {
-    let byte = deref(values)[offset];
+    let byte = values^[offset];
     let word = cvt::<u8, u64>(byte);
     set total = total +wrap word;
   }
@@ -1715,13 +1711,13 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
   place_back(window: &bytes, value: 0_u8);
   place_back(window: &bytes, value: 0_u8);
   let window = &bytes[0_u64..2_u64];
-  let value = deref(window)[2_u64];
+  let value = window^[2_u64];
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
     assert_eq!(failure.rule_id(), Some("OP-4"));
-    assert!(failure.detail().contains("2_u64 < deref(window).len"));
+    assert!(failure.detail().contains("2_u64 < window^.len"));
 }
 
 /// A range reference over a frame-resident window reaches that window's own

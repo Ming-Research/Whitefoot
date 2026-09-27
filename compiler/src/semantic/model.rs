@@ -1588,7 +1588,7 @@ pub(crate) enum CheckedRangeSource {
     /// One indexable owner place [OP-4]: a complete `Array` [TYPE-9] or a
     /// run's initialized window [WIN-1], addressed where it is stored.
     Storage(CheckedContainerRoot),
-    /// Re-slicing another range reference, `&deref(part)[a..b]` [REF-4].
+    /// Re-slicing another range reference, `&part^[a..b]` [REF-4].
     Range(CheckedRangeRoot),
 }
 
@@ -1739,8 +1739,8 @@ pub(crate) struct CheckedContainerRoot {
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
     /// One explicit dereference of `Box` content [TYPE-7]. It is an ordinary
-    /// path step of the resolved place, so `deref(h).value` and
-    /// `deref(h.value)` are two places [REF-1].
+    /// path step of the resolved place, so `h^.value` and
+    /// `h.value^` are two places [REF-1].
     BoxReferent(NominalId),
     Subscript(Box<CheckedPlaceSubscript>),
 }
@@ -1958,7 +1958,7 @@ fn selects_readonly_fragment_field(
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
-/// a binding, possibly below field selections, `deref` wrappings and `Box`
+/// a binding, possibly below field selections, `^` suffixes and `Box`
 /// content, with no subscript.
 fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
     match offset {
@@ -1982,7 +1982,7 @@ impl CheckedPlaceStep {
     ///
     /// `deref` is a step of its own here, where v0.59 erased it: [REF-1]
     /// continues a path through `Box` content, and [OWN-7] reads the complete
-    /// resolved path, so erasing the step would make `deref(h).value` and
+    /// resolved path, so erasing the step would make `h^.value` and
     /// `h.value` one place.
     /// The [FN-9] clause-side projection this step is, for a goal place.
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
@@ -2654,7 +2654,7 @@ pub(crate) struct CheckedStatePath {
 pub(crate) enum CheckedEffectStep {
     /// `.IDENT` selecting a struct field, by source ordinal.
     Field(u32),
-    /// `deref(path)`: `Box` content [TYPE-7].
+    /// `path^`: `Box` content [TYPE-7].
     Deref,
     /// `.TYPEID.IDENT`: one enum payload step, by variant and field ordinal.
     Payload { variant: u32, field: u32 },

@@ -7,7 +7,7 @@ enum State {
 
 fn steal(holder: &Box<State>) -> return_value: Box<State> reads(holder) {
   doc "A reference names the cell's path; the cell itself is affine and is owned by the binding the reference reaches, so it cannot be moved out through that reference.";
-  return move deref(holder);
+  return move holder^;
 }
 
 fn main() -> return_value: ExitStatus pure {

@@ -14,14 +14,14 @@ fn main() -> return_value: ExitStatus pure {
   let counter = Counter(value: 4_i32);
   let packet = Packet::Data(item: counter);
   let holder = &packet;
-  match deref(holder) {
+  match holder^ {
     Data(item: payload) => {
-      set deref(payload).value = 5_i32;
+      set payload^.value = 5_i32;
     }
   }
-  match deref(holder) {
+  match holder^ {
     Data(item: seen) => {
-      if deref(seen).value == 5_i32 {
+      if seen^.value == 5_i32 {
       } else {
         return exit_status(code: 1_u8);
       }

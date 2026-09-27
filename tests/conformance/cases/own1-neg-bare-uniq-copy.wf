@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn consume(x: &i32) -> return_value: unit reads(x) {
-  let seen = deref(x);
+  let seen = x^;
   return unit;
 }
 

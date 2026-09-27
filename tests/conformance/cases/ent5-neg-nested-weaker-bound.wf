@@ -3,7 +3,7 @@ alias exit_status = std::process::exit_status;
 
 fn fetch(b: &[u8], i: u64, outer: Bool, inner: Bool) -> result: u8 reads(b) {
   doc "An inner join has one strict and one non-strict predecessor. Joining that weaker result with an outer strict predecessor cannot strengthen it; the final subscript remains unproved [ENT-5, OP-4].";
-  let spare = deref(b).len;
+  let spare = b^.len;
   if outer {
     if inner {
       let tight = i < spare;
@@ -25,7 +25,7 @@ fn fetch(b: &[u8], i: u64, outer: Bool, inner: Bool) -> result: u8 reads(b) {
       return 0_u8;
     }
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

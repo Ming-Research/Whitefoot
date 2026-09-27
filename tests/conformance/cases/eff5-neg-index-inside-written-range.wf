@@ -7,9 +7,9 @@ fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result
   requires slot < 4_u64;
 } {
   doc "Writes the length of the run values[start..end] into values[slot]. EFF-5: one argument supplies both entries, and whether an index step overlaps a range step depends on the values, so every call compares them.";
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 

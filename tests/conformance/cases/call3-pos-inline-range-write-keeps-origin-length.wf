@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn clear(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {
-  requires at < deref(part).len;
+  requires at < part^.len;
 } {
   doc "Replaces one element of the range with an empty run.";
   let fresh = slots_new::<u64, 8>();
-  set deref(part)[at] = move fresh;
+  set part^[at] = move fresh;
   return unit;
 }
 

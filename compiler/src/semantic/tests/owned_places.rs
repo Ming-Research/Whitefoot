@@ -121,7 +121,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn read(rows: &Box<Array<Row>>, index: u64) -> result: u64 reads(rows) {
-  return deref(rows).inner[index].left;
+  return rows^.inner[index].left;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

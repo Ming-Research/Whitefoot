@@ -21,7 +21,7 @@ fn relay(owner: Owner) -> result: Owner pure {
 }
 
 fn clear(owner: &Owner) -> result: unit writes(owner) {
-  set deref(owner) = make_empty();
+  set owner^ = make_empty();
   return unit;
 }
 

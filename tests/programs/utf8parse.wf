@@ -4,13 +4,13 @@ alias exit_status = std::process::exit_status;
 const utf8_input: Array<u8, 15> =[65_u8, 194_u8, 162_u8, 226_u8, 130_u8, 172_u8, 240_u8, 159_u8, 152_u8, 128_u8, 194_u8, 65_u8, 255_u8, 226_u8, 130_u8];
 
 fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contract {
-  define source_length = deref(src).len;
-  define output_length = deref(out).len;
+  define source_length = src^.len;
+  define output_length = out^.len;
   define enough_output = output_length >= source_length;
   requires enough_output;
 } {
-  let source_length = deref(src).len;
-  let output_length = deref(out).len;
+  let source_length = src^.len;
+  let output_length = out^.len;
   let count = 0_u64;
   let state = 0_u8;
   let value = 0_u32;
@@ -20,13 +20,13 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
     } else {
       return count;
     }
-    let byte = deref(src)[i];
+    let byte = src^[i];
     let in_ground = state == 0_u8;
     if in_ground {
       let ascii = byte <= 127_u8;
       if ascii {
         let event = cvt::<u8, u32>(byte);
-        set deref(out)[count] = event;
+        set out^[count] = event;
         set count = count +wrap 1_u64;
       } else {
         let two_low = byte >= 194_u8;
@@ -79,7 +79,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
                       set value = cvt::<u8, u32>(payload);
                       set state = 7_u8;
                     } else {
-                      set deref(out)[count] = 1114112_u32;
+                      set out^[count] = 1114112_u32;
                       set count = count +wrap 1_u64;
                     }
                   }
@@ -100,11 +100,11 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
           let payload_wide = cvt::<u8, u32>(payload);
           let shifted = value *wrap 64_u32;
           let event = shifted +wrap payload_wide;
-          set deref(out)[count] = event;
+          set out^[count] = event;
           set count = count +wrap 1_u64;
           set state = 0_u8;
         } else {
-          set deref(out)[count] = 1114112_u32;
+          set out^[count] = 1114112_u32;
           set count = count +wrap 1_u64;
           set state = 0_u8;
         }
@@ -118,7 +118,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
             set value = shifted +wrap payload_wide;
             set state = 1_u8;
           } else {
-            set deref(out)[count] = 1114112_u32;
+            set out^[count] = 1114112_u32;
             set count = count +wrap 1_u64;
             set state = 0_u8;
           }
@@ -135,7 +135,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
               set value = shifted +wrap payload_wide;
               set state = 1_u8;
             } else {
-              set deref(out)[count] = 1114112_u32;
+              set out^[count] = 1114112_u32;
               set count = count +wrap 1_u64;
               set state = 0_u8;
             }
@@ -152,7 +152,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
                 set value = shifted +wrap payload_wide;
                 set state = 1_u8;
               } else {
-                set deref(out)[count] = 1114112_u32;
+                set out^[count] = 1114112_u32;
                 set count = count +wrap 1_u64;
                 set state = 0_u8;
               }
@@ -166,7 +166,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
                   set value = shifted +wrap payload_wide;
                   set state = 2_u8;
                 } else {
-                  set deref(out)[count] = 1114112_u32;
+                  set out^[count] = 1114112_u32;
                   set count = count +wrap 1_u64;
                   set state = 0_u8;
                 }
@@ -183,7 +183,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
                     set value = shifted +wrap payload_wide;
                     set state = 2_u8;
                   } else {
-                    set deref(out)[count] = 1114112_u32;
+                    set out^[count] = 1114112_u32;
                     set count = count +wrap 1_u64;
                     set state = 0_u8;
                   }
@@ -198,7 +198,7 @@ fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
                     set value = shifted +wrap payload_wide;
                     set state = 2_u8;
                   } else {
-                    set deref(out)[count] = 1114112_u32;
+                    set out^[count] = 1114112_u32;
                     set count = count +wrap 1_u64;
                     set state = 0_u8;
                   }
@@ -224,8 +224,8 @@ fn main() -> status: ExitStatus pure {
   }
   let window = &output[0_u64..15_u64];
   let input = &utf8_input[0_u64..15_u64];
-  let window_length = deref(window).len;
-  let input_length = deref(input).len;
+  let window_length = window^.len;
+  let input_length = input^.len;
   if window_length >= input_length {
   } else {
     return exit_status(code: 2_u8);

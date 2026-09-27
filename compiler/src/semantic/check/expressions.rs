@@ -34,7 +34,8 @@ enum AccessKind {
 #[derive(Clone, Copy)]
 pub(in crate::semantic::check) enum PlaceUseContext {
     Ordinary,
-    Consuming,
+    /// The caller judges a referent without taking its owned value.
+    InspectReferent,
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +103,7 @@ pub(in crate::semantic::check) struct MutationTarget {
     /// [REF-1, OWN-7].
     pub(in crate::semantic::check) place: ResolvedPlaceSet,
     /// The reference binding the target is reached through, when it is
-    /// `deref(p)` or a path below one [SET-1]. Its [REF-2] validity is
+    /// `p^` or a path below one [SET-1]. Its [REF-2] validity is
     /// rechecked after the right-hand side.
     pub(in crate::semantic::check) through_reference: Option<DeclarationId>,
     /// Whether the target uses the element-position judgment [MSR-2].
@@ -149,7 +150,7 @@ pub(in crate::semantic::check) const WIN3_LINEAR_TARGET: &str =
 
 /// The roots [SET-1] admits for a written target, as the diagnostic names
 /// them.
-const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below deref of a reference whose \
+const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below `^` of a reference whose \
      row declares that write";
 
 impl<'unit> Checker<'_, 'unit> {
@@ -166,7 +167,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// One [SET-1] target: the writability relation the rule states.
     ///
     /// The target is writable exactly when it is rooted in a live own-mode
-    /// value binding, when it is `deref(p)` or a path below it where `p` is a
+    /// value binding, when it is `p^` or a path below it where `p` is a
     /// reference parameter whose declared row carries `writes` of that path,
     /// or when `p` is a local reference variable whose named path is itself
     /// writable [SET-1, EFF-1, EFF-5].
@@ -184,12 +185,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
+        if !self.types.declarations.tree.place_has_dereference(node)?
             && self.types.declarations.tree.children(pbase)?.is_empty()
         {
             let usage =
@@ -239,13 +235,7 @@ impl<'unit> Checker<'_, 'unit> {
                 context, node, &suffixes, subscript, bindings, loop_depth,
             );
         }
-        if self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
-        {
+        if self.types.declarations.tree.place_has_dereference(node)? {
             return self.check_dereferenced_set_target(context, node, bindings);
         }
         if !self.types.declarations.tree.children(pbase)?.is_empty() {
@@ -286,13 +276,13 @@ impl<'unit> Checker<'_, 'unit> {
         // storage, so [SET-1]'s value-target judgment does not apply to it.
         // That rebinding is recognized at the statement; reaching this
         // formation with a bare reference target means the right-hand side is
-        // a value, which [TYPE-7] refuses with `deref(.)`.
+        // a value, which [TYPE-7] refuses with `p^`.
         if local.reference.is_some() && suffixes.is_empty() {
             return self.types.declarations.issue_node(
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(.)`",
+                    mechanical_fix: "write `p^`",
                 },
             );
         }
@@ -320,7 +310,8 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .reject_reserved_write_members(check_context, node, &suffixes, local.ty)?;
         let (fields, ty) = if local.mode == CheckedMode::Own {
-            let place = self.elaborate_local_place(check_context, node, &suffixes, &local)?;
+            let place =
+                self.elaborate_local_place(check_context, node, &suffixes, &local, bindings)?;
             let Some(fields) = place.plain_fields() else {
                 return self.check_elaborated_set_target(context, node, bindings, place);
             };
@@ -403,22 +394,6 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
             loop_depth,
             PlaceUseContext::Ordinary,
-        )
-    }
-
-    pub(super) fn check_consuming_expression(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        node: NodeId,
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        loop_depth: usize,
-    ) -> Result<TypedExpression, CheckStop> {
-        self.check_expression_in_context(
-            context,
-            node,
-            bindings,
-            loop_depth,
-            PlaceUseContext::Consuming,
         )
     }
 
@@ -715,10 +690,9 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// Checks an atom in a position whose owning rule decides whether the
-    /// selected value is admissible. This delays OWN-1's bare-affine spelling
-    /// rejection long enough for an earlier TYPE-7 implicit-read judgment to
-    /// take exclusive ownership of a holder used for its referent.
-    pub(super) fn check_consuming_atom(
+    /// selected referent is admissible. Owned values still obey the ordinary
+    /// OWN-1 spelling rule; only a referent can be inspected without taking it.
+    pub(super) fn check_inspected_atom(
         &mut self,
         context: FunctionContext<'_, '_>,
         node: NodeId,
@@ -730,7 +704,7 @@ impl<'unit> Checker<'_, 'unit> {
             node,
             bindings,
             loop_depth,
-            PlaceUseContext::Consuming,
+            PlaceUseContext::InspectReferent,
         )
     }
 
@@ -844,12 +818,6 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(node, Production::Psuffix)?;
         if !suffixes.is_empty()
-            && !self
-                .types
-                .declarations
-                .tree
-                .place_base(pbase)?
-                .is_dereference()
             && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {
                 declaration,
@@ -896,15 +864,10 @@ impl<'unit> Checker<'_, 'unit> {
         // [OP-15] a measure is read as a member of the measured place, so
         // `a.len` is a place form and not a call. The written base decides
         // nothing about that read: the explicit-place walker resolves a bare
-        // IDENT base exactly as it resolves a `deref` chain, so routing every
+        // IDENT base exactly as it resolves a `^` path, so routing every
         // measure member there keeps one implementation of [MSR-1]'s rows,
         // [MSR-2]'s descriptor-only support and [EFF-2]'s attribution.
-        if self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
+        if self.types.declarations.tree.place_has_dereference(node)?
             || self
                 .types
                 .declarations
@@ -915,7 +878,6 @@ impl<'unit> Checker<'_, 'unit> {
                 check_context,
                 use_node,
                 node,
-                pbase,
                 bindings,
                 options,
             );
@@ -947,7 +909,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 // [REF-1, TYPE-7] a bare reference variable denotes the
                 // reference itself, and the storage it names is reached only
-                // through `deref`, so a suffix chain written directly on one
+                // through `^`, so a suffix chain written directly on one
                 // is the [TYPE-7] missing-dereference rejection. The bare
                 // read is a copy of a name, never a consume: a reference owns
                 // no storage, so `move p` on one is [OWN-1]'s copy spelling.
@@ -957,7 +919,7 @@ impl<'unit> Checker<'_, 'unit> {
                             SemanticRule::Type7,
                             use_node,
                             SemanticIssueKind::MissingDereference {
-                                mechanical_fix: "write `deref(p)`",
+                                mechanical_fix: "write `p^`",
                             },
                         );
                     }
@@ -987,14 +949,18 @@ impl<'unit> Checker<'_, 'unit> {
                         accesses: Vec::new(),
                     });
                 }
-                let place =
-                    self.elaborate_local_place(check_context, use_node, &suffixes, &local)?;
+                let place = self.elaborate_local_place(
+                    check_context,
+                    use_node,
+                    &suffixes,
+                    &local,
+                    bindings,
+                )?;
                 let Some(fields) = place.plain_fields() else {
                     return self.check_elaborated_place_use(
                         check_context,
                         use_node,
                         node,
-                        pbase,
                         bindings,
                         options,
                         place,
@@ -1011,10 +977,7 @@ impl<'unit> Checker<'_, 'unit> {
                         },
                     );
                 }
-                if !copy
-                    && !options.explicit_move
-                    && matches!(options.context, PlaceUseContext::Ordinary)
-                {
+                if !copy && !options.explicit_move {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
@@ -1242,7 +1205,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// One [SET-1] target written `deref(p)` or a path below one.
+    /// One [SET-1] target written `p^` or a path below one.
     ///
     /// [SET-1] makes such a target writable exactly when `p` is a reference
     /// parameter whose declared row carries `writes` of that path
@@ -1380,11 +1343,16 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
-        self.check_consuming_expression(context, node, bindings, loop_depth)
+        self.check_expression_in_context(
+            context,
+            node,
+            bindings,
+            loop_depth,
+            PlaceUseContext::InspectReferent,
+        )
     }
 
-    /// [PROV-6] the operand of a `dispose` statement or of a destructuring
-    /// consume: an ordinary consuming place use, judged by [OWN-1] exactly as
+    /// [PROV-6] the operand of a destructuring consume: an ordinary consuming place use, judged by [OWN-1] exactly as
     /// every other consuming position is.
     pub(super) fn check_consumed_place(
         &mut self,
@@ -1402,7 +1370,7 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
             PlaceUseOptions {
                 explicit_move,
-                context: PlaceUseContext::Consuming,
+                context: PlaceUseContext::InspectReferent,
                 loop_depth,
             },
         )
@@ -1520,7 +1488,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `deref(holder)`",
+                        mechanical_fix: "write `holder^`",
                     },
                 );
             }
@@ -1864,7 +1832,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `deref(holder)`",
+                        mechanical_fix: "write `holder^`",
                     },
                 );
             }
@@ -1904,7 +1872,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(None);
         };
-        if self.tree.place_base(pbase)?.is_dereference() || !self.tree.children(pbase)?.is_empty() {
+        if self.tree.place_has_dereference(place)? || !self.tree.children(pbase)?.is_empty() {
             return Ok(None);
         }
         let usage = self.use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;

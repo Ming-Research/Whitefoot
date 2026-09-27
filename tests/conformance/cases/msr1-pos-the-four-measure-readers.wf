@@ -25,7 +25,7 @@ fn main() -> status: ExitStatus pure {
   let ring_room = cycle.cap - cycle.len;
   let ring_head = cycle.head;
   let view = &fixed[0_u64..4_u64];
-  let view_length = deref(view).len;
+  let view_length = view^.len;
   if view_length == 4_u64 {
     if ring_head == 0_u64 {
       if ring_length == 0_u64 {

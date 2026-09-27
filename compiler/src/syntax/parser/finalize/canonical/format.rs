@@ -542,7 +542,8 @@ fn right_attaches(predicate: TerminalPredicate) -> bool {
     matches!(
         predicate,
         TerminalPredicate::Fixed(
-            FixedTerminal::RightParen
+            FixedTerminal::Caret
+                | FixedTerminal::RightParen
                 | FixedTerminal::RightBracket
                 | FixedTerminal::RightAngle
                 | FixedTerminal::Comma

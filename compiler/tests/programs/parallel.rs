@@ -194,39 +194,39 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
 /// per-iteration partition of `w`. The first loop forms that range at the
 /// call and the second binds it first.
 const SHIFTING_ORIGIN_PROGRAM: &str = r#"fn bump(output: &[u64], mark: u64) -> result: u64 writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (x in 0_u64..count) {
-    let old = deref(output)[x];
+    let old = output^[x];
     let next = old +wrap mark;
-    set deref(output)[x] = next;
+    set output^[x] = next;
   }
   return count;
 }
 
 fn shifted_inline(values: &Box<Array<u64>>, n: u64) -> result: unit writes(values) contract {
   requires 1_u64 <= n;
-  requires n <= deref(values).inner.len;
+  requires n <= values^.inner.len;
 } {
   let last = n - 1_u64;
   for (i in 0_u64..n) {
     let lo = last - i;
-    let w = &deref(values).inner[lo..n];
+    let w = &values^.inner[lo..n];
     let hi = i + 1_u64;
-    let painted = bump(output: &deref(w)[i..hi], mark: 1_u64);
+    let painted = bump(output: &w^[i..hi], mark: 1_u64);
   }
   return unit;
 }
 
 fn shifted_bound(values: &Box<Array<u64>>, n: u64) -> result: unit writes(values) contract {
   requires 1_u64 <= n;
-  requires n <= deref(values).inner.len;
+  requires n <= values^.inner.len;
 } {
   let last = n - 1_u64;
   for (i in 0_u64..n) {
     let lo = last - i;
-    let w = &deref(values).inner[lo..n];
+    let w = &values^.inner[lo..n];
     let hi = i + 1_u64;
-    let u = &deref(w)[i..hi];
+    let u = &w^[i..hi];
     let painted = bump(output: u, mark: 1_u64);
   }
   return unit;

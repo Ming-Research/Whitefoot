@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn scaled(out: &[u8], src: &[u8]) -> written: u64 pure contract {
-  define room = deref(out).len;
-  define count = deref(src).len;
+  define room = out^.len;
+  define count = src^.len;
   define needed = count * 2_u64;
   requires room >= needed;
 } {

@@ -276,29 +276,17 @@ impl<'unit> Checker<'_, 'unit> {
         let Some(last) = self.types.declarations.tree.last_subscript(suffixes)? else {
             return Ok(None);
         };
-        let pbase = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
-        {
+        let Some(0) = self.types.declarations.tree.reference_step(suffixes)? else {
             return Ok(Some(last));
-        }
-        let inner = self
-            .types
-            .declarations
-            .tree
-            .dereferenced_place(pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let inner = self.elaborate_value_place(check_context, place, inner, bindings)?;
-        let dereferenced = self.resolve_explicit_dereference(place, pbase, inner, bindings)?;
+        };
+        let dereferenced = self.elaborate_place_prefix(
+            check_context,
+            place,
+            place,
+            &suffixes[..1],
+            bindings,
+            LexicalUseRole::PlaceBase,
+        )?;
         if !dereferenced.range_referent {
             return Ok(Some(last));
         }
@@ -1321,7 +1309,7 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [SET-1] the element-target half of the writability question.
     ///
-    /// [SET-1] makes a target writable when it "is `deref(p)` or a path below
+    /// [SET-1] makes a target writable when it "is `p^` or a path below
     /// it where `p` is a reference parameter whose declared row carries
     /// `writes` of that path [EFF-1, EFF-5]". An index and a field inherit
     /// the writability of their selected base, so an element target reached
@@ -1559,33 +1547,41 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_indexed_place(context, place, bindings, &suffixes, place, loop_depth)
     }
 
-    /// One indexable place written through an explicit `deref` [TYPE-7].
+    /// One indexable place written through an explicit `^` [TYPE-7].
     ///
     /// The `deref` names a reference's referent, so the place is resolved by
     /// the ordinary [REF-1] walk and the written suffixes continue it. The
     /// v0.59 companion of this function also had to answer for a view
     /// descriptor reached through a holder; views are gone, so one indexable
     /// container place is the whole answer.
+    #[allow(clippy::too_many_arguments)]
     fn check_dereferenced_indexed_place(
         &mut self,
         context: FunctionContext<'_, '_>,
         node: NodeId,
-        pbase: NodeId,
         base_suffixes: &[NodeId],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
+        root_role: LexicalUseRole,
     ) -> Result<CheckedIndexedPlace, CheckStop> {
         let FunctionContext { check_context, .. } = context;
-        let inner = self
+        let position = self
             .types
             .declarations
             .tree
-            .dereferenced_place(pbase)?
+            .reference_step(base_suffixes)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let inner = self.elaborate_value_place(check_context, node, inner, bindings)?;
-        let mut place = self.resolve_explicit_dereference(node, pbase, inner, bindings)?;
+        let mut place = self.elaborate_place_prefix(
+            check_context,
+            node,
+            node,
+            &base_suffixes[..=position],
+            bindings,
+            root_role,
+        )?;
+        let base_suffixes = &base_suffixes[position + 1..];
         // [REF-4, OP-4] the run a range reference names is an indexable base
-        // reached through `deref` [TYPE-7]. [TYPE-8] makes `&[T]` a reference
+        // reached through `^` [TYPE-7]. [TYPE-8] makes `&[T]` a reference
         // kind rather than a type, so the referent selects the element type
         // and the row [MSR-1] gives the range is carried by this place.
         if place.range_referent {
@@ -1648,7 +1644,7 @@ impl<'unit> Checker<'_, 'unit> {
                     offsets,
                 }))
             }
-            // [OP-4] the indexable bases, reached through `deref` exactly as
+            // [OP-4] the indexable bases, reached through `^` exactly as
             // an inline one is: a run is one measured place wherever it is
             // reached from [MSR-1].
             CheckedType::Array { .. } | CheckedType::Window { .. } => {
@@ -1721,20 +1717,14 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
-        {
+        if self.types.declarations.tree.reference_step(base_suffixes)? == Some(0) {
             return self.check_dereferenced_indexed_place(
                 context,
                 node,
-                pbase,
                 base_suffixes,
                 bindings,
                 loop_depth,
+                root_role,
             );
         }
         if !self.types.declarations.tree.children(pbase)?.is_empty() {
@@ -1785,7 +1775,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         node,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `deref(holder)`",
+                            mechanical_fix: "write `holder^`",
                         },
                     );
                 }
@@ -1889,7 +1879,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }))
             }
             // [TYPE-7] a `Box` is not a reference, so no implicit read and no
-            // `deref(.)` fix is at issue here: the cell is simply not one of
+            // `p^` fix is at issue here: the cell is simply not one of
             // [OP-4]'s indexable bases, and its content is the ordinary field
             // step `b.inner` [TYPE-9]. The refusal is therefore [OP-4]'s
             // non-indexable base.

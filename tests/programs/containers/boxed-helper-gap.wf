@@ -16,12 +16,12 @@ fn build(first: Box<u64>, replacement: Box<u64>) -> (slots: Slots<Option<Entry>,
 }
 
 fn replace_one(slots: &Slots<Option<Entry>, 1>, replacement: Entry) -> previous: Option<Entry> writes(slots) contract {
-  requires 1_u64 <= deref(slots).len;
-  ensures deref(slots).len == deref(entry(slots)).len;
+  requires 1_u64 <= slots^.len;
+  ensures slots^.len == entry(slots)^.len;
 } {
   doc "The exchange is swap: the offered occupant goes into the slot and the binding comes back holding the slot's previous value, with no hole at any program point.";
   let offered = Some<Entry>(value: move replacement);
-  swap(first: &deref(slots)[0_u64], second: &offered);
+  swap(first: &slots^[0_u64], second: &offered);
   return move offered;
 }
 

@@ -303,7 +303,7 @@ impl<'unit> Checker<'_, 'unit> {
             // against a parameter's type before the kind would report `u8`
             // where the source wrote `&[u8]`, and it would let a `&[T]` at an
             // `own T` parameter fall into the [TYPE-7] implicit read below,
-            // whose `deref(.)` fix is wrong here: `deref` of a range names
+            // whose `p^` fix is wrong here: `deref` of a range names
             // the whole run [TYPE-7, REF-4], never one element. Disagreement
             // about the range kind itself is therefore judged first, and it
             // is [TYPE-5]'s ordinary argument mismatch.
@@ -335,7 +335,7 @@ impl<'unit> Checker<'_, 'unit> {
             if argument.mode != parameter.mode {
                 // [TYPE-7] "A reference binding used where a value of its
                 // referent type is expected is a hard error citing TYPE-7,
-                // with the mechanical fix `deref(.)`." The operand mode is
+                // with the mechanical fix `p^`." The operand mode is
                 // what says which of the two refusals this is: a reference
                 // standing in an `own` position is the implicit read the rule
                 // refuses, and every other disagreement is [TYPE-5]'s.
@@ -346,7 +346,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         atom,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `deref(.)`",
+                            mechanical_fix: "write `p^`",
                         },
                     );
                 }
@@ -1136,13 +1136,13 @@ impl<'unit> TypeContext<'unit> {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
             // was formed over: `&a[2..4]` names two elements whatever `a.len`
-            // is. [MSR-1] admits `deref(view)` as a measure place — a root
-            // with `deref` wrappings, field selections and subscripts — and
+            // is. [MSR-1] admits `view^` as a measure place — a root
+            // with `^` suffixes, field selections and subscripts — and
             // admits no place formed with a range step, so
             // the term this instantiation names is the reference the actual
             // names and never that reference's base. Resolving through the
             // reference here would drop the range step and read
-            // `deref(part).len` as the owner's `len`, which admits an index
+            // `part^.len` as the owner's `len`, which admits an index
             // outside the range and outside the storage.
             //
             // An actual that forms its range at the call names no binding, so
@@ -1387,101 +1387,88 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let (mut expression, holder_pending) =
-            if self.declarations.tree.place_base(pbase)?.is_dereference() {
-                let nested = self
-                    .declarations
-                    .tree
-                    .dereferenced_place(pbase)?
-                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                let (nested, nested_holder_pending) =
-                    self.call_goal_place_inner(check_context, nested, bindings)?;
-                if nested_holder_pending {
-                    (nested, false)
-                } else {
-                    let CheckedType::Nominal(nominal) = nested.ty() else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
-                    else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    (
-                        nested
-                            .with_projection(GoalProjection::Deref, referent)
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                        false,
-                    )
-                }
-            } else {
-                let usage =
-                    self.declarations
-                        .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
-                let ResolvedTarget::Source { declaration, class } = usage.target() else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                match class {
-                    DeclarationClass::Value => {
-                        let local = bindings
-                            .get(&declaration)
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                        if let Some(reference) = &local.reference {
-                            (
-                                match reference.paths.as_slice() {
-                                    [path] if !path.has_descendant() => {
-                                        self.goal_referent_image(path, local.ty, place)?
-                                    }
-                                    // [REF-1] a joined reference still denotes
-                                    // one selected referent, but no member of its
-                                    // possible-target set is its unconditional
-                                    // value. Keep the reference's identity so
-                                    // proof kills can resolve every candidate.
-                                    _ => GoalExpression::Datum(GoalDatum::Place {
-                                        root: local.binding,
-                                        projections: Vec::new(),
-                                        ty: local.ty,
-                                    }),
-                                },
-                                true,
-                            )
-                        } else {
-                            (
-                                GoalExpression::Datum(GoalDatum::Place {
+        let (mut expression, mut holder_pending) = {
+            let usage =
+                self.declarations
+                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+            let ResolvedTarget::Source { declaration, class } = usage.target() else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            match class {
+                DeclarationClass::Value => {
+                    let local = bindings
+                        .get(&declaration)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    if let Some(reference) = &local.reference {
+                        (
+                            match reference.paths.as_slice() {
+                                [path] if !path.has_descendant() => {
+                                    self.goal_referent_image(path, local.ty, place)?
+                                }
+                                // [REF-1] a joined reference still denotes
+                                // one selected referent, but no member of its
+                                // possible-target set is its unconditional
+                                // value. Keep the reference's identity so
+                                // proof kills can resolve every candidate.
+                                _ => GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,
                                 }),
-                                false,
-                            )
-                        }
-                    }
-                    DeclarationClass::NamedConst => {
-                        let constant = self
-                            .constants
-                            .get(&declaration)
-                            .copied()
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                            },
+                            true,
+                        )
+                    } else {
                         (
-                            GoalExpression::Datum(GoalDatum::NamedConst {
-                                declaration,
+                            GoalExpression::Datum(GoalDatum::Place {
+                                root: local.binding,
                                 projections: Vec::new(),
-                                ty: self.constant(constant)?.ty,
+                                ty: local.ty,
                             }),
                             false,
                         )
                     }
-                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                 }
-            };
+                DeclarationClass::NamedConst => {
+                    let constant = self
+                        .constants
+                        .get(&declaration)
+                        .copied()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    (
+                        GoalExpression::Datum(GoalDatum::NamedConst {
+                            declaration,
+                            projections: Vec::new(),
+                            ty: self.constant(constant)?.ty,
+                        }),
+                        false,
+                    )
+                }
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            }
+        };
 
         let suffixes = self
             .declarations
             .tree
             .children_with(place, Production::Psuffix)?;
+        let suffixes = if let Some(&first) = suffixes.first()
+            && matches!(
+                self.declarations.tree.place_suffix(first)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+            if !holder_pending {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+            holder_pending = false;
+            &suffixes[1..]
+        } else {
+            suffixes.as_slice()
+        };
         if holder_pending && !suffixes.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        for &suffix in &suffixes {
+        for &suffix in suffixes {
             let ty = expression.ty();
             // [TYPE-9] a `Box`'s content is its field `inner`, and the storage
             // below that field is the cell's referent, so the image takes the
@@ -1603,22 +1590,13 @@ impl<'unit> DeclarationInventory<'unit> {
             },
         )
     }
-    /// A place may nest another place under a `deref` pbase. Search the whole
-    /// source place, not only its outer suffix list, so a future admitted
-    /// `deref(boxes[i])` actual receives the same ephemeral treatment and is
-    /// never misidentified as a rereadable place.
+    /// An indexed actual has an ephemeral image rather than a rereadable
+    /// place image. All path steps are in the one suffix list [GRAM-5].
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {
         let suffixes = self.tree.children_with(place, Production::Psuffix)?;
         if self.tree.last_subscript(&suffixes)?.is_some() {
             return Ok(true);
         }
-        let pbase = self
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(nested) = self.tree.dereferenced_place(pbase)? else {
-            return Ok(false);
-        };
-        self.call_goal_place_contains_subscript(nested)
+        Ok(false)
     }
 }

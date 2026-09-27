@@ -33,8 +33,8 @@ fn assert_complete(source: &str) {
 #[test]
 fn generic_unit_helper_publishes_only_proved_written_state_relations() {
     let source = r#"fn touch<T>(values: &Slots<T, 4>) -> result: unit writes(values) contract {
-  requires deref(values).len >= 1_u64;
-  ensures deref(values).len == deref(entry(values)).len;
+  requires values^.len >= 1_u64;
+  ensures values^.len == entry(values)^.len;
 } {
   let value = take_back(window: values);
   place_back(window: values, value: move value);
@@ -42,7 +42,7 @@ fn generic_unit_helper_publishes_only_proved_written_state_relations() {
 }
 
 fn exercise<T>(values: &Slots<T, 4>) -> result: unit writes(values) contract {
-  requires deref(values).len >= 1_u64;
+  requires values^.len >= 1_u64;
 } {
   touch::<T>(values: values);
   let value = take_back(window: values);
@@ -66,8 +66,8 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source
             .replace(
-                "ensures deref(values).len == deref(entry(values)).len;",
-                "ensures deref(values).len == deref(entry(values)).len + 1_u64;",
+                "ensures values^.len == entry(values)^.len;",
+                "ensures values^.len == entry(values)^.len + 1_u64;",
             )
             .as_bytes(),
         SemanticRule::Fn9,
@@ -79,10 +79,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // [FN-8]'s.
     assert_rule(
         source
-            .replace(
-                "  ensures deref(values).len == deref(entry(values)).len;\n",
-                "",
-            )
+            .replace("  ensures values^.len == entry(values)^.len;\n", "")
             .as_bytes(),
         SemanticRule::Fn8,
     );
@@ -90,7 +87,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source
             .replace(
-                "ensures deref(values).len == deref(entry(values)).len;",
+                "ensures values^.len == entry(values)^.len;",
                 "ensures result == unit;",
             )
             .as_bytes(),
@@ -99,9 +96,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 const PUSH: &str = r#"fn push(values: &Slots<u64, 4>, value: u64) -> result: unit writes(values) contract {
-  requires deref(values).len < deref(values).cap;
-  ensures deref(values).len == deref(entry(values)).len + 1_u64;
-  ensures deref(values).cap == deref(entry(values)).cap;
+  requires values^.len < values^.cap;
+  ensures values^.len == entry(values)^.len + 1_u64;
+  ensures values^.cap == entry(values)^.cap;
 } {
   place_back(window: values, value: value);
   return unit;
@@ -154,10 +151,7 @@ fn a_written_push_proves_entry_and_exit_and_publishes_without_result() {
 
 #[test]
 fn exit_state_cannot_be_its_own_increment() {
-    let source = PUSH.replace(
-        "deref(entry(values)).len + 1_u64",
-        "deref(values).len + 1_u64",
-    );
+    let source = PUSH.replace("entry(values)^.len + 1_u64", "values^.len + 1_u64");
     assert_rule(source.as_bytes(), SemanticRule::Call6);
 }
 
@@ -165,15 +159,15 @@ fn exit_state_cannot_be_its_own_increment() {
 fn entry_former_rejects_body_and_read_only_parameter() {
     let body = PUSH.replace(
         "return unit;",
-        "let size = deref(entry(values)).len;\n  return unit;",
+        "let size = entry(values)^.len;\n  return unit;",
     );
     assert_rule(body.as_bytes(), SemanticRule::Msr3);
     // A reference parameter whose row declares no write of the path has no
     // exit state, so `entry` names nothing it could be distinguished from.
     let read_only = r#"fn observe(values: &Slots<u64, 4>) -> result: u64 reads(values) contract {
-  ensures result == deref(entry(values)).len;
+  ensures result == entry(values)^.len;
 } {
-  return deref(values).len;
+  return values^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -186,14 +180,8 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_writing_call_without_ensures_requires_a_runtime_reread() {
     let source = PUSH
-        .replace(
-            "  ensures deref(values).len == deref(entry(values)).len + 1_u64;\n",
-            "",
-        )
-        .replace(
-            "  ensures deref(values).cap == deref(entry(values)).cap;\n",
-            "",
-        );
+        .replace("  ensures values^.len == entry(values)^.len + 1_u64;\n", "")
+        .replace("  ensures values^.cap == entry(values)^.cap;\n", "");
     assert_rule(source.as_bytes(), SemanticRule::Inv1);
     let guarded = source.replace(
         "  invariant upper: values.len <= 1_u64;\n  invariant lower: values.len >= 1_u64;\n  let last = take_back(window: &values);\n  invariant empty: values.len <= 0_u64;",
@@ -204,12 +192,12 @@ fn a_writing_call_without_ensures_requires_a_runtime_reread() {
 
 #[test]
 fn whole_referent_assignment_kills_the_old_window_facts() {
-    // v0.59 wrote this as `let old = replace deref(values) = move empty;`.
+    // v0.59 wrote this as `let old = replace values^ = move empty;`.
     // [SET-1] with [WIN-3]'s disposition is the successor: the assignment
     // releases the displaced affine window instead of reading it out.
     let source = r#"fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {
   let empty = slots_new::<u64, 4>();
-  set deref(values) = move empty;
+  set values^ = move empty;
   return unit;
 }
 
@@ -227,12 +215,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn exit_facts_publish_beside_multiple_results() {
     let source = r#"fn pop(values: &Slots<u64, 4>) -> (value: u64, count: u64) writes(values) contract {
-  requires deref(values).len > 0_u64;
-  ensures deref(values).len + 1_u64 == deref(entry(values)).len;
-  ensures count == deref(values).len;
+  requires values^.len > 0_u64;
+  ensures values^.len + 1_u64 == entry(values)^.len;
+  ensures count == values^.len;
 } {
   let value = take_back(window: values);
-  let count = deref(values).len;
+  let count = values^.len;
   return value, count;
 }
 
@@ -259,10 +247,10 @@ fn nested_field_effects_preserve_disjoint_support() {
 }
 
 fn push(pair: &Pair, value: u64) -> result: unit writes(pair.changed) contract {
-  requires deref(pair).changed.len < deref(pair).changed.cap;
-  ensures deref(pair).changed.len == deref(entry(pair)).changed.len + 1_u64;
+  requires pair^.changed.len < pair^.changed.cap;
+  ensures pair^.changed.len == entry(pair)^.changed.len + 1_u64;
 } {
-  place_back(window: &deref(pair).changed, value: value);
+  place_back(window: &pair^.changed, value: value);
   return unit;
 }
 
@@ -294,7 +282,7 @@ fn a_writing_call_invalidates_a_surviving_reference() {
   place_back(window: &values, value: 2_u64);
   let seen = &values[0_u64];
   push(values: &values, value: 3_u64);
-  let observed = deref(seen);
+  let observed = seen^;
   return std::process::exit_status(code: 0_u8);
 }
 "#
@@ -321,10 +309,10 @@ fn assigning_the_actual_after_a_call_kills_its_exit_only_relation() {
     let source = format!(
         "{helper}{}",
         r#"fn overwrite(values: &Slots<u64, 4>) -> result: unit writes(values) contract {
-  requires deref(values).len < deref(values).cap;
+  requires values^.len < values^.cap;
 } {
   let replacement = push(values: values, value: 7_u64);
-  set deref(values) = move replacement;
+  set values^ = move replacement;
   let last = take_back(window: values);
   return unit;
 }
@@ -340,20 +328,20 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn written_state_equality_requires_both_affine_bounds() {
     let source = r#"fn fill(slots: &Slots<u8, 8>, count: u64) -> result: unit writes(slots) contract {
-  requires deref(slots).len == 0_u64;
-  requires count <= deref(slots).cap - deref(slots).len;
-  ensures deref(slots).len == count;
+  requires slots^.len == 0_u64;
+  requires count <= slots^.cap - slots^.len;
+  ensures slots^.len == count;
 } {
   for (
     index in 0_u64..count,
-    invariant filled: deref(slots).len >= index,
-    invariant bounded: deref(slots).len <= index,
-    invariant spare: deref(slots).cap + index >= deref(slots).len + count
+    invariant filled: slots^.len >= index,
+    invariant bounded: slots^.len <= index,
+    invariant spare: slots^.cap + index >= slots^.len + count
   ) {
     place_back(window: slots, value: 0_u8);
   }
-  invariant complete_min: deref(slots).len >= count;
-  invariant complete_max: deref(slots).len <= count;
+  invariant complete_min: slots^.len >= count;
+  invariant complete_max: slots^.len <= count;
   return unit;
 }
 
@@ -364,12 +352,12 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_complete(source);
     for (header, fact) in [
         (
-            "    invariant filled: deref(slots).len >= index,\n",
-            "  invariant complete_min: deref(slots).len >= count;\n",
+            "    invariant filled: slots^.len >= index,\n",
+            "  invariant complete_min: slots^.len >= count;\n",
         ),
         (
-            "    invariant bounded: deref(slots).len <= index,\n",
-            "  invariant complete_max: deref(slots).len <= count;\n",
+            "    invariant bounded: slots^.len <= index,\n",
+            "  invariant complete_max: slots^.len <= count;\n",
         ),
     ] {
         let missing_direction = source.replace(header, "").replace(fact, "");
@@ -390,7 +378,7 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
     push(values: &owner.inner, value: 7_u64);
     invariant changed: owner.inner.len >= 1_u64;
     let held = &owner.inner[0_u64];
-    let observed = deref(held);
+    let observed = held^;
     return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
@@ -402,8 +390,8 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
     // prefix of the element reference's path, so the reference is invalid at
     // its next use [REF-2].
     let surviving = source.replace(
-        "    let held = &owner.inner[0_u64];\n    let observed = deref(held);",
-        "    let held = &owner.inner[0_u64];\n    let fresh = slots_new::<u64, 4>();\n    set owner.inner = move fresh;\n    let observed = deref(held);",
+        "    let held = &owner.inner[0_u64];\n    let observed = held^;",
+        "    let held = &owner.inner[0_u64];\n    let fresh = slots_new::<u64, 4>();\n    set owner.inner = move fresh;\n    let observed = held^;",
     );
     assert_rule(surviving.as_bytes(), SemanticRule::Ref2);
 }
@@ -415,10 +403,10 @@ fn two_overlapping_written_arguments_are_refused_pairwise() {
     // the complete `call`. v0.59 spelled the same refusal as a loan conflict
     // between two `&uniq` actuals.
     let source = r#"fn copy_first(source: &Slots<u64, 4>, destination: &Slots<u64, 4>) -> result: unit reads(source), writes(destination) contract {
-  requires deref(source).len > 0_u64;
-  requires deref(destination).len < deref(destination).cap;
+  requires source^.len > 0_u64;
+  requires destination^.len < destination^.cap;
 } {
-  let value = deref(source)[0_u64];
+  let value = source^[0_u64];
   place_back(window: destination, value: value);
   return unit;
 }

@@ -84,15 +84,15 @@ struct RecordStore<T, const ceiling: u64, const generation_limit: u64> {
 }
 
 fn record_id_hash(env: &RecordHash, key: &u64) -> hash: u64 reads(env), reads(key) {
-  let modulus = deref(env).modulus;
+  let modulus = env^.modulus;
   if modulus == 0_u64 {
     return 0_u64;
   }
-  return deref(key) % modulus;
+  return key^ % modulus;
 }
 
 fn record_id_equal(env: &RecordHash, left: &u64, right: &u64) -> equal: Bool reads(left), reads(right) {
-  return deref(left) == deref(right);
+  return left^ == right^;
 }
 
 binding RecordIdKey : HashMapKey<u64, RecordHash> {
@@ -101,28 +101,28 @@ binding RecordIdKey : HashMapKey<u64, RecordHash> {
 }
 
 fn record_due_compare(env: &RecordEmpty, left: &RecordDue, right: &RecordDue) -> order: i32 reads(left), reads(right) {
-  if deref(left).deadline < deref(right).deadline {
+  if left^.deadline < right^.deadline {
     return -1_i32;
   }
-  if deref(left).deadline > deref(right).deadline {
+  if left^.deadline > right^.deadline {
     return 1_i32;
   }
-  if deref(left).id < deref(right).id {
+  if left^.id < right^.id {
     return -1_i32;
   }
-  if deref(left).id > deref(right).id {
+  if left^.id > right^.id {
     return 1_i32;
   }
-  if deref(left).handle.index < deref(right).handle.index {
+  if left^.handle.index < right^.handle.index {
     return -1_i32;
   }
-  if deref(left).handle.index > deref(right).handle.index {
+  if left^.handle.index > right^.handle.index {
     return 1_i32;
   }
-  if deref(left).handle.generation < deref(right).handle.generation {
+  if left^.handle.generation < right^.handle.generation {
     return -1_i32;
   }
-  if deref(left).handle.generation > deref(right).handle.generation {
+  if left^.handle.generation > right^.handle.generation {
     return 1_i32;
   }
   return 0_i32;
@@ -140,36 +140,36 @@ fn record_handle_equal(left: SlabHandle, right: SlabHandle) -> equal: Bool pure 
 }
 
 fn record_read_info<T>(env: &RecordEmpty, value: &Record<T>) -> result: RecordInfo reads(value.id), reads(value.id_member), reads(value.position) {
-  return RecordInfo(id: deref(value).id, id_member: deref(value).id_member, position: deref(value).position);
+  return RecordInfo(id: value^.id, id_member: value^.id_member, position: value^.position);
 }
 
 fn record_set_position<T>(env: &u64, value: &Record<T>) -> result: unit reads(env), writes(value.position) {
-  set deref(value).position = deref(env);
+  set value^.position = env^;
   return unit;
 }
 
 fn record_set_id_member<T>(env: &Bool, value: &Record<T>) -> result: unit reads(env), writes(value.id_member) {
-  set deref(value).id_member = deref(env);
+  set value^.id_member = env^;
   return unit;
 }
 
 fn record_swap_payload<T>(env: &T, value: &Record<T>) -> result: unit writes(env), writes(value.payload) {
-  swap(first: env, second: &deref(value).payload);
+  swap(first: env, second: &value^.payload);
   return unit;
 }
 
 fn record_report_position<T, const ceiling: u64, const generation_limit: u64>(env: &Slab<Record<T>, ceiling, generation_limit>, value: &RecordDue, index: u64) -> result: unit reads(value.handle), writes(env.cells) {
   doc "Only a live matching generation receives a position. An old weak entry may share its slot with a replacement without writing the replacement's bookkeeping.";
-  let changed = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: env, handle: deref(value).handle, env: &index);
+  let changed = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: env, handle: value^.handle, env: &index);
   return unit;
 }
 
 fn record_read_handle(env: &RecordEmpty, key: &u64, value: &SlabHandle) -> result: SlabHandle reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn record_read_due(env: &RecordEmpty, value: &RecordDue) -> result: RecordDue reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn record_discard_id(env: &RecordEmpty, key: u64, value: SlabHandle) -> result: unit pure {
@@ -200,10 +200,10 @@ fn record_store_insert<T, const ceiling: u64, const generation_limit: u64>(store
   doc "Insertion creates no index membership. A later attachment or schedule refusal leaves this owner reachable through the returned handle; the application promises no atomic three-container insertion.";
   let absent = False();
   let record = Record<T>(id: id, payload: move payload, id_member: absent, position: ceiling);
-  let inserted = slab_insert::<Record<T>, ceiling, generation_limit>(slab: &deref(store).objects, value: move record);
-  match inserted {
+  let inserted = slab_insert::<Record<T>, ceiling, generation_limit>(slab: &store^.objects, value: move record);
+  match move inserted {
     Ok(value: object) => {
-      let handle = RecordHandle(store_id: deref(store).store_id, object: object);
+      let handle = RecordHandle(store_id: store^.store_id, object: object);
       return Ok<RecordHandle, T>(value: handle);
     }
     Err(error: returned) => {
@@ -214,12 +214,12 @@ fn record_store_insert<T, const ceiling: u64, const generation_limit: u64>(store
 }
 
 fn record_store_info<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle) -> result: Result<RecordInfo, RecordStatus> reads(store.store_id), reads(store.objects) {
-  if handle.store_id != deref(store).store_id {
+  if handle.store_id != store^.store_id {
     let reason = RecordStatus::RecordWrongStore();
     return Err<RecordInfo, RecordStatus>(error: reason);
   }
   let empty = RecordEmpty();
-  let found = slab_visit::<Record<T>, RecordEmpty, RecordInfo, fn record_read_info::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &empty);
+  let found = slab_visit::<Record<T>, RecordEmpty, RecordInfo, fn record_read_info::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: &empty);
   match found {
     Ok(value: info) => {
       return Ok<RecordInfo, RecordStatus>(value: info);
@@ -232,12 +232,12 @@ fn record_store_info<T, const ceiling: u64, const generation_limit: u64>(store: 
 }
 
 fn record_store_visit<T, E, R, fn observe(env: &E, value: &Record<T>) -> result: R reads(value), writes(env), const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle, env: &E) -> result: Result<R, RecordStatus> reads(store.store_id), reads(store.objects), writes(env) {
-  if handle.store_id != deref(store).store_id {
+  if handle.store_id != store^.store_id {
     let reason = RecordStatus::RecordWrongStore();
     return Err<R, RecordStatus>(error: reason);
   }
-  let found = slab_visit::<Record<T>, E, R, fn observe, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: env);
-  match found {
+  let found = slab_visit::<Record<T>, E, R, fn observe, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: env);
+  match move found {
     Ok(value: observed) => {
       return Ok<R, RecordStatus>(value: move observed);
     }
@@ -250,10 +250,10 @@ fn record_store_visit<T, E, R, fn observe(env: &E, value: &Record<T>) -> result:
 
 fn record_store_lookup<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, id: u64) -> result: Result<RecordHandle, RecordStatus> reads(store.store_id), reads(store.objects), reads(store.by_id), reads(store.id_hash) {
   let empty = RecordEmpty();
-  let found = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &deref(store).by_id, key: &id, key_env: &deref(store).id_hash, visit_env: &empty);
+  let found = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &store^.by_id, key: &id, key_env: &store^.id_hash, visit_env: &empty);
   match found {
     Ok(value: object) => {
-      let handle = RecordHandle(store_id: deref(store).store_id, object: object);
+      let handle = RecordHandle(store_id: store^.store_id, object: object);
       let validated = record_store_info::<T, ceiling, generation_limit>(store: store, handle: handle);
       match validated {
         Ok(value: info) => {
@@ -289,20 +289,20 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
     return RecordStatus::RecordAlready();
   }
   let empty = RecordEmpty();
-  let old = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &deref(store).by_id, key: &info.id, key_env: &deref(store).id_hash, visit_env: &empty);
+  let old = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &store^.by_id, key: &info.id, key_env: &store^.id_hash, visit_env: &empty);
   match old {
     Ok(value: previous) => {
       let same = record_handle_equal(left: previous, right: handle.object);
       if same {
         return RecordStatus::RecordAlready();
       }
-      let present = slab_find_index::<Record<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: previous);
+      let present = slab_find_index::<Record<T>, ceiling, generation_limit>(slab: &store^.objects, handle: previous);
       match present {
         Ok(value: index) => {
           return RecordStatus::RecordConflict();
         }
         Err(error: expired) => {
-          if deref(store).retained {
+          if store^.retained {
             return RecordStatus::RecordConflict();
           }
         }
@@ -311,7 +311,7 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
     Err(error: missing) => {
     }
   }
-  let inserted = hash_map_put::<RecordIdKey, SlabHandle, ceiling>(map: &deref(store).by_id, key: info.id, value: handle.object, env: &deref(store).id_hash);
+  let inserted = hash_map_put::<RecordIdKey, SlabHandle, ceiling>(map: &store^.by_id, key: info.id, value: handle.object, env: &store^.id_hash);
   match inserted {
     HashMapInserted() => {
     }
@@ -326,7 +326,7 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
     }
   }
   let member = True();
-  let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &member);
+  let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: &member);
   match changed {
     Ok(value: done) => {
       return RecordStatus::RecordDone();
@@ -339,20 +339,20 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
 
 fn record_store_detach<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, id: u64, handle: RecordHandle) -> result: RecordStatus reads(store.store_id), reads(store.id_hash), writes(store.objects), writes(store.by_id) {
   doc "The explicit ID lets a weak caller retire an association after its object expires. A same-ID replacement is protected by comparing the full stored handle before removal.";
-  if handle.store_id != deref(store).store_id {
+  if handle.store_id != store^.store_id {
     return RecordStatus::RecordWrongStore();
   }
   let empty = RecordEmpty();
-  let found = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &deref(store).by_id, key: &id, key_env: &deref(store).id_hash, visit_env: &empty);
+  let found = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &store^.by_id, key: &id, key_env: &store^.id_hash, visit_env: &empty);
   match found {
     Ok(value: stored) => {
       let same = record_handle_equal(left: stored, right: handle.object);
       if same {
-        let removed = hash_map_remove::<RecordIdKey, SlabHandle, ceiling>(map: &deref(store).by_id, key: &id, env: &deref(store).id_hash);
+        let removed = hash_map_remove::<RecordIdKey, SlabHandle, ceiling>(map: &store^.by_id, key: &id, env: &store^.id_hash);
         match removed {
           Some(value: pair) => {
             let absent = False();
-            let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &absent);
+            let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: &absent);
             return RecordStatus::RecordDone();
           }
           None() => {
@@ -369,7 +369,7 @@ fn record_store_detach<T, const ceiling: u64, const generation_limit: u64>(store
 }
 
 fn record_store_position<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle) -> result: Result<u64, RecordStatus> reads(store.store_id), reads(store.objects), reads(store.due.storage) contract {
-  ensures when Ok(value: index): index < deref(store).due.storage.inner.len;
+  ensures when Ok(value: index): index < store^.due.storage.inner.len;
 } {
   doc "A saved position is a hint until its current bound and complete entry identity have both been checked. An in-bounds position left by another removal cannot authorize changing that other record.";
   let validated = record_store_info::<T, ceiling, generation_limit>(store: store, handle: handle);
@@ -385,10 +385,10 @@ fn record_store_position<T, const ceiling: u64, const generation_limit: u64>(sto
     let reason = RecordStatus::RecordUnscheduled();
     return Err<u64, RecordStatus>(error: reason);
   }
-  let length = priority_queue_len::<RecordDue, ceiling>(queue: &deref(store).due);
+  let length = priority_queue_len::<RecordDue, ceiling>(queue: &store^.due);
   if info.position < length {
     let empty = RecordEmpty();
-    let due_item = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &deref(store).due, index: info.position, env: &empty);
+    let due_item = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &store^.due, index: info.position, env: &empty);
     let same = record_handle_equal(left: due_item.handle, right: handle.object);
     if same {
       if due_item.id == info.id {
@@ -423,7 +423,7 @@ fn record_store_schedule<T, const ceiling: u64, const generation_limit: u64>(sto
   }
   let due_item = RecordDue(deadline: deadline, id: info.id, handle: handle.object);
   let empty = RecordEmpty();
-  let pushed = priority_queue_push_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, value: due_item, order_env: &empty, position_env: &deref(store).objects);
+  let pushed = priority_queue_push_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &store^.due, value: due_item, order_env: &empty, position_env: &store^.objects);
   match pushed {
     Ok(value: done) => {
       return RecordStatus::RecordDone();
@@ -445,9 +445,9 @@ fn record_store_reschedule<T, const ceiling: u64, const generation_limit: u64>(s
     }
   }
   let empty = RecordEmpty();
-  let due_item = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &deref(store).due, index: position, env: &empty);
+  let due_item = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &store^.due, index: position, env: &empty);
   let replacement = RecordDue(deadline: deadline, id: due_item.id, handle: due_item.handle);
-  let previous = priority_queue_replace_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, index: position, value: replacement, order_env: &empty, position_env: &deref(store).objects);
+  let previous = priority_queue_replace_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &store^.due, index: position, value: replacement, order_env: &empty, position_env: &store^.objects);
   return RecordStatus::RecordDone();
 }
 
@@ -462,9 +462,9 @@ fn record_store_cancel<T, const ceiling: u64, const generation_limit: u64>(store
     }
   }
   let empty = RecordEmpty();
-  let removed = priority_queue_remove_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, index: position, order_env: &empty, position_env: &deref(store).objects);
+  let removed = priority_queue_remove_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &store^.due, index: position, order_env: &empty, position_env: &store^.objects);
   let absent = ceiling;
-  let cleared = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &absent);
+  let cleared = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: &absent);
   match cleared {
     Ok(value: done) => {
       return RecordStatus::RecordDone();
@@ -486,7 +486,7 @@ fn record_store_replace<T, const ceiling: u64, const generation_limit: u64>(stor
       return RecordReplacement<T>(status: reason, payload: move payload);
     }
   }
-  let changed = slab_edit::<Record<T>, T, unit, fn record_swap_payload::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &payload);
+  let changed = slab_edit::<Record<T>, T, unit, fn record_swap_payload::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object, env: &payload);
   match changed {
     Ok(value: done) => {
       let status = RecordStatus::RecordDone();
@@ -509,7 +509,7 @@ fn record_store_delete<T, const ceiling: u64, const generation_limit: u64>(store
       return Err<Record<T>, RecordStatus>(error: reason);
     }
   }
-  if deref(store).retained {
+  if store^.retained {
     if info.id_member {
       let reason = RecordStatus::RecordBusy();
       return Err<Record<T>, RecordStatus>(error: reason);
@@ -519,8 +519,8 @@ fn record_store_delete<T, const ceiling: u64, const generation_limit: u64>(store
       return Err<Record<T>, RecordStatus>(error: reason);
     }
   }
-  let removed = slab_remove::<Record<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object);
-  match removed {
+  let removed = slab_remove::<Record<T>, ceiling, generation_limit>(slab: &store^.objects, handle: handle.object);
+  match move removed {
     Some(value: owner) => {
       return Ok<Record<T>, RecordStatus>(value: move owner);
     }
@@ -536,21 +536,21 @@ fn record_store_expire<T, E, fn consume(env: &E, value: Record<T>) -> result: un
   let count = 0_u64;
   let empty = RecordEmpty();
   loop @expire {
-    let length = priority_queue_len::<RecordDue, ceiling>(queue: &deref(store).due);
+    let length = priority_queue_len::<RecordDue, ceiling>(queue: &store^.due);
     if length == 0_u64 {
       break @expire;
     }
-    let first = priority_queue_peek::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &deref(store).due, env: &empty);
+    let first = priority_queue_peek::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &store^.due, env: &empty);
     if first.deadline > now {
       break @expire;
     }
-    let removed = priority_queue_remove_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, index: 0_u64, order_env: &empty, position_env: &deref(store).objects);
+    let removed = priority_queue_remove_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &store^.due, index: 0_u64, order_env: &empty, position_env: &store^.objects);
     let absent = ceiling;
-    let cleared = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: removed.handle, env: &absent);
-    let handle = RecordHandle(store_id: deref(store).store_id, object: removed.handle);
+    let cleared = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: &store^.objects, handle: removed.handle, env: &absent);
+    let handle = RecordHandle(store_id: store^.store_id, object: removed.handle);
     let detached = record_store_detach::<T, ceiling, generation_limit>(store: store, id: removed.id, handle: handle);
     let deleted = record_store_delete::<T, ceiling, generation_limit>(store: store, handle: handle);
-    match deleted {
+    match move deleted {
       Ok(value: owner) => {
         consume(env: env, value: move owner);
         set count = count +wrap 1_u64;

@@ -5,27 +5,27 @@ fn fill_recursive(output: &[u64], depth: u64) -> result: u64 writes(output) cont
   requires depth <= 64_u64;
 } {
   doc "Subdivides one range reference recursively, including uneven and empty ranges. The parent range is used again after both children complete, so the witness checks restoration as well as disjoint sibling calls.";
-  let count = deref(output).len;
+  let count = output^.len;
   if count <= 1_u64 {
     for (i in 0_u64..count) {
-      set deref(output)[i] = 1_u64;
+      set output^[i] = 1_u64;
     }
     return count;
   }
   if depth == 0_u64 {
     for (i in 0_u64..count) {
-      set deref(output)[i] = 1_u64;
+      set output^[i] = 1_u64;
     }
     return count;
   }
   let middle = count / 2_u64;
   let remaining = depth - 1_u64;
-  let left = &deref(output)[0_u64..middle];
-  let right = &deref(output)[middle..count];
+  let left = &output^[0_u64..middle];
+  let right = &output^[middle..count];
   let a = fill_recursive(output: left, depth: remaining);
   let b = fill_recursive(output: right, depth: remaining);
-  let restored = deref(output)[0_u64];
-  set deref(output)[0_u64] = restored;
+  let restored = output^[0_u64];
+  set output^[0_u64] = restored;
   return count;
 }
 

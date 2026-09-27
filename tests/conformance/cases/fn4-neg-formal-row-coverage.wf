@@ -11,8 +11,8 @@ interface PureMember {
 
 fn writing_apply(store: &Counter, x: i32) -> result: i32 writes(store.count) {
   doc "FN-4 requires each actual write to be covered by a formal write. A writing actual exceeds a reads-only formal; writes subsumes reads, not conversely [EFF-1].";
-  let seen = deref(store).count;
-  set deref(store).count = seen;
+  let seen = store^.count;
+  set store^.count = seen;
   return x;
 }
 

@@ -7,7 +7,7 @@ struct Cell {
 
 fn pass(source: &Cell, other: &Cell) -> result: i32 reads(source.value) {
   doc "The relation this case once wrote as a shared region name - the result borrows one parameter - has no form here: a function returns owned values only [FN-1, REF-3], so the referent is read out by value and only the read is stated, by the row [EFF-1].";
-  return deref(source).value;
+  return source^.value;
 }
 
 fn main() -> status: ExitStatus pure {

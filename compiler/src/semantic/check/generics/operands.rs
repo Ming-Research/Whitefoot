@@ -484,17 +484,7 @@ impl<'unit> TypeContext<'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         // [TYPE-7] `deref` names the referent of a reference, whose selected
         // type is the type the reference binding already carries [REF-1].
-        let mut ty = if self.declarations.tree.place_base(pbase)?.is_dereference() {
-            let inner = self
-                .declarations
-                .tree
-                .dereferenced_place(pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            match self.place_selected_kind(check_context, inner, bindings)? {
-                Some(selected) => selected,
-                None => return Ok(None),
-            }
-        } else {
+        let mut ty = {
             // `entry(IDENT)` is a contract-only `pbase` [GRAM-5, MSR-3] and
             // names no operand in a body.
             if !self.declarations.tree.children(pbase)?.is_empty() {
@@ -531,6 +521,12 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .children_with(place, Production::Psuffix)?
         {
+            if matches!(
+                self.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+                continue;
+            }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [REF-4] a range step selects a `&[T]`, which is a reference
                 // kind and not a type [TYPE-8]; no row here admits one.

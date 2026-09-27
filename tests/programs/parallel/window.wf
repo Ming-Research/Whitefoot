@@ -46,17 +46,17 @@ fn mix(a: u64, b: u64) -> result: u64 pure {
 
 fn fold(node: &Box<Node>) -> result: u64 writes(node) {
   doc "Folds the tree through the cell reference, recording each branch's mix in its own slot.";
-  match deref(node).inner {
+  match node^.inner {
     Leaf(w: leaf_w) => {
-      return deref(leaf_w);
+      return leaf_w^;
     }
     Branch(left: l, right: r, w: slot) => {
-      let seed = irotl(deref(slot), 3_u32);
+      let seed = irotl(slot^, 3_u32);
       let a = fold(node: l);
       let b = fold(node: r);
       let blended = mix(a: a, b: b);
       let mixed = ixor(blended, seed);
-      set deref(slot) = mixed;
+      set slot^ = mixed;
       return mixed;
     }
   }
@@ -78,11 +78,11 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
     if done {
       break @octets;
     }
-    let spare = deref(destination).len;
+    let spare = destination^.len;
     let writable = cursor < spare;
     if writable {
       let byte = low_byte(v: rest);
-      set deref(destination)[cursor] = byte;
+      set destination^[cursor] = byte;
     }
     set rest = irotr(rest, 8_u32);
     set cursor = cursor +wrap 1_u64;

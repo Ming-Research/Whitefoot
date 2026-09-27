@@ -1,5 +1,5 @@
 fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out) contract {
-  define out_len = len_of(deref(out));
+  define out_len = len_of(out^);
   define src_len = len_of(src);
   define groups = ishr.wrap(out_len, 2_u32);
   define covered = groups *wrap 3_u64;
@@ -24,7 +24,7 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out) cont
     set o = o +wrap 4_u64;
   }
   if tail == 1_u64 {
-    set deref(out)[o] = 0_u8;
+    set out^[o] = 0_u8;
   }
   return o;
 }

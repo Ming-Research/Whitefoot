@@ -6,8 +6,8 @@ struct StaticBlock {
 }
 
 fn take_static(free: &Slots<StaticBlock, 2>) -> block: StaticBlock writes(free.last), writes(free.len) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len + 1_u64 == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len + 1_u64 == entry(free)^.len;
 } {
   doc "Takes the last filled slot of the pool and hands the block back; the boundary move is published as the declared exit relation.";
   let taken = take_back(window: free);
@@ -15,8 +15,8 @@ fn take_static(free: &Slots<StaticBlock, 2>) -> block: StaticBlock writes(free.l
 }
 
 fn return_static(free: &Slots<StaticBlock, 2>, block: StaticBlock) -> result: unit writes(free.next), writes(free.len) contract {
-  requires deref(free).len < deref(free).cap;
-  ensures deref(free).len == deref(entry(free)).len + 1_u64;
+  requires free^.len < free^.cap;
+  ensures free^.len == entry(free)^.len + 1_u64;
 } {
   doc "Puts one block back into the pool's append slot and publishes the boundary move.";
   place_back(window: free, value: move block);
@@ -56,8 +56,8 @@ fn plain() -> status: ExitStatus pure {
 }
 
 fn take_boxed(free: &Slots<Box<Slots<u8, 4>>, 2>) -> block: Box<Slots<u8, 4>> writes(free.last), writes(free.len) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len + 1_u64 == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len + 1_u64 == entry(free)^.len;
 } {
   doc "The same pool helper over boxed blocks; the cell is an ordinary owned value.";
   let taken = take_back(window: free);

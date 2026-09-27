@@ -6,7 +6,7 @@ fn takes(value: i32) -> function_result: unit pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A reference variable denotes the reference [REF-1], and the storage it names is reached only through deref, so writing the bare reference where a value of the referent type is declared is the missing dereference [TYPE-7], whose mechanical fix is deref(p).";
+  doc "A reference variable denotes the reference [REF-1], and the storage it names is reached only through postfix ^, so writing the bare reference where a value of the referent type is declared is the missing dereference [TYPE-7], whose mechanical fix is p^.";
   let a = 1_i32;
   let p = &a;
   takes(value: p);
