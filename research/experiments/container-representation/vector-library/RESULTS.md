@@ -500,7 +500,7 @@ resolved-symbol differences are six debug object paths changing
 describe the merged-main build. This comparison adds no timing samples;
 the preceding measurements retain their original revision and image identity.
 
-### Next source discriminator: one placement with a small capacity guard
+### Third source discriminator: one placement with a small capacity guard
 
 Keep append's single placement from the first helper candidate, and separate
 capacity preparation into a small `make_room` guard and a private `grow_full`
@@ -521,6 +521,163 @@ and two-cohort timing matrices. A repeatable useful-cell regression prevents
 selection. A changed layout and restored timing would support a source
 control-flow/code-shape explanation, but scheduling and register allocation
 also change; it would not establish a specific hardware-stall percentage.
+
+### Single-placement result: wide recovery with a scalar regression
+
+The third candidate also remains an intermediate result. It restores the
+first candidate's wide gains and the second candidate's scalar reserved
+recovery, but fails the recorded no-useful-regression criterion. Scalar
+suffix-3 at population 16 takes 1.909–1.911 ms, versus the second candidate's
+1.819–1.820 ms: a 1.049–1.051 ratio in the two cohorts. The observed sample
+ranges are separated in both cohorts, with candidate minima 1.019–1.023
+times the earlier maxima. Rust control drift is 0.996–1.006 and C++ drift
+0.999–1.000; normalizing by their medians leaves ratios 1.042–1.055 and
+1.049–1.051, respectively. Scalar suffix-3 medians also increase at 256 and
+4096, by factors 1.015–1.042 and 1.039–1.042, although their cohort-0 sample
+ranges overlap. Gains against the original baseline do not erase this
+counterexample to preserving the second candidate's useful-cell performance.
+
+The measured source is
+[`47f9f91b63a484ba7f4924a63b5863b1b8b6f289`](https://github.com/mbbill/Whitefoot/tree/47f9f91b63a484ba7f4924a63b5863b1b8b6f289).
+The [single-placement samples](ecosystem-append-single-placement-samples.csv)
+contain 4,116 rows; their SHA-256 is
+`63622733c1d242cfe5a0548f9d2fdf571d871151bc8c9d77a43f558a9778586e`.
+Every row's work, rounds, traces, checksum and sample identity agrees with
+the fresh baseline, first helper candidate and second spare-capacity
+candidate. The compiler, timed image and timed LLVM hashes are, respectively,
+`02f18a296656c48f08e044fb635f06cab0871ce25ea75f57343434367959e21d`,
+`ee6973459e4daaccc13b7df18b91563b86ea345b30f0389844ba5da17355ccab` and
+`4d6591a1eee0457b5edb2f46d312a03cd796b3d770c4ee9c04b71f3280ff4be6`.
+Construction uses `BUILD=.build/single-placement-guard`; timing retains
+`ECO_WORK=1048576 ECO_REPEATS=7` and completed in 80.60 s, separately from
+construction and correctness.
+
+The first helper candidate was also rebuilt with the current compiler
+implementation before this comparison. Its timed LLVM and WF object are
+byte-identical to the preserved first-trial artifacts. This bridge took
+19.37 s including restoration of the third source and compiler; the restored
+compiler, timed image and LLVM retain the hashes above. Together with the
+second candidate's merged-main comparison above, this checks the compiler
+revision variable without adding or pooling timing samples.
+
+The guarded third-candidate validation completed in 21.51 s: compiler
+construction 7.66 s, ecosystem construction 4.81 s, behavior checks 1.73 s,
+accounting 0.22 s, formal corpus construction 0.53 s and execution 3.67 s.
+Both ecosystem images pass all 1,260 configurations and 8,820 executions,
+including the checksum and cleanup falsifiers. All 294 accounting rows are
+byte-identical to [baseline accounting](ecosystem-accounting.csv), as are
+the timed C driver, C++ object and Rust archive relative to the second
+candidate. The formal vector program passes both lowering modes with its
+unchanged 25-allocation release expectation. A further one-shot check took
+2.69 s: changing only the new expected saturation length from 3 to 2,
+capacity from 3 to 2, or removed value from 55 to 54 produced exits 23, 24
+and 25, respectively; the unchanged program exited 0. Each new observation
+therefore demonstrated its own failure path. Scratch variants and their
+runner were removed after those observations.
+
+Final code passes the structural discriminator. The spare-capacity branch
+has no append or capacity-helper call, and constructs the wide value directly
+in backing storage. Relative to the record start, it writes scalar fields at
+offsets 0 and 8, paired vector stores starting at 16, 48, 80, 112, 144, 176
+and 208, then scalar fields at 240 and 248. This restores the first
+candidate's vector-store grouping while retaining the second candidate's
+inline capacity guard. The first scalar pair uses separate stores here.
+Scalar and wide truncate bodies remain identical to the first candidate
+after branch-address normalization: 44 and 168 instructions. The wide tail
+still runs once per suffix cycle, sets up fourteen vector constants and
+spills them for the cold growth path. Wide timing recovery alongside this
+code shape supports a source control-flow explanation for the second
+candidate's regression; scheduling and register allocation also changed,
+so it does not isolate a hardware stall or assign an elapsed-time share.
+
+At population 4096, the ranges below cover both cohort medians. Base is the
+fresh original baseline, A the first helper candidate, B the second
+spare-capacity candidate, and C this one-placement candidate.
+
+| Payload bytes | Path | C WF ms | C / base | C / A | C / B | WF / Rust | WF / C++ |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 1.680–1.681 | 0.495–0.506 | 0.500–0.504 | 0.993–0.998 | 1.094–1.097 | 0.797–0.798 |
+| 8 | growth | 2.062–2.075 | 0.515–0.558 | 0.537–0.545 | 0.989–0.990 | 1.062–1.073 | 0.849–0.852 |
+| 8 | reuse | 1.649–1.660 | 0.489–0.501 | 0.495–0.501 | 0.988–0.998 | 1.096–1.105 | 0.809–0.824 |
+| 8 | suffix-1 | 2.958–2.985 | 0.641–0.648 | 1.008–1.026 | 1.005–1.006 | 1.861–1.905 | 0.979–1.007 |
+| 8 | suffix-2 | 2.384–2.404 | 0.658–0.659 | 0.908–0.962 | 0.963–0.986 | 1.778–1.799 | 1.425–1.447 |
+| 8 | suffix-3 | 1.929–1.933 | 0.674–0.698 | 0.798–0.854 | 1.039–1.042 | 1.472–1.475 | 1.104–1.105 |
+| 256 | reserved | 40.787–40.974 | 0.794–0.802 | 0.954–0.960 | 0.967–0.972 | 0.997–1.003 | 0.935–0.940 |
+| 256 | growth | 53.180–54.029 | 0.832–0.843 | 0.974–0.996 | 0.992–1.004 | 1.284–1.306 | 1.026–1.037 |
+| 256 | reuse | 40.777–40.802 | 0.788–0.804 | 0.955–0.958 | 0.969–0.970 | 0.999–0.999 | 0.935–0.937 |
+| 256 | suffix-1 | 22.673–22.704 | 0.490–0.496 | 0.957–0.957 | 0.643–0.644 | 1.425–1.432 | 1.359–1.360 |
+| 256 | suffix-2 | 23.357–23.450 | 0.528–0.538 | 0.970–0.971 | 0.679–0.682 | 1.073–1.078 | 1.074–1.077 |
+| 256 | suffix-3 | 26.477–26.599 | 0.598–0.603 | 0.945–0.950 | 0.767–0.769 | 1.052–1.055 | 1.012–1.013 |
+
+Across all 36 mutating cells, C lowers both WF cohort medians relative to the
+fresh original baseline. Relative to A, 33 cells have lower medians and three
+have higher medians: scalar suffix-1 at each population, with overlapping
+sample ranges. Every wide cell improves relative to A in both cohorts.
+Relative to B, 23 cells have lower medians, seven have higher medians and six
+have mixed directions. Scalar reserved at population 16 improves further to
+3.631–3.666 ms, or 0.857–0.865 times B. Large wide suffix-1 recovers to
+0.643–0.644 times B and 0.957 times A. These successes satisfy the two primary
+recovery aims, but the scalar suffix-3 counterexample still prevents selection.
+
+The complete target reduction yields 11 passes, 11 deficits and 14
+inconclusive mutating cells, plus six unranked suffix-0 controls. Passes are
+scalar growth/reserved at 256 and 4096, scalar reuse at every population,
+wide growth at 256, wide reserved at 256 and 4096, and wide reuse at 4096.
+Every mutating native comparison has samples of at least 1 ms and cohort-ratio
+spread below 10%. The unstable comparison is scalar suffix-2 at 4096 against
+direct C (49.814%); every sub-millisecond observation is a suffix-0 control.
+Across mutating cells/cohorts, unchanged Rust/C++ control drifts are
+0.943–1.021 / 0.932–1.026 relative to baseline, 0.960–1.024 / 0.946–1.030
+relative to A, and 0.964–1.032 / 0.948–1.035 relative to B. At population
+4096, wide suffix-1 still takes 1.279–1.283 times take/swap C, while scalar
+reserved takes 0.818–0.819 times that control. The remaining native gaps
+therefore need path-specific comparison. The accounting and source/C controls
+do not yet assign causes to those remaining gaps.
+
+### Remaining attribution and bounded lowering probes
+
+Scalar suffix-2/3 already inline their append, truncate and scalar digest
+calls. Their final loops still take/swap values and update length while the
+native adapters consume the suffix forward. The source difference is real;
+its elapsed contribution is unmeasured. The existing
+[ordinary-representation refusals](#v061-copy-and-consumption-trial) and
+[selected consumption contract](../../../../design/language/data-model/vector-consumption.md)
+still rule out silently replacing the generic API with optional slots,
+prefix rotation or a callback that cannot consume an unconstrained owner.
+Wide suffix-1 instead retains a tail frame, fourteen per-call vector constants
+and a digest passed through stack storage. Native constant setup is outside
+the suffix cycles. Each wide digest uses sixteen paired loads and 32
+multiply-add instructions; these code differences do not establish which
+part explains the remaining time.
+
+The next scratch probe added only unsigned `nuw` facts to
+six checked logical-window arithmetic sites in the frozen C LLVM: one
+length increment in each scalar/wide `place_back`, and the address-index and
+stored-length decrements in each scalar/wide `take_back`. The source domains
+`len < cap <= u64::MAX` and `len > 0` justify them, including zero-stride
+values with very large logical capacities. No signed `nsw` assertion or
+Ring wrapping arithmetic changes. Exact function, header-load/store and
+payload-address contexts identify the six sites, and reversing those edits
+recovers every other byte of the control module. The criterion recorded
+before compilation required fewer scalar suffix descriptor stores/reloads
+or a simpler exit-length recurrence, with wide geometry monitored for
+collateral changes; unchanged hot code would end the probe without timing.
+Control and changed raw modules were independently compiled at O3 and linked
+with the same frozen native objects. The result is negative: optimized LLVM
+differs only in its first `ModuleID` comment, and all Mach-O section bytes
+and layouts match each other and the measured C image. The 691,696-byte text
+section has SHA-256
+`ff6b63b13941f977cf6522b587f67f91c8f6e242a123b8c93d6cd65539418cba`.
+Construction took 0.612 s and both complete checksum checks took 1.665 s;
+each passed 1,260 configurations and 8,820 executions. No timing followed,
+no compiler change was selected, and this probe explains no runtime gap.
+
+A separate proposed wide-value probe would direct selected helper inlining
+late in optimization, compared with unchanged-source reoptimization alone,
+to test the remaining tail frame and repeated constant setup. It is
+independent of the scalar no-wrap probe and proposes no production inline
+rule. It has no measured result and changes none of the source selections
+reported above.
 
 ## Historical source-composition evidence
 
