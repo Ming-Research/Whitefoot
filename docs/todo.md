@@ -1500,8 +1500,12 @@ each is resolved by a discussion and a tree change.
   explicit `move` at every consuming use of an existing noncopy owned place,
   including match and propagation, on 2026-09-27. The
   [same-operation comparison](../research/investigations/contract-surface/OWNERSHIP.md)
-  compares `->` with postfix `.*`; a complete arrow proposal, including
-  standalone `p->` for the whole referent, awaits selection. The named-constant root omission is corrected in the tree and
+  compares `->` with postfix `.*`. The compact `*p` companion in the pending
+  amendment conflicts with GRAM-1's maximal operator suffix (`*p` is one
+  invalid token, and `*wrap` already names wrapping multiplication). Await
+  owner direction on the recommended arrow selectors plus existing
+  `deref(p)` whole access, total arrow, or an explicitly revised prefix form;
+  do not count the token-grammar pass as raw lexical feasibility. The named-constant root omission is corrected in the tree and
   pending amendment. Reopen the coordinated specification/compiler/conformance
   implementation after access spelling is selected; the research PR does not
   implement the approved consumption rule. Validate copy and template-bound
@@ -1512,6 +1516,14 @@ each is resolved by a discussion and a tree change.
   performance gain. Keep the current container APIs pending the replacement-
   and-measure work below: a weaker contract or loss of `nodrop` support is not
   an equivalent reference interface.
+  The access amendment also needs four dependent source-spelling clauses: `language/surface-form/borrow-lexicon`,
+  `language/data-model`, `compiler/checker-facts` and
+  `compiler/rejection-payloads` still prescribe or illustrate `deref`.
+  Otherwise adopting the new form would leave contradictory current guidance.
+  Await owner direction to update those clauses with the selected spelling,
+  preserving the reference/Box distinction, typed place representation and
+  canonical renderer; reopen with the access ruling and check every live
+  spelling clause against the selected grammar before implementation.
 - **Expression composition and canonical source policy.** Reassess mandatory
   three-address computation and intermediate names together with the ban on
   comments and rejection of noncanonical formatting. Compare authoring,

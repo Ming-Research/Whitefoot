@@ -286,10 +286,12 @@ by implementation convenience. Its selection ground is one explicit step
 usable identically for a projection and the whole referent, without wrapping
 the preceding path or making that step optional at selected sites.
 The pending [reference-place amendment](../../../design/amendments/reference-place-spelling.md)
-now carries the arrow recommendation below. Its first decision replaces the
+currently carries the compact prefix-star candidate below. Its raw-lexical
+conflict remains unresolved; it is not an adoptable complete revision. Its first decision replaces the
 reference-validity node's first decision; its second adds the spelling's
-selection ground. The other decisions and refused alternatives are unchanged.
-No reference-access spelling has been approved or implemented in this PR.
+selection ground. Four dependent nodes also need synchronized source-spelling
+clauses; see the dependency section below. The amendment does not yet include those dependent revisions. No
+reference-access spelling has been approved or implemented in this PR.
 
 The owner approved the named-constant correction on 2026-09-27: the live
 reference-validity decision, its ancestor summary and the pending replacement
@@ -358,21 +360,28 @@ module forms. These
 are grammar-generation observations, not accepted programs on a modified
 compiler. No parsing or compiler timing comparison was performed.
 
+The follow-up `arrow-prefix` production was fixed in `150483eee` before
+measurement. It also generated a strong-LL(2) table under the full v0.75
+token grammar, including arithmetic and affine proof terms; its guarded command
+exited 0. Raw token formation does not supply those tokens for compact `*p`,
+as the lexical analysis below establishes. This extends the comparison without rerunning or reinterpreting the
+earlier source-semantic probes.
+
 The candidate names below are the driver's arguments. In the table, `p` is a
 reference to the selected value, `part` a range reference, and `node` a reference
 to a Box; all examples are hypothetical candidate syntax.
 
-| Operation | Dot-star | Arrow members | Arrow selectors | Total arrow |
-|---|---|---|---|---|
-| Whole referent | `p.*` | `deref(p)` | `deref(p)` | `p->` |
-| Field or measure | `p.*.field` | `p->field` | `p->field` | `p->field` |
-| Box payload field | `node.*.inner.value` | `node->inner.value` | `node->inner.value` | `node->inner.value` |
-| Variant payload | `p.*.Some.value` | `p->Some.value` | `p->Some.value` | `p->Some.value` |
-| Indexed referent | `part.*[i]` | `deref(part)[i]` | `part->[i]` | `part->[i]` |
-| Re-slice | `&part.*[lo..hi]` | `&deref(part)[lo..hi]` | `&part->[lo..hi]` | `&part->[lo..hi]` |
-| Entry proof path | `entry(node).*.inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` |
-| Rebind holder | `set p = &next;` | `set p = &next;` | `set p = &next;` | `set p = &next;` |
-| Write referent | `set p.* = value;` | `set deref(p) = value;` | `set deref(p) = value;` | `set p-> = value;` |
+| Operation | Dot-star | Arrow members | Arrow selectors | Total arrow | Arrow + prefix star |
+|---|---|---|---|---|---|
+| Whole referent | `p.*` | `deref(p)` | `deref(p)` | `p->` | `*p` |
+| Field or measure | `p.*.field` | `p->field` | `p->field` | `p->field` | `p->field` |
+| Box payload field | `node.*.inner.value` | `node->inner.value` | `node->inner.value` | `node->inner.value` | `node->inner.value` |
+| Variant payload | `p.*.Some.value` | `p->Some.value` | `p->Some.value` | `p->Some.value` | `p->Some.value` |
+| Indexed referent | `part.*[i]` | `deref(part)[i]` | `part->[i]` | `part->[i]` | `part->[i]` |
+| Re-slice | `&part.*[lo..hi]` | `&deref(part)[lo..hi]` | `&part->[lo..hi]` | `&part->[lo..hi]` | `&part->[lo..hi]` |
+| Entry proof path | `entry(node).*.inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` |
+| Rebind holder | `set p = &next;` | `set p = &next;` | `set p = &next;` | `set p = &next;` | `set p = &next;` |
+| Write referent | `set p.* = value;` | `set deref(p) = value;` | `set deref(p) = value;` | `set p-> = value;` | `set *p = value;` |
 
 The literal `arrow-step` candidate also passes, but writes `p->.field`:
 mechanically changing the `.*` step into `->` does not produce `p->field`.
@@ -400,6 +409,17 @@ measured its frequency or severity. A second arrow does not traverse a Box:
 still fail the reference-kind check. No candidate relaxes field visibility,
 reference validity, write effects, bounds proofs or the permitted move sites.
 
+`arrow-prefix` removes both prefix wrapping and the dangling arrow: whole
+access is `*p`, member access `p->field`, and range access `part->[i]`.
+The owned-link update becomes `set *cursor = f(head: move *cursor);`.
+Its token-grammar cost is two related forms rather than one postfix step;
+compact source also has the unresolved lexical conflict below. The prefix
+applies to the entire following place: `*p->field` selects through `p`, then
+tries to dereference that field. It is not an alias for `p->field`; with
+reference-free stored values, that extra reference step is a kind
+error. Neither `(*p).field` nor `p->.field` is a place production, so the
+candidate keeps one written form per path without checker-selected omissions.
+
 The [C++ draft's built-in member-access rule](https://eel.is/c++draft/expr.ref#2)
 relates `p->member` to member selection on the pointed-to object. That is the
 useful semantic analogy: an explicit indirection followed by a member
@@ -408,6 +428,10 @@ pointer, provides no pointer arithmetic or overloaded arrow, and keeps Box
 content separate. Standalone `p->`, `p->[i]` and variant/measure selections
 are Whitefoot extensions; C++ member syntax does not supply them. In particular,
 familiarity of `p->member` is not evidence that the whole proposal is familiar.
+Prefix `*p` shares the draft's explicit indirection meaning but, as with the
+arrow, applies only to a Whitefoot reference, never directly to a Box. The
+`->[i]` and `->[lo..hi]` forms remain Whitefoot extensions; bare `part[i]`
+does not silently dereference a range holder.
 
 All arrow variants need FORM-2 to distinguish a compact path arrow from the
 spaced signature arrow. Total arrow additionally distinguishes a selector
@@ -418,36 +442,97 @@ comparison `<` from a type-argument `<`; no type inference or later use is
 needed. Adding `->` to both global attachment sets would format these cases
 incorrectly. `.*` also needs its closing punctuation joins checked, but
 already gets its internal dot/star join from the existing dot attachment.
+The initial `arrow-prefix` candidate proposed a compact prefix star while
+keeping infix multiply spaced. Grammar-selected formatting alone cannot make
+that work: raw formation happens first and the compact bytes do not produce
+the intended tokens.
 
-### Recommendation awaiting ruling
+### Raw lexical boundary of prefix star
 
-Recommend replacing the unapproved dot-star proposal with `arrow-total`:
-`p->field`, `p->[i]` and standalone `p->` in ordinary and proof places. It
-keeps an explicit reference boundary for both projection and whole-object
-access, composes paths in reading order, and gives member selection the
-arrow spelling the owner prefers. The exact factored productions are:
+GRAM-1 forms `*` followed by the maximal lowercase suffix as one operator
+candidate, then terminal membership admits only the closed operator list.
+This is also the native scanner's `operator_form` rule; the maintained syntax
+test rejects `*x` as one token. The following are deductions from that lexical
+rule, distinct from the generator's measured token-grammar result:
+
+| Source bytes | Raw token spellings | Consequence |
+|---|---|---|
+| `*p` | `*p` | Invalid operator suffix; it is not prefix star plus identifier. |
+| `*cursor` | `*cursor` | The same failure for the owned-link example. |
+| `*wrap` | `*wrap` | The existing wrapping-multiply terminal, not access through a binding named `wrap`. |
+| `* p` | `*`, `p` | Supplies the tested prefix grammar's tokens, but needs a spaced canonical form instead of the proposed compact one. |
+| `*(p)` | `*`, `(`, `p`, `)` | Lexically suitable, but needs a different explicit parenthesized-access production; it is not covered by the prefix candidate's place grammar. |
+| `p->field` | `p`, `->`, `field` | The existing compound arrow forms independently of the following identifier. |
+| `p.*.field` | `p`, `.`, `*`, `.`, `field` | The dot terminates the operator candidate before the field name. |
+
+Simply splitting an unrecognized star-word would still leave `*wrap` and
+other admitted mode words colliding with ordinary identifier access. A lexer
+that consults expression position would change GRAM-1's context-independent
+formation, while renaming the arithmetic forms would expand the change to
+operation spelling. Neither follows from a preference for arrow projection.
+A complete compact-prefix proposal would need an explicit lexical rule and
+controls for all mode-word identifiers and existing infix uses. No such rule
+is selected here. The pending compact-prefix amendment therefore remains
+unresolved; a token-grammar pass is not source feasibility.
+
+### Recommended owner response
+
+Recommend arrow selection with the existing whole-referent form
+(`arrow-selectors`): `p->field`, `p->[i]`, and `deref(p)` in ordinary and proof
+places. The field and indexed paths become direct, and whole-object access
+retains an explicit form without a dangling arrow or a lexical change to
+arithmetic. Its cost is the retained prefix wrapping for whole-object reads,
+matches and atomic replacement, and two related forms rather than one postfix
+step. This does not establish a safety, productivity or performance gain.
+
+The complete token productions already tested for this option are:
 
 ```text
-place          := pbase psuffix* ("->" (IDENT | TYPEID "." IDENT | "[" atom range_tail? "]") psuffix*)* "->"?
+place          := pbase psuffix* | "deref" "(" place ")"
 pbase          := IDENT | "entry" "(" IDENT ")"
-psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]"
+psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "->" (IDENT | TYPEID "." IDENT | "[" atom range_tail? "]")
 ```
 
-This grammar admits `p->field` but not `p->.field`; old `deref(p)` access and
-`.*` are not parallel aliases. A selector arrow records an explicit reference
-step and that selector directly from the derivation, without an intermediate
-source rewrite. Effect selectors retain their parameter-rooted grammar, such
-as `writes(values.inner)`. The lexer already has the `->` terminal; all
-variants keep finite deterministic syntax and the same proof obligations.
-That supports feasibility, not a measured compile-time or runtime advantage.
+`deref(p)` cannot be followed by a projection in this grammar: the projected
+form is `p->field` or `p->[i]`, without a redundant `deref(p).field` alias.
+The selector arrow records an explicit reference step and its selector directly
+from the derivation. Box content stays `.inner`, and effect selectors keep
+their parameter-rooted grammar. Dot-star remains the more uniform postfix
+design. Total arrow (`p->field`, `p->[i]`, standalone `p->`) is also a complete
+option if the owner prefers uniformity over the trailing arrow's unfamiliarity.
+Spaced `* p` changes the compact-prefix proposal's canonical source; `*(p)`
+changes its grammar and retains parentheses. Neither is silently selected.
 
-The recommendation is provisional, with confidence 3/5: completeness and
-strong LL(2) are supported, while standalone-arrow readability is a judgment.
-If the owner finds `p->` misleading, prefer the complete `arrow-selectors`
-alternative (`p->field`, `p->[i]`, `deref(p)`) over an undocumented exception
-or allowing multiple spellings. The pending amendment states the full total-
-arrow choice so approving a member example cannot silently approve the whole-
-referent form. The owner has approved neither arrow variant nor dot-star.
+Confidence in recommending arrow selectors plus `deref` is 3/5: the grammar
+and raw token boundaries support feasibility, but there is no parser/checker/
+formatter implementation or writer trial. The lexical finding changes the
+pending proposal's source form or lexical rules, so the proposed response is
+presented for owner direction rather than silently rewriting the amendment.
+That amendment still describes the compact prefix candidate and needs the
+chosen resolution, plus the dependent tree revisions below, before adoption.
+The owner has approved no reference-access spelling.
+
+### Dependent source-spelling decisions
+
+Replacing the reference-validity spelling alone leaves four current
+decisions naming `deref`: the referent-form decision
+in [borrow-lexicon](../../../design/language/surface-form/borrow-lexicon.md),
+the reference-to-Box example in [data-model](../../../design/language/data-model.md),
+the source-rendering clause in [checker-facts](../../../design/compiler/checker-facts.md),
+and the reference-parameter rendering clause in
+[rejection-payloads](../../../design/compiler/rejection-payloads.md).
+These are dependencies of the same source-spelling choice; their semantic
+grounds do not change with that spelling.
+
+Recommend updating these current source-spelling clauses with the selected
+access form in the same ruling, preserving the reference/Box distinction,
+typed root-and-step representation and single canonical diagnostic renderer.
+Historical refused examples may remain historical. The pending amendment
+currently covers only reference-validity; it must gain those dependent
+revisions before it is described as the complete adoptable tree change.
+The grouped ownership-surface TODO records this dependency and its reopening
+condition. These four live nodes have not been revised for an unapproved
+access spelling.
 
 ## Validation and remaining uncertainty
 

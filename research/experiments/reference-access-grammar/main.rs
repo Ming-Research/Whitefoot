@@ -1,4 +1,6 @@
-//! Compare reference-access grammars with the compiler's unchanged generator.
+//! Compare token grammars with the compiler's unchanged generator.
+//! Raw token formation and canonical source bytes are separate: compact `*p`
+//! does not form the prefix candidate's tokens under the current lexical rule.
 //! Run from OWNERSHIP.md; retire this comparison when the selected spelling's
 //! formal grammar and conformance cases supersede the candidate evidence.
 #[path = "../../../compiler/src/syntax/grammar/generator.rs"]
