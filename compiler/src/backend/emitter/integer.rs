@@ -36,7 +36,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }) {
             return Err(BackendFailure::InvalidIr);
         }
-        let ty = llvm_type(self.program, operand_type)?;
+        let ty = self.output.type_name(self.program, operand_type)?;
         let binary = match arguments {
             [left, right] => Some((self.value_name(*left), self.value_name(*right))),
             _ => None,
@@ -131,6 +131,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 });
                 let pair = self.next_temporary()?;
                 let overflow = self.next_temporary()?;
+                self.output.symbol(intrinsic.to_string());
                 writeln!(
                     self.output,
                     "  %{pair} = call {{ {ty}, i1 }} @{intrinsic}({ty} {left}, {ty} {right})\n  %{overflow} = extractvalue {{ {ty}, i1 }} %{pair}, 1\n  {} = xor i1 %{overflow}, true",
@@ -190,8 +191,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let ok_value = self.next_temporary()?;
                 let error_tag = self.next_temporary()?;
                 let error_value = self.next_temporary()?;
-                let result_ty = llvm_type(self.program, result_type)?;
-                let error_ty = llvm_type(self.program, error_type)?;
+                let result_ty = self.output.type_name(self.program, result_type)?;
+                let error_ty = self.output.type_name(self.program, error_type)?;
+                self.output.symbol(intrinsic.to_string());
                 writeln!(
                     self.output,
                     "  %{pair} = call {{ {ty}, i1 }} @{intrinsic}({ty} {left}, {ty} {right})\n  %{value} = extractvalue {{ {ty}, i1 }} %{pair}, 0\n  %{overflow} = extractvalue {{ {ty}, i1 }} %{pair}, 1\n  %{ok_tag} = insertvalue {result_ty} zeroinitializer, i32 0, 0\n  %{ok_value} = insertvalue {result_ty} %{ok_tag}, {ty} %{value}, 1\n  %{error_tag} = insertvalue {result_ty} zeroinitializer, i32 1, 0\n  %{error_value} = insertvalue {result_ty} %{error_tag}, {error_ty} 0, 2\n  {} = select i1 %{overflow}, {result_ty} %{error_value}, {result_ty} %{ok_value}",
@@ -205,8 +207,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 };
                 let error_type =
                     self.checked_result_error_type(result_type, operand_type, &[0, 1])?;
-                let result_ty = llvm_type(self.program, result_type)?;
-                let error_ty = llvm_type(self.program, error_type)?;
+                let result_ty = self.output.type_name(self.program, result_type)?;
+                let error_ty = self.output.type_name(self.program, error_type)?;
                 let is_zero = self.next_temporary()?;
                 writeln!(self.output, "  %{is_zero} = icmp eq {ty} {right}, 0")
                     .map_err(|_| BackendFailure::TextEmission)?;
@@ -240,16 +242,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let error_kind = signed.then(|| self.next_temporary()).transpose()?;
                 let error_tag = self.next_temporary()?;
                 let error_value = self.next_temporary()?;
-                writeln!(
-                    self.output,
-                    "  br i1 %{error_condition}, label %{}, label %{}\n{}:\n  %{safe_value} = {opcode} {ty} {left}, {right}\n  %{ok_tag} = insertvalue {result_ty} zeroinitializer, i32 0, 0\n  %{ok_value} = insertvalue {result_ty} %{ok_tag}, {ty} %{safe_value}, 1\n  br label %{}\n{}:",
-                    integer_error_label(result),
-                    integer_safe_label(result),
-                    integer_safe_label(result),
-                    integer_continue_label(result),
-                    integer_error_label(result),
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
+                {
+                    let emission_argument_0 = integer_error_label(result);
+                    let emission_argument_1 = integer_safe_label(result);
+                    let emission_argument_2 = integer_safe_label(result);
+                    let emission_argument_3 = integer_continue_label(result);
+                    let emission_argument_4 = integer_error_label(result);
+
+                    writeln!(self.output, "  br i1 %{error_condition}, label %{emission_argument_0}, label %{emission_argument_1}").map_err(|_| BackendFailure::TextEmission)?;
+                    self.output.open_block(emission_argument_2.to_string());
+                    write!(self.output, "  %{safe_value} = {opcode} {ty} {left}, {right}\n  %{ok_tag} = insertvalue {result_ty} zeroinitializer, i32 0, 0\n  %{ok_value} = insertvalue {result_ty} %{ok_tag}, {ty} %{safe_value}, 1\n  br label %{emission_argument_3}\n").map_err(|_| BackendFailure::TextEmission)?;
+                    self.output.open_block(emission_argument_4.to_string());
+                };
                 let error_operand = if let Some(error_kind) = error_kind {
                     writeln!(
                         self.output,
@@ -260,16 +264,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 } else {
                     "0".to_owned()
                 };
-                writeln!(
-                    self.output,
-                    "  %{error_tag} = insertvalue {result_ty} zeroinitializer, i32 1, 0\n  %{error_value} = insertvalue {result_ty} %{error_tag}, {error_ty} {error_operand}, 2\n  br label %{}\n{}:\n  {} = phi {result_ty} [ %{ok_value}, %{} ], [ %{error_value}, %{} ]",
-                    integer_continue_label(result),
-                    integer_continue_label(result),
-                    self.value_name(result),
-                    integer_safe_label(result),
-                    integer_error_label(result),
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
+                {
+                    let emission_argument_0 = integer_continue_label(result);
+                    let emission_argument_1 = integer_continue_label(result);
+                    let emission_argument_2 = self.value_name(result);
+                    let emission_argument_3 = integer_safe_label(result);
+                    let emission_argument_4 = integer_error_label(result);
+
+                    write!(self.output, "  %{error_tag} = insertvalue {result_ty} zeroinitializer, i32 1, 0\n  %{error_value} = insertvalue {result_ty} %{error_tag}, {error_ty} {error_operand}, 2\n  br label %{emission_argument_0}\n").map_err(|_| BackendFailure::TextEmission)?;
+                    self.output.open_block(emission_argument_1.to_string());
+                    writeln!(self.output, "  {emission_argument_2} = phi {result_ty} [ %{ok_value}, %{emission_argument_3} ], [ %{error_value}, %{emission_argument_4} ]").map_err(|_| BackendFailure::TextEmission)?;
+                };
             }
             IrIntegerOperation::DivideExact | IrIntegerOperation::RemainderExact => {
                 let Some((left, right)) = &binary else {
@@ -343,22 +348,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         if result_type != operand_type {
                             return Err(BackendFailure::InvalidIr);
                         }
-                        writeln!(
-                            self.output,
-                            "  {} = call {ty} @{intrinsic}({ty} {argument}, i1 false)",
-                            self.value_name(result)
-                        )
+                        {
+                            self.output.symbol(intrinsic.to_string());
+                            writeln!(
+                                self.output,
+                                "  {} = call {ty} @{intrinsic}({ty} {argument}, i1 false)",
+                                self.value_name(result)
+                            )
+                        }
                         .map_err(|_| BackendFailure::TextEmission)?;
                     }
                     IrIntegerOperation::AbsoluteExact => {
                         if result_type != operand_type {
                             return Err(BackendFailure::InvalidIr);
                         }
-                        writeln!(
-                            self.output,
-                            "  {} = call {ty} @{intrinsic}({ty} {argument}, i1 false)",
-                            self.value_name(result)
-                        )
+                        {
+                            self.output.symbol(intrinsic.to_string());
+                            writeln!(
+                                self.output,
+                                "  {} = call {ty} @{intrinsic}({ty} {argument}, i1 false)",
+                                self.value_name(result)
+                            )
+                        }
                         .map_err(|_| BackendFailure::TextEmission)?;
                     }
                     IrIntegerOperation::AbsoluteDefined => {
@@ -382,9 +393,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         let ok_value = self.next_temporary()?;
                         let error_tag = self.next_temporary()?;
                         let error_value = self.next_temporary()?;
-                        let result_ty = llvm_type(self.program, result_type)?;
-                        let error_ty = llvm_type(self.program, error_type)?;
+                        let result_ty = self.output.type_name(self.program, result_type)?;
+                        let error_ty = self.output.type_name(self.program, error_type)?;
                         let minimum = -(1_i128 << (width - 1));
+                        self.output.symbol(intrinsic.to_string());
                         writeln!(
                             self.output,
                             "  %{absolute} = call {ty} @{intrinsic}({ty} {argument}, i1 false)\n  %{overflow} = icmp eq {ty} {argument}, {minimum}\n  %{ok_tag} = insertvalue {result_ty} zeroinitializer, i32 0, 0\n  %{ok_value} = insertvalue {result_ty} %{ok_tag}, {ty} %{absolute}, 1\n  %{error_tag} = insertvalue {result_ty} zeroinitializer, i32 1, 0\n  %{error_value} = insertvalue {result_ty} %{error_tag}, {error_ty} 0, 2\n  {} = select i1 %{overflow}, {result_ty} %{error_value}, {result_ty} %{ok_value}",
@@ -464,6 +476,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                             name: intrinsic.clone(),
                             ty: ty.clone(),
                         });
+                        self.output.symbol(intrinsic.to_string());
                         writeln!(
                             self.output,
                             "  {} = call {ty} @{intrinsic}({ty} {value}, {ty} {value}, {ty} {amount})",
@@ -549,10 +562,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 } else {
                     ", i1 false".to_owned()
                 };
-                writeln!(
-                    self.output,
-                    "  {count} = call {ty} @{intrinsic}({ty} {argument}{flag})"
-                )
+                {
+                    self.output.symbol(intrinsic.to_string());
+                    writeln!(
+                        self.output,
+                        "  {count} = call {ty} @{intrinsic}({ty} {argument}{flag})"
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 if width < 32 {
                     writeln!(
@@ -580,11 +596,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     name: intrinsic.clone(),
                     ty: ty.clone(),
                 });
-                writeln!(
-                    self.output,
-                    "  {} = call {ty} @{intrinsic}({ty} {argument})",
-                    self.value_name(result)
-                )
+                {
+                    self.output.symbol(intrinsic.to_string());
+                    writeln!(
+                        self.output,
+                        "  {} = call {ty} @{intrinsic}({ty} {argument})",
+                        self.value_name(result)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             IrIntegerOperation::MultiplyHigh => {
@@ -631,11 +650,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     name: intrinsic.clone(),
                     ty: ty.clone(),
                 });
-                writeln!(
-                    self.output,
-                    "  {} = call {ty} @{intrinsic}({ty} {left}, {ty} {right})",
-                    self.value_name(result)
-                )
+                {
+                    self.output.symbol(intrinsic.to_string());
+                    writeln!(
+                        self.output,
+                        "  {} = call {ty} @{intrinsic}({ty} {left}, {ty} {right})",
+                        self.value_name(result)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             IrIntegerOperation::MultiplySaturating => {

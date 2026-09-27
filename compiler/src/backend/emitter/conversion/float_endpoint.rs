@@ -80,8 +80,8 @@ impl FunctionEmitter<'_, '_> {
         } else {
             format!("%{}", self.next_temporary()?)
         };
-        let source_ty = llvm_type(self.program, source_type)?;
-        let destination_ty = llvm_type(self.program, destination_type)?;
+        let source_ty = self.output.type_name(self.program, source_type)?;
+        let destination_ty = self.output.type_name(self.program, destination_type)?;
         let opcode = if source_signed { "sitofp" } else { "uitofp" };
         writeln!(
             self.output,
@@ -109,6 +109,7 @@ impl FunctionEmitter<'_, '_> {
         let valid = self.next_temporary()?;
         let reverse = if source_signed { "fptosi" } else { "fptoui" };
         let intrinsic = format!("llvm.{reverse}.sat.i{source_width}.f{destination_width}");
+        self.output.symbol(&intrinsic);
         self.intrinsics.insert(IntrinsicDeclaration::UnaryCast {
             name: intrinsic.clone(),
             result_ty: source_ty.clone(),
@@ -163,8 +164,8 @@ impl FunctionEmitter<'_, '_> {
         if !matches!(source_width, 32 | 64) || !matches!(destination_width, 8 | 16 | 32 | 64) {
             return Err(BackendFailure::InvalidIr);
         }
-        let source_ty = llvm_type(self.program, source_type)?;
-        let destination_ty = llvm_type(self.program, destination_type)?;
+        let source_ty = self.output.type_name(self.program, source_type)?;
+        let destination_ty = self.output.type_name(self.program, destination_type)?;
         let opcode = if destination_signed {
             "fptosi"
         } else {
@@ -185,6 +186,7 @@ impl FunctionEmitter<'_, '_> {
         let reverse = self.next_temporary()?;
         let equal = self.next_temporary()?;
         let intrinsic = format!("llvm.{opcode}.sat.i{destination_width}.f{source_width}");
+        self.output.symbol(&intrinsic);
         self.intrinsics.insert(IntrinsicDeclaration::UnaryCast {
             name: intrinsic.clone(),
             result_ty: destination_ty.clone(),
@@ -276,8 +278,8 @@ impl FunctionEmitter<'_, '_> {
             );
         }
 
-        let source_ty = llvm_type(self.program, source_type)?;
-        let destination_ty = llvm_type(self.program, destination_type)?;
+        let source_ty = self.output.type_name(self.program, source_type)?;
+        let destination_ty = self.output.type_name(self.program, destination_type)?;
         let converted = self.next_temporary()?;
         let nan = self.next_temporary()?;
         writeln!(

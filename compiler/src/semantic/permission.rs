@@ -355,12 +355,20 @@ impl PermissionMetadata {
 pub(crate) fn analyze_permission(
     functions: &[CheckedFunction],
     signatures: &[PermissionSignature],
+    selected: &[bool],
 ) -> PermissionMetadata {
     let program = Program { signatures };
     PermissionMetadata {
         functions: functions
             .iter()
-            .map(|function| program.analyze_function(function))
+            .enumerate()
+            .map(|(index, function)| {
+                if selected[index] {
+                    program.analyze_function(function)
+                } else {
+                    FunctionPermissions::default()
+                }
+            })
             .collect(),
     }
 }

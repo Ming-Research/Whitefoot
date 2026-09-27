@@ -158,7 +158,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 ### 进行中
 
-- **不用 async 的并发 I/O。** 语言里没有 `async`、`await`、future、回调或任务：文件和套接字都是普通的值，I/O 操作就是普通的调用。编译出的程序通过基于完成通知的运行时（completion runtime；Linux 上是 io_uring，Windows 上是 I/O 完成端口）提交 I/O，普通顺序代码中互相独立的调用会被一起发出，因此代码从来不会被分成同步和异步两类。让计算得以并行的 `reads` 和 `writes` 效应行，也决定了哪些 I/O 调用可以重叠。同时服务大量连接的能力正在设计中。
+- **不用 async 的并发 I/O。** 语言里没有 `async`、`await`、future、回调或任务：文件和套接字都是普通的值，I/O 操作就是普通的调用，因此代码从来不会被分成同步和异步两类。编译出的程序通过基于完成通知的运行时（completion runtime；Linux 上是 io_uring，Windows 上是 I/O 完成端口）执行 I/O。让计算得以并行的 `reads` 和 `writes` 效应行，也决定了哪些 I/O 调用可以重叠。目前重叠来自 `--par`：它可以让两个互相独立的调用在两个工作线程上同时运行，其中也包括 I/O；默认构建则一次只发出一个 I/O 调用。同时服务大量连接的能力正在设计中。
 
 ### 计划中
 
@@ -179,16 +179,16 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 短文，每篇只讲一个想法，附带能编译的程序。前三篇从上面的例子出发：
 
-1. 要么证明，要么写分支——边界检查和溢出检查因为被证明而消失。
+1. [要么证明，要么写分支](docs/articles/prove-it-or-write-a-branch.md)——边界检查和溢出检查因为被证明而消失。
 2. [写顺序的代码，得到并行的结果](docs/articles/sequential-code-parallel-results.md)——编译器如何在普通代码（包括递归）中找到独立性，并把它交给工作线程。
 3. [不用求解器，手工证明](docs/articles/proofs-by-hand.md)——差分约束（difference bounds）、约束闭包和循环不变式，在纸上演算一遍。
-4. 拒绝告诉你什么——为负责修复代码的 agent 编写的诊断信息。
-5. 整数——每个运算都写明自己的含义。
-6. 只有一种构建——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
-7. 从内存到资源——不用堆、线性资源，以及最高安全模式的计划。
-8. 审查者读什么——把契约和效应行作为审查的对象。
+4. [拒绝告诉你什么](docs/articles/what-a-rejection-tells-you.md)——为负责修复代码的 agent 编写的诊断信息。
+5. [整数](docs/articles/integers.md)——每个运算都写明自己的含义。
+6. [只有一种构建](docs/articles/one-build.md)——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
+7. [从内存到资源](docs/articles/beyond-memory.md)——不用堆、线性资源，以及最高安全模式的计划。
+8. [审查者读什么](docs/articles/what-a-reviewer-reads.md)——把契约和效应行作为审查的对象。
 9. 可信基——哪些东西被信任，以及缩小它的计划。
-10. 速度从哪里来——证明被利用的每一种方式。
+10. [速度从哪里来](docs/articles/where-the-speed-comes-from.md)——证明被利用的每一种方式。
 11. 不用 async 的 I/O——由编译器让普通调用相互重叠。
 12. 一个布局引擎——第一个大型程序。
 13. 这个项目如何借助 agent 构建。

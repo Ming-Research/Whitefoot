@@ -3,8 +3,8 @@
 //! The compiler/incremental-compilation decisions retain separate IR
 //! fragments, optimization plans and native objects instead of handing LLVM
 //! the whole program as one module on each edit. The emitter writes one
-//! textual module in a closed, regular subset of LLVM's form; this splits it
-//! into the fragments a ThinLTO link joins, reading each top-level line once.
+//! structured module; this partitions its recorded definitions and dependencies
+//! into the fragments a ThinLTO link joins.
 //!
 //! A fragment defines one group of externally visible functions, one
 //! function or the functions of one source module, with the local
@@ -25,8 +25,7 @@
 //! function of its own definitions and of the signatures they name. With
 //! stable symbols and type names, an unchanged function keeps the bytes of
 //! its fragment across an edit elsewhere, and with them its cached object.
-//! A top-level line outside the emitter's form fails the split rather than
-//! being guessed at.
+//! A missing symbol, type or attribute definition fails the split.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -56,39 +55,8 @@ fn failure(message: impl Into<String>) -> SplitFailure {
     SplitFailure(message.into())
 }
 
-/// How far a definition is visible.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Linkage {
-    /// Visible to the link and prevailing there.
-    External,
-    /// Visible to the link, where another definition may prevail.
-    Weak,
-    /// Visible only inside the module: `private` or `internal`.
-    Local,
-}
-
-/// One top-level definition of a symbol: a function with its body, or a
-/// global variable.
-struct Entity<'module> {
-    name: String,
-    /// The `define` line or the global's line.
-    header: &'module str,
-    /// A function's body lines through its closing brace; empty for a
-    /// global.
-    body: Vec<&'module str>,
-    linkage: Linkage,
-    global: bool,
-}
-
-/// The top-level lines of one emitted module.
-#[derive(Default)]
-struct Module<'module> {
-    header: Vec<&'module str>,
-    types: BTreeMap<String, &'module str>,
-    declarations: BTreeMap<String, &'module str>,
-    entities: Vec<Entity<'module>>,
-    attributes: BTreeMap<u64, &'module str>,
-}
+use super::emission::{Module, References};
+use super::emitter::LlvmModule;
 
 /// Where one entity's definition lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,14 +71,31 @@ enum Owner {
 ///
 /// # Errors
 ///
-/// Returns a failure when the module holds a top-level line outside the
-/// emitter's form, or a function names a symbol the module neither defines
-/// nor declares.
+/// Returns a failure when a recorded dependency has no definition or
+/// declaration, or a symbol is defined more than once.
 pub fn split_module(
-    llvm: &str,
+    llvm: &LlvmModule,
     granularity: FragmentGranularity,
 ) -> Result<Vec<String>, SplitFailure> {
-    let module = parse(llvm)?;
+    split_emission(&llvm.model, granularity)
+}
+
+fn split_emission(
+    module: &Module,
+    granularity: FragmentGranularity,
+) -> Result<Vec<String>, SplitFailure> {
+    if let Some(name) = module.repeated_declaration() {
+        return Err(failure(format!("@{name} is declared or defined twice")));
+    }
+    let mut names = module.declarations.keys().cloned().collect::<BTreeSet<_>>();
+    for entity in &module.entities {
+        if !names.insert(entity.name.clone()) {
+            return Err(failure(format!(
+                "@{} is declared or defined twice",
+                entity.name
+            )));
+        }
+    }
     let by_name = module
         .entities
         .iter()
@@ -120,11 +105,7 @@ pub fn split_module(
     // What each entity names: other entities, and declared functions.
     let mut references = Vec::with_capacity(module.entities.len());
     for entity in &module.entities {
-        let mut named = BTreeSet::new();
-        symbol_references(entity.header, &mut named);
-        for line in &entity.body {
-            symbol_references(line, &mut named);
-        }
+        let named = &entity.references.symbols;
         let mut entities = BTreeSet::new();
         let mut declared = BTreeSet::new();
         for name in named {
@@ -132,8 +113,8 @@ pub fn split_module(
                 if module.entities[index].name != entity.name {
                     entities.insert(index);
                 }
-            } else if module.declarations.contains_key(&name) {
-                declared.insert(name);
+            } else if module.declarations.contains_key(name) {
+                declared.insert(name.clone());
             } else {
                 return Err(failure(format!(
                     "@{} names @{name}, which the module neither defines nor declares",
@@ -146,7 +127,7 @@ pub fn split_module(
     // The groups of externally visible functions, by key.
     let mut keys: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, entity) in module.entities.iter().enumerate() {
-        if entity.linkage != Linkage::Local {
+        if !entity.linkage.is_local() {
             let key = match granularity {
                 FragmentGranularity::Function => entity.name.clone(),
                 FragmentGranularity::Module => fragment_module(&entity.name),
@@ -155,7 +136,7 @@ pub fn split_module(
         }
     }
     let groups = keys.into_values().collect::<Vec<_>>();
-    let owners = owners(&module, &groups, &references);
+    let owners = owners(module, &groups, &references);
     // One fragment per group, then one per shared local definition.
     let mut members = vec![Vec::new(); groups.len()];
     let mut roots: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -171,7 +152,7 @@ pub fn split_module(
     members
         .iter()
         .chain(roots.values())
-        .map(|members| fragment(&module, &owners, &references, members))
+        .map(|members| fragment(module, &owners, &references, members))
         .collect()
 }
 
@@ -185,7 +166,7 @@ pub fn split_module(
 /// directly, which is such an entry or which more than one group or entry
 /// reaches, owns a fragment.
 fn owners(
-    module: &Module<'_>,
+    module: &Module,
     groups: &[Vec<usize>],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
 ) -> Vec<Owner> {
@@ -194,7 +175,7 @@ fn owners(
         .entities
         .iter()
         .enumerate()
-        .filter(|(_, entity)| entity.linkage == Linkage::Local)
+        .filter(|(_, entity)| entity.linkage.is_local())
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let node_of_local = locals
@@ -356,7 +337,7 @@ fn immediate_dominators(successors: &[BTreeSet<usize>]) -> Vec<Option<usize>> {
 /// One fragment's text: `members` defined, and declarations, types and
 /// attribute groups for everything they name.
 fn fragment(
-    module: &Module<'_>,
+    module: &Module,
     owners: &[Owner],
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
     members: &[usize],
@@ -365,14 +346,16 @@ fn fragment(
     let mut globals = BTreeMap::new();
     let mut declarations = BTreeMap::new();
     let mut definitions = BTreeMap::new();
+    let mut dependencies = References::default();
     for &member in &inside {
         let entity = &module.entities[member];
+        dependencies.extend(&entity.references);
         // A local definition that owns its fragment is named from others.
-        let shared = entity.linkage == Linkage::Local && owners[member] == Owner::Root(member);
+        let shared = entity.linkage.is_local() && owners[member] == Owner::Root(member);
         let header = if shared {
-            hidden(entity)?
+            entity.hidden_header.clone()
         } else {
-            entity.header.to_owned()
+            entity.header.clone()
         };
         if entity.global {
             globals.insert(entity.name.as_str(), header);
@@ -385,41 +368,34 @@ fn fragment(
                 continue;
             }
             let other = &module.entities[named];
-            if other.linkage == Linkage::Local && owners[named] != Owner::Root(named) {
+            if other.linkage.is_local() && owners[named] != Owner::Root(named) {
                 return Err(failure(format!(
                     "@{} names the local definition @{}, which another fragment owns",
                     entity.name, other.name
                 )));
             }
-            declarations.insert(other.name.as_str(), declaration(other)?);
+            declarations.insert(other.name.as_str(), other.declaration.clone());
+            dependencies.extend(&other.declaration_references);
         }
         for name in declared {
-            declarations.insert(name.as_str(), module.declarations[name].to_owned());
+            declarations.insert(name.as_str(), module.declarations[name].text.clone());
+            dependencies.extend(&module.declarations[name].references);
         }
     }
-    let mut lines: Vec<&str> = Vec::new();
-    for line in globals.values().chain(declarations.values()) {
-        lines.push(line);
-    }
-    for (header, body) in definitions.values() {
-        lines.push(header);
-        lines.extend(body.iter().copied());
-    }
-    // The named types these lines use, closed over the types' own fields.
+    // Dependencies are recorded at construction; only their transitive type
+    // closure is computed here. No LLVM instruction or header is reparsed.
     let mut types = BTreeSet::new();
-    let mut pending = Vec::new();
-    for line in &lines {
-        type_references(line, module, &mut pending);
-    }
+    let mut pending = dependencies.types.into_iter().collect::<Vec<_>>();
     while let Some(name) = pending.pop() {
         if types.insert(name.clone()) {
-            type_references(module.types[&name], module, &mut pending);
+            let definition = module
+                .types
+                .get(&name)
+                .ok_or_else(|| failure(format!("type %{name} is used but not defined")))?;
+            pending.extend(definition.references.types.iter().cloned());
         }
     }
-    let mut attributes = BTreeSet::new();
-    for line in &lines {
-        attribute_references(line, &mut attributes);
-    }
+    let attributes = dependencies.attributes;
     let mut text = String::new();
     for line in &module.header {
         text.push_str(line);
@@ -427,7 +403,7 @@ fn fragment(
     }
     text.push('\n');
     for name in &types {
-        text.push_str(module.types[name]);
+        text.push_str(&module.types[name].text);
         text.push('\n');
     }
     for line in globals.values().chain(declarations.values()) {
@@ -438,10 +414,8 @@ fn fragment(
         text.push('\n');
         text.push_str(header);
         text.push('\n');
-        for line in *body {
-            text.push_str(line);
-            text.push('\n');
-        }
+        text.push_str(body);
+        text.push_str("}\n");
     }
     text.push('\n');
     for group in attributes {
@@ -453,353 +427,6 @@ fn fragment(
         text.push('\n');
     }
     Ok(text)
-}
-
-fn parse(llvm: &str) -> Result<Module<'_>, SplitFailure> {
-    let mut module = Module::default();
-    let mut names = BTreeSet::new();
-    let mut lines = llvm.lines();
-    while let Some(line) = lines.next() {
-        if line.is_empty() || line.starts_with(';') {
-            continue;
-        }
-        let entity = if let Some(rest) = line.strip_prefix("define ") {
-            let linkage = match rest.split_once(' ').map(|(first, _)| first) {
-                Some("private" | "internal") => Linkage::Local,
-                Some("weak") => Linkage::Weak,
-                Some(
-                    "external"
-                    | "linkonce"
-                    | "linkonce_odr"
-                    | "weak_odr"
-                    | "common"
-                    | "appending"
-                    | "extern_weak"
-                    | "available_externally"
-                    | "hidden"
-                    | "protected"
-                    | "dllexport"
-                    | "dllimport",
-                ) => return Err(failure(format!("a definition of another form: {line}"))),
-                _ => Linkage::External,
-            };
-            if !line.ends_with(" {") {
-                return Err(failure(format!(
-                    "a definition header without its body: {line}"
-                )));
-            }
-            let mut body = Vec::new();
-            loop {
-                let next = lines
-                    .next()
-                    .ok_or_else(|| failure(format!("a definition without its end: {line}")))?;
-                body.push(next);
-                if next == "}" {
-                    break;
-                }
-            }
-            Some(Entity {
-                name: symbol_after_at(rest)
-                    .ok_or_else(|| failure(format!("a definition without a name: {line}")))?,
-                header: line,
-                body,
-                linkage,
-                global: false,
-            })
-        } else if line.starts_with('@') {
-            let (_, rest) = line
-                .split_once(" = ")
-                .ok_or_else(|| failure(format!("a global of another form: {line}")))?;
-            let local = ["private ", "internal "]
-                .iter()
-                .any(|linkage| rest.starts_with(linkage));
-            let kind = rest
-                .split_once(' ')
-                .map(|(_, kind)| kind.strip_prefix("unnamed_addr ").unwrap_or(kind));
-            if !local
-                || !kind.is_some_and(|kind| {
-                    kind.starts_with("constant ") || kind.starts_with("global ")
-                })
-            {
-                return Err(failure(format!("a global of another form: {line}")));
-            }
-            Some(Entity {
-                name: symbol_after_at(line)
-                    .ok_or_else(|| failure(format!("a global without a name: {line}")))?,
-                header: line,
-                body: Vec::new(),
-                linkage: Linkage::Local,
-                global: true,
-            })
-        } else if let Some(rest) = line.strip_prefix("declare ") {
-            let name = symbol_after_at(rest)
-                .ok_or_else(|| failure(format!("a declaration without a name: {line}")))?;
-            if !names.insert(name.clone()) {
-                return Err(failure(format!("@{name} is declared or defined twice")));
-            }
-            module.declarations.insert(name, line);
-            None
-        } else if let Some(rest) = line.strip_prefix('%') {
-            let (name, _) = rest
-                .split_once(" = type ")
-                .ok_or_else(|| failure(format!("an unrecognized line: {line}")))?;
-            module.types.insert(name.to_owned(), line);
-            None
-        } else if let Some(rest) = line.strip_prefix("attributes #") {
-            let group = rest
-                .split_once(" = ")
-                .and_then(|(group, _)| group.parse().ok())
-                .ok_or_else(|| failure(format!("an unrecognized line: {line}")))?;
-            module.attributes.insert(group, line);
-            None
-        } else if line.starts_with("source_filename = ") || line.starts_with("target ") {
-            module.header.push(line);
-            None
-        } else {
-            return Err(failure(format!("an unrecognized line: {line}")));
-        };
-        if let Some(entity) = entity {
-            if !names.insert(entity.name.clone()) {
-                return Err(failure(format!(
-                    "@{} is declared or defined twice",
-                    entity.name
-                )));
-            }
-            module.entities.push(entity);
-        }
-    }
-    Ok(module)
-}
-
-/// The symbol named after the first `@` of `text`, quoted or bare.
-fn symbol_after_at(text: &str) -> Option<String> {
-    let at = text.find('@')?;
-    symbol_at(text.get(at + 1..)?).map(|(name, _)| name)
-}
-
-/// The symbol at the start of `text`, which follows an `@` or `%`, and the
-/// bytes it spans.
-fn symbol_at(text: &str) -> Option<(String, usize)> {
-    if let Some(quoted) = text.strip_prefix('"') {
-        let end = quoted.find('"')?;
-        return Some((quoted.get(..end)?.to_owned(), end + 2));
-    }
-    let length = text
-        .bytes()
-        .take_while(|byte| byte.is_ascii_alphanumeric() || b"-$._".contains(byte))
-        .count();
-    (length > 0).then(|| (text[..length].to_owned(), length))
-}
-
-/// Calls `found` with each name a line writes after `sigil`, outside its
-/// string constants and its comment.
-fn sigil_names(line: &str, sigil: u8, mut found: impl FnMut(String)) {
-    let bytes = line.as_bytes();
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        if byte == b'"' && index > 0 && bytes[index - 1] == b'c' {
-            // A `c"..."` string constant is data.
-            index += 1;
-            while bytes.get(index).is_some_and(|byte| *byte != b'"') {
-                index += 1;
-            }
-            index += 1;
-        } else if byte == b';' {
-            return;
-        } else if byte == sigil
-            && let Some((name, length)) = line.get(index + 1..).and_then(symbol_at)
-        {
-            found(name);
-            index += 1 + length;
-        } else {
-            index += 1;
-        }
-    }
-}
-
-/// Every `@symbol` a line names.
-fn symbol_references(line: &str, named: &mut BTreeSet<String>) {
-    sigil_names(line, b'@', |name| {
-        named.insert(name);
-    });
-}
-
-/// Every named type a line uses.
-fn type_references(line: &str, module: &Module<'_>, found: &mut Vec<String>) {
-    sigil_names(line, b'%', |name| {
-        if module.types.contains_key(&name) {
-            found.push(name);
-        }
-    });
-}
-
-/// Every attribute group, such as `#0`, a line names.
-fn attribute_references(line: &str, found: &mut BTreeSet<u64>) {
-    let bytes = line.as_bytes();
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte != b'#' || index == 0 || bytes[index - 1] != b' ' {
-            continue;
-        }
-        let digits = bytes[index + 1..]
-            .iter()
-            .take_while(|byte| byte.is_ascii_digit())
-            .count();
-        if let Some(group) = line
-            .get(index + 1..=index + digits)
-            .and_then(|digits| digits.parse().ok())
-        {
-            found.insert(group);
-        }
-    }
-}
-
-/// A local definition's line with `hidden` for its local linkage, so the
-/// fragments that name it reach its one definition.
-fn hidden(entity: &Entity<'_>) -> Result<String, SplitFailure> {
-    let (prefix, rest) = if entity.global {
-        let (name, rest) = entity
-            .header
-            .split_once(" = ")
-            .ok_or_else(|| failure(format!("a global of another form: {}", entity.header)))?;
-        (format!("{name} = "), rest)
-    } else {
-        (
-            "define ".to_owned(),
-            entity
-                .header
-                .strip_prefix("define ")
-                .unwrap_or(entity.header),
-        )
-    };
-    let rest = rest
-        .strip_prefix("private ")
-        .or_else(|| rest.strip_prefix("internal "))
-        .ok_or_else(|| {
-            failure(format!(
-                "a local definition of another form: {}",
-                entity.header
-            ))
-        })?;
-    Ok(format!("{prefix}hidden {rest}"))
-}
-
-/// The declaration another fragment writes for `entity`: a function's header
-/// without linkage, parameter names or body, or a global's type without its
-/// initializer, `hidden` when the definition was local.
-fn declaration(entity: &Entity<'_>) -> Result<String, SplitFailure> {
-    let visibility = if entity.linkage == Linkage::Local {
-        "hidden "
-    } else {
-        ""
-    };
-    let other = || failure(format!("a definition of another form: {}", entity.header));
-    if entity.global {
-        // `@name = LINKAGE [unnamed_addr] constant|global TYPE VALUE[, align N]`
-        let (name, rest) = entity.header.split_once(" = ").ok_or_else(other)?;
-        let (_, rest) = rest.split_once(' ').ok_or_else(other)?;
-        let rest = rest.strip_prefix("unnamed_addr ").unwrap_or(rest);
-        let (kind, rest) = rest.split_once(' ').ok_or_else(other)?;
-        let ty = leading_type(rest).ok_or_else(other)?;
-        let align = rest
-            .rsplit_once(", align ")
-            .filter(|(_, align)| {
-                !align.is_empty() && align.bytes().all(|byte| byte.is_ascii_digit())
-            })
-            .map_or_else(String::new, |(_, align)| format!(", align {align}"));
-        return Ok(format!("{name} = external {visibility}{kind} {ty}{align}"));
-    }
-    let rest = entity
-        .header
-        .strip_prefix("define ")
-        .and_then(|rest| rest.strip_suffix(" {"))
-        .ok_or_else(other)?;
-    let rest = ["private ", "internal ", "weak "]
-        .iter()
-        .find_map(|linkage| rest.strip_prefix(linkage))
-        .unwrap_or(rest);
-    let at = rest.find('@').ok_or_else(other)?;
-    let open = at + rest[at..].find('(').ok_or_else(other)?;
-    let close = matching_parenthesis(rest, open).ok_or_else(other)?;
-    Ok(format!(
-        "declare {visibility}{}({}){}",
-        &rest[..open],
-        unnamed_parameters(&rest[open + 1..close]),
-        &rest[close + 1..]
-    ))
-}
-
-/// The type at the start of `text`: one bracketed aggregate, or one word.
-fn leading_type(text: &str) -> Option<&str> {
-    match text.bytes().next()? {
-        b'[' | b'{' | b'<' => {
-            let mut depth = 0_usize;
-            for (index, byte) in text.bytes().enumerate() {
-                match byte {
-                    b'[' | b'{' | b'<' => depth += 1,
-                    b']' | b'}' | b'>' => {
-                        depth = depth.checked_sub(1)?;
-                        if depth == 0 {
-                            return text.get(..=index);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            None
-        }
-        _ => text.split(' ').next(),
-    }
-}
-
-/// The index of the parenthesis closing the one at `open`.
-fn matching_parenthesis(text: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (index, byte) in text.bytes().enumerate().skip(open) {
-        match byte {
-            b'(' => depth += 1,
-            b')' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A parameter list without its parameter names, so a declaration names
-/// only the signature.
-fn unnamed_parameters(parameters: &str) -> String {
-    let mut pieces = Vec::new();
-    let mut depth = 0_usize;
-    let mut start = 0;
-    for (index, byte) in parameters.bytes().enumerate() {
-        match byte {
-            b'(' | b'{' | b'[' | b'<' => depth += 1,
-            b')' | b'}' | b']' | b'>' => depth = depth.saturating_sub(1),
-            b',' if depth == 0 => {
-                pieces.push(&parameters[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if !parameters.trim().is_empty() {
-        pieces.push(&parameters[start..]);
-    }
-    pieces
-        .into_iter()
-        .map(|piece| {
-            let piece = piece.trim();
-            match piece.rsplit_once(' ') {
-                Some((kept, name)) if name.starts_with('%') => kept,
-                _ => piece,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// The module fragment a symbol belongs to: its module path for a module's
@@ -826,77 +453,225 @@ fn fragment_module(symbol: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FragmentGranularity, fragment_module, split_module, symbol_after_at};
+    use super::{FragmentGranularity, fragment_module, split_emission};
+    use crate::backend::emission::{
+        FunctionBody, Linkage, Module, Parameter, References, Signature,
+    };
 
     /// A module in the emitter's form: `pkg::a::f` and `pkg::b::g` share a
     /// release helper and a latch; `f` alone reaches a helper that reaches a
     /// constant; `g` alone reads a table; `main` calls both; a weak runtime
     /// fallback stands beside them, and one helper nothing names.
-    fn module(g_body: &str) -> String {
-        format!(
-            "source_filename = \"whitefoot\"
-target datalayout = \"e-m:e-i64:64-n8:16:32:64-S128\"
-target triple = \"x86_64-unknown-linux-gnu\"
-
-%wf.t.aa = type {{ i64, %wf.t.bb }}
-%wf.t.bb = type {{ i8, i8 }}
-%wf.t.cc = type {{ i32 }}
-@.wf_const.k1 = private unnamed_addr constant [2 x i8] [i8 1, i8 2], align 1
-@.wf_const.t1 = private unnamed_addr constant [2 x i32] [i32 7, i32 9], align 4
-@.wf_resource_record.latch = private global i32 0, align 4
-declare void @abort()
-declare i64 @write(i32, ptr, i64)
-
-define i64 @wf_a.f(ptr noalias nonnull %v0, i64 %v1) #0 {{
-entry:
-  call void @wf.drop.t.aa(%wf.t.aa zeroinitializer)
-  %v2 = call i64 @wf_f_helper(i64 %v1)
-  store i32 1, ptr @.wf_resource_record.latch, align 4
-  ret i64 %v2
-}}
-
-define private i64 @wf_f_helper(i64 %v0) #0 {{
-entry:
-  %v1 = load i8, ptr @.wf_const.k1, align 1
-  ret i64 %v0
-}}
-
-define private void @wf.drop.t.aa(%wf.t.aa %value) #0 {{
-entry:
-  ret void
-}}
-
-define private void @wf.unused() #0 {{
-entry:
-  call void @abort()
-  ret void
-}}
-
-define i32 @wf_b.g(i32 %v0) #0 {{
-entry:
-{g_body}
-  call void @wf.drop.t.aa(%wf.t.aa zeroinitializer)
-  %v1 = load i32, ptr @.wf_const.t1, align 4
-  %v2 = load i32, ptr @.wf_resource_record.latch, align 4
-  ret i32 %v1
-}}
-
-define weak i32 @wf__floor_run(ptr %v0) #0 {{
-entry:
-  ret i32 0
-}}
-
-define i32 @main(i32 %argc, ptr %argv) #0 {{
-entry:
-  %v0 = call i64 @wf_a.f(ptr null, i64 1)
-  %v1 = call i32 @wf_b.g(i32 2)
-  %v2 = call i32 @wf__floor_run(ptr null)
-  ret i32 %v1
-}}
-
-attributes #0 = {{ \"probe-stack\"=\"inline-asm\" }}
-"
-        )
+    fn module(g_body: &str) -> Module {
+        let mut module = Module::default();
+        module.header("source_filename = \"whitefoot\"".to_owned());
+        module.header("target datalayout = \"e-m:e-i64:64-n8:16:32:64-S128\"".to_owned());
+        module.header("target triple = \"x86_64-unknown-linux-gnu\"".to_owned());
+        module.named_type(
+            "wf.t.aa".to_owned(),
+            "{ i64, %wf.t.bb }".to_owned(),
+            References {
+                types: ["wf.t.bb".to_owned()].into(),
+                symbols: [].into(),
+                ..References::default()
+            },
+        );
+        module.named_type(
+            "wf.t.bb".to_owned(),
+            "{ i8, i8 }".to_owned(),
+            References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            },
+        );
+        module.named_type(
+            "wf.t.cc".to_owned(),
+            "{ i32 }".to_owned(),
+            References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            },
+        );
+        module.global(
+            ".wf_const.k1".to_owned(),
+            "unnamed_addr constant",
+            "[2 x i8]".to_owned(),
+            "[i8 1, i8 2]".to_owned(),
+            Some(1),
+            References::default(),
+        );
+        module.global(
+            ".wf_const.t1".to_owned(),
+            "unnamed_addr constant",
+            "[2 x i32]".to_owned(),
+            "[i32 7, i32 9]".to_owned(),
+            Some(4),
+            References::default(),
+        );
+        module.global(
+            ".wf_resource_record.latch".to_owned(),
+            "global",
+            "i32".to_owned(),
+            "0".to_owned(),
+            Some(4),
+            References::default(),
+        );
+        let mut signature = Signature::new("abort", "void", vec![]);
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        module.declare(signature);
+        let mut signature = Signature::new(
+            "write",
+            "i64",
+            vec![
+                Parameter::unnamed("i32"),
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+            ],
+        );
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        module.declare(signature);
+        let mut signature = Signature::new(
+            "wf_a.f",
+            "i64",
+            vec![
+                Parameter::named("ptr noalias nonnull", "%v0"),
+                Parameter::named("i64", "%v1"),
+            ],
+        );
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.references.types.extend(["wf.t.aa".to_owned()]);
+        body.instructions(
+            "  call void @wf.drop.t.aa(%wf.t.aa zeroinitializer)\n",
+            &["wf.drop.t.aa"],
+        );
+        body.instructions("  %v2 = call i64 @wf_f_helper(i64 %v1)\n", &["wf_f_helper"]);
+        body.instructions(
+            "  store i32 1, ptr @.wf_resource_record.latch, align 4\n",
+            &[".wf_resource_record.latch"],
+        );
+        body.instructions("  ret i64 %v2\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature =
+            Signature::new("wf_f_helper", "i64", vec![Parameter::named("i64", "%v0")]);
+        signature.linkage = Linkage::Private;
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(
+            "  %v1 = load i8, ptr @.wf_const.k1, align 1\n",
+            &[".wf_const.k1"],
+        );
+        body.instructions("  ret i64 %v0\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature = Signature::new(
+            "wf.drop.t.aa",
+            "void",
+            vec![Parameter::named("%wf.t.aa", "%value")],
+        );
+        signature.linkage = Linkage::Private;
+        signature.references = References {
+            types: ["wf.t.aa".to_owned()].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  ret void\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature = Signature::new("wf.unused", "void", vec![]);
+        signature.linkage = Linkage::Private;
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  call void @abort()\n", &["abort"]);
+        body.instructions("  ret void\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature = Signature::new("wf_b.g", "i32", vec![Parameter::named("i32", "%v0")]);
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(g_body, &[]);
+        body.push('\n');
+        body.references.types.extend(["wf.t.aa".to_owned()]);
+        body.instructions(
+            "  call void @wf.drop.t.aa(%wf.t.aa zeroinitializer)\n",
+            &["wf.drop.t.aa"],
+        );
+        body.instructions(
+            "  %v1 = load i32, ptr @.wf_const.t1, align 4\n",
+            &[".wf_const.t1"],
+        );
+        body.instructions(
+            "  %v2 = load i32, ptr @.wf_resource_record.latch, align 4\n",
+            &[".wf_resource_record.latch"],
+        );
+        body.instructions("  ret i32 %v1\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature =
+            Signature::new("wf__floor_run", "i32", vec![Parameter::named("ptr", "%v0")]);
+        signature.linkage = Linkage::Weak;
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  ret i32 0\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        let mut signature = Signature::new(
+            "main",
+            "i32",
+            vec![
+                Parameter::named("i32", "%argc"),
+                Parameter::named("ptr", "%argv"),
+            ],
+        );
+        signature.references = References {
+            types: [].into(),
+            symbols: [].into(),
+            ..References::default()
+        };
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  %v0 = call i64 @wf_a.f(ptr null, i64 1)\n", &["wf_a.f"]);
+        body.instructions("  %v1 = call i32 @wf_b.g(i32 2)\n", &["wf_b.g"]);
+        body.instructions(
+            "  %v2 = call i32 @wf__floor_run(ptr null)\n",
+            &["wf__floor_run"],
+        );
+        body.instructions("  ret i32 %v1\n", &[]);
+        module.define(signature.define(body, "").expect("fixture definition"));
+        module.attribute_group(0, "\"probe-stack\"=\"inline-asm\"".to_owned());
+        module
     }
 
     fn defining<'fragments>(fragments: &'fragments [String], line: &str) -> Vec<&'fragments str> {
@@ -916,7 +691,7 @@ attributes #0 = {{ \"probe-stack\"=\"inline-asm\" }}
     /// hidden, in a fragment of its own, and declared by its users.
     #[test]
     fn each_definition_has_one_owner_and_shared_definitions_become_hidden() {
-        let fragments = split_module(
+        let fragments = split_emission(
             &module("  %v9 = add i32 %v0, 1"),
             FragmentGranularity::Function,
         )
@@ -980,25 +755,48 @@ attributes #0 = {{ \"probe-stack\"=\"inline-asm\" }}
     /// reached from two fragments, so it owns one of its own.
     #[test]
     fn an_unreached_helper_keeps_what_it_names_reachable() {
-        let module = "target triple = \"x86_64-unknown-linux-gnu\"
-define i32 @wf_a.f() #0 {
-entry:
-  call void @wf.drop.t.x()
-  ret i32 0
-}
-define private void @wf.drop.t.x() #0 {
-entry:
-  ret void
-}
-define private void @wf.drop.t.y() #0 {
-entry:
-  call void @wf.drop.t.x()
-  ret void
-}
-attributes #0 = { nounwind }
-";
+        let module = {
+            let mut module = Module::default();
+            module.header("target triple = \"x86_64-unknown-linux-gnu\"".to_owned());
+            let mut signature = Signature::new("wf_a.f", "i32", vec![]);
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  call void @wf.drop.t.x()\n", &["wf.drop.t.x"]);
+            body.instructions("  ret i32 0\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.drop.t.x", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.drop.t.y", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  call void @wf.drop.t.x()\n", &["wf.drop.t.x"]);
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            module.attribute_group(0, "nounwind".to_owned());
+            module
+        };
         let fragments =
-            split_module(module, FragmentGranularity::Function).expect("the module splits");
+            split_emission(&module, FragmentGranularity::Function).expect("the module splits");
         assert_eq!(fragments.len(), 3, "{fragments:#?}");
         for definition in [
             "define i32 @wf_a.f(",
@@ -1021,34 +819,71 @@ attributes #0 = { nounwind }
     /// first member.
     #[test]
     fn an_unreached_chain_keeps_its_callee_beside_it() {
-        let module = "target triple = \"x86_64-unknown-linux-gnu\"
-define i32 @wf_a.f() #0 {
-entry:
-  ret i32 0
-}
-define private void @wf.drop.t.b() #0 {
-entry:
-  ret void
-}
-define private void @wf.drop.t.a() #0 {
-entry:
-  call void @wf.drop.t.b()
-  ret void
-}
-define private void @wf.cycle.one() #0 {
-entry:
-  call void @wf.cycle.two()
-  ret void
-}
-define private void @wf.cycle.two() #0 {
-entry:
-  call void @wf.cycle.one()
-  ret void
-}
-attributes #0 = { nounwind }
-";
+        let module = {
+            let mut module = Module::default();
+            module.header("target triple = \"x86_64-unknown-linux-gnu\"".to_owned());
+            let mut signature = Signature::new("wf_a.f", "i32", vec![]);
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  ret i32 0\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.drop.t.b", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.drop.t.a", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  call void @wf.drop.t.b()\n", &["wf.drop.t.b"]);
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.cycle.one", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  call void @wf.cycle.two()\n", &["wf.cycle.two"]);
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            let mut signature = Signature::new("wf.cycle.two", "void", vec![]);
+            signature.linkage = Linkage::Private;
+            signature.references = References {
+                types: [].into(),
+                symbols: [].into(),
+                ..References::default()
+            };
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  call void @wf.cycle.one()\n", &["wf.cycle.one"]);
+            body.instructions("  ret void\n", &[]);
+            module.define(signature.define(body, "").expect("fixture definition"));
+            module.attribute_group(0, "nounwind".to_owned());
+            module
+        };
         let fragments =
-            split_module(module, FragmentGranularity::Function).expect("the module splits");
+            split_emission(&module, FragmentGranularity::Function).expect("the module splits");
         assert_eq!(fragments.len(), 3, "{fragments:#?}");
         let chain = defining(&fragments, "define hidden void @wf.drop.t.a(");
         assert_eq!(chain.len(), 1, "{fragments:#?}");
@@ -1070,7 +905,7 @@ attributes #0 = { nounwind }
     /// definitions only that module reaches stay beside them.
     #[test]
     fn module_fragments_group_a_modules_functions() {
-        let fragments = split_module(
+        let fragments = split_emission(
             &module("  %v9 = add i32 %v0, 1"),
             FragmentGranularity::Module,
         )
@@ -1089,9 +924,9 @@ attributes #0 = { nounwind }
     #[test]
     fn an_edit_changes_only_the_fragment_of_the_edited_function() {
         for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
-            let before = split_module(&module("  %v9 = add i32 %v0, 1"), granularity)
+            let before = split_emission(&module("  %v9 = add i32 %v0, 1"), granularity)
                 .expect("the module splits");
-            let after = split_module(&module("  %v9 = mul i32 %v0, 3"), granularity)
+            let after = split_emission(&module("  %v9 = mul i32 %v0, 3"), granularity)
                 .expect("the module splits");
             assert_eq!(before.len(), after.len());
             let changed = before
@@ -1103,51 +938,54 @@ attributes #0 = { nounwind }
         }
     }
 
-    /// A line outside the emitter's form, or a name nothing defines, fails
-    /// the split instead of being guessed at.
+    /// Missing dependency records and duplicate definitions cannot produce a
+    /// fragment. The retired text-parser tests for unsupported top-level LLVM
+    /// and linkage spellings are replaced by this model integrity boundary:
+    /// those spellings have no constructor in the emission model.
     #[test]
-    fn an_unrecognized_module_is_refused() {
+    fn incomplete_or_duplicate_module_records_are_refused() {
         let base = module("  %v9 = add i32 %v0, 1");
-        for (from, to) in [
-            (
-                "declare void @abort()",
-                "declare void @abort()\n@g = global i32 0",
-            ),
-            (
-                "declare void @abort()",
-                "declare void @abort()\nmodule asm \"nop\"",
-            ),
-            ("define weak i32", "define linkonce_odr i32"),
-            ("call void @abort()", "call void @missing()"),
+        assert!(split_emission(&base, FragmentGranularity::Function).is_ok());
+        let mut missing_symbol = base.clone();
+        missing_symbol.declarations.remove("abort");
+        let mut missing_type = base.clone();
+        missing_type.types.remove("wf.t.bb");
+        let mut missing_attribute = base.clone();
+        missing_attribute.attributes.remove(&0);
+        let mut duplicate = base.clone();
+        duplicate.entities.push(duplicate.entities[0].clone());
+        let mut duplicate_declaration = base.clone();
+        duplicate_declaration.declare(Signature::new("abort", "void", Vec::new()));
+        for (name, edited) in [
+            ("symbol", missing_symbol),
+            ("transitive type", missing_type),
+            ("attribute", missing_attribute),
+            ("duplicate definition", duplicate),
+            ("duplicate declaration", duplicate_declaration),
         ] {
-            let edited = base.replacen(from, to, 1);
-            assert_ne!(edited, base);
             assert!(
-                split_module(&edited, FragmentGranularity::Function).is_err(),
-                "{to} must be refused"
+                split_emission(&edited, FragmentGranularity::Function).is_err(),
+                "{name} must be refused"
             );
         }
     }
 
-    /// A symbol is read bare or quoted, after any linkage.
+    /// Quoting at an instruction's printing site does not change the symbol
+    /// identity carried by its dependency record.
     #[test]
-    fn a_symbol_is_read_quoted_or_bare() {
-        for (definition, symbol) in [
-            (
-                "void @wf_runtime.queue.new(ptr %wf.result) #0 {",
-                "wf_runtime.queue.new",
-            ),
-            (
-                "ptr @\"wf_box_new$instance$39\"(ptr %wf.arg.v0) #0 {",
-                "wf_box_new$instance$39",
-            ),
-            (
-                "weak i32 @wf__floor_run(i32 %argc, ptr %argv) #0 {",
-                "wf__floor_run",
-            ),
-        ] {
-            assert_eq!(symbol_after_at(definition).as_deref(), Some(symbol));
-        }
+    fn a_quoted_reference_uses_its_recorded_symbol_identity() {
+        let mut input = module("  %v9 = add i32 %v0, 1");
+        let main = input
+            .entities
+            .iter_mut()
+            .find(|entity| entity.name == "main")
+            .expect("main");
+        main.body = main.body.replace("@wf_b.g", "@\"wf_b.g\"");
+        let fragments =
+            split_emission(&input, FragmentGranularity::Function).expect("recorded name");
+        let main = defining(&fragments, "define i32 @main(")[0];
+        assert!(main.contains("declare i32 @wf_b.g(i32) #0"));
+        assert!(main.contains("@\"wf_b.g\""));
     }
 
     /// A fragment groups a module's functions and the instances of its

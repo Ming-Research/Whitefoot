@@ -55,10 +55,11 @@
 //! before this module existed. That is a reserved namespace, not a name check
 //! — nothing here inspects a source function's spelling.
 
+use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use super::{BackendFailure, FunctionEmitter, IntrinsicDeclaration, llvm_type, value_name};
+use super::{BackendFailure, FunctionEmitter, IntrinsicDeclaration, value_name};
 use crate::backend::abi::{FunctionAbi, ResultAbi};
 use crate::{
     IrAddressed, IrFunction, IrInstruction, IrNominalKind, IrOperation, IrProgram, IrSynthesis,
@@ -93,18 +94,54 @@ pub(super) struct LoopSplitSite<'ir> {
 /// `sched/core.c`, configuration in `sched/entry.c`, and platform primitives.
 /// Windows requires those external definitions at link time; pool resource
 /// exhaustion still uses the ordinary-call fallback.
-pub(crate) const PARALLEL_RUNTIME_DECLARATIONS: &str = "declare ptr @wf__par_acquire_lane(i64)\ndeclare void @wf__par_publish(ptr, ptr)\ndeclare void @wf__par_join(ptr)\ndeclare void @wf__par_release(ptr)\n";
+pub(super) fn parallel_runtime_declarations() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let signature = Signature::new(
+        "wf__par_acquire_lane",
+        "ptr",
+        vec![Parameter::unnamed("i64")],
+    );
+    module.declare(signature);
+    let signature = Signature::new(
+        "wf__par_publish",
+        "void",
+        vec![Parameter::unnamed("ptr"), Parameter::unnamed("ptr")],
+    );
+    module.declare(signature);
+    let signature = Signature::new("wf__par_join", "void", vec![Parameter::unnamed("ptr")]);
+    module.declare(signature);
+    let signature = Signature::new("wf__par_release", "void", vec![Parameter::unnamed("ptr")]);
+    module.declare(signature);
+    Ok(module)
+}
 
 /// The fail-closed Windows declaration of the once-per-process backend query.
-pub(crate) const PARALLEL_POOL_QUERY_DECLARATION: &str = "declare i32 @wf__par_pool_active()\n";
+pub(super) fn parallel_pool_query_declaration() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let signature = Signature::new("wf__par_pool_active", "i32", vec![]);
+    module.declare(signature);
+    Ok(module)
+}
 
 /// The fail-closed Windows declaration of the loop split budget query.
-pub(crate) const PARALLEL_SPLIT_BUDGET_DECLARATION: &str =
-    "declare i64 @wf__par_split_budget(i64, i64)\n";
+pub(super) fn parallel_split_budget_declaration() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let signature = Signature::new(
+        "wf__par_split_budget",
+        "i64",
+        vec![Parameter::unnamed("i64"), Parameter::unnamed("i64")],
+    );
+    module.declare(signature);
+    Ok(module)
+}
 
 /// The fail-closed Windows declaration of the recursion budget query.
-pub(crate) const PARALLEL_RECURSION_BUDGET_DECLARATION: &str =
-    "declare i64 @wf__par_recursion_budget()\n";
+pub(super) fn parallel_recursion_budget_declaration() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let signature = Signature::new("wf__par_recursion_budget", "i64", vec![]);
+    module.declare(signature);
+    Ok(module)
+}
 
 /// A non-Windows module's own definition of the lane protocol: acquire no lane,
 /// ever.
@@ -122,7 +159,57 @@ pub(crate) const PARALLEL_RECURSION_BUDGET_DECLARATION: &str =
 /// would make the runtime a link obligation of every path that ever builds a
 /// Whitefoot program rather than an option of the paths that want lanes. The
 /// Windows production contract deliberately chooses that obligation.
-pub(crate) const PARALLEL_RUNTIME_FALLBACK: &str = "define weak ptr @wf__par_acquire_lane(i64 %bytes) {\nentry:\n  ret ptr null\n}\n\ndefine weak void @wf__par_publish(ptr %frame, ptr %fn) {\nentry:\n  ret void\n}\n\ndefine weak void @wf__par_join(ptr %frame) {\nentry:\n  ret void\n}\n\ndefine weak void @wf__par_release(ptr %frame) {\nentry:\n  ret void\n}\n\n";
+pub(super) fn parallel_runtime_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let mut signature = Signature::new(
+        "wf__par_acquire_lane",
+        "ptr",
+        vec![Parameter::named("i64", "%bytes")],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret ptr null\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf__par_publish",
+        "void",
+        vec![
+            Parameter::named("ptr", "%frame"),
+            Parameter::named("ptr", "%fn"),
+        ],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret void\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf__par_join",
+        "void",
+        vec![Parameter::named("ptr", "%frame")],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret void\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf__par_release",
+        "void",
+        vec![Parameter::named("ptr", "%frame")],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret void\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 /// The first line of [`PARALLEL_RUNTIME_FALLBACK`], and so the marker a
 /// non-Windows link path reads.
@@ -157,8 +244,17 @@ pub fn module_requires_parallel_runtime(module: &str) -> bool {
 /// Windows emits the external declaration above instead. The query is not part
 /// of the lane protocol — it takes no frame, moves no work, and starts nothing
 /// — so it remains separate from the four protocol signatures.
-pub(crate) const PARALLEL_POOL_QUERY_FALLBACK: &str =
-    "define weak i32 @wf__par_pool_active() {\nentry:\n  ret i32 0\n}\n\n";
+pub(super) fn parallel_pool_query_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let mut signature = Signature::new("wf__par_pool_active", "i32", vec![]);
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret i32 0\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 /// The runtime's answer to "how many times may a split of this span halve",
 /// and a non-Windows module's own weak answer of "not at all".
@@ -171,8 +267,24 @@ pub(crate) const PARALLEL_POOL_QUERY_FALLBACK: &str =
 /// It is a separate definition rather than a fifth lane-protocol entry point
 /// because it takes no frame, publishes nothing, and moves no work; keeping it
 /// apart also leaves the four protocol signatures' bytes exactly as they were.
-pub(crate) const PARALLEL_SPLIT_BUDGET_FALLBACK: &str =
-    "define weak i64 @wf__par_split_budget(i64 %span, i64 %weight) {\nentry:\n  ret i64 0\n}\n\n";
+pub(super) fn parallel_split_budget_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let mut signature = Signature::new(
+        "wf__par_split_budget",
+        "i64",
+        vec![
+            Parameter::named("i64", "%span"),
+            Parameter::named("i64", "%weight"),
+        ],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret i64 0\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 /// The runtime's answer to "how many levels of this recursive component may
 /// still hand work out", and a non-Windows module's own weak answer of "none".
@@ -182,8 +294,17 @@ pub(crate) const PARALLEL_SPLIT_BUDGET_FALLBACK: &str =
 /// zero and the component's ordinary entry descends straight into its
 /// sequential clone — the world a pool-less run wants anyway. Windows leaves
 /// the external query unresolved until native link.
-pub(crate) const PARALLEL_RECURSION_BUDGET_FALLBACK: &str =
-    "define weak i64 @wf__par_recursion_budget() {\nentry:\n  ret i64 0\n}\n\n";
+pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let mut signature = Signature::new("wf__par_recursion_budget", "i64", vec![]);
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret i64 0\n", &[]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 /// The symbol one function's sequential clone is emitted under.
 ///
@@ -333,7 +454,7 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
 /// The outlined thunks of one module, in emission order.
 #[derive(Debug, Default)]
 pub(crate) struct ParallelThunks {
-    definitions: String,
+    definitions: Module,
     count: u32,
     /// How many thunks each function's emission has registered, which
     /// numbers the next one's symbol within that function alone.
@@ -349,8 +470,8 @@ pub(crate) struct ParallelThunks {
 impl ParallelThunks {
     /// The thunk definitions this module needs, or empty when it hands out
     /// nothing.
-    pub(crate) fn definitions(&self) -> &str {
-        &self.definitions
+    pub(super) fn into_definitions(self) -> Module {
+        self.definitions
     }
 
     pub(crate) const fn is_used(&self) -> bool {
@@ -372,7 +493,7 @@ impl ParallelThunks {
     fn register(
         &mut self,
         parent: &str,
-        body: impl FnOnce(&str) -> String,
+        body: impl FnOnce(&str) -> Result<Module, BackendFailure>,
     ) -> Result<String, BackendFailure> {
         let local = self.local.entry(parent.to_owned()).or_insert(0);
         let symbol = format!("@wf__par_thunk_{parent}.{local}");
@@ -383,7 +504,7 @@ impl ParallelThunks {
             .count
             .checked_add(1)
             .ok_or(BackendFailure::CounterOverflow)?;
-        self.definitions.push_str(&body(&symbol));
+        self.definitions.append(body(&symbol)?);
         Ok(symbol)
     }
 }
@@ -435,13 +556,18 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let mut field_types = Vec::with_capacity(arguments.len() + 1);
+        let mut frame_references = References::default();
         let mut operands = Vec::with_capacity(arguments.len());
         let mut call_arguments = Vec::with_capacity(arguments.len());
         for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
             }
-            let parameter_type = llvm_type(self.program, parameter.ty())?;
+            let parameter_type = super::llvm_type_with_references(
+                self.program,
+                parameter.ty(),
+                &mut frame_references.types,
+            )?;
             let operand = self.value_operand(*argument)?;
             operands.push(format!("{parameter_type} {operand}"));
             // The frame keeps a range reference's pair whole; the refused
@@ -454,7 +580,8 @@ impl FunctionEmitter<'_, '_> {
             });
             field_types.push(parameter_type);
         }
-        let result_type = llvm_type(self.program, ty)?;
+        let result_type =
+            super::llvm_type_with_references(self.program, ty, &mut frame_references.types)?;
         let result_field = field_types.len();
         field_types.push(result_type.clone());
         let frame_layout = self
@@ -474,6 +601,7 @@ impl FunctionEmitter<'_, '_> {
             field_types.push("i64".to_owned());
             field_types.len() - 1
         });
+        self.output.references.extend(&frame_references);
         let frame_type = format!("{{ {} }}", field_types.join(", "));
         let thunk = self.parallel.register(self.function.name(), |symbol| {
             thunk_definition(
@@ -483,6 +611,7 @@ impl FunctionEmitter<'_, '_> {
                     field_types: &field_types,
                     result: result_field,
                     budget: budget_field,
+                    references: &frame_references,
                 },
                 &abi,
                 &callee,
@@ -490,6 +619,7 @@ impl FunctionEmitter<'_, '_> {
             )
         })?;
 
+        self.output.symbol(thunk.trim_start_matches('@'));
         // Target layout already computed the exact complete aggregate before
         // this function emitted any text. Passing that proved constant avoids
         // forming an address from `null` merely to ask LLVM for the same size.
@@ -497,12 +627,18 @@ impl FunctionEmitter<'_, '_> {
         let granted = format!("%{}", self.next_temporary()?);
         let offer = par_offer_label(result);
         let offered = par_offered_label(result);
-        writeln!(
-            self.output,
-            "  {frame} = call ptr @wf__par_acquire_lane(i64 {})\n  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}\n{offer}:",
-            frame_layout.size()
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = frame_layout.size();
+
+            {
+                self.output.symbol("wf__par_acquire_lane");
+                write!(
+                    self.output,
+                    "  {frame} = call ptr @wf__par_acquire_lane(i64 {emission_argument_0})\n  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}\n"
+                )
+            }?;
+            self.output.open_block(offer.to_string());
+        };
         for (index, operand) in operands.iter().enumerate() {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
@@ -519,11 +655,16 @@ impl FunctionEmitter<'_, '_> {
             )
             .map_err(|_| BackendFailure::TextEmission)?;
         }
-        writeln!(
-            self.output,
-            "  call void @wf__par_publish(ptr {frame}, ptr {thunk})\n  br label %{offered}\n{offered}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            {
+                self.output.symbol("wf__par_publish");
+                write!(
+                    self.output,
+                    "  call void @wf__par_publish(ptr {frame}, ptr {thunk})\n  br label %{offered}\n"
+                )
+            }?;
+            self.output.open_block(offered.to_string());
+        };
         // The refused edge runs the same call on this thread. The opt-in
         // refusal control may send it to the clone instead, which is the
         // source ABI and carries no budget.
@@ -591,7 +732,7 @@ impl FunctionEmitter<'_, '_> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let result_type = llvm_type(self.program, ty)?;
+        let result_type = self.output.type_name(self.program, ty)?;
         let mut arguments = Vec::with_capacity(split.captures.len() + 4);
         arguments.push(if declared[0].is_indirect() {
             let address = self.value_place(split.seed)?;
@@ -634,13 +775,16 @@ impl FunctionEmitter<'_, '_> {
         } else {
             split.weight.to_string()
         };
-        writeln!(
-            self.output,
-            "  {width} = sub i64 {upper}, {lower}\n  \
+        {
+            self.output.symbol("wf__par_split_budget");
+            writeln!(
+                self.output,
+                "  {width} = sub i64 {upper}, {lower}\n  \
              {ascending} = icmp ugt i64 {upper}, {lower}\n  \
              {span} = select i1 {ascending}, i64 {width}, i64 0\n  \
              {budget} = call i64 @wf__par_split_budget(i64 {span}, i64 {weight})"
-        )
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         self.parallel.queries_split_budget = true;
         arguments.push(format!("i64 {budget}"));
@@ -707,12 +851,15 @@ impl FunctionEmitter<'_, '_> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let result = format!("%{}", self.next_temporary()?);
-                writeln!(
-                    self.output,
-                    "  {result} = extractvalue {} {}, 1",
-                    llvm_type(self.program, ty)?,
-                    self.value_name(*value)
-                )
+                {
+                    let emitted_type_0 = self.output.type_name(self.program, ty)?;
+                    writeln!(
+                        self.output,
+                        "  {result} = extractvalue {} {}, 1",
+                        emitted_type_0,
+                        self.value_name(*value)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 result
             }
@@ -740,6 +887,7 @@ impl FunctionEmitter<'_, '_> {
                 let product = self.next_temporary()?;
                 let overflow = self.next_temporary()?;
                 let result = format!("%{}", self.next_temporary()?);
+                self.output.symbol("llvm.umul.with.overflow.i64");
                 writeln!(self.output, "  %{pair} = call {{ i64, i1 }} @llvm.umul.with.overflow.i64(i64 {left}, i64 {right})\n  %{product} = extractvalue {{ i64, i1 }} %{pair}, 0\n  %{overflow} = extractvalue {{ i64, i1 }} %{pair}, 1\n  {result} = select i1 %{overflow}, i64 -1, i64 %{product}")
                     .map_err(|_| BackendFailure::TextEmission)?;
                 result
@@ -770,10 +918,13 @@ impl FunctionEmitter<'_, '_> {
             ty: "i64".to_owned(),
         });
         let result = format!("%{}", self.next_temporary()?);
-        writeln!(
-            self.output,
-            "  {result} = call i64 @{intrinsic}(i64 {left}, i64 {right})"
-        )
+        {
+            self.output.symbol(intrinsic.to_string());
+            writeln!(
+                self.output,
+                "  {result} = call i64 @{intrinsic}(i64 {left}, i64 {right})"
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(result)
     }
@@ -785,26 +936,32 @@ impl FunctionEmitter<'_, '_> {
         callee: &str,
         mut arguments: Vec<String>,
     ) -> Result<(), BackendFailure> {
-        let result_type = llvm_type(self.program, result_abi.ty())?;
+        let result_type = self.output.type_name(self.program, result_abi.ty())?;
         if result_abi.uses_destination() {
             let destination = self.value_place(result)?;
             arguments.insert(0, format!("ptr {destination}"));
             // LoopSplit uses the value-definition bridge, whose ordinary
             // result save reads this snapshot of the completed destination.
-            return writeln!(
-                self.output,
-                "  call void @{callee}({})\n  {} = load {result_type}, ptr {destination}",
-                arguments.join(", "),
-                value_name(result)
-            )
+            return {
+                self.output.symbol(callee.to_string());
+                writeln!(
+                    self.output,
+                    "  call void @{callee}({})\n  {} = load {result_type}, ptr {destination}",
+                    arguments.join(", "),
+                    value_name(result)
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission);
         }
-        writeln!(
-            self.output,
-            "  {} = call {result_type} @{callee}({})",
-            value_name(result),
-            arguments.join(", ")
-        )
+        {
+            self.output.symbol(callee.to_string());
+            writeln!(
+                self.output,
+                "  {} = call {result_type} @{callee}({})",
+                value_name(result),
+                arguments.join(", ")
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -830,7 +987,9 @@ impl FunctionEmitter<'_, '_> {
             let inline = par_inline_label(pending.result);
             let wait = par_wait_label(pending.result);
             let done = par_done_label(pending.result);
-            let result_type = llvm_type(self.program, pending.result_abi.ty())?;
+            let result_type = self
+                .output
+                .type_name(self.program, pending.result_abi.ty())?;
             let ComputeHandedOut {
                 frame,
                 frame_type,
@@ -839,6 +998,7 @@ impl FunctionEmitter<'_, '_> {
                 result_field,
                 ..
             } = &pending;
+            self.output.symbol(callee.as_str());
             let (inline_call, save_waited) = if pending.result_abi.uses_destination() {
                 let destination = self.value_place(pending.result)?;
                 let arguments = if arguments.is_empty() {
@@ -858,20 +1018,25 @@ impl FunctionEmitter<'_, '_> {
                     String::new(),
                 )
             };
-            writeln!(
-                self.output,
-                "  {condition} = icmp eq ptr {frame}, null\n  \
-                 br i1 {condition}, label %{inline}, label %{wait}\n\
-                 {inline}:\n  {inline_call}\n  \
-                 br label %{done}\n\
-                 {wait}:\n  call void @wf__par_join(ptr {frame})\n  \
-                 {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}\n  \
-                 {waited} = load {result_type}, ptr {field}\n  \
-                 {save_waited}call void @wf__par_release(ptr {frame})\n  br label %{done}\n\
-                 {done}:\n  {} = phi {result_type} [ {refused}, %{inline} ], [ {waited}, %{wait} ]",
-                value_name(pending.result),
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
+            {
+                let emission_argument_0 = value_name(pending.result);
+
+                write!(self.output, "  {condition} = icmp eq ptr {frame}, null\n  br i1 {condition}, label %{inline}, label %{wait}\n").map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(inline.to_string());
+                write!(self.output, "  {inline_call}\n  br label %{done}\n")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(wait.to_string());
+                {
+                    self.output.symbol("wf__par_join");
+                    self.output.symbol("wf__par_release");
+                    write!(
+                        self.output,
+                        "  call void @wf__par_join(ptr {frame})\n  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}\n  {waited} = load {result_type}, ptr {field}\n  {save_waited}call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
+                    )
+                }?;
+                self.output.open_block(done.to_string());
+                writeln!(self.output, "  {emission_argument_0} = phi {result_type} [ {refused}, %{inline} ], [ {waited}, %{wait} ]").map_err(|_| BackendFailure::TextEmission)?;
+            };
             self.save_value_result(pending.result)?;
         }
         Ok(())
@@ -888,6 +1053,7 @@ struct ThunkFrame<'site> {
     /// The field carrying the callee variant's budget, where the callback
     /// lands inside a budgeted component.
     budget: Option<usize>,
+    references: &'site References,
 }
 
 /// One outlined call over its frame.
@@ -897,14 +1063,24 @@ fn thunk_definition(
     abi: &FunctionAbi,
     callee: &str,
     result_type: &str,
-) -> String {
+) -> Result<Module, BackendFailure> {
     let ThunkFrame {
         ty: frame_type,
         field_types,
         result: result_field,
         budget: budget_field,
+        references,
     } = *frame;
-    let mut body = format!("define internal void {symbol}(ptr %frame) {{\nentry:\n");
+    let mut signature = Signature::new(
+        symbol.trim_start_matches('@'),
+        "void",
+        vec![Parameter::named("ptr", "%frame")],
+    );
+    signature.linkage = Linkage::Internal;
+    let mut body = FunctionBody::default();
+    body.references.extend(references);
+    body.symbol(callee);
+    body.open_block("entry".to_owned());
     let mut rendered = Vec::with_capacity(field_types.len() - 1);
     for (index, (field_type, parameter)) in field_types.iter().zip(abi.parameters()).enumerate() {
         let _ = writeln!(
@@ -944,20 +1120,32 @@ fn thunk_definition(
     if abi.result().uses_destination() {
         // Construct into the same result field the existing join path reads.
         // No pointer to worker-local or released storage becomes the result.
-        let _ = write!(
-            body,
-            "  %slot = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {field}\n  call void @{callee}(ptr %slot{}{})\n  ret void\n}}\n\n",
-            if rendered.is_empty() { "" } else { ", " },
-            rendered.join(", ")
-        );
-        return body;
+        let _ = {
+            body.symbol(callee.to_string());
+            write!(
+                body,
+                "  %slot = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {field}\n  call void @{callee}(ptr %slot{}{})\n  ret void\n",
+                if rendered.is_empty() { "" } else { ", " },
+                rendered.join(", ")
+            )
+        };
+        let mut module = Module::default();
+        module.define(signature.define(body, "")?);
+        module.text("\n");
+        return Ok(module);
     }
-    let _ = write!(
-        body,
-        "  %result = call {result_type} @{callee}({})\n  %slot = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {field}\n  store {result_type} %result, ptr %slot\n  ret void\n}}\n\n",
-        rendered.join(", ")
-    );
-    body
+    let _ = {
+        body.symbol(callee.to_string());
+        write!(
+            body,
+            "  %result = call {result_type} @{callee}({})\n  %slot = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {field}\n  store {result_type} %result, ptr %slot\n  ret void\n",
+            rendered.join(", ")
+        )
+    };
+    let mut module = Module::default();
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
 }
 
 /// The label a granted lane's frame is filled and published in.

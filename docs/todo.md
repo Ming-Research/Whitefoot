@@ -344,7 +344,13 @@ rarely insert at the same place.
   content-move repair writes `free_empty(move b)` without the argument name
   GRAM-11 requires and offers the cell's scope-exit release to a content
   whose elements are linear, and PROV-6's partial-consume repair writes the
-  placeholder `let N(f: a, ...) = move v;`. Pin each with a program per
+  placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
+  offers that placeholder as its second route for every linear binding,
+  although an opaque host handle such as `ReadFile` cannot be taken apart
+  [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
+  value of an unbounded type parameter can only be moved whole; the
+  [beyond-memory article](articles/beyond-memory.md) shows it for
+  `ReadFile`. Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -1330,9 +1336,13 @@ rarely insert at the same place.
   or limit that shows it: the later stage of the
   [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
   persistent formation, lookup, instance, summary and lowering queries inside
-  a composition through module build units, instance units and fact-based
-  entry checks, selected when edit-build measurements show the composition's
-  rerun to limit a current experiment (a build of an edited entry now forms,
+  a composition, where module build units follow the owned representation
+  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
+  (`design/compiler/incremental-compilation.md`, since the standard library
+  on modules needs a library module checked once and reused by every program
+  that names it), and instance units and fact-based entry checks wait until
+  edit-build measurements show the composition's rerun to limit a current
+  experiment or a consumer needs them (a build of an edited entry now forms,
   resolves and type-checks the whole closure and reuses only its proof
   analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
   build of a 32-module chain, growing with the program); a cold build without
@@ -1400,24 +1410,11 @@ rarely insert at the same place.
   module declarations only. Split when no open branch has large edits in
   these files; close when both are under 4,000 lines.
 
-- **LLVM emission writes and then patches text.**
-  `compiler/src/backend/emitter.rs` inserts entry allocas by byte offset and
-  adds the stack-probe attribute by rewriting `define` lines. Which operations
-  open blocks, and so which predecessor a phi names, comes from a hand-kept
-  list (`definition_exit_label`) apart from the code that opens them, and
-  `compiler/src/backend/fragments.rs` re-parses the finished text to split it.
-  A structured function model printed once (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, a design
-  amendment) records exit labels, places allocas and cuts fragments from the
-  model. Validate with byte-identical output, which keeps the backend tests'
-  substring checks as the net. Reopen when an operation that opens blocks is
-  added.
-
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
   `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
   function and nominal templates (always created empty), the
-  `elided_store_brand` cell, `CheckedNominalKind::Box`'s `region` field, a
+  `CheckedNominalKind::Box`'s `region` field, a
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
@@ -1446,18 +1443,57 @@ rarely insert at the same place.
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker reads raw syntax.** The checker makes 522 `self.tree` calls
-  and 443 `Production::` matches, learning which alternative was written by
-  probing children; the if/else split is decoded from brace offsets in both
-  `compiler/src/resolution/scopes.rs` and `compiler/src/semantic/tree.rs`; and
-  the checker joins resolution records by linear scans comparing
-  `(role, NodePath)` (`compiler/src/semantic/check/support.rs`). Per-node
-  indexes published by resolution (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1) remove
-  the scans without test changes; a typed syntax access layer (P3.4, a design
-  amendment) confines each grammar amendment to one place. Validate with
-  identical verdicts, timing resolution and checking before and after the
-  indexes. Reopen with the next grammar amendment.
+- **Shared checking identities still retain separate judgment work.** P2.3
+  removes the rollback, structural type mirror and discovery replay, but
+  symbolic and ordinary views conservatively recheck their selected bodies
+  and analyses. This preserves the distinct selector universes and consumed
+  callee claims; retained symbolic bodies also remain in checked-program
+  metadata while lowering selects only the ordinary view. Whether repeated
+  judgment work or retained body storage matters is unmeasured. A later
+  consumer could key reusable judgments by substitution, checking context and
+  consumed claims, or discard unconsumed bodies while retaining their
+  identities. Both changes affect the checker, proof metadata and consumers
+  that address functions by identity. Defer this extra cache/projection
+  machinery until a compiler-cost investigation identifies this work or
+  storage as a blocker; compare cached and fresh verdicts, diagnostics and
+  emitted output and measure the saved work and retained memory before
+  selecting either change. See the
+  [inventory design](../research/investigations/compiler-architecture/DESIGN.md#p23-one-inventory-without-rollback).
+
+- **Syntax views eagerly build the node-path index.** The shared view now
+  serves the graph reader and interface fingerprinting as well as checking;
+  those first two consumers use tokens and extents but never node paths.
+  Constructing their unused path vectors and sorted lookup index adds work
+  whose practical cost is unmeasured. Consider constructing that index on its
+  first path query within the same borrowed view. This adds lazy cache state
+  and is deferred because no current measurement identifies view setup as a
+  blocker. Reopen with the next module-reading performance investigation;
+  require unchanged paths, extents and fingerprints, and measure whether the
+  saved setup work matters before changing the cache policy.
+
+- **Measure the retained emission model's text storage when backend memory matters.**
+  Structured LLVM emission retains definition text for fragment construction
+  and a rendered whole-module string for existing text consumers. This can
+  duplicate instruction bytes; the practical memory and build-time cost is
+  unmeasured. Consider rendering whole-module text lazily or transferring it
+  to the final text consumer once fragment construction is complete. Either
+  change affects the private output/cache boundary and needs unchanged
+  whole-module bytes, fragment bytes and cached/uncached results. Defer from
+  the structural migration because no current experiment identifies this
+  storage as a blocker; reopen when a larger program's backend profile shows
+  material retained text or rendering cost.
+
+- **Review scope misses the conformance adapter's check-integrity group.**
+  `docs/skills/completion-review/scripts/review-scope.sh` classifies every
+  `compiler/` path as code before considering test paths. An adapter-only
+  change under `compiler/tests/conformance/` therefore omits group T even
+  though AGENTS treats that adapter as conformance evidence. Include these
+  adapter/runner paths in the T trigger and cover an adapter-only diff with
+  a scope test. Until then, reviewers must add the applicable T checks by
+  judgment; the compiler-architecture review does so. Defer the tooling
+  change from that compiler migration and reopen when review-scope routing
+  is next changed, requiring both adapter-only inclusion and ordinary-code
+  exclusion to be observed.
 
 ## Open language questions
 

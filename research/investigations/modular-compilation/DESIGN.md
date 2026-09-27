@@ -1338,10 +1338,20 @@ verdicts and reuse depend on content keys alone:
 3. Fact-based entry checks: the no-heap closure and the cross-module FN-9
    components are computed from the recorded heap and call facts.
 
+The owner's ruling of 2026-09-25 (`design/log.md`) moved the first step ahead
+of that condition: module build units follow the owned representation, since
+the standard library on modules needs a library module checked once and reused
+by every program that names it. Instance units and fact-based entry checks
+still wait for the measurement or a consumer.
+
 The obstacle is structural, not a missing cache family: the checked program is
-one whole-closure structure that borrows its source text and indexes
-declarations densely, so a composition has no module-level checked result to
-reuse. Each step is measured against the stage it replaces.
+one whole-closure structure, so a composition has no module-level checked
+result to reuse. It also borrowed its source text and named declarations only
+by dense index until the
+[compiler-architecture investigation](../compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s
+P3.2 and P3.3 made the syntax and the checked program owned and gave every
+declaration a stable key. Each step is measured against the stage it
+replaces.
 
 ## Recursive dependencies and generic instances
 

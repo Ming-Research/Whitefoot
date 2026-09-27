@@ -7,7 +7,8 @@
 use std::fmt::Write;
 
 use crate::backend::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use crate::backend::emitter::{llvm_type, source_symbol};
+use crate::backend::emission::{FunctionBody, Module, Parameter, Signature};
+use crate::backend::emitter::source_symbol;
 use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 
 /// The standard library's invocation inputs and exit status, by the
@@ -16,16 +17,16 @@ use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 const INPUTS: &str = "std.process.Inputs";
 const EXIT_STATUS: &str = "std.process.ExitStatus";
 
-pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, BackendFailure> {
+pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, BackendFailure> {
     let Some(main) = program
         .functions()
         .iter()
         .find(|function| function.name() == selected)
     else {
-        return Ok(String::new());
+        return Ok(Module::default());
     };
     let Some(signature) = main.source_signature() else {
-        return Ok(String::new());
+        return Ok(Module::default());
     };
     if signature.result() != IrSourceMode::Own
         || signature
@@ -33,7 +34,7 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, Back
             .iter()
             .any(|mode| *mode != IrSourceMode::Own)
     {
-        return Ok(String::new());
+        return Ok(Module::default());
     }
     let abi = FunctionAbi::build(program, main)?;
     let mut arguments = Vec::new();
@@ -49,7 +50,7 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, Back
                 inputs = Some(*id);
                 arguments.push("ptr %inputs".to_owned());
             }
-            _ => return Ok(String::new()),
+            _ => return Ok(Module::default()),
         }
     }
     let status = match abi.result() {
@@ -62,73 +63,114 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, Back
             Some(id)
         }
         ResultAbi::Value(IrType::Unit) => None,
-        _ => return Ok(String::new()),
+        _ => return Ok(Module::default()),
     };
-    let mut output = String::new();
+    let mut module = Module::default();
     if inputs.is_some() {
-        output.push_str("\ndeclare i32 @wf__ordinary_inputs(ptr, i32, ptr)\n");
+        module.text("\n");
+        module.declare(Signature::new(
+            "wf__ordinary_inputs",
+            "i32",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i32"),
+                Parameter::unnamed("ptr"),
+            ],
+        ));
     }
     if status.is_some() {
-        output.push_str("\ndeclare i8 @wf__ordinary_exit_code(ptr)\n");
+        module.text("\n");
+        module.declare(Signature::new(
+            "wf__ordinary_exit_code",
+            "i8",
+            vec![Parameter::unnamed("ptr")],
+        ));
     }
-    output.push_str("\ndefine i32 @wf__main_body(i32 %argc, ptr %argv) #0 {\nentry:\n");
+    module.text("\n");
+    let signature = Signature::new(
+        "wf__main_body",
+        "i32",
+        vec![
+            Parameter::named("i32", "%argc"),
+            Parameter::named("ptr", "%argv"),
+        ],
+    );
+    let mut output = FunctionBody::default();
+    output.open_block("entry".to_owned());
     if let Some(id) = inputs {
-        writeln!(
-            output,
-            "  %inputs = alloca {}, align 16",
-            llvm_type(program, IrType::Nominal(id))?
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        output.push_str("  %ready = call i32 @wf__ordinary_inputs(ptr %inputs, i32 %argc, ptr %argv)\n  %ok = icmp ne i32 %ready, 0\n  br i1 %ok, label %invoke, label %unavailable\nunavailable:\n  ret i32 70\ninvoke:\n");
+        let ty = output.type_name(program, IrType::Nominal(id))?;
+        writeln!(output, "  %inputs = alloca {ty}, align 16")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        output.instructions("  %ready = call i32 @wf__ordinary_inputs(ptr %inputs, i32 %argc, ptr %argv)\n  %ok = icmp ne i32 %ready, 0\n  br i1 %ok, label %invoke, label %unavailable\n", &["wf__ordinary_inputs"]);
+        output.open_block("unavailable".to_owned());
+        output.push_str("  ret i32 70\n");
+        output.open_block("invoke".to_owned());
     }
     if let Some(id) = status {
-        writeln!(
-            output,
-            "  %status = alloca {}, align 16",
-            llvm_type(program, IrType::Nominal(id))?
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let ty = output.type_name(program, IrType::Nominal(id))?;
+        writeln!(output, "  %status = alloca {ty}, align 16")
+            .map_err(|_| BackendFailure::TextEmission)?;
         arguments.insert(0, "ptr %status".to_owned());
     }
     let result_type = if status.is_some() { "void" } else { "i8" };
     let unit_assignment = if status.is_some() { "" } else { "%unit = " };
+    let callee = source_symbol(main.name());
+    output.symbol(&callee);
     if let Some(sequential) =
         crate::backend::emitter::sequential_entry_symbol(program, main.name())?
     {
-        output.push_str("  %par.pool = call i32 @wf__par_pool_active()\n  %par.active = icmp ne i32 %par.pool, 0\n  br i1 %par.active, label %parallel, label %sequential\nparallel:\n");
+        output.instructions("  %par.pool = call i32 @wf__par_pool_active()\n  %par.active = icmp ne i32 %par.pool, 0\n  br i1 %par.active, label %parallel, label %sequential\n", &["wf__par_pool_active"]);
+        output.open_block("parallel".to_owned());
         let assignment = if status.is_some() { "" } else { "%unit.par = " };
         writeln!(
             output,
-            "  {assignment}call {result_type} @\"{}\"({})",
-            source_symbol(main.name()),
+            "  {assignment}call {result_type} @\"{callee}\"({})",
             arguments.join(", ")
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        output.push_str("  br label %returned\nsequential:\n");
+        output.push_str("  br label %returned\n");
+        output.open_block("sequential".to_owned());
         let assignment = if status.is_some() { "" } else { "%unit.seq = " };
+        output.symbol(&sequential);
         writeln!(
             output,
             "  {assignment}call {result_type} @\"{sequential}\"({})",
             arguments.join(", ")
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        output.push_str("  br label %returned\nreturned:\n");
+        output.push_str("  br label %returned\n");
+        output.open_block("returned".to_owned());
     } else {
         writeln!(
             output,
-            "  {unit_assignment}call {result_type} @\"{}\"({})",
-            source_symbol(main.name()),
+            "  {unit_assignment}call {result_type} @\"{callee}\"({})",
             arguments.join(", ")
         )
         .map_err(|_| BackendFailure::TextEmission)?;
     }
     if status.is_some() {
-        output.push_str("  %code = call i8 @wf__ordinary_exit_code(ptr %status)\n  %exit = zext i8 %code to i32\n  ret i32 %exit\n}\n");
+        output.instructions("  %code = call i8 @wf__ordinary_exit_code(ptr %status)\n  %exit = zext i8 %code to i32\n  ret i32 %exit\n", &["wf__ordinary_exit_code"]);
     } else {
-        output.push_str("  ret i32 0\n}\n");
+        output.push_str("  ret i32 0\n");
     }
-    output.push_str("\ndefine i32 @main(i32 %argc, ptr %argv) #0 {\nentry:\n  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)\n  ret i32 %status\n}\n");
-    Ok(output)
+    module.define(signature.define(output, "")?);
+    module.text("\n");
+    let signature = Signature::new(
+        "main",
+        "i32",
+        vec![
+            Parameter::named("i32", "%argc"),
+            Parameter::named("ptr", "%argv"),
+        ],
+    );
+    let mut output = FunctionBody::default();
+    output.open_block("entry".to_owned());
+    output.instructions(
+        "  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)\n  ret i32 %status\n",
+        &["wf__floor_run"],
+    );
+    module.define(signature.define(output, "")?);
+    Ok(module)
 }
 
 /// Constructs the executable builder's caller as ordinary WF source. Copying

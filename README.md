@@ -301,12 +301,14 @@ Safe, fast and small are the core. These are the other things worth knowing.
 
 - **Concurrent I/O without async.** The language has no `async`, `await`,
   futures, callbacks or tasks: files and sockets are ordinary values, and an
-  I/O operation is an ordinary call. The compiled program submits I/O through
-  a completion runtime (io_uring on Linux, I/O completion ports on Windows),
-  and independent calls in plain sequential code are issued together, so
-  code is never split into synchronous and asynchronous kinds. The `reads`
-  and `writes` rows that let computation run in parallel decide which I/O
-  calls may overlap. Serving many connections at once is being designed.
+  I/O operation is an ordinary call, so code is never split into synchronous
+  and asynchronous kinds. The compiled program carries out I/O through a
+  completion runtime (io_uring on Linux, I/O completion ports on Windows).
+  The `reads` and `writes` rows that let computation run in parallel also
+  decide which I/O calls may overlap. Today the overlap comes from `--par`,
+  which can run two independent calls on two workers, I/O included; the
+  default build issues I/O one call at a time. Serving many connections at
+  once is being designed.
 
 ### Planned
 
@@ -348,24 +350,26 @@ Not started. Each builds on what the proofs already establish.
 Short pieces, each on one idea, with programs that compile. The first three
 start from the examples above:
 
-1. Prove it or write a branch — bounds and overflow checks that disappear
-   because they are proved.
+1. [Prove it or write a branch](docs/articles/prove-it-or-write-a-branch.md) —
+   bounds and overflow checks that disappear because they are proved.
 2. [Write sequential code, get parallel
    results](docs/articles/sequential-code-parallel-results.md) — how the
    compiler finds independence in plain code, recursion included, and hands
    it to the workers.
 3. [Proofs without a solver, by hand](docs/articles/proofs-by-hand.md) —
    difference bounds, closure and loop invariants, worked on paper.
-4. What a rejection tells you — diagnostics written for the agent that fixes
-   the code.
-5. Integers — every operation states its meaning.
-6. One build — no panic, no debug/release split, a fixed record on resource
-   exhaustion.
-7. Beyond memory — no heap, linear resources, and the plan for a
-   maximum-safety mode.
-8. What a reviewer reads — contracts and effect rows as the review surface.
+4. [What a rejection tells you](docs/articles/what-a-rejection-tells-you.md) —
+   diagnostics written for the agent that fixes the code.
+5. [Integers](docs/articles/integers.md) — every operation states its meaning.
+6. [One build](docs/articles/one-build.md) — no panic, no debug/release
+   split, a fixed record on resource exhaustion.
+7. [Beyond memory](docs/articles/beyond-memory.md) — no heap, linear
+   resources, and the plan for a maximum-safety mode.
+8. [What a reviewer reads](docs/articles/what-a-reviewer-reads.md) —
+   contracts and effect rows as the review surface.
 9. The trusted base — what is trusted, and the plan to shrink it.
-10. Where the speed comes from — every way the proofs are used.
+10. [Where the speed comes from](docs/articles/where-the-speed-comes-from.md) —
+    every way the proofs are used.
 11. I/O without async — ordinary calls that the compiler overlaps.
 12. A layout engine — the first large program.
 13. How this project is built with agents.

@@ -780,8 +780,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             1
@@ -822,7 +821,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_nominal_bearing_generic_requirement_survives_the_symbolic_checkpoint_as_metadata() {
+fn a_nominal_bearing_generic_requirement_retains_symbolic_identity_as_metadata() {
     // v0.59 reached the symbolic nominal through `buffer_fits::<Pair<T>>(n)`.
     // [OP-9]'s allocation-size predicate "has no writer-callable spelling" in
     // v0.60, so a measure over `Slots<Pair<T>, 1>` retains the nominal as the
@@ -915,8 +914,8 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("Pair<T>'s nominal identity must address checked metadata");
         assert!(retained.name.starts_with("Pair<"));
         assert!(
-            index >= checked.data.executable_nominal_count,
-            "metadata-only symbolic nominals must follow the executable prefix"
+            !checked.data.executable_nominals.contains(&nominal),
+            "metadata-only symbolic nominals must remain outside the executable view"
         );
         let CheckedNominalKind::Struct { fields } = &retained.kind else {
             panic!("Pair<T> must retain its checked struct shape");
@@ -1004,8 +1003,7 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let concrete = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.name == "positive")
             .collect::<Vec<_>>();
         assert_eq!(concrete.len(), 2);
@@ -1055,8 +1053,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             1

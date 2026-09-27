@@ -22,6 +22,7 @@
 //! A rejection is never recorded, so a failing function is analyzed afresh
 //! and reported where its current source stands.
 
+use crate::semantic::check::{AnalysisState, DeclarationInventory, TypeContext};
 use std::collections::{HashMap, HashSet};
 
 use super::{CheckStop, CheckedFunctionInventory, Checker};
@@ -529,43 +530,31 @@ fn claims_rendering(function: &CheckedFunction) -> String {
     )
 }
 
-impl Checker<'_> {
-    /// The key resolution minted for every top-level item of this unit, by
-    /// the item's ordinal among the root's children, as [`receipt_item`]
-    /// spells it. An alias binds names only and no analysis reads a node of
-    /// one, so an alias item has no spelling here.
-    pub(super) fn receipt_items(&self) -> Result<ItemSpellings, CheckStop> {
-        let count = self.tree.children(self.tree.root())?.len();
-        let by_ordinal = (0..count)
-            .map(|ordinal| {
-                u32::try_from(ordinal)
-                    .ok()
-                    .and_then(|ordinal| self.resolved.item_key(ordinal))
-                    .filter(|key| !matches!(key, crate::ItemKey::Alias { .. }))
-                    .map(|key| receipt_item(key).to_string())
-            })
-            .collect();
-        Ok(ItemSpellings { by_ordinal })
-    }
-
+impl Checker<'_, '_> {
     /// How a receipt key spells one program-wide identity, or `None` when
     /// no stable spelling covers it.
     fn receipt_spelling(&self, kind: IdKind, value: u64) -> Option<Spelling> {
         let index = usize::try_from(value).ok()?;
         match kind {
-            IdKind::Function => Some(Spelling::Stable(self.signatures.get(index)?.symbol.clone())),
+            IdKind::Function => Some(Spelling::Stable(
+                self.types.signatures.get(index)?.symbol.clone(),
+            )),
             IdKind::Nominal => {
                 let nominal = NominalId(u32::try_from(index).ok()?);
-                self.receipt_type(CheckedType::Nominal(nominal))
+                self.types
+                    .receipt_type(CheckedType::Nominal(nominal))
                     .map(Spelling::Stable)
             }
             IdKind::Element => {
-                let ty = self.elements.borrow().get(index).copied()?;
-                self.receipt_type(ty)
+                let ty = self.types.elements.get(index).copied()?;
+                self.types
+                    .receipt_type(ty)
                     .map(|spelled| Spelling::Stable(format!("element {spelled}")))
             }
             IdKind::Declaration => {
                 let record = self
+                    .types
+                    .declarations
                     .resolved
                     .declaration(DeclarationId::from_index(index)?)?;
                 match record.role() {
@@ -594,7 +583,7 @@ impl Checker<'_> {
                 }
             }
             IdKind::Constant => {
-                let declaration = self.checked_constants.get(index)?.declaration;
+                let declaration = self.types.checked_constants.get(index)?.declaration;
                 match self.receipt_spelling(IdKind::Declaration, declaration.index() as u64)? {
                     Spelling::Stable(spelled) => Some(Spelling::Stable(format!("const {spelled}"))),
                     Spelling::Local | Spelling::Numbered => None,
@@ -603,9 +592,11 @@ impl Checker<'_> {
             // A query is numbered where the key first names it and expanded
             // there, so the key keeps which call uses which query.
             IdKind::ContractQuery => {
-                (index < self.contract_queries.borrow().len()).then_some(Spelling::Numbered)
+                (index < self.analysis.contract_queries.len()).then_some(Spelling::Numbered)
             }
             IdKind::Module => self
+                .types
+                .declarations
                 .resolved
                 .syntax()
                 .classified_bundle()
@@ -616,8 +607,10 @@ impl Checker<'_> {
             // path within its item is stable where the dense id is not.
             IdKind::Node => {
                 let node = crate::syntax::NodeId::from_index(index)?;
-                let path = self.tree.path(node).ok()?;
-                self.resolved
+                let path = self.types.declarations.tree.path(node).ok()?;
+                self.types
+                    .declarations
+                    .resolved
                     .occurrence_key(path)
                     .filter(|key| !matches!(key.item, crate::ItemKey::Alias { .. }))
                     .map(|key| {
@@ -636,11 +629,6 @@ impl Checker<'_> {
             | IdKind::Scope
             | IdKind::Offset => None,
         }
-    }
-
-    /// The stable spelling of one checked type [FN-2].
-    fn receipt_type(&self, ty: CheckedType) -> Option<String> {
-        self.stable_type_spelling(ty)
     }
 
     /// The key under which the analysis of `functions[index]` is recorded,
@@ -689,19 +677,23 @@ impl Checker<'_> {
                     )
                 }
                 IdKind::Nominal => {
-                    let nominal = self.nominals.get(position)?;
+                    let nominal = self.types.nominals.get(position)?;
                     format!(
                         "nominal\n{:?}\n{:?} {:?}",
                         nominal.kind, nominal.linear, nominal.nocopy
                     )
                 }
                 IdKind::Element => {
-                    format!("element\n{:?}", self.elements.borrow().get(position)?)
+                    format!("element\n{:?}", self.types.elements.get(position)?)
                 }
-                IdKind::Constant => self.receipt_constant(position)?,
+                IdKind::Constant => self.types.receipt_constant(position)?,
                 IdKind::Declaration => {
-                    match self.constants.get(&DeclarationId::from_index(position)?) {
-                        Some(constant) => self.receipt_constant(constant.0 as usize)?,
+                    match self
+                        .types
+                        .constants
+                        .get(&DeclarationId::from_index(position)?)
+                    {
+                        Some(constant) => self.types.receipt_constant(constant.0 as usize)?,
                         None => continue,
                     }
                 }
@@ -709,7 +701,7 @@ impl Checker<'_> {
                 // analysis never reads; an instance several modules request
                 // is one analysis whichever request came first [FN-2].
                 IdKind::ContractQuery => {
-                    let queries = self.contract_queries.borrow();
+                    let queries = &self.analysis.contract_queries;
                     let CheckedContractQuery {
                         instance,
                         site: _,
@@ -742,24 +734,12 @@ impl Checker<'_> {
         Some(text.into_text().into_bytes())
     }
 
-    fn receipt_constant(&self, position: usize) -> Option<String> {
-        let constant = self.checked_constants.get(position)?;
-        Some(format!(
-            "constant\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}",
-            constant.declaration,
-            constant.name,
-            constant.declared_type,
-            constant.ty,
-            constant.value
-        ))
-    }
-
     /// The analysis a recorded receipt stands for, when the store holds one
     /// for this function's key; otherwise `None`, and the key is kept so an
     /// accepted fresh analysis can be recorded under it.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn recorded_analysis(
-        &self,
+        &mut self,
         store: &dyn ProofReceipts,
         items: &ItemSpellings,
         functions: &[CheckedFunctionInventory],
@@ -779,46 +759,59 @@ impl Checker<'_> {
         let recorded = store
             .load(&key)
             .and_then(|bytes| ProofReceipt::decode(&bytes))
-            .and_then(|receipt| self.receipt_entailment(&functions.get(index)?.function, &receipt));
+            .and_then(|receipt| {
+                self.types
+                    .declarations
+                    .receipt_entailment(&functions.get(index)?.function, &receipt)
+            });
         if recorded.is_some() {
-            if let Some(slot) = self.reused_analyses.borrow_mut().get_mut(index) {
+            if let Some(slot) = self.analysis.reused_analyses.get_mut(index) {
                 *slot = true;
             }
         } else {
-            self.receipt_keys.borrow_mut().push((index, key));
+            self.analysis.receipt_keys.push((index, key));
         }
         recorded
     }
 
-    /// Whether the concrete function at `index` took its analysis from a
-    /// receipt.
-    pub(super) fn analysis_reused(&self, index: usize) -> bool {
-        self.reused_analyses
-            .borrow()
-            .get(index)
-            .copied()
-            .unwrap_or(false)
-    }
-
     /// Records the receipt of every function analyzed afresh whose analysis
     /// no rejection names.
-    pub(super) fn record_receipts(&self, functions: &[&CheckedFunction], rejected: &[bool]) {
+    pub(super) fn record_receipts(&mut self, functions: &[&CheckedFunction], rejected: &[bool]) {
         let Some(store) = self.receipts else {
             return;
         };
-        for (index, key) in self.receipt_keys.take() {
+        for (index, key) in std::mem::take(&mut self.analysis.receipt_keys) {
             if rejected.get(index).copied().unwrap_or(true) {
                 continue;
             }
             if let Some(receipt) = functions
                 .get(index)
-                .and_then(|function| self.proof_receipt(function))
+                .and_then(|function| self.types.declarations.proof_receipt(function))
             {
                 store.store(&key, &receipt.encode());
             }
         }
     }
+}
 
+impl<'unit> DeclarationInventory<'unit> {
+    /// The key resolution minted for every top-level item of this unit, by
+    /// the item's ordinal among the root's children, as [`receipt_item`]
+    /// spells it. An alias binds names only and no analysis reads a node of
+    /// one, so an alias item has no spelling here.
+    pub(super) fn receipt_items(&self) -> Result<ItemSpellings, CheckStop> {
+        let count = self.tree.children(self.tree.root())?.len();
+        let by_ordinal = (0..count)
+            .map(|ordinal| {
+                u32::try_from(ordinal)
+                    .ok()
+                    .and_then(|ordinal| self.resolved.item_key(ordinal))
+                    .filter(|key| !matches!(key, crate::ItemKey::Alias { .. }))
+                    .map(|key| receipt_item(key).to_string())
+            })
+            .collect();
+        Ok(ItemSpellings { by_ordinal })
+    }
     /// The receipt of an accepted analysis of `function`, or `None` when an
     /// allocation site it proved lies outside its own item.
     pub(super) fn proof_receipt(&self, function: &CheckedFunction) -> Option<ProofReceipt> {
@@ -848,7 +841,6 @@ impl Checker<'_> {
             allocation_bounds,
         })
     }
-
     /// The root-child ordinal of the item whose body `function` checks.
     fn receipt_item_ordinal(&self, function: &CheckedFunction) -> Option<u32> {
         self.resolved
@@ -859,7 +851,6 @@ impl Checker<'_> {
             .first()
             .copied()
     }
-
     /// The analysis a receipt stands for: everything later stages read of
     /// it, and every postcondition verified for publication [FN-9].
     pub(super) fn receipt_entailment(
@@ -925,6 +916,32 @@ impl Checker<'_> {
             postconditions,
             ..FunctionEntailment::default()
         })
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    fn receipt_constant(&self, position: usize) -> Option<String> {
+        let constant = self.checked_constants.get(position)?;
+        Some(format!(
+            "constant\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}",
+            constant.declaration,
+            constant.name,
+            constant.declared_type,
+            constant.ty,
+            constant.value
+        ))
+    }
+    /// The stable spelling of one checked type [FN-2].
+    fn receipt_type(&self, ty: CheckedType) -> Option<String> {
+        self.stable_type_spelling(ty)
+    }
+}
+
+impl AnalysisState {
+    /// Whether the concrete function at `index` took its analysis from a
+    /// receipt.
+    pub(super) fn analysis_reused(&self, index: usize) -> bool {
+        self.reused_analyses.get(index).copied().unwrap_or(false)
     }
 }
 

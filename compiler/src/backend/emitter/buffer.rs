@@ -53,17 +53,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     /// The byte offset of the first element: the block's header.
-    fn buffer_header_size(&self, block: IrType) -> Result<String, BackendFailure> {
+    fn buffer_header_size(&mut self, block: IrType) -> Result<String, BackendFailure> {
         Ok(format!(
             "ptrtoint (ptr getelementptr ({}, ptr null, i64 0, i32 {ELEMENTS_FIELD}) to i64)",
-            llvm_type(self.program, block)?
+            self.output.type_name(self.program, block)?
         ))
     }
 
-    fn buffer_element_stride(&self, element: IrElement) -> Result<String, BackendFailure> {
+    fn buffer_element_stride(&mut self, element: IrElement) -> Result<String, BackendFailure> {
         Ok(format!(
             "ptrtoint (ptr getelementptr ({}, ptr null, i64 1) to i64)",
-            llvm_type(
+            self.output.type_name(
                 self.program,
                 self.program
                     .element(element)
@@ -89,11 +89,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .ok_or(BackendFailure::InvalidIr)?;
         let offset = self.element_address_index(element, offset)?;
         let pointer = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{pointer} = getelementptr inbounds {}, ptr {address}, i64 0, i32 {ELEMENTS_FIELD}, i64 {offset}",
-            llvm_type(self.program, block)?
-        )
+        {
+let emitted_type_0 = self.output.type_name(self.program, block)?;
+writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, i64 0, i32 {ELEMENTS_FIELD}, i64 {offset}", emitted_type_0)
+}
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(format!("%{pointer}"))
     }
@@ -114,13 +113,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let block = self.buffer_block_type(nominal)?;
-        writeln!(
-            self.output,
-            "  {} = getelementptr inbounds {}, ptr {}, i64 0, i32 {ELEMENTS_FIELD}, i64 0",
-            self.value_name(result),
-            llvm_type(self.program, block)?,
-            self.value_name(owner),
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, block)?;
+            writeln!(
+                self.output,
+                "  {} = getelementptr inbounds {}, ptr {}, i64 0, i32 {ELEMENTS_FIELD}, i64 0",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(owner)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -140,10 +142,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let block = self.buffer_block_type(nominal)?;
         let negative_header = self.next_temporary()?;
+        let header_size = self.buffer_header_size(block)?;
         writeln!(
             self.output,
             "  %{negative_header} = sub i64 0, {}\n  {} = getelementptr inbounds i8, ptr {}, i64 %{negative_header}",
-            self.buffer_header_size(block)?,
+            header_size,
             self.value_name(result),
             self.value_name(payload),
         )
@@ -201,7 +204,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         length: IrValueId,
         stored: Option<IrValueId>,
     ) -> Result<(), BackendFailure> {
-        let element_type = llvm_type(
+        let element_type = self.output.type_name(
             self.program,
             self.program
                 .element(element)
@@ -220,20 +223,40 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let done = buffer_fill_done_label(result);
         let count = self.value_name(length);
         let address = self.value_name(result);
-        writeln!(
-            self.output,
-            "  %{element_bytes} = mul nuw i64 {count}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n  br label %{allocate}\n{allocate}:\n  {address} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n{oom}:\n  call void @wf_resource_abort()\n  unreachable\n{init}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            write!(self.output, "  %{element_bytes} = mul nuw i64 {count}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n  br label %{allocate}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(allocate.to_string());
+            {
+                self.output.symbol("malloc");
+                write!(
+                    self.output,
+                    "  {address} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
+                )
+            }?;
+            self.output.open_block(oom.to_string());
+            {
+                self.output.symbol("wf_resource_abort");
+                write!(
+                    self.output,
+                    "  call void @wf_resource_abort()\n  unreachable\n"
+                )
+            }?;
+            self.output.open_block(init.to_string());
+        };
         let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
         let index = self.next_temporary()?;
         let in_range = self.next_temporary()?;
         let next_index = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  store i64 {count}, ptr {length_address}\n  br label %{head}\n{head}:\n  %{index} = phi i64 [ 0, %{init} ], [ %{next_index}, %{body} ]\n  %{in_range} = icmp ult i64 %{index}, {count}\n  br i1 %{in_range}, label %{body}, label %{done}\n{body}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            write!(
+                self.output,
+                "  store i64 {count}, ptr {length_address}\n  br label %{head}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(head.to_string());
+            write!(self.output, "  %{index} = phi i64 [ 0, %{init} ], [ %{next_index}, %{body} ]\n  %{in_range} = icmp ult i64 %{index}, {count}\n  br i1 %{in_range}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(body.to_string());
+        };
         let offset = format!("%{index}");
         let element_pointer = self.buffer_element_pointer(block, &address, &offset)?;
         if let Some(value) = stored {
@@ -245,11 +268,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             )
             .map_err(|_| BackendFailure::TextEmission)?;
         }
-        writeln!(
-            self.output,
-            "  %{next_index} = add i64 %{index}, 1\n  br label %{head}\n{done}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        {
+            write!(
+                self.output,
+                "  %{next_index} = add i64 %{index}, 1\n  br label %{head}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(done.to_string());
+            Ok::<_, BackendFailure>(())
+        }
     }
 
     /// [MSR-1] the one measure of a runtime-capacity `Array<T>`: the `len`
@@ -404,21 +431,24 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let fits = self.next_temporary()?;
         let address = self.next_temporary()?;
         let vector = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{tighter} = icmp ult i64 {}, {length}\n  %{window} = select i1 %{tighter}, i64 {}, i64 {length}\n  %{room} = icmp uge i64 %{window}, 16\n  br i1 %{room}, label %{}, label %{}\n{}:\n  %{edge} = sub i64 %{window}, 16\n  %{fits} = icmp ule i64 {}, %{edge}\n  br i1 %{fits}, label %{}, label %{}\n{}:\n  %{address} = getelementptr inbounds i8, ptr {first_element}, i64 {}\n  %{vector} = load <16 x i8>, ptr %{address}, align 1",
-            self.value_name(limit),
-            self.value_name(limit),
-            buffer_probe_room_label(result),
-            buffer_probe_zero_label(result),
-            buffer_probe_room_label(result),
-            self.value_name(index),
-            buffer_probe_load_label(result),
-            buffer_probe_zero_label(result),
-            buffer_probe_load_label(result),
-            self.value_name(index),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = self.value_name(limit);
+            let emission_argument_1 = self.value_name(limit);
+            let emission_argument_2 = buffer_probe_room_label(result);
+            let emission_argument_3 = buffer_probe_zero_label(result);
+            let emission_argument_4 = buffer_probe_room_label(result);
+            let emission_argument_5 = self.value_name(index);
+            let emission_argument_6 = buffer_probe_load_label(result);
+            let emission_argument_7 = buffer_probe_zero_label(result);
+            let emission_argument_8 = buffer_probe_load_label(result);
+            let emission_argument_9 = self.value_name(index);
+
+            write!(self.output, "  %{tighter} = icmp ult i64 {emission_argument_0}, {length}\n  %{window} = select i1 %{tighter}, i64 {emission_argument_1}, i64 {length}\n  %{room} = icmp uge i64 %{window}, 16\n  br i1 %{room}, label %{emission_argument_2}, label %{emission_argument_3}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_4.to_string());
+            write!(self.output, "  %{edge} = sub i64 %{window}, 16\n  %{fits} = icmp ule i64 {emission_argument_5}, %{edge}\n  br i1 %{fits}, label %{emission_argument_6}, label %{emission_argument_7}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_8.to_string());
+            write!(self.output, "  %{address} = getelementptr inbounds i8, ptr {first_element}, i64 {emission_argument_9}\n  %{vector} = load <16 x i8>, ptr %{address}, align 1\n").map_err(|_| BackendFailure::TextEmission)?;
+        };
         let mut accumulated: Option<String> = None;
         for needle in needles {
             let inserted = self.next_temporary()?;
@@ -448,24 +478,40 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let none = self.next_temporary()?;
         let zeros = self.next_temporary()?;
         let extended = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{mask} = bitcast <16 x i1> %{mask_lanes} to i16\n  %{none} = icmp eq i16 %{mask}, 0\n  br i1 %{none}, label %{}, label %{}\n{}:\n  br label %{}\n{}:\n  %{zeros} = call i16 @llvm.cttz.i16(i16 %{mask}, i1 true)\n  %{extended} = zext i16 %{zeros} to i64\n  br label %{}\n{}:\n  br label %{}\n{}:\n  {} = phi i64 [ 16, %{} ], [ %{extended}, %{} ], [ 0, %{} ]",
-            buffer_probe_clean_label(result),
-            buffer_probe_found_label(result),
-            buffer_probe_clean_label(result),
-            buffer_probe_join_label(result),
-            buffer_probe_found_label(result),
-            buffer_probe_join_label(result),
-            buffer_probe_zero_label(result),
-            buffer_probe_join_label(result),
-            buffer_probe_join_label(result),
-            self.value_name(result),
-            buffer_probe_clean_label(result),
-            buffer_probe_found_label(result),
-            buffer_probe_zero_label(result),
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        {
+            let emission_argument_0 = buffer_probe_clean_label(result);
+            let emission_argument_1 = buffer_probe_found_label(result);
+            let emission_argument_2 = buffer_probe_clean_label(result);
+            let emission_argument_3 = buffer_probe_join_label(result);
+            let emission_argument_4 = buffer_probe_found_label(result);
+            let emission_argument_5 = buffer_probe_join_label(result);
+            let emission_argument_6 = buffer_probe_zero_label(result);
+            let emission_argument_7 = buffer_probe_join_label(result);
+            let emission_argument_8 = buffer_probe_join_label(result);
+            let emission_argument_9 = self.value_name(result);
+            let emission_argument_10 = buffer_probe_clean_label(result);
+            let emission_argument_11 = buffer_probe_found_label(result);
+            let emission_argument_12 = buffer_probe_zero_label(result);
+
+            write!(self.output, "  %{mask} = bitcast <16 x i1> %{mask_lanes} to i16\n  %{none} = icmp eq i16 %{mask}, 0\n  br i1 %{none}, label %{emission_argument_0}, label %{emission_argument_1}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_2.to_string());
+            writeln!(self.output, "  br label %{emission_argument_3}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_4.to_string());
+            {
+                self.output.symbol("llvm.cttz.i16");
+                write!(
+                    self.output,
+                    "  %{zeros} = call i16 @llvm.cttz.i16(i16 %{mask}, i1 true)\n  %{extended} = zext i16 %{zeros} to i64\n  br label %{emission_argument_5}\n"
+                )
+            }?;
+            self.output.open_block(emission_argument_6.to_string());
+            writeln!(self.output, "  br label %{emission_argument_7}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_8.to_string());
+            writeln!(self.output, "  {emission_argument_9} = phi i64 [ 16, %{emission_argument_10} ], [ %{extended}, %{emission_argument_11} ], [ 0, %{emission_argument_12} ]").map_err(|_| BackendFailure::TextEmission)?;
+            Ok::<_, BackendFailure>(())
+        }
     }
 }
 

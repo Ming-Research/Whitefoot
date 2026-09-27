@@ -5,6 +5,8 @@
 //! The stored shape has no temporary nominal IDs: constructor templates keep
 //! it after their symbolic nominal checkpoint has been restored.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::TypeContext;
 use crate::syntax::NodeId;
 use crate::{DeclarationClass, DeclarationId, LexicalUseRole, Production, ResolvedTarget};
 
@@ -34,7 +36,28 @@ impl TypeRegionShape {
     }
 }
 
-impl<'unit> Checker<'unit> {
+impl<'unit> Checker<'_, 'unit> {
+    /// An instantiated type parameter can carry a caller's store brand even
+    /// though that brand's source declaration belongs to a different body.
+    /// Input values and explicit type arguments supply those regions for
+    /// this invocation [FN-2, OWN-3].
+    pub(super) fn check_confined_destination(
+        function: &super::FunctionSignature,
+        ty: CheckedType,
+        destination: Option<DeclarationId>,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
+        // [BLK-4] had no successor: v0.60 has one heap [STOR-8], no region
+        // block, and no confined value, so no type names a region a
+        // destination could escape. The walk is retained only so that its
+        // two remaining callers keep one entry point while the region-shape
+        // apparatus is removed with the storage package.
+        let _ = (ty, function, destination, node);
+        Ok(())
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
     /// [BLK-4] the complete value type, including phantom nominal brands and
     /// instantiated element types. This is independent of the declaration's
     /// region-argument matching shape: an opaque `T` can carry confinement.
@@ -72,27 +95,6 @@ impl<'unit> Checker<'unit> {
         regions.dedup();
         Ok(regions)
     }
-
-    /// An instantiated type parameter can carry a caller's store brand even
-    /// though that brand's source declaration belongs to a different body.
-    /// Input values and explicit type arguments supply those regions for
-    /// this invocation [FN-2, OWN-3].
-    pub(super) fn check_confined_destination(
-        &self,
-        function: &super::FunctionSignature,
-        ty: CheckedType,
-        destination: Option<DeclarationId>,
-        node: NodeId,
-    ) -> Result<(), CheckStop> {
-        // [BLK-4] had no successor: v0.60 has one heap [STOR-8], no region
-        // block, and no confined value, so no type names a region a
-        // destination could escape. The walk is retained only so that its
-        // two remaining callers keep one entry point while the region-shape
-        // apparatus is removed with the storage package.
-        let _ = (ty, function, destination, node);
-        Ok(())
-    }
-
     /// The name's own region and type-argument axes, without its fields.
     fn type_region_axes(
         &self,
@@ -142,19 +144,21 @@ impl<'unit> Checker<'unit> {
         };
         Ok(axes)
     }
-
     /// `source` is present for a concrete function instance so written `T`
     /// remains opaque. Constructor templates use symbolic checked types,
     /// where generic leaves already carry that distinction.
     pub(super) fn type_region_shape(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         source: Option<NodeId>,
     ) -> Result<TypeRegionShape, CheckStop> {
         if let Some(source) = source
-            && self.tree.names_nominal(source)?
+            && self.declarations.tree.names_nominal(source)?
             && matches!(
-                self.use_at(source, LexicalUseRole::Type)?.target(),
+                self.declarations
+                    .use_at(check_context, source, LexicalUseRole::Type)?
+                    .target(),
                 ResolvedTarget::Source {
                     class: DeclarationClass::GenericType,
                     ..
@@ -169,11 +173,22 @@ impl<'unit> Checker<'unit> {
         let (regions, types) = self.type_region_axes(ty)?;
         let mut sources = Vec::new();
         if let Some(source) = source {
-            sources = self.tree.children_with(source, Production::Type)?;
-            if let Some(targs) = self.tree.argument_list(source)? {
-                for argument in self.tree.children_with(targs, Production::Targ)? {
-                    if let Some(ty) = self.tree.first_child_with(argument, Production::Type)? {
-                        sources.extend(self.behavior_type_sources(ty)?);
+            sources = self
+                .declarations
+                .tree
+                .children_with(source, Production::Type)?;
+            if let Some(targs) = self.declarations.tree.argument_list(source)? {
+                for argument in self
+                    .declarations
+                    .tree
+                    .children_with(targs, Production::Targ)?
+                {
+                    if let Some(ty) = self
+                        .declarations
+                        .tree
+                        .first_child_with(argument, Production::Type)?
+                    {
+                        sources.extend(self.behavior_type_sources(check_context, ty)?);
                     }
                 }
             }
@@ -184,7 +199,9 @@ impl<'unit> Checker<'unit> {
         let arguments = types
             .into_iter()
             .enumerate()
-            .map(|(index, ty)| self.type_region_shape(ty, sources.get(index).copied()))
+            .map(|(index, ty)| {
+                self.type_region_shape(check_context, ty, sources.get(index).copied())
+            })
             .collect::<Result<_, _>>()?;
         Ok(TypeRegionShape { regions, arguments })
     }
