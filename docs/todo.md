@@ -819,8 +819,7 @@ rarely insert at the same place.
   [OP-11 and TYPE-9](../spec/kernel-spec.md) admit the implicit `swap` instance
   over two runtime `Slots` contents; no runtime-content local or move is needed.
   The following sequence in a pure entry is accepted by both `--check` and
-  `--emit-llvm` with frozen compiler SHA-256
-  `e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`:
+  `--emit-llvm` with the [frozen integrated-main compiler](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-main-integration-identical-executable-inputs-no-retiming):
 
   ```wf
   let empty = box_slots_new::<u64>(capacity: 0_u64);
