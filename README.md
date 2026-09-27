@@ -366,7 +366,8 @@ start from the examples above:
 8. [What a reviewer reads](docs/articles/what-a-reviewer-reads.md) —
    contracts and effect rows as the review surface.
 9. The trusted base — what is trusted, and the plan to shrink it.
-10. Where the speed comes from — every way the proofs are used.
+10. [Where the speed comes from](docs/articles/where-the-speed-comes-from.md) —
+    every way the proofs are used.
 11. I/O without async — ordinary calls that the compiler overlaps.
 12. A layout engine — the first large program.
 13. How this project is built with agents.
