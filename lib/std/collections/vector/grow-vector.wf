@@ -20,16 +20,13 @@ fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, t
   return total;
 }
 
-fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
+fn grow_vector_grow_full<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
   requires deref(values).storage.inner.len < ceiling;
+  requires deref(values).storage.inner.cap <= deref(values).storage.inner.len;
   ensures deref(values).storage.inner.cap > deref(values).storage.inner.len;
   ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
   ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
 } {
-  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
-  if spare > 0_u64 {
-    return unit;
-  }
   let current = deref(values).storage.inner.cap;
   if current == 0_u64 {
     let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
@@ -46,6 +43,20 @@ fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>)
   return unit;
 }
 
+fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
+  requires deref(values).storage.inner.len < ceiling;
+  ensures deref(values).storage.inner.cap > deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+} {
+  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
+  if spare > 0_u64 {
+    return unit;
+  }
+  grow_vector_grow_full::<T, ceiling>(values: values);
+  return unit;
+}
+
 fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
   requires deref(values).storage.inner.len < ceiling;
   ensures length == deref(values).storage.inner.len;
@@ -53,12 +64,6 @@ fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, va
   ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
 } {
   doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty. The written length bound and the concrete ceiling discharge each allocation-size obligation [OP-9].";
-  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
-  if spare > 0_u64 {
-    place_back(window: &deref(values).storage.inner, value: move value);
-    let reached = deref(values).storage.inner.len;
-    return reached;
-  }
   grow_vector_make_room::<T, ceiling>(values: values);
   place_back(window: &deref(values).storage.inner, value: move value);
   let reached = deref(values).storage.inner.len;
