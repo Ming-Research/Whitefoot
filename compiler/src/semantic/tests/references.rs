@@ -668,13 +668,38 @@ fn main() -> status: std::process::ExitStatus pure {
         SemanticRule::Eff5,
         |kind| matches!(kind, SemanticIssueKind::OverlappingCallEffects { .. }),
     );
-    // [WIN-2] a slot overlaps `r.last` unless the call proves it is not the
-    // last one, so that pair depends on the slot's value.
-    assert_rule_kind(
-        br#"fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {
+    // [WIN-2] a slot overlaps `r.last` whatever its value, because one
+    // `writes(r.last)` covers every `take_back` a body makes, so the pair one
+    // argument supplies overlaps at every position and no call compares it,
+    // while the same pair from two arguments is compared and refused.
+    let take_after_read = |slot: &str| {
+        format!(
+            "fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {{
   requires i < deref(window).len;
-} {
+}} {{
   let observed = deref(window)[i];
+  let taken = take_back(window: window);
+  return observed +wrap taken;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let window = slots_new::<u64, 4>();
+  place_back(window: &window, value: 5_u64);
+  place_back(window: &window, value: 6_u64);
+  let sum = take_after_read(window: &window, i: {slot});
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_accepts(take_after_read("1_u64").as_bytes());
+    assert_accepts(take_after_read("0_u64").as_bytes());
+    assert_rule_kind(
+        br#"fn take_after_read(source: &Slots<u64, 4>, window: &Slots<u64, 4>, i: u64) -> result: u64 reads(source[i]), writes(window.last), writes(window.len) contract {
+  requires i < deref(source).len;
+  requires 0_u64 < deref(window).len;
+} {
+  let observed = deref(source)[i];
   let taken = take_back(window: window);
   return observed +wrap taken;
 }
@@ -683,7 +708,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let window = slots_new::<u64, 4>();
   place_back(window: &window, value: 5_u64);
   place_back(window: &window, value: 6_u64);
-  let sum = take_after_read(window: &window, i: 0_u64);
+  let sum = take_after_read(source: &window, window: &window, i: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -996,6 +1021,77 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     assert_rule_kind(source, SemanticRule::Eff5, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedCallSeparation { .. })
+    });
+}
+
+/// [EFF-5] one call may owe several separations: a write compared with two
+/// reads of one window is two questions at one call, each its own obligation
+/// record answered by its own judgment. Both proved accepts the call; both
+/// unproved is the EFF-5 refusal, never a disagreement between the checker's
+/// records and the engine's judgments.
+#[test]
+fn two_separations_at_one_call_are_judged_one_by_one() {
+    const TWO: &str = r#"fn touch3(a: &Slots<u64, 4>, b: &Slots<u64, 4>, c: &Slots<u64, 4>, i: u64, j: u64, k: u64) -> result: unit reads(b[j]), reads(c[k]), writes(a[i]) contract {
+  requires i < deref(a).len;
+  requires j < deref(b).len;
+  requires k < deref(c).len;
+} {
+  let x = deref(b)[j];
+  let y = deref(c)[k];
+  set deref(a)[i] = 9_u64;
+  return unit;
+}
+
+fn run(r: &Slots<u64, 4>, i: u64, j: u64, k: u64) -> result: unit reads(r[j]), reads(r[k]), writes(r[i]) contract {
+  requires i < deref(r).len;
+  requires j < deref(r).len;
+  requires k < deref(r).len;
+  requires i != j;
+  requires i != k;
+} {
+  touch3(a: r, b: r, c: r, i: i, j: j, k: k);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  place_back(window: &r, value: 3_u64);
+  run(r: &r, i: 0_u64, j: 1_u64, k: 2_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(TWO.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("two proved separations at one call must be accepted: {outcome:?}");
+        };
+        let run = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "run")
+            .expect("run is checked");
+        let separations = run
+            .entailment
+            .obligations
+            .iter()
+            .filter(|outcome| {
+                matches!(
+                    outcome.family,
+                    super::super::entailment::ObligationFamily::CallSeparation(_)
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(separations.len(), 2);
+        assert_eq!(separations[0].node_path, separations[1].node_path);
+        assert_ne!(separations[0].family, separations[1].family);
+        assert!(separations.iter().all(|outcome| outcome.discharged));
+    });
+    let unproved = TWO.replace("  requires i != j;\n  requires i != k;\n", "");
+    assert_ne!(unproved, TWO);
+    assert_rule_kind(unproved.as_bytes(), SemanticRule::Eff5, |kind| {
         matches!(kind, SemanticIssueKind::UndischargedCallSeparation { .. })
     });
 }

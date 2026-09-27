@@ -1,3 +1,7 @@
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::DeclarationInventory;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::TypeContext;
 use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
@@ -15,7 +19,7 @@ use super::super::super::model::{
     CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
     CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType,
 };
-use super::super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
+use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
 use super::StatementResult;
 
 /// The semantic owner of the shared proof-only affine expression grammar.
@@ -46,20 +50,24 @@ struct OrderedRelationNormalization {
     equality: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_local_invariant(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-        function: &FunctionSignature,
         loop_depth: usize,
     ) -> Result<StatementResult, CheckStop> {
-        let declaration = self.declaration_at(node, crate::DeclarationRole::Invariant)?;
-        let identifiers = self.tree.direct_identifiers(node)?;
+        let FunctionContext { check_context, .. } = context;
+        let declaration = self
+            .types
+            .declarations
+            .declaration_at(node, crate::DeclarationRole::Invariant)?;
+        let identifiers = self.types.declarations.tree.direct_identifiers(node)?;
         let [name_token] = identifiers.as_slice() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
-        let name = std::str::from_utf8(self.tree.token_bytes(*name_token)?)
+        let name = std::str::from_utf8(self.types.declarations.tree.token_bytes(*name_token)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?
             .to_owned();
         if name != declaration.spelling() {
@@ -68,22 +76,30 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
 
         let allowed_values = bindings.keys().copied().collect::<HashSet<_>>();
         let target = self.check_ordered_affine_relation(
+            context,
             node,
             bindings,
             &allowed_values,
-            function,
             loop_depth,
             AffineProofOwner::InvariantTarget,
         )?;
-        let premise_nodes = self.tree.children_with(node, Production::ProofUse)?;
+        let premise_nodes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::ProofUse)?;
         let mut uses = Vec::with_capacity(premise_nodes.len());
         for premise_node in premise_nodes {
-            let multiplicity = self.invariant_use_multiplicity(premise_node, bindings)?;
+            let multiplicity =
+                self.types
+                    .invariant_use_multiplicity(check_context, premise_node, bindings)?;
             // [GRAM-4] the premise the use cites is a `use_premise` node: a
             // relation premise delimits its relation with parentheses and
             // carries two affine expressions around a `compare_op`; a named
             // premise is exactly the one IDENT it cites.
             let premise_children = self
+                .types
+                .declarations
                 .tree
                 .children_with(premise_node, Production::UsePremise)?;
             let [premise] = premise_children.as_slice() else {
@@ -91,20 +107,26 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             };
             let premise = *premise;
             let relation_form = !self
+                .types
+                .declarations
                 .tree
                 .children_with(premise, Production::AffineExpr)?
                 .is_empty();
             let source = if relation_form {
                 CheckedProofUseSource::Relation(self.check_ordered_affine_relation(
+                    context,
                     premise,
                     bindings,
                     &allowed_values,
-                    function,
                     loop_depth,
                     AffineProofOwner::ProofUse,
                 )?)
             } else {
-                let usage = self.use_at(premise, LexicalUseRole::InvariantFact)?;
+                let usage = self.types.declarations.use_at(
+                    check_context,
+                    premise,
+                    LexicalUseRole::InvariantFact,
+                )?;
                 let ResolvedTarget::Source {
                     declaration,
                     class: DeclarationClass::Invariant,
@@ -115,15 +137,15 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 CheckedProofUseSource::Named(declaration)
             };
             uses.push(CheckedProofUse {
-                node_path: self.tree.path(premise_node)?.clone(),
+                node_path: self.types.declarations.tree.path(premise_node)?.clone(),
                 multiplicity,
                 source,
             });
         }
 
-        Ok(Self::continuing_statement(
+        Ok(Checker::continuing_statement(
             CheckedStatement::Proof(CheckedSourceProof {
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 declaration: declaration.id(),
                 name,
                 target,
@@ -133,259 +155,67 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         ))
     }
 
-    /// Reads the optional multiplicity on one `use`.
-    ///
-    /// [GRAM-4] spells it `N times` before the premise, and the two forms it
-    /// admits are checked here. A bare decimal is a proof-domain integer: the
-    /// lexer classifies `[0-9]+` as `digits` and a typed runtime literal is a
-    /// different terminal, which keeps the written multiplicity independent of
-    /// machine integer types. A name is a live own local of unsigned integer
-    /// type, so a written multiplicity is never negative by construction.
-    /// Omission is the canonical spelling of one, and an explicit `1 times`
-    /// is rejected.
-    fn invariant_use_multiplicity(
-        &self,
-        node: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<CheckedProofMultiplicity, CheckStop> {
-        let Some(token) = self
-            .tree
-            .direct_token_with(node, crate::syntax::terminal::TerminalPredicate::Digits)?
-        else {
-            return self.invariant_use_value_multiplicity(node, bindings);
-        };
-        let bytes = self.tree.token_bytes(token)?;
-        if bytes == b"0" {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplier is zero",
-                "write a positive bare-decimal multiplier, or omit it when it is one",
-            );
-        }
-        if bytes == b"1" {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "an explicitly written use multiplier one is not canonical",
-                "omit `1 *` from this use",
-            );
-        }
-        if bytes.len() > 1 && bytes.first() == Some(&b'0') {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplier is not in canonical decimal form",
-                "remove leading zeroes from the positive bare-decimal multiplier",
-            );
-        }
-        let Some(factor) = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|digits| digits.parse::<i128>().ok())
-        else {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplier exceeds the positive i128 proof domain",
-                "write a positive bare-decimal multiplier no greater than 170141183460469231731687303715884105727",
-            );
-        };
-        Ok(CheckedProofMultiplicity::Literal(factor))
-    }
-
-    /// The named form of the multiplicity, `use n times X;`.
-    ///
-    /// A `proof_use` owns at most one direct IDENT and it is exactly this
-    /// multiplicity, because the premise it cites is a `use_premise` node of
-    /// its own. The value must be readable where the certificate is checked
-    /// and unsigned: nonnegativity is what makes scaling a premise sound, and
-    /// taking it from the written type keeps it structural.
-    fn invariant_use_value_multiplicity(
-        &self,
-        node: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<CheckedProofMultiplicity, CheckStop> {
-        if self.tree.direct_identifiers(node)?.is_empty() {
-            return Ok(CheckedProofMultiplicity::Literal(1));
-        }
-        let usage = self.use_at(node, LexicalUseRole::ProofValue)?;
-        if let ResolvedTarget::Source {
-            declaration,
-            class: DeclarationClass::NamedConst,
-        } = usage.target()
-        {
-            let (value, ty) =
-                self.affine_named_const(declaration, node, AffineProofOwner::ProofUse)?;
-            if ty.signed() || value < 1 {
-                return self.invalid_affine_proof(
-                    AffineProofOwner::ProofUse,
-                    node,
-                    "a named use multiplicity is not a positive unsigned integer",
-                    "name a live own unsigned integer local, or write a positive bare decimal",
-                );
-            }
-            return Ok(CheckedProofMultiplicity::Literal(value));
-        }
-        let ResolvedTarget::Source {
-            declaration,
-            class: DeclarationClass::Value,
-        } = usage.target()
-        else {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        };
-        let local = bindings
-            .get(&declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if !local.live || local.mode != CheckedMode::Own {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplicity reads a moved or borrowed local",
-                "name a live own unsigned integer local",
-            );
-        }
-        let CheckedType::Integer(ty) = local.ty else {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplicity does not have a closed integer type",
-                "name a live own unsigned integer local",
-            );
-        };
-        if ty.signed() {
-            return self.invalid_affine_proof(
-                AffineProofOwner::ProofUse,
-                node,
-                "a use multiplicity is a signed integer, which may scale a premise by a negative number",
-                "name an unsigned integer local, or convert the value to an unsigned type before the invariant",
-            );
-        }
-        Ok(CheckedProofMultiplicity::Value {
-            binding: local.binding,
-            ty,
-        })
-    }
-
-    /// [INV-1] the `compare_op` between the two affine expressions selects
-    /// the proof-domain relation: the four ordered symbols normalize to one
-    /// bounded `<=`, `==` in an invariant target normalizes to the bound pair
-    /// `a-b <= 0` and `b-a <= 0`, and disequality is no relation here.
-    ///
-    /// `==` is admitted in a `header_invariant` and an `invariant_stmt` and
-    /// refused in a `use_premise`, which adds one normalized premise into one
-    /// sum [PRF-1]; the owning position selects which rule the refusal cites.
-    fn ordered_relation_normalization(
-        &self,
-        owner: AffineProofOwner,
-        node: NodeId,
-    ) -> Result<OrderedRelationNormalization, CheckStop> {
-        let operator = self
-            .tree
-            .first_child_with(node, Production::CompareOp)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let [relation_token] = self.tree.direct_token_indices(operator)? else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        let normalization = match self.tree.token_bytes(*relation_token)? {
-            b"<=" => OrderedRelationNormalization {
-                reverse: false,
-                bound: 0,
-                equality: false,
-            },
-            b"<" => OrderedRelationNormalization {
-                reverse: false,
-                bound: -1,
-                equality: false,
-            },
-            b">=" => OrderedRelationNormalization {
-                reverse: true,
-                bound: 0,
-                equality: false,
-            },
-            b">" => OrderedRelationNormalization {
-                reverse: true,
-                bound: -1,
-                equality: false,
-            },
-            b"==" if matches!(owner, AffineProofOwner::InvariantTarget) => {
-                OrderedRelationNormalization {
-                    reverse: false,
-                    bound: 0,
-                    equality: true,
-                }
-            }
-            b"==" => {
-                return self.invalid_affine_proof(
-                    owner,
-                    node,
-                    "a certificate premise is one inequality, and equality is a bound pair",
-                    "write `<=`, `<`, `>=`, or `>` in a `use` premise, and state the two bounds as two premises",
-                );
-            }
-            _ => {
-                return self.invalid_affine_proof(
-                    owner,
-                    node,
-                    "the invariant relation is not an admitted ordered integer relation",
-                    "write `<=`, `<`, `>=`, `>`, or `==` between the two affine expressions; disequality is not an invariant relation",
-                );
-            }
-        };
-        Ok(normalization)
-    }
-
     pub(super) fn check_ordered_affine_relation(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedAffineRelation, CheckStop> {
-        let normalization = self.ordered_relation_normalization(owner, node)?;
+        let normalization = self
+            .types
+            .declarations
+            .ordered_relation_normalization(owner, node)?;
         let mut relation =
-            self.form_affine_relation(node, bindings, allowed_values, function, loop_depth, owner)?;
+            self.form_affine_relation(context, node, bindings, allowed_values, loop_depth, owner)?;
         if normalization.reverse {
             std::mem::swap(&mut relation.left, &mut relation.right);
         }
         relation.bound = normalization.bound;
         relation.equality = normalization.equality;
-        self.validate_affine_relation(node, &relation, owner)?;
+        self.types
+            .declarations
+            .validate_affine_relation(node, &relation, owner)?;
         Ok(relation)
     }
 
     fn form_affine_relation(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedAffineRelation, CheckStop> {
-        let expressions = self.tree.children_with(node, Production::AffineExpr)?;
+        let expressions = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::AffineExpr)?;
         let [left_node, right_node] = expressions.as_slice() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
         let left = self.check_affine_expression(
+            context,
             *left_node,
             bindings,
             allowed_values,
-            function,
             loop_depth,
             owner,
         )?;
         let right = self.check_affine_expression(
+            context,
             *right_node,
             bindings,
             allowed_values,
-            function,
             loop_depth,
             owner,
         )?;
         Ok(CheckedAffineRelation {
-            node_path: self.tree.path(node)?.clone(),
+            node_path: self.types.declarations.tree.path(node)?.clone(),
             left,
             right,
             bound: 0,
@@ -393,53 +223,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
-    fn validate_affine_relation(
-        &self,
-        node: NodeId,
-        relation: &CheckedAffineRelation,
-        owner: AffineProofOwner,
-    ) -> Result<(), CheckStop> {
-        let affine_left = checked_affine_expression(&relation.left)
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let affine_right = checked_affine_expression(&relation.right)
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let mut affine_check = AffineCheckState::new();
-        match normalize_bounded_less_equal(
-            &affine_left,
-            &affine_right,
-            relation.bound,
-            &mut affine_check,
-        )
-        .map(drop)
-        {
-            Ok(()) => {}
-            Err(AffineCheckError::ArithmeticOverflow) => {
-                return self.invalid_affine_proof(
-                    owner,
-                    node,
-                    "the affine coefficients or accumulated constant arithmetic overflow i128",
-                    "reduce the affine coefficients and constants until every formation step fits i128",
-                );
-            }
-            Err(AffineCheckError::LimitExceeded(_)) => {
-                return self.invalid_affine_proof(
-                    owner,
-                    node,
-                    "the affine relation exceeds the checker's fixed formation capacity",
-                    "split the relation into smaller named local invariants",
-                );
-            }
-            Err(_) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
-        }
-        Ok(())
-    }
-
     fn check_affine_expression(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedAffineExpression, CheckStop> {
@@ -460,25 +249,33 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         while let Some(next) = pending.pop() {
             match next {
                 Formation::Expression(node) => {
-                    let children = self.tree.children(node)?;
+                    let children = self.types.declarations.tree.children(node)?;
                     let Some((&first, rest)) = children.split_first() else {
                         return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                     };
-                    if self.tree.production(first)? != Production::AffineTerm || rest.len() % 2 != 0
+                    if self.types.declarations.tree.production(first)? != Production::AffineTerm
+                        || rest.len() % 2 != 0
                     {
                         return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                     }
                     for pair in rest.rchunks_exact(2) {
                         let [operator, term] = [pair[0], pair[1]];
-                        if self.tree.production(operator)? != Production::AffineAddOp
-                            || self.tree.production(term)? != Production::AffineTerm
+                        if self.types.declarations.tree.production(operator)?
+                            != Production::AffineAddOp
+                            || self.types.declarations.tree.production(term)?
+                                != Production::AffineTerm
                         {
                             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                         }
-                        let [token] = self.tree.direct_token_indices(operator)? else {
+                        let [token] = self
+                            .types
+                            .declarations
+                            .tree
+                            .direct_token_indices(operator)?
+                        else {
                             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                         };
-                        let subtract = match self.tree.token_bytes(*token)? {
+                        let subtract = match self.types.declarations.tree.token_bytes(*token)? {
                             b"+" => false,
                             b"-" => true,
                             _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
@@ -489,7 +286,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     pending.push(Formation::Term(first));
                 }
                 Formation::Term(node) => {
-                    let factors = self.tree.children_with(node, Production::AffineFactor)?;
+                    let factors = self
+                        .types
+                        .declarations
+                        .tree
+                        .children_with(node, Production::AffineFactor)?;
                     match factors.as_slice() {
                         [factor] => pending.push(Formation::Factor(*factor)),
                         [left, right] => {
@@ -501,17 +302,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     }
                 }
                 Formation::Factor(node) => {
-                    if let Some(nested) =
-                        self.tree.first_child_with(node, Production::AffineExpr)?
+                    if let Some(nested) = self
+                        .types
+                        .declarations
+                        .tree
+                        .first_child_with(node, Production::AffineExpr)?
                     {
                         pending.push(Formation::Group);
                         pending.push(Formation::Expression(nested));
                     } else {
                         values.push(self.check_affine_factor(
+                            context,
                             node,
                             bindings,
                             allowed_values,
-                            function,
                             loop_depth,
                             owner,
                         )?);
@@ -538,7 +342,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     };
                     values.push((
                         CheckedAffineExpression {
-                            node_path: self.tree.path(node)?.clone(),
+                            node_path: self.types.declarations.tree.path(node)?.clone(),
                             kind,
                         },
                         None,
@@ -555,7 +359,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         (Some((constant, ty)), _) => (constant, ty, right),
                         (None, Some((constant, ty))) => (constant, ty, left),
                         (None, None) => {
-                            return self.invalid_affine_proof(
+                            return self.types.declarations.invalid_affine_proof(
                                 owner,
                                 node,
                                 "an affine multiplication has no direct integer-literal operand",
@@ -565,7 +369,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     };
                     values.push((
                         CheckedAffineExpression {
-                            node_path: self.tree.path(node)?.clone(),
+                            node_path: self.types.declarations.tree.path(node)?.clone(),
                             kind: CheckedAffineExpressionKind::MultiplyByConstant {
                                 constant,
                                 constant_ty,
@@ -586,38 +390,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(expression)
     }
 
-    /// The closed integer value of one named const named by a proof relation.
-    ///
-    /// A const-generic parameter is symbolic rather than closed, so it is not
-    /// this: [MSR-6] admits it above as an affine atom of its own instead of
-    /// folding it to a number here.
-    fn affine_named_const(
-        &self,
-        declaration: DeclarationId,
-        node: NodeId,
-        owner: AffineProofOwner,
-    ) -> Result<(i128, IntegerType), CheckStop> {
-        let Some(constant) = self.constants.get(&declaration).copied() else {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        };
-        let constant = self.constant(constant)?;
-        let CheckedValue::Integer { ty, bits } = &constant.value else {
-            return self.invalid_affine_proof(
-                owner,
-                node,
-                "an affine factor names a const that is not an integer",
-                "name an integer const, an integer literal, or a live own integer local",
-            );
-        };
-        Ok((affine_integer_value(*ty, *bits), *ty))
-    }
-
     fn check_affine_factor(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<(CheckedAffineExpression, Option<(i128, IntegerType)>), CheckStop> {
@@ -627,23 +405,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // bare IDENT place or one integer literal; every other atom shape,
         // and a `construct`, is a rule rejection at this factor and not a
         // parse rejection.
-        if let Some(atom) = self.tree.first_child_with(node, Production::Atom)? {
+        if let Some(atom) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Atom)?
+        {
             return self.check_affine_atom(
+                context,
                 node,
                 atom,
                 bindings,
                 allowed_values,
-                function,
                 loop_depth,
                 owner,
             );
         }
         if self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::Call)?
-            .is_some_and(|call| self.tree.is_constructor_call(call).unwrap_or(false))
+            .is_some_and(|call| {
+                self.types
+                    .declarations
+                    .tree
+                    .is_constructor_call(call)
+                    .unwrap_or(false)
+            })
         {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine factor is a construction",
@@ -655,18 +446,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // evaluates nothing and reads no storage, so the factor reaches the
         // resolved place and the measure row and stops there: no loan access,
         // no effect, and no goal.
-        if let Some(call) = self.tree.first_child_with(node, Production::Call)? {
+        if let Some(call) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Call)?
+        {
             let expression = self.check_affine_measure(
+                context,
                 call,
                 bindings,
                 allowed_values,
-                function,
                 loop_depth,
                 owner,
             )?;
             return Ok((
                 CheckedAffineExpression {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: CheckedAffineExpressionKind::Measure(Box::new(expression)),
                 },
                 None,
@@ -680,30 +476,38 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// an integer literal.
     #[allow(clippy::too_many_arguments)]
     fn check_affine_atom(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         atom: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<(CheckedAffineExpression, Option<(i128, IntegerType)>), CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         if let Some(literal) = self
+            .types
+            .declarations
             .tree
             .direct_token_with(atom, crate::syntax::terminal::TerminalPredicate::Literal)?
         {
-            let bytes = self.tree.token_bytes(literal)?;
+            let bytes = self.types.declarations.tree.token_bytes(literal)?;
             if matches!(bytes, b"0_T" | b"1_T") {
-                return self.invalid_affine_proof(
+                return self.types.declarations.invalid_affine_proof(
                     owner,
                     node,
                     "an affine literal does not have a closed integer type",
                     "write a concrete integer suffix such as `_u64` on every affine literal",
                 );
             }
-            let CheckedValue::Integer { ty, bits } = self.parse_literal(node, bytes)? else {
-                return self.invalid_affine_proof(
+            let CheckedValue::Integer { ty, bits } =
+                self.types.declarations.parse_literal(node, bytes)?
+            else {
+                return self.types.declarations.invalid_affine_proof(
                     owner,
                     node,
                     "an affine factor is not an integer literal",
@@ -713,31 +517,47 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let value = affine_integer_value(ty, bits);
             return Ok((
                 CheckedAffineExpression {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: CheckedAffineExpressionKind::Constant { value, ty },
                 },
                 Some((value, ty)),
             ));
         }
 
-        let Some(place) = self.tree.first_child_with(atom, Production::Place)? else {
-            return self.invalid_affine_proof(
+        let Some(place) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(atom, Production::Place)?
+        else {
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine factor is a borrow rather than a value",
                 "use only integer literals, live own integer locals, and measure formers",
             );
         };
-        if self.has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)? {
-            return self.invalid_affine_proof(
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)?
+        {
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine factor consumes the value it reads",
                 "read the live own integer local without `move`",
             );
         }
-        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(place, Production::Psuffix)?;
         let pbase = self
+            .types
+            .declarations
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
@@ -747,19 +567,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // `deref` [REF-1, TYPE-7], which is how section 16's example writes
         // `deref(p).len`. A bare `deref(p)` naming no measure is still no
         // affine atom, and the refusal for it stands below.
-        let dereferenced = self.has_fixed(pbase, crate::syntax::terminal::FixedTerminal::Deref)?;
+        let dereferenced = self
+            .types
+            .declarations
+            .tree
+            .has_fixed(pbase, crate::syntax::terminal::FixedTerminal::Deref)?;
         // [INV-1, OP-15] one `place` formed from an admitted measure place by
         // one measure-member `psuffix`. The relation evaluates nothing and
         // reads no storage, so the factor reaches the resolved place and the
         // measure row and stops there: no access, no effect, and no goal.
-        if let Some(measure) = self.trailing_measure_member(&suffixes)? {
+        if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)? {
             let base = &suffixes[..suffixes.len() - 1];
             let measured = self.check_indexed_place_rooted(
+                context,
                 place,
                 bindings,
                 base,
                 place,
-                function,
                 loop_depth,
                 owner.value_role(),
             )?;
@@ -768,24 +592,26 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             if let Some(declaration) = measured.root_declaration()
                 && !allowed_values.contains(&declaration)
             {
-                return self.invalid_affine_proof(
+                return self.types.declarations.invalid_affine_proof(
                     owner,
                     node,
                     "an affine relation reads a value outside its admitted entry state",
                     "measure a value that exists before this proof point",
                 );
             }
-            let expression = self.measure_of_indexed_place(measure, measured, atom)?;
+            let expression = self
+                .types
+                .measure_of_indexed_place(measure, measured, atom)?;
             return Ok((
                 CheckedAffineExpression {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: CheckedAffineExpressionKind::Measure(Box::new(expression)),
                 },
                 None,
             ));
         }
         if dereferenced {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine factor reads a referent that is not a measure",
@@ -793,7 +619,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         }
         if !suffixes.is_empty() {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine factor selects a field or an element of a place",
@@ -801,7 +627,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         }
 
-        let usage = self.use_at(pbase, owner.value_role())?;
+        let usage = self
+            .types
+            .declarations
+            .use_at(check_context, pbase, owner.value_role())?;
         let ResolvedTarget::Source { declaration, class } = usage.target() else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
@@ -812,7 +641,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // mathematical constant [FN-2] fixed for it; the one source-canonical
         // symbolic instance keeps the declaration-anchored constant term.
         if class == DeclarationClass::ConstGeneric {
-            let ty = self.const_generic_type(declaration)?;
+            let ty = self.types.const_generic_type(declaration)?;
             let kind = match function.substitution.const_argument(declaration) {
                 Some(crate::semantic::CheckedConst::Value(value)) => {
                     CheckedAffineExpressionKind::Constant {
@@ -828,18 +657,18 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     CheckedAffineExpressionKind::ConstGeneric {
                         declaration: supplied,
                         ty,
-                        name: self.declaration_spelling(supplied)?,
+                        name: self.types.declarations.declaration_spelling(supplied)?,
                     }
                 }
                 _ => CheckedAffineExpressionKind::ConstGeneric {
                     declaration,
                     ty,
-                    name: self.declaration_spelling(declaration)?,
+                    name: self.types.declarations.declaration_spelling(declaration)?,
                 },
             };
             return Ok((
                 CheckedAffineExpression {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind,
                 },
                 // A const generic is not an integer literal, so it never
@@ -854,10 +683,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // has no closed value at the source-canonical instance; a named const
         // always has one.
         if class == DeclarationClass::NamedConst {
-            let (value, ty) = self.affine_named_const(declaration, node, owner)?;
+            let (value, ty) = self.types.affine_named_const(declaration, node, owner)?;
             return Ok((
                 CheckedAffineExpression {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: CheckedAffineExpressionKind::Constant { value, ty },
                 },
                 Some((value, ty)),
@@ -867,7 +696,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         if !allowed_values.contains(&declaration) {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine relation reads a value outside its admitted entry state",
@@ -878,7 +707,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .get(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if !local.live {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine relation reads a moved local value",
@@ -886,7 +715,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         }
         let CheckedType::Integer(ty) = local.ty else {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine local does not have a closed integer type",
@@ -894,7 +723,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         };
         if local.mode != CheckedMode::Own {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 node,
                 "an affine local is a borrow holder rather than an own integer value",
@@ -903,7 +732,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         Ok((
             CheckedAffineExpression {
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 kind: CheckedAffineExpressionKind::Local {
                     binding: local.binding,
                     ty,
@@ -916,19 +745,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// [INV-1] the one `call` an affine factor admits: a measure former over
     /// an admitted measure place.
     fn check_affine_measure(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         call: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
         owner: AffineProofOwner,
     ) -> Result<CheckedExpression, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
         let callee = self
+            .types
+            .declarations
             .tree
             .first_child_with(call, Production::Callee)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let usage = self.use_at_roles(
+        let usage = self.types.declarations.use_at_roles(
+            check_context,
             callee,
             &[
                 LexicalUseRole::IdentifierCallee,
@@ -936,7 +769,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             ],
         );
         let Ok(usage) = usage else {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 call,
                 "an affine factor calls something other than a measure former",
@@ -944,7 +777,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         };
         let ResolvedTarget::Operation(operation) = usage.target() else {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 call,
                 "an affine factor calls something other than a measure former",
@@ -954,56 +787,39 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let spelling = crate::operation_family_spelling(operation)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let Some(measure) = super::super::expressions::calls::measure_former(spelling) else {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 call,
                 "an affine factor calls something other than a measure former",
                 "write P.len, P.cap or P.head over a measured place",
             );
         };
-        self.reject_named_operation_arguments(call, spelling)?;
-        self.reject_written_operation_type_argument(call)?;
-        let atoms = self.operation_atoms(call, 1)?;
+        self.types
+            .declarations
+            .reject_named_operation_arguments(call, spelling)?;
+        self.types
+            .declarations
+            .reject_written_operation_type_argument(call)?;
+        let atoms = self.types.declarations.operation_atoms(call, 1)?;
         // [INV-1, MSR-1] a subscript inside the measured place is an ordinary
         // [OP-4] occurrence and its offset an ordinary operand, so it is
         // formed under the enclosing concrete instance and at the enclosing
         // loop depth — the same premise set the same place has anywhere else.
-        let place = self.check_indexed_atom_place(atoms[0], bindings, function, loop_depth)?;
+        let place = self.check_indexed_atom_place(context, atoms[0], bindings, loop_depth)?;
         // [INV-1] the place resolves in the same context an IDENT does, and
         // its root is one of the values that context admits.
         if let Some(declaration) = place.root_declaration()
             && !allowed_values.contains(&declaration)
         {
-            return self.invalid_affine_proof(
+            return self.types.declarations.invalid_affine_proof(
                 owner,
                 atoms[0],
                 "an affine relation reads a value outside its admitted entry state",
                 "measure a value that exists before this proof point",
             );
         }
-        self.measure_of_indexed_place(measure, place, atoms[0])
-    }
-
-    fn invalid_affine_proof<ResultValue>(
-        &self,
-        owner: AffineProofOwner,
-        node: NodeId,
-        reason: &'static str,
-        mechanical_fix: &'static str,
-    ) -> Result<ResultValue, CheckStop> {
-        match owner {
-            AffineProofOwner::InvariantTarget => {
-                self.invalid_invariant(node, reason, mechanical_fix)
-            }
-            AffineProofOwner::ProofUse => self.issue_node(
-                SemanticRule::Prf1,
-                node,
-                SemanticIssueKind::InvalidSourceProof {
-                    reason,
-                    mechanical_fix,
-                },
-            ),
-        }
+        self.types
+            .measure_of_indexed_place(measure, place, atoms[0])
     }
 }
 
@@ -1122,4 +938,299 @@ fn checked_affine_expression(source: &CheckedAffineExpression) -> Option<AffineE
     }
     let result = values.pop()?;
     values.is_empty().then_some(result)
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    /// [INV-1] the `compare_op` between the two affine expressions selects
+    /// the proof-domain relation: the four ordered symbols normalize to one
+    /// bounded `<=`, `==` in an invariant target normalizes to the bound pair
+    /// `a-b <= 0` and `b-a <= 0`, and disequality is no relation here.
+    ///
+    /// `==` is admitted in a `header_invariant` and an `invariant_stmt` and
+    /// refused in a `use_premise`, which adds one normalized premise into one
+    /// sum [PRF-1]; the owning position selects which rule the refusal cites.
+    fn ordered_relation_normalization(
+        &self,
+        owner: AffineProofOwner,
+        node: NodeId,
+    ) -> Result<OrderedRelationNormalization, CheckStop> {
+        let operator = self
+            .tree
+            .first_child_with(node, Production::CompareOp)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let [relation_token] = self.tree.direct_token_indices(operator)? else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        let normalization = match self.tree.token_bytes(*relation_token)? {
+            b"<=" => OrderedRelationNormalization {
+                reverse: false,
+                bound: 0,
+                equality: false,
+            },
+            b"<" => OrderedRelationNormalization {
+                reverse: false,
+                bound: -1,
+                equality: false,
+            },
+            b">=" => OrderedRelationNormalization {
+                reverse: true,
+                bound: 0,
+                equality: false,
+            },
+            b">" => OrderedRelationNormalization {
+                reverse: true,
+                bound: -1,
+                equality: false,
+            },
+            b"==" if matches!(owner, AffineProofOwner::InvariantTarget) => {
+                OrderedRelationNormalization {
+                    reverse: false,
+                    bound: 0,
+                    equality: true,
+                }
+            }
+            b"==" => {
+                return self.invalid_affine_proof(
+                    owner,
+                    node,
+                    "a certificate premise is one inequality, and equality is a bound pair",
+                    "write `<=`, `<`, `>=`, or `>` in a `use` premise, and state the two bounds as two premises",
+                );
+            }
+            _ => {
+                return self.invalid_affine_proof(
+                    owner,
+                    node,
+                    "the invariant relation is not an admitted ordered integer relation",
+                    "write `<=`, `<`, `>=`, `>`, or `==` between the two affine expressions; disequality is not an invariant relation",
+                );
+            }
+        };
+        Ok(normalization)
+    }
+    fn validate_affine_relation(
+        &self,
+        node: NodeId,
+        relation: &CheckedAffineRelation,
+        owner: AffineProofOwner,
+    ) -> Result<(), CheckStop> {
+        let affine_left = checked_affine_expression(&relation.left)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let affine_right = checked_affine_expression(&relation.right)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let mut affine_check = AffineCheckState::new();
+        match normalize_bounded_less_equal(
+            &affine_left,
+            &affine_right,
+            relation.bound,
+            &mut affine_check,
+        )
+        .map(drop)
+        {
+            Ok(()) => {}
+            Err(AffineCheckError::ArithmeticOverflow) => {
+                return self.invalid_affine_proof(
+                    owner,
+                    node,
+                    "the affine coefficients or accumulated constant arithmetic overflow i128",
+                    "reduce the affine coefficients and constants until every formation step fits i128",
+                );
+            }
+            Err(AffineCheckError::LimitExceeded(_)) => {
+                return self.invalid_affine_proof(
+                    owner,
+                    node,
+                    "the affine relation exceeds the checker's fixed formation capacity",
+                    "split the relation into smaller named local invariants",
+                );
+            }
+            Err(_) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+        }
+        Ok(())
+    }
+    fn invalid_affine_proof<ResultValue>(
+        &self,
+        owner: AffineProofOwner,
+        node: NodeId,
+        reason: &'static str,
+        mechanical_fix: &'static str,
+    ) -> Result<ResultValue, CheckStop> {
+        match owner {
+            AffineProofOwner::InvariantTarget => {
+                self.invalid_invariant(node, reason, mechanical_fix)
+            }
+            AffineProofOwner::ProofUse => self.issue_node(
+                SemanticRule::Prf1,
+                node,
+                SemanticIssueKind::InvalidSourceProof {
+                    reason,
+                    mechanical_fix,
+                },
+            ),
+        }
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// Reads the optional multiplicity on one `use`.
+    ///
+    /// [GRAM-4] spells it `N times` before the premise, and the two forms it
+    /// admits are checked here. A bare decimal is a proof-domain integer: the
+    /// lexer classifies `[0-9]+` as `digits` and a typed runtime literal is a
+    /// different terminal, which keeps the written multiplicity independent of
+    /// machine integer types. A name is a live own local of unsigned integer
+    /// type, so a written multiplicity is never negative by construction.
+    /// Omission is the canonical spelling of one, and an explicit `1 times`
+    /// is rejected.
+    fn invariant_use_multiplicity(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<CheckedProofMultiplicity, CheckStop> {
+        let Some(token) = self
+            .declarations
+            .tree
+            .direct_token_with(node, crate::syntax::terminal::TerminalPredicate::Digits)?
+        else {
+            return self.invariant_use_value_multiplicity(check_context, node, bindings);
+        };
+        let bytes = self.declarations.tree.token_bytes(token)?;
+        if bytes == b"0" {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplier is zero",
+                "write a positive bare-decimal multiplier, or omit it when it is one",
+            );
+        }
+        if bytes == b"1" {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "an explicitly written use multiplier one is not canonical",
+                "omit `1 *` from this use",
+            );
+        }
+        if bytes.len() > 1 && bytes.first() == Some(&b'0') {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplier is not in canonical decimal form",
+                "remove leading zeroes from the positive bare-decimal multiplier",
+            );
+        }
+        let Some(factor) = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|digits| digits.parse::<i128>().ok())
+        else {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplier exceeds the positive i128 proof domain",
+                "write a positive bare-decimal multiplier no greater than 170141183460469231731687303715884105727",
+            );
+        };
+        Ok(CheckedProofMultiplicity::Literal(factor))
+    }
+    /// The named form of the multiplicity, `use n times X;`.
+    ///
+    /// A `proof_use` owns at most one direct IDENT and it is exactly this
+    /// multiplicity, because the premise it cites is a `use_premise` node of
+    /// its own. The value must be readable where the certificate is checked
+    /// and unsigned: nonnegativity is what makes scaling a premise sound, and
+    /// taking it from the written type keeps it structural.
+    fn invariant_use_value_multiplicity(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<CheckedProofMultiplicity, CheckStop> {
+        if self.declarations.tree.direct_identifiers(node)?.is_empty() {
+            return Ok(CheckedProofMultiplicity::Literal(1));
+        }
+        let usage = self
+            .declarations
+            .use_at(check_context, node, LexicalUseRole::ProofValue)?;
+        if let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::NamedConst,
+        } = usage.target()
+        {
+            let (value, ty) =
+                self.affine_named_const(declaration, node, AffineProofOwner::ProofUse)?;
+            if ty.signed() || value < 1 {
+                return self.declarations.invalid_affine_proof(
+                    AffineProofOwner::ProofUse,
+                    node,
+                    "a named use multiplicity is not a positive unsigned integer",
+                    "name a live own unsigned integer local, or write a positive bare decimal",
+                );
+            }
+            return Ok(CheckedProofMultiplicity::Literal(value));
+        }
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = usage.target()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let local = bindings
+            .get(&declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if !local.live || local.mode != CheckedMode::Own {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplicity reads a moved or borrowed local",
+                "name a live own unsigned integer local",
+            );
+        }
+        let CheckedType::Integer(ty) = local.ty else {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplicity does not have a closed integer type",
+                "name a live own unsigned integer local",
+            );
+        };
+        if ty.signed() {
+            return self.declarations.invalid_affine_proof(
+                AffineProofOwner::ProofUse,
+                node,
+                "a use multiplicity is a signed integer, which may scale a premise by a negative number",
+                "name an unsigned integer local, or convert the value to an unsigned type before the invariant",
+            );
+        }
+        Ok(CheckedProofMultiplicity::Value {
+            binding: local.binding,
+            ty,
+        })
+    }
+    /// The closed integer value of one named const named by a proof relation.
+    ///
+    /// A const-generic parameter is symbolic rather than closed, so it is not
+    /// this: [MSR-6] admits it above as an affine atom of its own instead of
+    /// folding it to a number here.
+    fn affine_named_const(
+        &self,
+        declaration: DeclarationId,
+        node: NodeId,
+        owner: AffineProofOwner,
+    ) -> Result<(i128, IntegerType), CheckStop> {
+        let Some(constant) = self.constants.get(&declaration).copied() else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let constant = self.constant(constant)?;
+        let CheckedValue::Integer { ty, bits } = &constant.value else {
+            return self.declarations.invalid_affine_proof(
+                owner,
+                node,
+                "an affine factor names a const that is not an integer",
+                "name an integer const, an integer literal, or a live own integer local",
+            );
+        };
+        Ok((affine_integer_value(*ty, *bits), *ty))
+    }
 }

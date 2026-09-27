@@ -636,3 +636,16 @@ query or declare that query as a requirement. Generic helpers can use `Int` or
 return type when the selected pair changes. Same-type conversion copies bits,
 while conversion between float formats uses the destination's canonical quiet
 NaN [OP-6].
+
+Use `cvt.wrap::<Src, Dst>(value)` for the destination-width residue of an
+integer. Both endpoints must be integer types, and the result is always Dst.
+For example, wrapping -1_i8 to u32 gives 4294967295: the source denotes the
+integer -1 before the destination modulus is applied. Narrowing keeps the low
+destination bits; equal-width conversion preserves the bit pattern. Generic
+wrappers can give both endpoints the `Int` bound.
+
+A wrapped value carries its destination type's bounds. It does not inherit
+the exact conversion's proof that the output equals the input. A contract may
+name the total wrapping operation in a definition; a branch proving the
+identical wrapped comparison can satisfy that requirement through ordinary
+goal identity [FN-8, ENT-2].

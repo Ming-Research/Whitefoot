@@ -1,3 +1,7 @@
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::TypeContext;
+use crate::semantic::check::{BodyChecker, DeclarationInventory};
 use std::collections::{HashMap, HashSet};
 
 use crate::semantic::tree::ConditionalAlternative;
@@ -11,12 +15,11 @@ use super::super::super::model::{
     BindingId, CheckedExpression, CheckedLoopId, CheckedLoopInvariant, CheckedMode,
     CheckedStatement, CheckedType, IntegerType, SubscriptedTerm,
 };
+use super::super::super::places::CaptureId;
 use super::super::references::{
     InvalidationEvent, LoopReferenceToken, ReferenceValidity, RequiredReferent,
 };
-use super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
-};
+use super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::proofs::AffineProofOwner;
 use super::{ControlCounters, ControlScope, StatementResult};
 
@@ -48,6 +51,16 @@ struct LoopReferenceEquation {
     entry_preservations: Vec<super::super::super::model::CheckedCallSeparation>,
 }
 
+/// The header [`Checker::enter_loop_reference_header`] forms: its reference
+/// equations, each index capture a header reference still spells with its
+/// binding, and each parameter still holding its call value there, which
+/// [`BodyChecker::record_backedge_supersedes`] reads.
+struct LoopReferenceHeader {
+    equations: Vec<LoopReferenceEquation>,
+    spelled: HashSet<(CaptureId, BindingId)>,
+    call_values: HashSet<BindingId>,
+}
+
 #[derive(Clone)]
 struct LoopReferenceResolution {
     invalid: Option<InvalidationEvent>,
@@ -55,12 +68,8 @@ struct LoopReferenceResolution {
     preservations: Vec<super::super::super::model::CheckedCallSeparation>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
-    fn loop_binding_agrees(
-        &self,
-        entry: Option<&LocalBinding>,
-        backedge: Option<&LocalBinding>,
-    ) -> bool {
+impl<'unit> Checker<'_, 'unit> {
+    fn loop_binding_agrees(entry: Option<&LocalBinding>, backedge: Option<&LocalBinding>) -> bool {
         match (entry, backedge) {
             (Some(entry), Some(backedge)) => entry.loop_agrees_with(backedge),
             (None, None) => true,
@@ -73,11 +82,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// holder a continuing source `set` may rebind loses capture precision
     /// and receives the current finite path summary [REF-1].
     fn enter_loop_reference_header(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         id: CheckedLoopId,
         rebound: &HashSet<DeclarationId>,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<Vec<LoopReferenceEquation>, CheckStop> {
+    ) -> Result<LoopReferenceHeader, CheckStop> {
         let mut declarations = bindings.keys().copied().collect::<Vec<_>>();
         declarations.sort_by_key(|declaration| declaration.index());
         let mut equations = Vec::new();
@@ -104,10 +114,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             {
                 let ty = local.ty;
                 let kind = reference.kind;
-                self.join_loop_reference_summary(token, ty, kind, &paths, bindings)?;
+                self.join_loop_reference_summary(check_context, token, ty, kind, &paths, bindings)?;
                 let paths = self
+                    .body
                     .loop_reference_summaries
-                    .borrow()
                     .get(&token)
                     .cloned()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
@@ -117,151 +127,48 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?
                     .paths
                     .clone_from(&paths);
-                self.record_reference_origins(token.owner, &paths);
+                self.body.record_reference_origins(token.owner, &paths);
             }
         }
-        Ok(equations)
-    }
-
-    fn record_reference_rebinding_target(
-        &self,
-        set: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        rebound: &mut ReferenceRebindings,
-    ) -> Result<(), CheckStop> {
-        let [target] = self.tree.children_with(set, Production::Place)?[..] else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        if !self
-            .tree
-            .children_with(target, Production::Psuffix)?
-            .is_empty()
+        // [REF-1] a write the backedge carries reaches this header again, so
+        // every iteration's header holds the indices captured from a binding
+        // the backedge wrote as superseded, not only the iterations after the
+        // write, and [EFF-1] a parameter the backedge wrote holds no call
+        // value there. [`BodyChecker::record_backedge_supersedes`] finds those
+        // bindings.
+        let superseded = self
+            .body
+            .loop_superseded_bindings
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        let mut spelled = HashSet::new();
+        for reference in bindings
+            .values_mut()
+            .filter_map(|local| local.reference.as_mut())
         {
-            return Ok(());
-        }
-        let Some(declaration) = self.complete_binding_target(target)? else {
-            return Ok(());
-        };
-        if bindings
-            .get(&declaration)
-            .is_some_and(|binding| binding.reference.is_some())
-        {
-            rebound.holders.insert(declaration);
-            rebound.sites.insert(set);
-        }
-        Ok(())
-    }
-
-    /// Finds the outer reference holders a source path reaching this loop's
-    /// normal backedge may rebind. This is a structural control scan only: it
-    /// allocates no binding, emits no diagnostic, and evaluates no expression.
-    fn continuing_reference_rebindings(
-        &self,
-        statements: &[NodeId],
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<ReferenceRebindings, CheckStop> {
-        let mut rebound = ReferenceRebindings::default();
-        let _ =
-            self.collect_continuing_reference_rebindings(statements, true, bindings, &mut rebound)?;
-        Ok(rebound)
-    }
-
-    fn collect_continuing_reference_rebindings(
-        &self,
-        statements: &[NodeId],
-        normal_reaches: bool,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        rebound: &mut ReferenceRebindings,
-    ) -> Result<bool, CheckStop> {
-        let mut reaches = normal_reaches;
-        for wrapper in statements.iter().rev() {
-            let statement = self.tree.only_child(*wrapper)?;
-            reaches = self.collect_continuing_reference_rebinding_statement(
-                statement, reaches, bindings, rebound,
-            )?;
-        }
-        Ok(reaches)
-    }
-
-    fn collect_continuing_reference_rebinding_statement(
-        &self,
-        statement: NodeId,
-        normal_reaches: bool,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        rebound: &mut ReferenceRebindings,
-    ) -> Result<bool, CheckStop> {
-        match self.tree.production(statement)? {
-            Production::SetStmt => {
-                if normal_reaches {
-                    self.record_reference_rebinding_target(statement, bindings, rebound)?;
+            for path in &mut reference.paths {
+                for binding in &superseded {
+                    path.supersede_binding(*binding);
                 }
-                Ok(normal_reaches)
-            }
-            Production::ReturnStmt | Production::GiveStmt | Production::BreakStmt => Ok(false),
-            Production::IfStmt => {
-                let blocks = self.tree.conditional_blocks(statement)?;
-                let then_reaches = self.collect_continuing_reference_rebindings(
-                    &blocks.then_statements,
-                    normal_reaches,
-                    bindings,
-                    rebound,
-                )?;
-                let else_reaches = match &blocks.alternative {
-                    ConditionalAlternative::Absent => normal_reaches,
-                    ConditionalAlternative::Block(statements) => self
-                        .collect_continuing_reference_rebindings(
-                            statements,
-                            normal_reaches,
-                            bindings,
-                            rebound,
-                        )?,
-                    ConditionalAlternative::Chain(nested) => self
-                        .collect_continuing_reference_rebinding_statement(
-                            *nested,
-                            normal_reaches,
-                            bindings,
-                            rebound,
-                        )?,
-                };
-                Ok(then_reaches || else_reaches)
-            }
-            Production::MatchStmt => {
-                let mut reaches = false;
-                for arm in self.tree.children_with(statement, Production::Arm)? {
-                    reaches |= self.collect_continuing_reference_rebindings(
-                        &self.tree.children_with(arm, Production::Stmt)?,
-                        normal_reaches,
-                        bindings,
-                        rebound,
-                    )?;
-                }
-                Ok(reaches)
-            }
-            Production::LoopStmt | Production::ForStmt => {
-                // FN-1 retains a conservative successor for a nested loop.
-                // Any nested rebinding may consequently reach this outer
-                // backedge; filtering its internal exits would require the
-                // checked loop ids this side-effect-free inventory precedes.
-                if normal_reaches {
-                    for set in self.tree.descendants_with(statement, Production::SetStmt)? {
-                        self.record_reference_rebinding_target(set, bindings, rebound)?;
-                    }
-                }
-                Ok(normal_reaches)
-            }
-            _ => {
-                // A value initializer can contain statement blocks below a
-                // `let`. Its successful `give` continues this statement, so
-                // conservatively retain each reference rebind in that
-                // expression without inventing a control edge elsewhere.
-                if normal_reaches {
-                    for set in self.tree.descendants_with(statement, Production::SetStmt)? {
-                        self.record_reference_rebinding_target(set, bindings, rebound)?;
-                    }
-                }
-                Ok(normal_reaches)
+                spelled.extend(path.spelled_indices());
             }
         }
+        for local in bindings.values_mut() {
+            if superseded.contains(&local.binding) {
+                local.call_value = false;
+            }
+        }
+        let call_values = bindings
+            .values()
+            .filter(|local| local.call_value)
+            .map(|local| local.binding)
+            .collect();
+        Ok(LoopReferenceHeader {
+            equations,
+            spelled,
+            call_values,
+        })
     }
 
     /// Solves the positive, conjunction-only validity equations for one loop
@@ -270,7 +177,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// dependencies it reaches. There is no iteration budget: each pass
     /// removes a local possibility or adds one finite dependency.
     fn loop_reference_resolutions(
-        &self,
         equations: &[LoopReferenceEquation],
         backedge: &HashMap<DeclarationId, LocalBinding>,
         has_backedge: bool,
@@ -435,7 +341,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     ) {
         for binding in state.values_mut() {
             if let Some(reference) = &mut binding.reference {
-                Self::resolve_reference_info(reference, resolutions);
+                Checker::resolve_reference_info(reference, resolutions);
             }
         }
     }
@@ -446,10 +352,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// loop remains deferred to that loop. The complete resolution is
     /// installed before any checked function can be published.
     fn resolve_deferred_loop_reference_uses(
-        &self,
+        &mut self,
         resolutions: &HashMap<LoopReferenceToken, LoopReferenceResolution>,
     ) -> Result<(), CheckStop> {
-        let pending = std::mem::take(&mut *self.deferred_loop_reference_uses.borrow_mut());
+        let pending = std::mem::take(&mut self.body.deferred_loop_reference_uses);
         let mut remaining = Vec::with_capacity(pending.len());
         let mut first_invalid = None;
         for mut deferred in pending {
@@ -491,15 +397,15 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 )?;
             }
         }
-        *self.deferred_loop_reference_uses.borrow_mut() = remaining;
+        self.body.deferred_loop_reference_uses = remaining;
         let Some((node, declaration, event)) = first_invalid else {
             return Ok(());
         };
-        self.issue_node(
+        self.types.declarations.issue_node(
             SemanticRule::Ref2,
             node,
             SemanticIssueKind::InvalidReferenceUse {
-                binder: self.declaration_spelling(declaration)?,
+                binder: self.types.declarations.declaration_spelling(declaration)?,
                 event: event.phrase(),
                 mechanical_fix: super::super::references::REF2_FORM_AGAIN,
             },
@@ -507,23 +413,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     fn form_loop_invariants(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         nodes: Vec<NodeId>,
         loop_id: CheckedLoopId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
         loop_depth: usize,
     ) -> Result<Vec<CheckedLoopInvariant>, CheckStop> {
         let mut names = HashSet::new();
         let mut invariants = Vec::with_capacity(nodes.len());
         for node in nodes {
             invariants.push(self.check_loop_invariant(
+                context,
                 node,
                 loop_id,
                 bindings,
                 allowed_values,
-                function,
                 loop_depth,
                 &mut names,
             )?);
@@ -532,18 +438,25 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     pub(super) fn check_counted_range(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
         let binding_node = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::ForBinding)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let endpoints = self.tree.children_with(binding_node, Production::Atom)?;
+        let endpoints = self
+            .types
+            .declarations
+            .tree
+            .children_with(binding_node, Production::Atom)?;
         let [lower_node, upper_node] = endpoints.as_slice() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
@@ -552,19 +465,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // counted binder exists. Each check can therefore observe only the
         // preceding endpoint's ordinary ownership/effect consequences.
         let lower =
-            self.check_counted_endpoint(function, *lower_node, bindings, scope.loops.len())?;
+            self.check_counted_endpoint(context, *lower_node, bindings, scope.loops.len())?;
         let upper =
-            self.check_counted_endpoint(function, *upper_node, bindings, scope.loops.len())?;
+            self.check_counted_endpoint(context, *upper_node, bindings, scope.loops.len())?;
         let effects = lower.effects.union(upper.effects);
 
         let label = self
+            .types
+            .declarations
             .optional_declaration_at(node, DeclarationRole::LoopLabel)?
             .map(crate::DeclarationRecord::id);
-        let binder_declaration =
-            self.declaration_at(binding_node, DeclarationRole::CountedBinder)?;
+        let binder_declaration = self
+            .types
+            .declarations
+            .declaration_at(binding_node, DeclarationRole::CountedBinder)?;
         let binder_declaration_id = binder_declaration.id();
-        let id = Self::allocate_loop(counters.next_loop)?;
-        let binder = Self::allocate_binding(counters.next_binding)?;
+        let id = Checker::allocate_loop(counters.next_loop)?;
+        let binder = Checker::allocate_binding(counters.next_binding)?;
         counters
             .binding_names
             .push(binder_declaration.spelling().to_owned());
@@ -572,13 +489,32 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let base_bindings = bindings.clone();
         let base_keys = base_bindings.keys().copied().collect::<Vec<_>>();
         let preserved = base_keys.iter().copied().collect::<HashSet<_>>();
-        let invariant_nodes = self.tree.children_with(node, Production::HeaderInvariant)?;
-        let executable_statements = self.tree.children_with(node, Production::Stmt)?;
-        let rebound =
-            self.continuing_reference_rebindings(&executable_statements, &base_bindings)?;
+        let invariant_nodes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::HeaderInvariant)?;
+        let executable_statements = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Stmt)?;
+        let rebound = self.types.declarations.continuing_reference_rebindings(
+            check_context,
+            &executable_statements,
+            &base_bindings,
+        )?;
         let mut header_bindings = base_bindings.clone();
-        let reference_equations =
-            self.enter_loop_reference_header(id, &rebound.holders, &mut header_bindings)?;
+        let LoopReferenceHeader {
+            equations: reference_equations,
+            spelled: header_spelled,
+            call_values: header_call_values,
+        } = self.enter_loop_reference_header(
+            check_context,
+            id,
+            &rebound.holders,
+            &mut header_bindings,
+        )?;
         if header_bindings
             .insert(
                 binder_declaration_id,
@@ -592,6 +528,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: true,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()
@@ -611,15 +548,15 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
 
         let allowed_invariant_values = header_keys.iter().copied().collect::<HashSet<_>>();
         let invariants = self.form_loop_invariants(
+            context,
             invariant_nodes,
             id,
             &body_bindings,
             &allowed_invariant_values,
-            function,
             scope.loops.len(),
         )?;
         let mut checked = self.check_block(
-            function,
+            context,
             &executable_statements,
             &mut body_bindings,
             counters,
@@ -628,14 +565,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 give_context: scope.give_context,
             },
         )?;
+        if checked.can_continue {
+            self.body.record_backedge_supersedes(
+                id,
+                &header_spelled,
+                &header_call_values,
+                &header_keys,
+                &body_bindings,
+            )?;
+        }
         // [OWN-11, REF-2] the body is an ordinary block whose own bindings
         // begin and end with one iteration, so a reference whose path starts
         // at one of them is invalid on the backedge, before the carried-state
         // comparison, and on every edge leaving the body.
-        let leaving = Self::bindings_leaving_scope(&body_bindings, &header_keys);
-        Self::invalidate_references_leaving_scope(&mut body_bindings, &leaving);
+        let leaving = Checker::bindings_leaving_scope(&body_bindings, &header_keys);
+        Checker::invalidate_references_leaving_scope(&mut body_bindings, &leaving);
         for state in &mut checked.give_states {
-            Self::invalidate_references_leaving_scope(state, &leaving);
+            Checker::invalidate_references_leaving_scope(state, &leaving);
         }
         for state in &mut checked.break_states {
             state.invalidate_references_leaving_scope(&leaving);
@@ -645,36 +591,45 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         {
             context.invalidate_reference_roots_leaving_scope(&leaving);
         }
-        self.judge_backedge_liveness(node, &header_keys, &header_bindings, &body_bindings)?;
+        self.types.declarations.judge_backedge_liveness(
+            node,
+            &header_keys,
+            &header_bindings,
+            &body_bindings,
+        )?;
         if checked.can_continue
             && header_keys.iter().any(|key| {
-                !self.loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
+                !Checker::loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
             })
         {
-            return self.unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
+            return self
+                .types
+                .declarations
+                .unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
         }
 
-        let resolutions = self.loop_reference_resolutions(
+        let resolutions = Checker::loop_reference_resolutions(
             &reference_equations,
             &body_bindings,
             checked.can_continue,
         )?;
-        Self::resolve_loop_binding_state(&mut body_bindings, &resolutions);
+        Checker::resolve_loop_binding_state(&mut body_bindings, &resolutions);
         for state in &mut checked.give_states {
-            Self::resolve_loop_binding_state(state, &resolutions);
+            Checker::resolve_loop_binding_state(state, &resolutions);
         }
         for state in &mut checked.break_states {
-            Self::resolve_loop_binding_state(&mut state.bindings, &resolutions);
+            Checker::resolve_loop_binding_state(&mut state.bindings, &resolutions);
         }
         if let Some(context) = scope.give_context
             && let Some(reference) = context.delivered_reference.borrow_mut().as_mut()
         {
-            Self::resolve_reference_info(reference, &resolutions);
+            Checker::resolve_reference_info(reference, &resolutions);
         }
         self.resolve_deferred_loop_reference_uses(&resolutions)?;
 
         let backedge_drops = if checked.can_continue {
-            self.live_affine_drops(&body_bindings, &header_preserved, node)?
+            self.types
+                .live_affine_drops(check_context, &body_bindings, &header_preserved, node)?
         } else {
             Vec::new()
         };
@@ -683,7 +638,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // input even when no local break is written. Local breaks join it;
         // breaks targeting an enclosing loop keep escaping normally.
         let mut exhaustion_bindings = header_bindings;
-        Self::resolve_loop_binding_state(&mut exhaustion_bindings, &resolutions);
+        Checker::resolve_loop_binding_state(&mut exhaustion_bindings, &resolutions);
         let mut continuation_states = vec![exhaustion_bindings];
         let mut continuation_labels = vec!["the loop's exhausted edge".to_owned()];
         let mut escaping_break_states = Vec::new();
@@ -695,7 +650,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 escaping_break_states.push(state);
             }
         }
-        self.join_states(
+        self.types.declarations.join_states(
             &base_keys,
             &continuation_states,
             &continuation_labels,
@@ -706,7 +661,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(StatementResult {
             statement: CheckedStatement::CountedRange {
                 id,
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 binder,
                 lower: lower.expression,
                 upper: Box::new(upper.expression),
@@ -723,6 +678,533 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn check_loop_invariant(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        loop_id: CheckedLoopId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        allowed_values: &HashSet<DeclarationId>,
+        loop_depth: usize,
+        names: &mut HashSet<String>,
+    ) -> Result<CheckedLoopInvariant, CheckStop> {
+        let declaration = self
+            .types
+            .declarations
+            .declaration_at(node, DeclarationRole::Invariant)?;
+        let identifiers = self.types.declarations.tree.direct_identifiers(node)?;
+        let [name_token] = identifiers.as_slice() else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        let name = std::str::from_utf8(self.types.declarations.tree.token_bytes(*name_token)?)
+            .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?
+            .to_owned();
+        if !names.insert(name.clone()) {
+            return self.types.declarations.invalid_invariant(
+                node,
+                "a loop contains two invariants with the same name",
+                "give every invariant in this loop a distinct name",
+            );
+        }
+        let relation = self.check_ordered_affine_relation(
+            context,
+            node,
+            bindings,
+            allowed_values,
+            loop_depth,
+            AffineProofOwner::InvariantTarget,
+        )?;
+
+        Ok(CheckedLoopInvariant {
+            loop_id,
+            declaration: declaration.id(),
+            name,
+            relation,
+        })
+    }
+
+    fn check_counted_endpoint(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
+        let required = CheckedType::Integer(IntegerType::U64);
+        if self.types.direct_counted_endpoint_holder_requires_deref(
+            check_context,
+            node,
+            bindings,
+            required,
+        )? {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type7,
+                node,
+                SemanticIssueKind::MissingDereference {
+                    mechanical_fix: "write `deref(holder)`",
+                },
+            );
+        }
+        // TYPE-7 precedes the endpoint's TYPE-5 exact-value judgment. Use the
+        // consuming-position atom path so a box or borrow holder reaches
+        // that exclusive judgment instead of stopping first at OWN-1's bare
+        // affine spelling rule.
+        let endpoint = self.check_consuming_atom(context, node, bindings, loop_depth)?;
+        if self.types.reads_implicitly_through_holder(
+            endpoint.reference_value,
+            endpoint.expression.ty(),
+            RequiredReferent::Exact(required),
+        )? {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type7,
+                node,
+                SemanticIssueKind::MissingDereference {
+                    mechanical_fix: "write `deref(holder)`",
+                },
+            );
+        }
+        if endpoint.mode != CheckedMode::Own || endpoint.expression.ty() != required {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    format!("own {}", self.types.checked_type_name(required)?),
+                    self.types
+                        .checked_value_name(endpoint.mode, endpoint.expression.ty())?,
+                ),
+            );
+        }
+        if !self
+            .types
+            .counted_endpoint_is_term_or_constant(node, &endpoint.expression)?
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Ent2,
+                node,
+                SemanticIssueKind::InvalidCountedEndpoint {
+                    mechanical_fix: "bind the computed u64 value with one preceding ordinary let and use that term as the endpoint",
+                },
+            );
+        }
+        Ok(endpoint)
+    }
+
+    pub(super) fn check_loop(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        counters: &mut ControlCounters<'_>,
+        scope: ControlScope<'_>,
+    ) -> Result<StatementResult, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
+        let declaration = self
+            .types
+            .declarations
+            .optional_declaration_at(node, DeclarationRole::LoopLabel)?
+            .map(crate::DeclarationRecord::id);
+        let id = Checker::allocate_loop(counters.next_loop)?;
+        let base_bindings = bindings.clone();
+        let base_keys = base_bindings.keys().copied().collect::<Vec<_>>();
+        let preserved = base_keys.iter().copied().collect::<HashSet<_>>();
+        let invariant_nodes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::HeaderInvariant)?;
+        let executable_statements = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Stmt)?;
+        let rebound = self.types.declarations.continuing_reference_rebindings(
+            check_context,
+            &executable_statements,
+            &base_bindings,
+        )?;
+        let mut nested_loops = scope.loops.to_vec();
+        nested_loops.push(LoopContext {
+            id,
+            reference_rebindings: rebound.sites,
+            label_declaration: declaration,
+            preserved: preserved.clone(),
+        });
+        let mut header_bindings = base_bindings.clone();
+        let LoopReferenceHeader {
+            equations: reference_equations,
+            spelled: header_spelled,
+            call_values: header_call_values,
+        } = self.enter_loop_reference_header(
+            check_context,
+            id,
+            &rebound.holders,
+            &mut header_bindings,
+        )?;
+        let mut body_bindings = header_bindings.clone();
+        let allowed_invariant_values = base_keys.iter().copied().collect::<HashSet<_>>();
+        let invariants = self.form_loop_invariants(
+            context,
+            invariant_nodes,
+            id,
+            &body_bindings,
+            &allowed_invariant_values,
+            scope.loops.len(),
+        )?;
+        let mut checked = self.check_block(
+            context,
+            &executable_statements,
+            &mut body_bindings,
+            counters,
+            ControlScope {
+                loops: &nested_loops,
+                give_context: scope.give_context,
+            },
+        )?;
+        if checked.can_continue {
+            self.body.record_backedge_supersedes(
+                id,
+                &header_spelled,
+                &header_call_values,
+                &base_keys,
+                &body_bindings,
+            )?;
+        }
+        // [OWN-11, REF-2] the body is an ordinary block whose own bindings
+        // begin and end with one iteration, so a reference whose path starts
+        // at one of them is invalid on the backedge, before the carried-state
+        // comparison, and on every edge leaving the body.
+        let leaving = Checker::bindings_leaving_scope(&body_bindings, &base_keys);
+        Checker::invalidate_references_leaving_scope(&mut body_bindings, &leaving);
+        for state in &mut checked.give_states {
+            Checker::invalidate_references_leaving_scope(state, &leaving);
+        }
+        for state in &mut checked.break_states {
+            state.invalidate_references_leaving_scope(&leaving);
+        }
+        if let Some(context) = scope.give_context
+            && !checked.give_states.is_empty()
+        {
+            context.invalidate_reference_roots_leaving_scope(&leaving);
+        }
+        self.types.declarations.judge_backedge_liveness(
+            node,
+            &base_keys,
+            &header_bindings,
+            &body_bindings,
+        )?;
+        if checked.can_continue
+            && base_keys.iter().any(|key| {
+                !Checker::loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
+            })
+        {
+            return self
+                .types
+                .declarations
+                .unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
+        }
+
+        let resolutions = Checker::loop_reference_resolutions(
+            &reference_equations,
+            &body_bindings,
+            checked.can_continue,
+        )?;
+        Checker::resolve_loop_binding_state(&mut body_bindings, &resolutions);
+        for state in &mut checked.give_states {
+            Checker::resolve_loop_binding_state(state, &resolutions);
+        }
+        for state in &mut checked.break_states {
+            Checker::resolve_loop_binding_state(&mut state.bindings, &resolutions);
+        }
+        if let Some(context) = scope.give_context
+            && let Some(reference) = context.delivered_reference.borrow_mut().as_mut()
+        {
+            Checker::resolve_reference_info(reference, &resolutions);
+        }
+        self.resolve_deferred_loop_reference_uses(&resolutions)?;
+
+        let mut own_break_states = Vec::new();
+        let mut own_break_labels: Vec<String> = Vec::new();
+        let mut escaping_break_states = Vec::new();
+        for state in checked.break_states {
+            if state.target == id {
+                own_break_states.push(state.bindings);
+                own_break_labels.push("a `break` edge of this loop".to_owned());
+            } else {
+                escaping_break_states.push(state);
+            }
+        }
+        // An ordinary loop with no break resolved to itself has no executable
+        // continuation input. `join_states` deliberately leaves the
+        // structurally retained continuation bindings unchanged for that
+        // empty join; ENT-5's proof flow marks the same continuation
+        // contradictory, and lowering emits an unreachable exit block.
+        self.types.declarations.join_states(
+            &base_keys,
+            &own_break_states,
+            &own_break_labels,
+            node,
+            bindings,
+        )?;
+        let backedge_drops = if checked.can_continue {
+            self.types
+                .live_affine_drops(check_context, &body_bindings, &preserved, node)?
+        } else {
+            Vec::new()
+        };
+
+        Ok(StatementResult {
+            statement: CheckedStatement::Loop {
+                id,
+                invariants,
+                body: checked.statements,
+                backedge_drops,
+            },
+            // FN-1 conservatively gives every loop a normal successor; the
+            // executable path reaches it only through a checked break edge.
+            can_continue: true,
+            effects: checked.effects,
+            all_paths_deliver: false,
+            direct_give: false,
+            give_states: checked.give_states,
+            break_states: escaping_break_states,
+        })
+    }
+
+    fn allocate_loop(next_loop: &mut u32) -> Result<CheckedLoopId, CheckStop> {
+        let id = CheckedLoopId(*next_loop);
+        *next_loop = next_loop
+            .checked_add(1)
+            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+        Ok(id)
+    }
+}
+
+impl BreakState {
+    /// [REF-2] the scope of the local variables a break edge leaves ends
+    /// there, so a reference whose path starts at one of them is invalid on
+    /// this edge.
+    pub(super) fn invalidate_references_leaving_scope(&mut self, leaving: &[BindingId]) {
+        Checker::invalidate_references_leaving_scope(&mut self.bindings, leaving);
+    }
+}
+
+impl BodyChecker {
+    /// [REF-1] records the binding of each index capture a header reference
+    /// spelled at the header and holds superseded on the backedge, and
+    /// [EFF-1] each parameter holding its call value at the header and not on
+    /// the backedge. It restarts the walk when one is new, as a grown path
+    /// summary does: the next iteration reaches the header after that write.
+    /// A write on a path that leaves the loop reaches no header, and an index
+    /// superseded before the loop is no capture the header spelled. There are
+    /// finitely many pairs of loop and binding, so the restarts end.
+    fn record_backedge_supersedes(
+        &mut self,
+        id: CheckedLoopId,
+        spelled: &HashSet<(CaptureId, BindingId)>,
+        call_values: &HashSet<BindingId>,
+        header_keys: &[DeclarationId],
+        backedge: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        let recorded = &mut self.loop_superseded_bindings;
+        let recorded = recorded.entry(id).or_default();
+        let mut grown = false;
+        for key in header_keys {
+            let Some(local) = backedge.get(key) else {
+                continue;
+            };
+            if !local.call_value && call_values.contains(&local.binding) {
+                grown |= recorded.insert(local.binding);
+            }
+            let Some(reference) = local.reference.as_ref() else {
+                continue;
+            };
+            for path in &reference.paths {
+                for (capture, binding) in path.superseded_indices() {
+                    if spelled.contains(&(capture, binding)) {
+                        grown |= recorded.insert(binding);
+                    }
+                }
+            }
+        }
+        if grown {
+            return Err(CheckStop::ReferenceSummaryChanged);
+        }
+        Ok(())
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    fn record_reference_rebinding_target(
+        &self,
+        check_context: &CheckContext<'_>,
+        set: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        rebound: &mut ReferenceRebindings,
+    ) -> Result<(), CheckStop> {
+        let [target] = self.tree.children_with(set, Production::Place)?[..] else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        if !self
+            .tree
+            .children_with(target, Production::Psuffix)?
+            .is_empty()
+        {
+            return Ok(());
+        }
+        let Some(declaration) = self.complete_binding_target(check_context, target)? else {
+            return Ok(());
+        };
+        if bindings
+            .get(&declaration)
+            .is_some_and(|binding| binding.reference.is_some())
+        {
+            rebound.holders.insert(declaration);
+            rebound.sites.insert(set);
+        }
+        Ok(())
+    }
+    /// Finds the outer reference holders a source path reaching this loop's
+    /// normal backedge may rebind. This is a structural control scan only: it
+    /// allocates no binding, emits no diagnostic, and evaluates no expression.
+    fn continuing_reference_rebindings(
+        &self,
+        check_context: &CheckContext<'_>,
+        statements: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<ReferenceRebindings, CheckStop> {
+        let mut rebound = ReferenceRebindings::default();
+        let _ = self.collect_continuing_reference_rebindings(
+            check_context,
+            statements,
+            true,
+            bindings,
+            &mut rebound,
+        )?;
+        Ok(rebound)
+    }
+    fn collect_continuing_reference_rebindings(
+        &self,
+        check_context: &CheckContext<'_>,
+        statements: &[NodeId],
+        normal_reaches: bool,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        rebound: &mut ReferenceRebindings,
+    ) -> Result<bool, CheckStop> {
+        let mut reaches = normal_reaches;
+        for wrapper in statements.iter().rev() {
+            let statement = self.tree.only_child(*wrapper)?;
+            reaches = self.collect_continuing_reference_rebinding_statement(
+                check_context,
+                statement,
+                reaches,
+                bindings,
+                rebound,
+            )?;
+        }
+        Ok(reaches)
+    }
+    fn collect_continuing_reference_rebinding_statement(
+        &self,
+        check_context: &CheckContext<'_>,
+        statement: NodeId,
+        normal_reaches: bool,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        rebound: &mut ReferenceRebindings,
+    ) -> Result<bool, CheckStop> {
+        match self.tree.production(statement)? {
+            Production::SetStmt => {
+                if normal_reaches {
+                    self.record_reference_rebinding_target(
+                        check_context,
+                        statement,
+                        bindings,
+                        rebound,
+                    )?;
+                }
+                Ok(normal_reaches)
+            }
+            Production::ReturnStmt | Production::GiveStmt | Production::BreakStmt => Ok(false),
+            Production::IfStmt => {
+                let blocks = self.tree.conditional_blocks(statement)?;
+                let then_reaches = self.collect_continuing_reference_rebindings(
+                    check_context,
+                    &blocks.then_statements,
+                    normal_reaches,
+                    bindings,
+                    rebound,
+                )?;
+                let else_reaches = match &blocks.alternative {
+                    ConditionalAlternative::Absent => normal_reaches,
+                    ConditionalAlternative::Block(statements) => self
+                        .collect_continuing_reference_rebindings(
+                            check_context,
+                            statements,
+                            normal_reaches,
+                            bindings,
+                            rebound,
+                        )?,
+                    ConditionalAlternative::Chain(nested) => self
+                        .collect_continuing_reference_rebinding_statement(
+                            check_context,
+                            *nested,
+                            normal_reaches,
+                            bindings,
+                            rebound,
+                        )?,
+                };
+                Ok(then_reaches || else_reaches)
+            }
+            Production::MatchStmt => {
+                let mut reaches = false;
+                for arm in self.tree.children_with(statement, Production::Arm)? {
+                    reaches |= self.collect_continuing_reference_rebindings(
+                        check_context,
+                        &self.tree.children_with(arm, Production::Stmt)?,
+                        normal_reaches,
+                        bindings,
+                        rebound,
+                    )?;
+                }
+                Ok(reaches)
+            }
+            Production::LoopStmt | Production::ForStmt => {
+                // FN-1 retains a conservative successor for a nested loop.
+                // Any nested rebinding may consequently reach this outer
+                // backedge; filtering its internal exits would require the
+                // checked loop ids this side-effect-free inventory precedes.
+                if normal_reaches {
+                    for set in self.tree.descendants_with(statement, Production::SetStmt)? {
+                        self.record_reference_rebinding_target(
+                            check_context,
+                            set,
+                            bindings,
+                            rebound,
+                        )?;
+                    }
+                }
+                Ok(normal_reaches)
+            }
+            _ => {
+                // A value initializer can contain statement blocks below a
+                // `let`. Its successful `give` continues this statement, so
+                // conservatively retain each reference rebind in that
+                // expression without inventing a control edge elsewhere.
+                if normal_reaches {
+                    for set in self.tree.descendants_with(statement, Production::SetStmt)? {
+                        self.record_reference_rebinding_target(
+                            check_context,
+                            set,
+                            bindings,
+                            rebound,
+                        )?;
+                    }
+                }
+                Ok(normal_reaches)
+            }
+        }
+    }
     /// [OWN-11] the per-iteration judgment, which is [LIV-1]'s liveness
     /// agreement read at this loop's head.
     ///
@@ -768,50 +1250,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         Ok(())
     }
-
-    #[allow(clippy::too_many_arguments)]
-    fn check_loop_invariant(
-        &self,
-        node: NodeId,
-        loop_id: CheckedLoopId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        allowed_values: &HashSet<DeclarationId>,
-        function: &FunctionSignature,
-        loop_depth: usize,
-        names: &mut HashSet<String>,
-    ) -> Result<CheckedLoopInvariant, CheckStop> {
-        let declaration = self.declaration_at(node, DeclarationRole::Invariant)?;
-        let identifiers = self.tree.direct_identifiers(node)?;
-        let [name_token] = identifiers.as_slice() else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        let name = std::str::from_utf8(self.tree.token_bytes(*name_token)?)
-            .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?
-            .to_owned();
-        if !names.insert(name.clone()) {
-            return self.invalid_invariant(
-                node,
-                "a loop contains two invariants with the same name",
-                "give every invariant in this loop a distinct name",
-            );
-        }
-        let relation = self.check_ordered_affine_relation(
-            node,
-            bindings,
-            allowed_values,
-            function,
-            loop_depth,
-            AffineProofOwner::InvariantTarget,
-        )?;
-
-        Ok(CheckedLoopInvariant {
-            loop_id,
-            declaration: declaration.id(),
-            name,
-            relation,
-        })
-    }
-
     pub(super) fn invalid_invariant<ResultValue>(
         &self,
         node: NodeId,
@@ -827,64 +1265,24 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             },
         )
     }
-
-    fn check_counted_endpoint(
-        &self,
-        function: &FunctionSignature,
-        node: NodeId,
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        loop_depth: usize,
-    ) -> Result<TypedExpression, CheckStop> {
-        let required = CheckedType::Integer(IntegerType::U64);
-        if self.direct_counted_endpoint_holder_requires_deref(node, bindings, required)? {
-            return self.issue_node(
-                SemanticRule::Type7,
-                node,
-                SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
-                },
-            );
+    fn counted_endpoint_place_is_term(&self, place: NodeId) -> Result<bool, CheckStop> {
+        for suffix in self.tree.children_with(place, Production::Psuffix)? {
+            if self.tree.subscript_offset(suffix)?.is_some() {
+                return Ok(false);
+            }
         }
-        // TYPE-7 precedes the endpoint's TYPE-5 exact-value judgment. Use the
-        // consuming-position atom path so a box or borrow holder reaches
-        // that exclusive judgment instead of stopping first at OWN-1's bare
-        // affine spelling rule.
-        let endpoint = self.check_consuming_atom(function, node, bindings, loop_depth)?;
-        if self.reads_implicitly_through_holder(
-            endpoint.reference_value,
-            endpoint.expression.ty(),
-            RequiredReferent::Exact(required),
-        )? {
-            return self.issue_node(
-                SemanticRule::Type7,
-                node,
-                SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
-                },
-            );
-        }
-        if endpoint.mode != CheckedMode::Own || endpoint.expression.ty() != required {
-            return self.issue_node(
-                SemanticRule::Type5,
-                node,
-                SemanticIssueKind::type_mismatch(
-                    format!("own {}", self.checked_type_name(required)?),
-                    self.checked_value_name(endpoint.mode, endpoint.expression.ty())?,
-                ),
-            );
-        }
-        if !self.counted_endpoint_is_term_or_constant(node, &endpoint.expression)? {
-            return self.issue_node(
-                SemanticRule::Ent2,
-                node,
-                SemanticIssueKind::InvalidCountedEndpoint {
-                    mechanical_fix: "bind the computed u64 value with one preceding ordinary let and use that term as the endpoint",
-                },
-            );
-        }
-        Ok(endpoint)
+        let pbase = self
+            .tree
+            .first_child_with(place, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let Some(inner) = self.tree.dereferenced_place(pbase)? else {
+            return Ok(true);
+        };
+        self.counted_endpoint_place_is_term(inner)
     }
+}
 
+impl<'unit> TypeContext<'unit> {
     /// After TYPE-5, the only atom shapes still capable of producing `own
     /// u64` are a literal or a place. ENT-2 admits the literal, a measure
     /// [MSR-1] or other readonly field whose subscripts, if any, all carry an
@@ -914,7 +1312,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // but names no captured value in this compiler: the place is not
             // rejected, it is not represented [DIAG-1].
             Some(SubscriptedTerm::Unrepresented) => {
-                return self.unsupported(UnsupportedSemanticFeature::CompositeValues, node);
+                return self
+                    .declarations
+                    .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
             }
             // A measure over a place with any other offset is no term.
             None if matches!(
@@ -928,55 +1328,54 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
             None => {}
         }
-        let Some(place) = self.tree.first_child_with(node, Production::Place)? else {
+        let Some(place) = self
+            .declarations
+            .tree
+            .first_child_with(node, Production::Place)?
+        else {
             // TYPE-5 has already excluded a borrow expression, so the
             // remaining non-place atom is an integer literal constant.
             return Ok(true);
         };
-        self.counted_endpoint_place_is_term(place)
+        self.declarations.counted_endpoint_place_is_term(place)
     }
-
-    fn counted_endpoint_place_is_term(&self, place: NodeId) -> Result<bool, CheckStop> {
-        for suffix in self.tree.children_with(place, Production::Psuffix)? {
-            if self.subscript_offset(suffix)?.is_some() {
-                return Ok(false);
-            }
-        }
-        let pbase = self
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(inner) = self.tree.first_child_with(pbase, Production::Place)? else {
-            return Ok(true);
-        };
-        self.counted_endpoint_place_is_term(inner)
-    }
-
     /// TYPE-7 is definitionally earlier than both OWN-1's holder spelling and
     /// OWN-11's outer-affine move check. Inspect a live direct holder before
     /// those generic place checks so an endpoint that plainly needs `deref`
     /// keeps the rule's exclusive attribution even inside another loop.
     fn direct_counted_endpoint_holder_requires_deref(
         &self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         required: CheckedType,
     ) -> Result<bool, CheckStop> {
-        let Some(place) = self.tree.first_child_with(node, Production::Place)? else {
+        let Some(place) = self
+            .declarations
+            .tree
+            .first_child_with(node, Production::Place)?
+        else {
             return Ok(false);
         };
-        let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
+        let Some(pbase) = self
+            .declarations
+            .tree
+            .first_child_with(place, Production::Pbase)?
+        else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
-        if !self.tree.children(pbase)?.is_empty()
+        if !self.declarations.tree.children(pbase)?.is_empty()
             || !self
+                .declarations
                 .tree
                 .children_with(place, Production::Psuffix)?
                 .is_empty()
         {
             return Ok(false);
         }
-        let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
+        let usage = self
+            .declarations
+            .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
         let ResolvedTarget::Source {
             declaration,
             class: DeclarationClass::Value,
@@ -996,158 +1395,19 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             RequiredReferent::Exact(required),
         )
     }
-
-    pub(super) fn check_loop(
-        &self,
-        function: &FunctionSignature,
-        node: NodeId,
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        counters: &mut ControlCounters<'_>,
-        scope: ControlScope<'_>,
-    ) -> Result<StatementResult, CheckStop> {
-        let declaration = self
-            .optional_declaration_at(node, DeclarationRole::LoopLabel)?
-            .map(crate::DeclarationRecord::id);
-        let id = Self::allocate_loop(counters.next_loop)?;
-        let base_bindings = bindings.clone();
-        let base_keys = base_bindings.keys().copied().collect::<Vec<_>>();
-        let preserved = base_keys.iter().copied().collect::<HashSet<_>>();
-        let invariant_nodes = self.tree.children_with(node, Production::HeaderInvariant)?;
-        let executable_statements = self.tree.children_with(node, Production::Stmt)?;
-        let rebound =
-            self.continuing_reference_rebindings(&executable_statements, &base_bindings)?;
-        let mut nested_loops = scope.loops.to_vec();
-        nested_loops.push(LoopContext {
-            id,
-            reference_rebindings: rebound.sites,
-            label_declaration: declaration,
-            preserved: preserved.clone(),
-        });
-        let mut header_bindings = base_bindings.clone();
-        let reference_equations =
-            self.enter_loop_reference_header(id, &rebound.holders, &mut header_bindings)?;
-        let mut body_bindings = header_bindings.clone();
-        let allowed_invariant_values = base_keys.iter().copied().collect::<HashSet<_>>();
-        let invariants = self.form_loop_invariants(
-            invariant_nodes,
-            id,
-            &body_bindings,
-            &allowed_invariant_values,
-            function,
-            scope.loops.len(),
-        )?;
-        let mut checked = self.check_block(
-            function,
-            &executable_statements,
-            &mut body_bindings,
-            counters,
-            ControlScope {
-                loops: &nested_loops,
-                give_context: scope.give_context,
-            },
-        )?;
-        // [OWN-11, REF-2] the body is an ordinary block whose own bindings
-        // begin and end with one iteration, so a reference whose path starts
-        // at one of them is invalid on the backedge, before the carried-state
-        // comparison, and on every edge leaving the body.
-        let leaving = Self::bindings_leaving_scope(&body_bindings, &base_keys);
-        Self::invalidate_references_leaving_scope(&mut body_bindings, &leaving);
-        for state in &mut checked.give_states {
-            Self::invalidate_references_leaving_scope(state, &leaving);
-        }
-        for state in &mut checked.break_states {
-            state.invalidate_references_leaving_scope(&leaving);
-        }
-        if let Some(context) = scope.give_context
-            && !checked.give_states.is_empty()
-        {
-            context.invalidate_reference_roots_leaving_scope(&leaving);
-        }
-        self.judge_backedge_liveness(node, &base_keys, &header_bindings, &body_bindings)?;
-        if checked.can_continue
-            && base_keys.iter().any(|key| {
-                !self.loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
-            })
-        {
-            return self.unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
-        }
-
-        let resolutions = self.loop_reference_resolutions(
-            &reference_equations,
-            &body_bindings,
-            checked.can_continue,
-        )?;
-        Self::resolve_loop_binding_state(&mut body_bindings, &resolutions);
-        for state in &mut checked.give_states {
-            Self::resolve_loop_binding_state(state, &resolutions);
-        }
-        for state in &mut checked.break_states {
-            Self::resolve_loop_binding_state(&mut state.bindings, &resolutions);
-        }
-        if let Some(context) = scope.give_context
-            && let Some(reference) = context.delivered_reference.borrow_mut().as_mut()
-        {
-            Self::resolve_reference_info(reference, &resolutions);
-        }
-        self.resolve_deferred_loop_reference_uses(&resolutions)?;
-
-        let mut own_break_states = Vec::new();
-        let mut own_break_labels: Vec<String> = Vec::new();
-        let mut escaping_break_states = Vec::new();
-        for state in checked.break_states {
-            if state.target == id {
-                own_break_states.push(state.bindings);
-                own_break_labels.push("a `break` edge of this loop".to_owned());
-            } else {
-                escaping_break_states.push(state);
-            }
-        }
-        // An ordinary loop with no break resolved to itself has no executable
-        // continuation input. `join_states` deliberately leaves the
-        // structurally retained continuation bindings unchanged for that
-        // empty join; ENT-5's proof flow marks the same continuation
-        // contradictory, and lowering emits an unreachable exit block.
-        self.join_states(
-            &base_keys,
-            &own_break_states,
-            &own_break_labels,
-            node,
-            bindings,
-        )?;
-        let backedge_drops = if checked.can_continue {
-            self.live_affine_drops(&body_bindings, &preserved, node)?
-        } else {
-            Vec::new()
-        };
-
-        Ok(StatementResult {
-            statement: CheckedStatement::Loop {
-                id,
-                invariants,
-                body: checked.statements,
-                backedge_drops,
-            },
-            // FN-1 conservatively gives every loop a normal successor; the
-            // executable path reaches it only through a checked break edge.
-            can_continue: true,
-            effects: checked.effects,
-            all_paths_deliver: false,
-            direct_give: false,
-            give_states: checked.give_states,
-            break_states: escaping_break_states,
-        })
-    }
-
     pub(super) fn check_break(
         &self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
-        let uses = self.uses_at_ordered(node, LexicalUseRole::BreakLabel)?;
+        let uses =
+            self.declarations
+                .uses_at_ordered(check_context, node, LexicalUseRole::BreakLabel)?;
         let target = match uses.as_slice() {
             [] => scope.loops.last().ok_or_else(|| {
-                self.issue_value(
+                self.declarations.issue_value(
                     SemanticRule::Fn1,
                     node,
                     SemanticIssueKind::BreakOutsideLoop {
@@ -1178,7 +1438,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(StatementResult {
             statement: CheckedStatement::Break {
                 target: target.id,
-                drops: self.live_affine_drops(bindings, &target.preserved, node)?,
+                drops: self.live_affine_drops(check_context, bindings, &target.preserved, node)?,
             },
             can_continue: false,
             effects: EffectSet::NONE,
@@ -1190,22 +1450,5 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 bindings: bindings.clone(),
             }],
         })
-    }
-
-    fn allocate_loop(next_loop: &mut u32) -> Result<CheckedLoopId, CheckStop> {
-        let id = CheckedLoopId(*next_loop);
-        *next_loop = next_loop
-            .checked_add(1)
-            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-        Ok(id)
-    }
-}
-
-impl BreakState {
-    /// [REF-2] the scope of the local variables a break edge leaves ends
-    /// there, so a reference whose path starts at one of them is invalid on
-    /// this edge.
-    pub(super) fn invalidate_references_leaving_scope(&mut self, leaving: &[BindingId]) {
-        Checker::invalidate_references_leaving_scope(&mut self.bindings, leaving);
     }
 }

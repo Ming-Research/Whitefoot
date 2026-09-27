@@ -263,7 +263,7 @@ impl DeclarationDomain {
 }
 
 /// Source declaration roles, in the closed order this resolver classifies.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DeclarationRole {
     /// D01: top-level function.
     Function,
@@ -443,6 +443,171 @@ pub enum DeclarationOrigin {
     Prelude(PreludeDeclarationId),
 }
 
+/// [MOD-3] Where an item is declared, by identities no graph row position,
+/// file name or dense id enters: one module's interface or implementation
+/// records, or the compiler's own PRE-1 records.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ItemHome {
+    /// A registered module, by package and path, and which of its records
+    /// declare the item: its interface declaration and its definition are
+    /// two declarations of one function.
+    Module {
+        /// The package the module belongs to [MOD-10].
+        package: crate::Package,
+        /// The module's path within its package.
+        path: Vec<String>,
+        /// The records that declare the item.
+        record: crate::SourceRole,
+    },
+    /// The compiler's own PRE-1 records.
+    Prelude,
+}
+
+impl ItemHome {
+    /// The home of the items one source declares.
+    fn of(file: &crate::SourceFile, bundle: &crate::SourceBundle) -> Option<Self> {
+        if file.prelude().is_some() {
+            return Some(Self::Prelude);
+        }
+        let module = bundle.module(file.module())?;
+        Some(Self::Module {
+            package: module.package(),
+            path: module.path().to_vec(),
+            record: file.role(),
+        })
+    }
+}
+
+impl core::fmt::Display for ItemHome {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Module {
+                package,
+                path,
+                record,
+            } => {
+                formatter.write_str(package.qualifier())?;
+                for component in path {
+                    write!(formatter, "::{component}")?;
+                }
+                if *record == crate::SourceRole::Interface {
+                    formatter.write_str(" interface")?;
+                }
+                Ok(())
+            }
+            Self::Prelude => formatter.write_str("prelude"),
+        }
+    }
+}
+
+/// The stable identity resolution mints for one item of the unit
+/// (`design/compiler/incremental-compilation.md`): the declaration that heads
+/// it, by home, role and spelling, or the alias it binds. Adding, removing or
+/// reordering other items changes no item's key.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ItemKey {
+    /// An item headed by a function, struct, enum, interface, binding or
+    /// constant declaration [GRAM-2].
+    Declared {
+        /// Where it is declared.
+        home: ItemHome,
+        /// The heading declaration's role.
+        role: DeclarationRole,
+        /// The heading declaration's spelling.
+        spelling: String,
+    },
+    /// A file-local alias [MOD-4], by the logical path of the source whose
+    /// alias header binds it and its spelling.
+    Alias {
+        /// The logical path of the source that binds it.
+        source: String,
+        /// The alias's spelling.
+        spelling: String,
+    },
+}
+
+impl core::fmt::Display for ItemKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Declared {
+                home,
+                role,
+                spelling,
+            } => write!(formatter, "{home}::{spelling}#{role:?}"),
+            Self::Alias { source, spelling } => write!(formatter, "alias {source}::{spelling}"),
+        }
+    }
+}
+
+/// The stable identity resolution mints for one declaration: an item's own
+/// heading declaration is that item's key, and every other declaration is
+/// placed within its item by the path from the item's node to the declaring
+/// node and its ordinal among that node's roles. An edit outside an item
+/// changes no key within it.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DeclarationKey {
+    /// The declaration that heads an item.
+    Item(ItemKey),
+    /// A declaration within an item.
+    Local {
+        /// The item that holds it.
+        item: ItemKey,
+        /// The child ordinals from the item's node to the declaring node.
+        path: Vec<u32>,
+        /// Its role ordinal and subtoken ordinal within the declaring node.
+        ordinal: (u32, u32),
+    },
+}
+
+impl DeclarationKey {
+    /// The item that holds the declaration.
+    #[must_use]
+    pub const fn item(&self) -> &ItemKey {
+        match self {
+            Self::Item(item) | Self::Local { item, .. } => item,
+        }
+    }
+}
+
+impl core::fmt::Display for DeclarationKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Item(item) => write!(formatter, "{item}"),
+            Self::Local {
+                item,
+                path,
+                ordinal: (role, subtoken),
+            } => {
+                write!(formatter, "{item}")?;
+                for component in path {
+                    write!(formatter, "/{component}")?;
+                }
+                write!(formatter, "#{role}.{subtoken}")
+            }
+        }
+    }
+}
+
+/// The stable identity of one syntax node, relative to the item that holds
+/// it: the item's key and the child ordinals from the item's node down.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct OccurrenceKey {
+    /// The item that holds the node.
+    pub item: ItemKey,
+    /// The child ordinals from the item's node to this node.
+    pub path: Vec<u32>,
+}
+
+impl core::fmt::Display for OccurrenceKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "{}", self.item)?;
+        for component in &self.path {
+            write!(formatter, "/{component}")?;
+        }
+        Ok(())
+    }
+}
+
 /// One source declaration event and its lookup entries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeclarationRecord {
@@ -458,6 +623,8 @@ pub struct DeclarationRecord {
     module: Option<crate::ModuleId>,
     /// Whether an interface marks it `public` [MOD-6].
     public: bool,
+    /// Its stable identity.
+    key: DeclarationKey,
 }
 
 impl DeclarationRecord {
@@ -518,6 +685,12 @@ impl DeclarationRecord {
     #[must_use]
     pub const fn is_public(&self) -> bool {
         self.public
+    }
+
+    /// Returns the stable identity resolution minted for it.
+    #[must_use]
+    pub const fn key(&self) -> &DeclarationKey {
+        &self.key
     }
 }
 
@@ -1093,12 +1266,15 @@ pub enum ResolutionCompilerFailure {
     AmbiguousResolution,
     /// A dense identity, ordinal, or coordinate calculation overflowed.
     CounterOverflow,
+    /// Two declarations of a resolved unit received one key, which would
+    /// merge their identities for every stage that reads keys.
+    DuplicateDeclarationKey,
 }
 
 /// Canonical syntax plus complete active-specification lexical resolution tables.
 #[derive(Debug)]
-pub struct ResolvedSyntaxUnit<'classified, 'lexed, 'source> {
-    syntax: CanonicalSyntaxUnit<'classified, 'lexed, 'source>,
+pub struct ResolvedSyntaxUnit {
+    syntax: CanonicalSyntaxUnit,
     scopes: Vec<ScopeRecord>,
     prelude: Vec<PreludeDeclarationRecord>,
     declarations: Vec<DeclarationRecord>,
@@ -1108,6 +1284,9 @@ pub struct ResolvedSyntaxUnit<'classified, 'lexed, 'source> {
     postconditions: Vec<PostconditionResolutionRecord>,
     interface_functions: Vec<InterfaceFunction>,
     by_node: NodeRecords,
+    /// The key of each item, by its ordinal among the root's children;
+    /// `None` for `program no_heap`, which heads no declaration.
+    items: Vec<Option<ItemKey>>,
 }
 
 /// The positions of one record list's entries, grouped by the node that owns
@@ -1224,7 +1403,7 @@ impl InterfaceFunction {
     }
 }
 
-impl<'classified, 'lexed, 'source> ResolvedSyntaxUnit<'classified, 'lexed, 'source> {
+impl ResolvedSyntaxUnit {
     /// [MOD-6, MOD-8] the read-only rendering of one module's resolved public
     /// interface: its public declarations and the complete definitions they
     /// reach, every name printed as its qualified identity and no `doc`
@@ -1257,7 +1436,7 @@ impl<'classified, 'lexed, 'source> ResolvedSyntaxUnit<'classified, 'lexed, 'sour
 
     /// Returns the source-bound canonical syntax consumed by this stage.
     #[must_use]
-    pub const fn syntax(&self) -> &CanonicalSyntaxUnit<'classified, 'lexed, 'source> {
+    pub const fn syntax(&self) -> &CanonicalSyntaxUnit {
         &self.syntax
     }
 
@@ -1292,6 +1471,25 @@ impl<'classified, 'lexed, 'source> ResolvedSyntaxUnit<'classified, 'lexed, 'sour
     #[must_use]
     pub fn declaration(&self, id: DeclarationId) -> Option<&DeclarationRecord> {
         self.declarations.get(id.index())
+    }
+
+    /// Returns the key of the item the root's child `ordinal` is, or `None`
+    /// for an item that heads no declaration.
+    #[must_use]
+    pub fn item_key(&self, ordinal: u32) -> Option<&ItemKey> {
+        self.items.get(ordinal as usize)?.as_ref()
+    }
+
+    /// Returns the stable identity of the node at `path`, relative to the
+    /// item that holds it; `None` for the root and within an item that heads
+    /// no declaration.
+    #[must_use]
+    pub fn occurrence_key(&self, path: &NodePath) -> Option<OccurrenceKey> {
+        let (first, rest) = path.components().split_first()?;
+        Some(OccurrenceKey {
+            item: self.item_key(*first)?.clone(),
+            path: rest.to_vec(),
+        })
     }
 
     /// Returns the dependent declarations.
@@ -1364,27 +1562,27 @@ impl<'classified, 'lexed, 'source> ResolvedSyntaxUnit<'classified, 'lexed, 'sour
 
     /// Consumes resolution and returns the underlying canonical syntax.
     #[must_use]
-    pub fn into_syntax(self) -> CanonicalSyntaxUnit<'classified, 'lexed, 'source> {
+    pub fn into_syntax(self) -> CanonicalSyntaxUnit {
         self.syntax
     }
 }
 
 /// Failure-atomic outcome of active-specification lexical resolution.
 #[derive(Debug)]
-pub enum ResolutionOutcome<'classified, 'lexed, 'source> {
+pub enum ResolutionOutcome {
     /// The complete scope, declaration, lexical-use, and deferred-role tables.
-    Complete(ResolvedSyntaxUnit<'classified, 'lexed, 'source>),
+    Complete(ResolvedSyntaxUnit),
     /// The first spec-defined FN-8, inventory, or lookup rejection.
     SourceIssue {
         /// Canonical syntax retained for diagnostics or caller policy.
-        syntax: CanonicalSyntaxUnit<'classified, 'lexed, 'source>,
+        syntax: CanonicalSyntaxUnit,
         /// Deterministic resolver issue.
         issue: ResolutionIssue,
     },
     /// A trusted compiler invariant failed.
     CompilerFailure {
         /// Canonical syntax retained for debugging.
-        syntax: CanonicalSyntaxUnit<'classified, 'lexed, 'source>,
+        syntax: CanonicalSyntaxUnit,
         /// Internal failure class.
         failure: ResolutionCompilerFailure,
     },

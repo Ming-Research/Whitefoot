@@ -46,6 +46,12 @@ module it is an ordinary field. The complete set of events that change it:
 | rebinding a reference the place reads through | the holder | the holder is a support member |
 | consume or scope exit of the root or offset | — | kills (c) and (d) |
 
+On 2026-09-26 kernel-spec v0.74 fixed every index and every range as
+overlapping `P.last` whatever its value, because one `writes(P.last)` entry
+covers every `take_back` a callee makes; the `take_back` row above states the
+v0.73 rule, which no event answered. [The last filled
+slot](../one-argument-rows/DESIGN.md#the-last-filled-slot) records why.
+
 A write to a sibling field `P[i].g` or to an element at a proved-distinct
 offset overlaps none of these and correctly keeps the fact. Measures over
 subscripted places already relied on exactly this table, so the extension adds
@@ -101,7 +107,8 @@ event. Both halves are closed, and either alone rejects p50.
   a loop header in its preheader state because the length falls only at an
   event that kills every such fact anyway; and an effect row's index position
   beside a part is submitted to the call's entry state as index distinctness
-  is ([EFF-5]).
+  is ([EFF-5]). Since v0.74 (2026-09-26) `r.last` is separated from no
+  index at all, as the note under the event table says.
 
 With the judgment alone p50 is refused at its clause; with the liveness
 condition alone the fact dies at `place_back` and the loop's cell read is

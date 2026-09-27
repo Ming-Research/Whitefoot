@@ -11,6 +11,7 @@ mod entry;
 mod goal;
 mod loop_permission;
 mod model;
+mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
@@ -21,7 +22,7 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-use crate::{NodePath, ResolutionIssue, ResolvedSyntaxUnit, SyntaxCoordinate};
+use crate::{NodePath, ResolutionIssue, SyntaxCoordinate};
 
 pub use check::check_semantics;
 #[cfg(test)]
@@ -917,8 +918,10 @@ pub enum SemanticIssueKind {
         disposition: StaticObligationDisposition,
         mechanical_fix: String,
     },
-    /// Two compared index or range steps have no source proof of disjointness
-    /// [OWN-7, EFF-5]. The residual names the exact position family.
+    /// Two compared positions have no source proof of the separation their
+    /// family needs [OWN-7, WIN-2, EFF-5]: two index or range steps, an index
+    /// beside a range, or either beside a window part. The residual names the
+    /// exact position family.
     UndischargedCallSeparation {
         residual: String,
         mechanical_fix: &'static str,
@@ -1313,16 +1316,24 @@ pub enum SemanticCompilerFailure {
     InvalidSourceEncoding,
     /// A dense identity or source-coordinate calculation overflowed.
     CounterOverflow,
+    /// A function's obligation records and the entailment engine's judgments
+    /// disagreed: a record no judgment answered, with no answered record
+    /// undischarged, or a judgment that answered no record. The function is
+    /// not accepted (`design/compiler/acceptance-records.md`).
+    ObligationContract,
 }
 
 /// Whole-unit semantic success and its only lowering authority.
+///
+/// It holds what checking concluded and no syntax: a stage that reads
+/// resolution records, such as an entry's composition judgment, reads them
+/// from the resolved unit the check was made over.
 #[derive(Debug)]
-pub struct CheckedProgram<'classified, 'lexed, 'source> {
-    pub(crate) _resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+pub struct CheckedProgram {
     pub(crate) data: CheckedProgramData,
 }
 
-impl CheckedProgram<'_, '_, '_> {
+impl CheckedProgram {
     /// [ENT-4] every judgment in the named functions that succeeded only
     /// because the state it was asked in is contradictory, so that a test can
     /// show a repaired program succeeds where its construct runs [DIAG-1].
@@ -1331,8 +1342,7 @@ impl CheckedProgram<'_, '_, '_> {
         let mut found = Vec::new();
         for function in self
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| functions.contains(&function.name))
         {
             let summary = &function.entailment;
@@ -1376,8 +1386,7 @@ impl CheckedProgram<'_, '_, '_> {
     #[cfg(test)]
     pub fn function_count(&self) -> usize {
         self.data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.body.is_some())
             .count()
     }
@@ -1396,9 +1405,9 @@ impl CheckedProgram<'_, '_, '_> {
 
 /// Failure-atomic result of target-independent semantic checking.
 #[derive(Debug)]
-pub enum SemanticOutcome<'classified, 'lexed, 'source> {
+pub enum SemanticOutcome {
     /// Every applicable whole-unit judgment succeeded.
-    Complete(Box<CheckedProgram<'classified, 'lexed, 'source>>),
+    Complete(Box<CheckedProgram>),
     /// A numbered language rule was violated.
     SourceIssue {
         /// Deterministically selected semantic issue.
@@ -1426,16 +1435,6 @@ enum CheckStop {
     Resolution(Box<ResolutionIssue>),
     Unsupported(SemanticUnsupported),
     Compiler(SemanticCompilerFailure),
-    /// A derived type named a nominal instance that is not interned yet.
-    ///
-    /// Function checking is `&self`, and every interning site reads a
-    /// *written* type — a `box<T>` for [STOR-2], a `Result<T, E>` for the
-    /// checked arithmetic rows. A derived type has no written form anywhere,
-    /// so once the annotation is gone nothing interns it. This is the
-    /// recoverable signal that closes that gap: the driver interns what is
-    /// pending and checks the function again. It is private to the checker
-    /// and never reaches a diagnostic.
-    DeferredNominal,
     /// A finite loop-header path summary grew. Retry the ordinary typed
     /// walk; no partial checked body or obligations are published.
     ReferenceSummaryChanged,

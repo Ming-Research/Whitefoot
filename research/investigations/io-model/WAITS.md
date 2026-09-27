@@ -160,7 +160,7 @@ compiled server has.
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
-is kernel-spec v0.74 [WAIT-1, WAIT-2, PAR-4, HOST-1], and each choice below is
+is kernel-spec v0.76 [WAIT-1, WAIT-2, PAR-4, HOST-1], and each choice below is
 proposed to the design tree as an amendment.
 
 ### Waiting is a function kind the writer declares

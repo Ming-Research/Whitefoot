@@ -3,11 +3,11 @@
 //! signed goals.
 //!
 //! The engine is acceptance-bearing: [`analyze_function`] computes the
-//! closed fact state along the [FN-1] structural graph, the [ENT-6]
-//! disposition of every bounds obligation, the [FN-8] disposition of every
-//! ordinary call requirement. The checker rejects a function whose summary
-//! contains an undischarged obligation or call goal and retains the complete
-//! summary on the checked function [DIAG-2].
+//! closed fact state along the [FN-1] structural graph and judges every
+//! obligation it reaches, and [`answer_records`] answers each obligation
+//! record the checker formed with the judgment that decided it. The checker
+//! accepts a function exactly when every record is answered and discharged,
+//! and retains the complete summary on the checked function [DIAG-2].
 //!
 //! Judgments are per function body [ENT-2]; the [ENT-3] S4 `requires`
 //! relation is the one fact that enters from outside the body, and no fact
@@ -54,6 +54,7 @@ use super::model::{
     CheckedIntegerOperation, CheckedLoopId, CheckedMode, CheckedNominal, CheckedSetTarget,
     CheckedStatement, CheckedType, FunctionId, IntegerType,
 };
+use super::obligations::{ObligationSubject, RecordAnswer};
 use super::postcondition::CheckedPostcondition;
 use crate::{DeclarationId, NodePath};
 
@@ -273,7 +274,7 @@ impl EntailmentContext<'_> {
 }
 
 /// The [ENT-6] obligation family one outcome belongs to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ObligationFamily {
     /// A subscript bounds obligation `i < P.len` [OP-4, WIN-1].
     Bounds,
@@ -292,8 +293,9 @@ pub(crate) enum ObligationFamily {
     /// four non-strict orderings [OWN-7] submits under [ENT-6] [EFF-5]. The
     /// number is the query's position in the function's call separations.
     CallSeparation(u32),
-    /// Disjoint positions exclude proper ancestry at an exchange [OP-11].
-    ExchangeSeparation,
+    /// Disjoint positions exclude proper ancestry at an exchange [OP-11]. The
+    /// number is the query's position in the function's call separations.
+    ExchangeSeparation(u32),
     /// A REF-2 use depends on this event-site separation query.
     ReferencePreservation(u32),
 }
@@ -1115,11 +1117,144 @@ pub(crate) struct FunctionEntailment {
     /// statement pair and captured ranges whose first-point state proved
     /// them. Absence or an undischarged entry retains sequential lowering.
     pub(crate) permission_separations: Vec<super::permission::PermissionSeparationProof>,
+    /// One answer per obligation record of the analyzed function, in the
+    /// records' order; `None` where no judgment decided the record.
+    pub(crate) answers: Vec<Option<RecordAnswer>>,
+    /// The sites of judgments that answer no record. The checker and the
+    /// engine then disagree about the function's obligations, and it is not
+    /// accepted.
+    pub(crate) unrecorded: Vec<NodePath>,
     /// Function-local, lifetime-bound derivations for mandatory DIAG-2 roots.
     pub(crate) derivations: DerivationLedger,
     /// Canonical term and goal identities moved from the analyzer so every
     /// retained dense ID remains exact and interpretable after analysis.
     pub(crate) inventory: DerivationInventory,
+}
+
+/// Answers each obligation record of `function` with the judgment that
+/// decided it (`design/compiler/acceptance-records.md`).
+///
+/// A judgment answers a record formed at its own site for its own subject.
+/// Records and judgments of one identity pair in the order the checker formed
+/// and the engine made them, so the contract rests on their counts agreeing,
+/// not on identities being unique. A record no judgment is left for stays
+/// unanswered; a judgment no record is left for is returned by its site.
+/// Either way the function's obligations and the engine's judgments disagree,
+/// which acceptance refuses.
+pub(crate) fn answer_records(
+    function: &CheckedFunction,
+    entailment: &FunctionEntailment,
+) -> (Vec<Option<RecordAnswer>>, Vec<NodePath>) {
+    let mut obligations = Judgments::of(entailment.obligations.iter().map(|outcome| {
+        (
+            (&outcome.node_path, outcome.family, outcome.conjunct),
+            &outcome.node_path,
+        )
+    }));
+    let mut call_goals = Judgments::of(entailment.call_goals.iter().map(|outcome| {
+        (
+            (&outcome.node_path, &outcome.requires_clause),
+            &outcome.node_path,
+        )
+    }));
+    let mut loop_invariants = Judgments::of(
+        entailment
+            .loop_invariants
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
+    let mut source_proofs = Judgments::of(
+        entailment
+            .source_proofs
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
+    // [PRE-1] the relations of a signature without a body are declaration
+    // premises the analysis publishes, never obligations a record asks for.
+    let mut postconditions = Judgments::of(
+        entailment
+            .postconditions
+            .iter()
+            .filter(|_| function.body.is_some())
+            .map(|proof| ((&proof.selector, proof.relation_ordinal), &proof.selector)),
+    );
+    let uninhabited = matches!(
+        entailment.body_disposition,
+        super::model::CheckedBodyDisposition::Uninhabited { .. }
+    );
+    let answers = function
+        .obligations
+        .iter()
+        .map(|record| {
+            let site = &record.site;
+            match &record.subject {
+                ObligationSubject::Source { family, conjunct } => obligations
+                    .take(&(site, *family, *conjunct))
+                    .map(RecordAnswer::Obligation),
+                ObligationSubject::CallRequirement {
+                    requires_clause, ..
+                } => call_goals
+                    .take(&(site, requires_clause))
+                    .map(RecordAnswer::CallGoal),
+                ObligationSubject::LoopInvariant => {
+                    loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)
+                }
+                ObligationSubject::SourceProof => {
+                    source_proofs.take(&site).map(RecordAnswer::SourceProof)
+                }
+                // [FN-9] a relation of a body whose requirements contradict
+                // holds at every exit, since none is reachable.
+                ObligationSubject::Postcondition { .. } if uninhabited => {
+                    Some(RecordAnswer::Uninhabited)
+                }
+                ObligationSubject::Postcondition { relation_ordinal } => postconditions
+                    .take(&(site, *relation_ordinal))
+                    .map(RecordAnswer::Postcondition),
+            }
+        })
+        .collect();
+    let mut unrecorded = obligations
+        .unanswered()
+        .chain(call_goals.unanswered())
+        .chain(loop_invariants.unanswered())
+        .chain(source_proofs.unanswered())
+        .chain(postconditions.unanswered())
+        .cloned()
+        .collect::<Vec<_>>();
+    unrecorded.sort_by(|left, right| left.components().cmp(right.components()));
+    (answers, unrecorded)
+}
+
+/// One kind's judgments by the identity a record names them by, each identity
+/// holding its judgments' positions in the order they were made, with the
+/// site of each.
+struct Judgments<'judgment, Key> {
+    by_key: HashMap<Key, std::collections::VecDeque<(usize, &'judgment NodePath)>>,
+}
+
+impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
+    fn of(judgments: impl Iterator<Item = (Key, &'judgment NodePath)>) -> Self {
+        let mut by_key = HashMap::<Key, std::collections::VecDeque<_>>::new();
+        for (index, (key, site)) in judgments.enumerate() {
+            by_key.entry(key).or_default().push_back((index, site));
+        }
+        Self { by_key }
+    }
+
+    /// The earliest judgment of `key` no record has taken yet.
+    fn take(&mut self, key: &Key) -> Option<usize> {
+        self.by_key
+            .get_mut(key)?
+            .pop_front()
+            .map(|(index, _)| index)
+    }
+
+    /// The sites of the judgments no record took.
+    fn unanswered(&self) -> impl Iterator<Item = &'judgment NodePath> + '_ {
+        self.by_key
+            .values()
+            .flat_map(|judgments| judgments.iter().map(|(_, site)| *site))
+    }
 }
 
 /// What one term of a rejected obligation reads, which is what selects the

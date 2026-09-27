@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::{DeclarationInventory, TypeContext};
+use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{
@@ -89,8 +92,21 @@ impl SeparationOracle for EntryPairSeparations<'_> {
         })
     }
 
-    fn index_is_not_last(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
-        UnprovedSeparations.index_is_not_last(window, index)
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        UnprovedSeparations.index_outside_range(index, range)
+    }
+
+    /// A range of an actual's own path was formed at the call, discharging
+    /// its [REF-4] bound there, or is named by a reference valid only while
+    /// that bound holds [OP-10], so it lies within the length of the call's
+    /// entry state, as an index of that path is live; a range a row supplies
+    /// takes its endpoints from other arguments and is bounded by nothing
+    /// until the entailment fragment proves it [EFF-5, WIN-2].
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
+        let depth = window.path.len();
+        self.entries.iter().all(|entry| {
+            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Range(range))
+        })
     }
 
     fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {
@@ -110,78 +126,111 @@ struct FormalCallBoundary {
 /// caller of that function then meets the same rule, up to a waiting entry.
 pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_user_call(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         declaration: DeclarationId,
-        function: &FunctionSignature,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         // [OP-10, OP-11, OP-14] a window operation, `swap` and `free_empty`
         // write no type arguments at a call: the operand supplies every type
         // parameter, so the instance is selected from the operand's own type
         // here instead of from a written argument list [FN-2].
-        let target = match self.operand_directed_function_for_call(node, declaration, bindings)? {
+        let target = match self.operand_directed_function_for_call(
+            check_context,
+            node,
+            declaration,
+            bindings,
+        )? {
             Some(target) => target,
-            None => self.concrete_function_for_call(node, declaration, &function.substitution)?,
+            None => self.concrete_function_for_call(
+                check_context,
+                node,
+                declaration,
+                &function.substitution,
+            )?,
         };
         let signature = self
+            .types
             .signatures
             .get(target.0 as usize)
+            .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        self.check_selected_user_call(node, signature, None, function, bindings, loop_depth)
+        self.check_selected_user_call(context, node, &signature, None, bindings, loop_depth)
     }
 
     pub(in crate::semantic::check) fn check_behavior_call(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         key: crate::semantic::check::generics::GenericParameterKey,
-        function: &FunctionSignature,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         let argument = function
             .substitution
             .function_argument(key)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let target = self.function_argument_instance(argument)?;
+        let target = self.types.function_argument_instance(argument)?;
         let actual = self
+            .types
             .signatures
             .get(target.0 as usize)
+            .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let formal = self.formal_signature(key, &function.substitution, target)?;
-        let binding_site = self.behavior_binding_site(node, key, &function.substitution)?;
-        let (effective, formal_effects, formal_contract) =
-            self.behavior_call_signature(binding_site, Some(function.id), &formal, actual)?;
+        let formal = self.formal_signature(check_context, key, &function.substitution, target)?;
+        let binding_site = self
+            .types
+            .behavior_binding_site(node, key, &function.substitution)?;
+        let (effective, formal_effects, formal_contract) = self.behavior_call_signature(
+            check_context,
+            binding_site,
+            Some(function.id),
+            &formal,
+            &actual,
+        )?;
         self.check_selected_user_call(
+            context,
             node,
             &effective,
             Some(FormalCallBoundary {
                 effects: formal_effects,
                 contract: formal_contract,
             }),
-            function,
             bindings,
             loop_depth,
         )
     }
 
     fn check_selected_user_call(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         signature: &FunctionSignature,
         formal: Option<FormalCallBoundary>,
-        function: &FunctionSignature,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         // [WAIT-1] a waiting call stands only in the body of a waiting
         // function, so every function that does not wait is wait-free and
         // compute overlap never contains a wait [PAR-1, PAR-2].
         if signature.waits && !function.waits {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Wait1,
                 node,
                 SemanticIssueKind::WaitingCallOutsideWaitingFunction {
@@ -192,31 +241,38 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             );
         }
         if signature.waits {
-            let call = self.tree.path(node)?.clone();
-            self.waiting.borrow_mut().calls.push(call);
-            if self.is_mustpar_marked(node)? {
-                self.check_waiting_mustpar(node, signature)?;
+            let call = self.types.declarations.tree.path(node)?.clone();
+            self.body.waiting.calls.push(call);
+            if self.types.declarations.is_mustpar_marked(node)? {
+                self.check_waiting_mustpar(check_context, node, signature)?;
             }
         }
         let target = signature.id;
         let fields = if let Some(list) = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::FieldinitList)?
         {
-            self.tree.children_with(list, Production::Fieldinit)?
+            self.types
+                .declarations
+                .tree
+                .children_with(list, Production::Fieldinit)?
         } else {
             Vec::new()
         };
         if self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::AtomList)?
             .is_some()
             || fields.len() != signature.parameters.len()
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Gram11,
                 node,
-                Self::invalid_named_arguments(signature),
+                Checker::invalid_named_arguments(signature),
             );
         }
         let mut arguments = Vec::with_capacity(fields.len());
@@ -229,25 +285,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let mut actual_paths: Vec<Vec<ResolvedPlace>> = Vec::with_capacity(fields.len());
         let mut actual_captures = Vec::with_capacity(fields.len());
         let mut actual_modes = Vec::with_capacity(fields.len());
-        let call = self.tree.path(node)?.clone();
+        let call = self.types.declarations.tree.path(node)?.clone();
         self.prepare_atomic_update_call(&call, signature)?;
         let mut effects = EffectSet::NONE;
         for (ordinal, (field, parameter)) in
             fields.into_iter().zip(&signature.parameters).enumerate()
         {
-            if self.identifier(field)? != parameter.name {
-                return self.issue_node(
+            if self.types.declarations.identifier(field)? != parameter.name {
+                return self.types.declarations.issue_node(
                     SemanticRule::Gram11,
                     field,
-                    Self::invalid_named_arguments(signature),
+                    Checker::invalid_named_arguments(signature),
                 );
             }
             let atom = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(field, Production::Atom)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            self.enter_atomic_update_argument(&call, ordinal);
-            let argument = self.check_call_argument_atom(function, atom, bindings, loop_depth)?;
+            self.body.enter_atomic_update_argument(&call, ordinal);
+            let argument = self.check_call_argument_atom(context, atom, bindings, loop_depth)?;
             self.reject_failed_atomic_update_argument(atom)?;
             // [CONST-2, OWN-11, TYPE-2] every possible origin of a written
             // reference argument must be writable. The checked argument
@@ -259,7 +317,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .iter()
                     .any(|entry| entry.root == parameter.declaration)
             {
-                self.check_written_reference_argument(atom, &argument, bindings)?;
+                self.types.check_written_reference_argument(
+                    check_context,
+                    atom,
+                    &argument,
+                    bindings,
+                )?;
             }
             // [TYPE-8] `&[T]` is a kind, so a checked range value carries the
             // element type T beside its `Range` mode. Comparing that element
@@ -273,23 +336,25 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             {
                 use super::super::super::super::model::CheckedMode;
                 if (argument.mode == CheckedMode::Range) != (parameter.mode == CheckedMode::Range) {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
                         SemanticIssueKind::type_mismatch(
-                            self.checked_value_name(parameter.mode, parameter.ty)?,
-                            self.checked_value_name(argument.mode, argument.expression.ty())?,
+                            self.types
+                                .checked_value_name(parameter.mode, parameter.ty)?,
+                            self.types
+                                .checked_value_name(argument.mode, argument.expression.ty())?,
                         ),
                     );
                 }
             }
             if argument.expression.ty() != parameter.ty {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type5,
                     atom,
                     SemanticIssueKind::type_mismatch(
-                        self.checked_type_name(parameter.ty)?,
-                        self.checked_type_name(argument.expression.ty())?,
+                        self.types.checked_type_name(parameter.ty)?,
+                        self.types.checked_type_name(argument.expression.ty())?,
                     ),
                 );
             }
@@ -303,7 +368,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 if argument.mode.is_reference()
                     && parameter.mode == super::super::super::super::model::CheckedMode::Own
                 {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Type7,
                         atom,
                         SemanticIssueKind::MissingDereference {
@@ -311,12 +376,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         },
                     );
                 }
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type5,
                     atom,
                     SemanticIssueKind::type_mismatch(
-                        self.checked_value_name(parameter.mode, parameter.ty)?,
-                        self.checked_value_name(argument.mode, argument.expression.ty())?,
+                        self.types
+                            .checked_value_name(parameter.mode, parameter.ty)?,
+                        self.types
+                            .checked_value_name(argument.mode, argument.expression.ty())?,
                     ),
                 );
             }
@@ -324,7 +391,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             if let Some(reference) = &argument.reference
                 && !reference.is_valid()
             {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Ref2,
                     atom,
                     SemanticIssueKind::InvalidReferenceUse {
@@ -352,7 +419,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 });
             let ordinal_index =
                 u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            goal_arguments.push(self.call_goal_argument(
+            goal_arguments.push(self.types.call_goal_argument(
+                check_context,
                 function.id,
                 &call,
                 ordinal_index,
@@ -366,11 +434,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 },
                 bindings,
             )?);
-            argument_nodes.push(self.tree.path(atom)?.clone());
+            argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             actual_paths.push(paths);
             actual_captures.push(
-                Self::captured_of(atom, &argument.expression)
-                    .unwrap_or_else(CapturedValue::unknown),
+                self.body.note_capture(
+                    Checker::captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown),
+                    bindings,
+                ),
             );
             actual_modes.push(parameter.mode);
             effects = effects.union(argument.effects);
@@ -378,8 +449,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
-        self.reject_allocating_call_under_no_heap(node, signature)?;
-        self.reject_swap_over_copy(node, signature)?;
+        self.types
+            .declarations
+            .reject_allocating_call_under_no_heap(node, signature)?;
+        self.types
+            .reject_swap_over_copy(check_context, node, signature)?;
         // Both forms share the same activation-replacement conditions. A
         // source marker requires them; an ordinary call merely opts out when
         // they fail. Bound calls are not direct self calls even when their
@@ -387,7 +461,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // completes this selection after deriving the remaining releases.
         let tail_transfer = formal.is_none()
             && target == function.id
-            && self.is_sole_return_call(node)?
+            && self.types.declarations.is_sole_return_call(node)?
             && self.check_self_tail_arguments(
                 node,
                 function,
@@ -401,7 +475,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if signature.declared_effects.allocates {
             effects.add_allocation();
         }
-        let substituted = self.substitute_call_row(
+        let substituted = self.types.substitute_call_row(
+            check_context,
             node,
             signature,
             &actual_paths,
@@ -415,8 +490,15 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let atomic_target =
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
         self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
-        self.invalidate_call_references(node, &substituted, atomic_target.as_ref(), bindings)?;
-        Self::invalidate_window_operation_references(signature, &substituted, bindings);
+        self.types.invalidate_call_references(
+            node,
+            &substituted,
+            atomic_target.as_ref(),
+            bindings,
+        )?;
+        self.types
+            .declarations
+            .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
         let result = signature.result;
         let result_mode = signature.result_mode;
@@ -442,7 +524,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 requirements: Vec::new(),
                 result,
                 result_borrow: None,
-                allocation: self.allocation_fit_of_call(signature)?,
+                allocation: self.types.allocation_fit_of_call(signature)?,
             },
             mode: result_mode,
             // [REF-3] no call delivers a reference: FN-1 returns owned values
@@ -455,178 +537,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
-    /// [OP-9, OP-13, OP-10] the static allocation-size obligation this call
-    /// carries, if it is one of the operations that carry one.
-    ///
-    /// [OP-13] gives it to "each runtime-capacity construction" and [OP-10]
-    /// to `grow`, "over that operation's own stored type and count". The
-    /// three constructions take the count first and name the stored type in
-    /// their own result cell; `grow` remakes the cell it is handed, so its
-    /// stored type is that cell's and its count is its second argument. The
-    /// constant-capacity rows allocate nothing at runtime and the cell row
-    /// `box_new` allocates exactly one value, so neither carries the
-    /// obligation.
-    fn allocation_fit_of_call(
-        &self,
-        signature: &FunctionSignature,
-    ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
-        let (count, cell) = match signature.name.as_str() {
-            "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
-            "grow" => {
-                let Some(parameter) = signature.parameters.first() else {
-                    return Ok(None);
-                };
-                (1, parameter.ty)
-            }
-            _ => return Ok(None),
-        };
-        let Some(element) = self.runtime_capacity_content_element(cell)? else {
-            return Ok(None);
-        };
-        let layout_ceiling = match self.instantiated_layout_ceiling(element) {
-            Some(ceiling) => ceiling,
-            None if self
-                .stabilize_substitution_with_visiting(
-                    &signature.substitution,
-                    0,
-                    &mut HashSet::new(),
-                    false,
-                )?
-                .is_none() =>
-            {
-                // [ENT-1, FN-2] only a layout depending on an unresolved
-                // type or const parameter may defer the schema obligation.
-                // This includes an opaque parameter inside an aggregate,
-                // but not a fixed-layout Box shell or a known AboveU64
-                // ceiling. Inspect the operation's substitution recursively:
-                // a nominal argument can still contain a schema parameter.
-                // No deferred record grants proof or lowering authority;
-                // every concrete replay recomputes its bound.
-                return Ok(None);
-            }
-            None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-        };
-        Ok(Some(
-            super::super::super::super::model::CheckedAllocationFit {
-                cell,
-                element,
-                layout_ceiling,
-                count,
-                source_length_upper_bound: None,
-            },
-        ))
-    }
-
-    /// The element type of the runtime-capacity shape a `Box` holds [TYPE-9].
-    ///
-    /// A runtime-capacity `Array<T>`, `Slots<T>` or `Ring<T>` exists only as
-    /// the content of its cell, so this is the one place the stored type of
-    /// an allocation is found, and a constant-capacity content, which
-    /// allocates no slots of its own, has none.
-    fn runtime_capacity_content_element(
-        &self,
-        cell: CheckedType,
-    ) -> Result<Option<CheckedType>, CheckStop> {
-        let CheckedType::Nominal(nominal) = cell else {
-            return Ok(None);
-        };
-        let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
-            return Ok(None);
-        };
-        Ok(match referent {
-            CheckedType::Buffer { element } => Some(self.element_type(element)?),
-            CheckedType::Window {
-                element,
-                capacity: None,
-                ..
-            } => Some(self.element_type(element)?),
-            _ => None,
-        })
-    }
-
-    /// [EFF-5] the substituted row of one call.
-    ///
-    /// Each `effect_path` rooted at reference parameter i takes actual
-    /// argument i's path and appends its own `epsuffix*`; a by-value argument
-    /// contributes a consumption or a read of its place to the same list. An
-    /// index or range position names a value parameter of the same callable,
-    /// and the value that parameter's argument supplies is what replaces it.
-    fn substitute_call_row(
-        &self,
-        node: NodeId,
-        signature: &FunctionSignature,
-        actual_paths: &[Vec<ResolvedPlace>],
-        actual_captures: &[CapturedValue],
-        actual_modes: &[CheckedMode],
-    ) -> Result<Vec<SubstitutedEntry>, CheckStop> {
-        let mut entries = Vec::new();
-        let mut next_origin = 0usize;
-        for (write, declared) in [
-            (false, &signature.declared_effects.reads),
-            (true, &signature.declared_effects.writes),
-        ] {
-            for formal in declared {
-                let origin = next_origin;
-                next_origin = next_origin
-                    .checked_add(1)
-                    .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-                let Some(index) = signature
-                    .parameters
-                    .iter()
-                    .position(|parameter| parameter.declaration == formal.root)
-                else {
-                    // [EFF-1] a row is rooted at a parameter of the same
-                    // callable; the declaration boundary already refused
-                    // anything else.
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let steps = self.substitute_effect_steps(signature, formal, actual_captures)?;
-                for base in actual_paths.get(index).into_iter().flatten() {
-                    let mut place = base.clone();
-                    place.path.extend_from_slice(&steps);
-                    entries.push(SubstitutedEntry {
-                        formed: base.path.len(),
-                        place,
-                        write,
-                        consuming: false,
-                        argument: index,
-                        origin,
-                    });
-                }
-            }
-        }
-        // [EFF-5] clause 2: a by-value argument contributes a consumption
-        // (`move`) or a read (copy) of its place to this same comparison.
-        for (index, mode) in actual_modes.iter().enumerate() {
-            if *mode != CheckedMode::Own {
-                continue;
-            }
-            let origin = next_origin;
-            next_origin = next_origin
-                .checked_add(1)
-                .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-            for place in actual_paths.get(index).into_iter().flatten() {
-                let consuming = self
-                    .is_copy_place_type(signature, index)
-                    .is_none_or(|copy| !copy);
-                entries.push(SubstitutedEntry {
-                    formed: place.path.len(),
-                    place: place.clone(),
-                    // A `move` empties the place, which [EFF-1] classes with
-                    // the writes; a copy argument observes it.
-                    write: consuming,
-                    consuming,
-                    argument: index,
-                    origin,
-                });
-            }
-        }
-        let _ = node;
-        Ok(entries)
-    }
-
     /// [EFF-5] the declared row's entries in the callee's own frame, in the
-    /// order [`Self::substitute_call_row`] numbers their origins: every
+    /// order [`Checker::substitute_call_row`] numbers their origins: every
     /// `reads` entry, then every `writes` entry.
     ///
     /// Each reference parameter is its own root and each index or range
@@ -634,10 +546,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// value exactly when they name one parameter [EFF-1]. No actual enters:
     /// whether two entries overlap at every position is a property of the
     /// row, the same at every call.
-    fn formal_row_places(
-        &self,
-        signature: &FunctionSignature,
-    ) -> Result<Vec<ResolvedPlace>, CheckStop> {
+    fn formal_row_places(signature: &FunctionSignature) -> Result<Vec<ResolvedPlace>, CheckStop> {
         let captures = (0..signature.parameters.len())
             .map(|ordinal| {
                 let ordinal = u32::try_from(ordinal)
@@ -660,7 +569,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             places.push(ResolvedPlace {
                 root: PlaceRoot::Binding(BindingId(ordinal)),
-                path: self.substitute_effect_steps(signature, formal, &captures)?,
+                path: Checker::substitute_effect_steps(signature, formal, &captures)?,
             });
         }
         Ok(places)
@@ -669,7 +578,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// One declared `epsuffix*`, with its index and range positions replaced
     /// by the values their own arguments supply [EFF-5].
     fn substitute_effect_steps(
-        &self,
         signature: &FunctionSignature,
         formal: &CheckedStatePath,
         actual_captures: &[CapturedValue],
@@ -709,13 +617,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .collect())
     }
 
-    /// Whether the by-value parameter at `index` has a copy type, so its
-    /// argument contributes a read rather than a consumption [EFF-5].
-    fn is_copy_place_type(&self, signature: &FunctionSignature, index: usize) -> Option<bool> {
-        let parameter = signature.parameters.get(index)?;
-        self.is_copy_type(parameter.ty).ok()
-    }
-
     /// [OP-12] "`f`'s declared row must not write, move out of, or free any
     /// prefix of `p`, while reading anything and writing disjoint storage is
     /// admitted [EFF-5]; a row that does is a hard error citing OP-12 at the
@@ -734,7 +635,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<ResolvedPlace>, CheckStop> {
-        let Some(target) = self.atomic_update_target(self.tree.path(node)?) else {
+        let Some(target) = self
+            .body
+            .atomic_update_target(self.types.declarations.tree.path(node)?)
+        else {
             return Ok(None);
         };
         // "where the first argument of the call is the target place itself":
@@ -759,12 +663,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             {
                 continue;
             }
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Op12,
                 node,
                 SemanticIssueKind::AtomicUpdateReachesTargetPrefix {
-                    target: self.render_resolved_place(&target, bindings)?,
-                    effect: self.render_resolved_place(&entry.place, bindings)?,
+                    target: self.types.render_resolved_place(&target, bindings)?,
+                    effect: self.types.render_resolved_place(&entry.place, bindings)?,
                     mechanical_fix: "declare a row that reaches no prefix of the updated place: reading anything and writing storage disjoint from it is admitted, and an update whose callee must reach the place is written as ordinary statements instead",
                 },
             );
@@ -789,14 +693,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// call has nothing to prove about it. The caller's kills and reference
     /// invalidations still take every substituted write [REF-2, ENT-5].
     fn check_call_pairwise_disjointness(
-        &self,
+        &mut self,
         node: NodeId,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        let exchange = self.is_swap_row(signature);
-        let formal = self.formal_row_places(signature)?;
+        let exchange = Checker::is_swap_row(signature);
+        let formal = Checker::formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
                 if left.origin == right.origin || !(left.write || right.write) {
@@ -823,23 +727,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 // families' question; every other overlap is refused here and
                 // now.
                 if let Some((positions, window)) =
-                    Self::separable_by_position(&left.place, &right.place)
+                    Checker::separable_by_position(&left.place, &right.place)
                 {
-                    self.call_separations
-                        .borrow_mut()
-                        .push(CheckedCallSeparation {
-                            site: self.tree.path(node)?.clone(),
-                            exchange,
-                            reference_use: None,
-                            positions,
-                            window,
-                            left_spelling: self.render_resolved_place(&left.place, bindings)?,
-                            right_spelling: self.render_resolved_place(&right.place, bindings)?,
-                            one_argument: left.argument == right.argument,
-                        });
+                    self.body.call_separations.push(CheckedCallSeparation {
+                        site: self.types.declarations.tree.path(node)?.clone(),
+                        exchange,
+                        reference_use: None,
+                        positions,
+                        window,
+                        left_spelling: self.types.render_resolved_place(&left.place, bindings)?,
+                        right_spelling: self.types.render_resolved_place(&right.place, bindings)?,
+                        one_argument: left.argument == right.argument,
+                    });
                     continue;
                 }
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     if exchange {
                         SemanticRule::Op11
                     } else {
@@ -847,18 +749,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     },
                     node,
                     SemanticIssueKind::OverlappingCallEffects {
-                        first: self.render_resolved_place(&left.place, bindings)?,
-                        second: self.render_resolved_place(&right.place, bindings)?,
+                        first: self.types.render_resolved_place(&left.place, bindings)?,
+                        second: self.types.render_resolved_place(&right.place, bindings)?,
                         // No position separates this pair, so proving one
                         // distinct is no repair here [DIAG-1]. One
                         // argument's pair got here because this call gives
                         // the declared positions that tell its entries apart
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
-                        // separates the steps at which the two paths differ:
-                        // a range beside an index, an index beside `.last`,
-                        // or two places a joined argument may name. Only the
-                        // first is repaired at the call's positions.
+                        // separates the steps at which the two paths differ,
+                        // as for two places a joined argument may name. Only
+                        // the first is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
@@ -867,7 +768,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                                 == right.place.path.get(..right.formed)
                             && let (Some(left_formal), Some(right_formal)) =
                                 (formal.get(left.origin), formal.get(right.origin))
-                            && Self::separable_by_position(left_formal, right_formal).is_some()
+                            && Checker::separable_by_position(left_formal, right_formal).is_some()
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument {
@@ -883,11 +784,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     /// The ordered position disagreements an admitted [OWN-7] family can
-    /// still separate. Index suffixes remain candidates; a range divergence
-    /// is the final candidate because its coordinate frames then differ, and
-    /// so is an index beside a window's `next` or `free`, which [WIN-2]
-    /// separates once the index is proved live, together with the window it
-    /// indexes.
+    /// still separate. Index suffixes remain candidates; a divergence with a
+    /// range step is the final candidate because its coordinate frames then
+    /// differ, whether against another range or against an index, and so is
+    /// a position beside a window's `next` or `free`, which [WIN-2] separates
+    /// by a bound on that window's length, together with the window it reads.
+    /// Beside `last` or `filled` a position overlaps whatever its value.
     pub(in crate::semantic::check) fn separable_by_position(
         left: &ResolvedPlace,
         right: &ResolvedPlace,
@@ -918,10 +820,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
                     break;
                 }
-                (PlaceStep::Index(index), PlaceStep::Part(WindowPart::Next | WindowPart::Free))
-                | (PlaceStep::Part(WindowPart::Next | WindowPart::Free), PlaceStep::Index(index)) =>
+                (PlaceStep::Index(index), PlaceStep::Range(range))
+                | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
+                    candidates.push(CheckedCallSeparationPositions::IndexOutsideRange(
+                        *index, *range,
+                    ));
+                    break;
+                }
+                (PlaceStep::Index(_) | PlaceStep::Range(_), PlaceStep::Part(part))
+                | (PlaceStep::Part(part), PlaceStep::Index(_) | PlaceStep::Range(_))
+                    if matches!(part, WindowPart::Next | WindowPart::Free) =>
                 {
-                    candidates.push(CheckedCallSeparationPositions::Live(*index));
+                    let position = match steps {
+                        (PlaceStep::Index(index), _) | (_, PlaceStep::Index(index)) => {
+                            CheckedCallSeparationPositions::Live(*index)
+                        }
+                        (PlaceStep::Range(range), _) | (_, PlaceStep::Range(range)) => {
+                            CheckedCallSeparationPositions::RangeWithinLength(*range)
+                        }
+                        _ => break,
+                    };
+                    candidates.push(position);
                     window = Some(ResolvedPlace {
                         root: left.root,
                         path: left.path[..depth].to_vec(),
@@ -936,74 +855,215 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         (!candidates.is_empty()).then_some((candidates, window))
     }
 
-    /// [OP-10] the window operations that end the bound a reference into the
-    /// window was formed under.
-    ///
-    /// `place_back`'s `ensures` carries `i < r.len` across the call and
-    /// `insert_at` only changes a slot's occupant, so neither appears here.
-    /// The rest move a boundary down, move a run between two windows, shift
-    /// every logical index, or remake the block whole, and every reference
-    /// into the operand dies [REF-2, REF-4].
-    fn invalidate_window_operation_references(
-        signature: &FunctionSignature,
-        entries: &[SubstitutedEntry],
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-    ) {
-        const BOUND_ENDING_ROWS: [&str; 7] = [
-            "take_back",
-            "remove_at",
-            "append",
-            "split_off",
-            "place_front",
-            "take_front",
-            "grow",
-        ];
-        if !BOUND_ENDING_ROWS.contains(&signature.name.as_str()) {
-            return;
-        }
-        for entry in entries {
-            // A row entry names a part or a measure word of the window --
-            // `writes(window.filled)`, `writes(window.len)` -- and the window
-            // whose bound the operation ends is the place below that step.
-            let cut = entry
-                .place
-                .path
-                .iter()
-                .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
-                .unwrap_or(entry.place.path.len());
-            let window = ResolvedPlace {
-                root: entry.place.root,
-                path: entry.place.path[..cut].to_vec(),
-            };
-            Self::invalidate_window_references(bindings, &window);
-        }
+    /// [OP-11] the one operation whose two reference arguments may name the
+    /// same place.
+    fn is_swap_row(signature: &FunctionSignature) -> bool {
+        signature.name == "swap"
     }
 
-    /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
-    /// call an allocating prelude row.
-    ///
-    /// The five rows the rule names are exactly the allocating [OP-13] and
-    /// [OP-10] records that take a cell from the heap; `slots_new`,
-    /// `ring_new` and `array_filled` build frame-resident shapes and are not
-    /// among them.
-    fn reject_allocating_call_under_no_heap(
+    /// [EFF-2] the caller's own row: each projected entry rooted in a current
+    /// formal contributes that formal's corresponding path, and an entry
+    /// rooted only in local storage contributes none.
+    fn project_call_effects(
         &self,
         node: NodeId,
-        signature: &FunctionSignature,
+        caller: &FunctionSignature,
+        entries: &[SubstitutedEntry],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        effects: &mut EffectSet,
     ) -> Result<(), CheckStop> {
-        if !self.no_heap || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str()) {
-            return Ok(());
+        for entry in entries {
+            for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
+                if !caller
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.declaration == path.path.root)
+                {
+                    continue;
+                }
+                if entry.write {
+                    effects.add_write(path);
+                } else {
+                    effects.add_read(path);
+                }
+            }
         }
-        self.issue_node(
-            SemanticRule::Stor8,
-            node,
-            SemanticIssueKind::HeapTypeUnderNoHeap {
-                spelling: signature.name.clone(),
-                mechanical_fix: super::super::super::types::STOR8_NO_HEAP,
-            },
-        )
+        Ok(())
     }
+}
 
+impl<'unit> TypeContext<'unit> {
+    /// [OP-9, OP-13, OP-10] the static allocation-size obligation this call
+    /// carries, if it is one of the operations that carry one.
+    ///
+    /// [OP-13] gives it to "each runtime-capacity construction" and [OP-10]
+    /// to `grow`, "over that operation's own stored type and count". The
+    /// three constructions take the count first and name the stored type in
+    /// their own result cell; `grow` remakes the cell it is handed, so its
+    /// stored type is that cell's and its count is its second argument. The
+    /// constant-capacity rows allocate nothing at runtime and the cell row
+    /// `box_new` allocates exactly one value, so neither carries the
+    /// obligation.
+    fn allocation_fit_of_call(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
+        let (count, cell) = match signature.name.as_str() {
+            "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
+            "grow" => {
+                let Some(parameter) = signature.parameters.first() else {
+                    return Ok(None);
+                };
+                (1, parameter.ty)
+            }
+            _ => return Ok(None),
+        };
+        let Some(element) = self.runtime_capacity_content_element(cell)? else {
+            return Ok(None);
+        };
+        let layout_ceiling = match self.instantiated_layout_ceiling(element) {
+            Some(ceiling) => ceiling,
+            None if !self.concrete_substitution_identity(&signature.substitution)? => {
+                // [ENT-1, FN-2] only a layout depending on an unresolved
+                // type or const parameter may defer the schema obligation.
+                // This includes an opaque parameter inside an aggregate,
+                // but not a fixed-layout Box shell or a known AboveU64
+                // ceiling. Inspect the operation's substitution recursively:
+                // a nominal argument can still contain a schema parameter.
+                // No deferred record grants proof or lowering authority;
+                // every concrete replay recomputes its bound.
+                return Ok(None);
+            }
+            None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+        };
+        Ok(Some(
+            super::super::super::super::model::CheckedAllocationFit {
+                cell,
+                element,
+                layout_ceiling,
+                count,
+                source_length_upper_bound: None,
+            },
+        ))
+    }
+    /// The element type of the runtime-capacity shape a `Box` holds [TYPE-9].
+    ///
+    /// A runtime-capacity `Array<T>`, `Slots<T>` or `Ring<T>` exists only as
+    /// the content of its cell, so this is the one place the stored type of
+    /// an allocation is found, and a constant-capacity content, which
+    /// allocates no slots of its own, has none.
+    fn runtime_capacity_content_element(
+        &self,
+        cell: CheckedType,
+    ) -> Result<Option<CheckedType>, CheckStop> {
+        let CheckedType::Nominal(nominal) = cell else {
+            return Ok(None);
+        };
+        let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
+            return Ok(None);
+        };
+        Ok(match referent {
+            CheckedType::Buffer { element } => Some(self.element_type(element)?),
+            CheckedType::Window {
+                element,
+                capacity: None,
+                ..
+            } => Some(self.element_type(element)?),
+            _ => None,
+        })
+    }
+    /// [EFF-5] the substituted row of one call.
+    ///
+    /// Each `effect_path` rooted at reference parameter i takes actual
+    /// argument i's path and appends its own `epsuffix*`; a by-value argument
+    /// contributes a consumption or a read of its place to the same list. An
+    /// index or range position names a value parameter of the same callable,
+    /// and the value that parameter's argument supplies is what replaces it.
+    fn substitute_call_row(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        signature: &FunctionSignature,
+        actual_paths: &[Vec<ResolvedPlace>],
+        actual_captures: &[CapturedValue],
+        actual_modes: &[CheckedMode],
+    ) -> Result<Vec<SubstitutedEntry>, CheckStop> {
+        let mut entries = Vec::new();
+        let mut next_origin = 0usize;
+        for (write, declared) in [
+            (false, &signature.declared_effects.reads),
+            (true, &signature.declared_effects.writes),
+        ] {
+            for formal in declared {
+                let origin = next_origin;
+                next_origin = next_origin
+                    .checked_add(1)
+                    .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                let Some(index) = signature
+                    .parameters
+                    .iter()
+                    .position(|parameter| parameter.declaration == formal.root)
+                else {
+                    // [EFF-1] a row is rooted at a parameter of the same
+                    // callable; the declaration boundary already refused
+                    // anything else.
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                };
+                let steps = Checker::substitute_effect_steps(signature, formal, actual_captures)?;
+                for base in actual_paths.get(index).into_iter().flatten() {
+                    let mut place = base.clone();
+                    place.path.extend_from_slice(&steps);
+                    entries.push(SubstitutedEntry {
+                        formed: base.path.len(),
+                        place,
+                        write,
+                        consuming: false,
+                        argument: index,
+                        origin,
+                    });
+                }
+            }
+        }
+        // [EFF-5] clause 2: a by-value argument contributes a consumption
+        // (`move`) or a read (copy) of its place to this same comparison.
+        for (index, mode) in actual_modes.iter().enumerate() {
+            if *mode != CheckedMode::Own {
+                continue;
+            }
+            let origin = next_origin;
+            next_origin = next_origin
+                .checked_add(1)
+                .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+            for place in actual_paths.get(index).into_iter().flatten() {
+                let consuming = self
+                    .is_copy_place_type(check_context, signature, index)
+                    .is_none_or(|copy| !copy);
+                entries.push(SubstitutedEntry {
+                    formed: place.path.len(),
+                    place: place.clone(),
+                    // A `move` empties the place, which [EFF-1] classes with
+                    // the writes; a copy argument observes it.
+                    write: consuming,
+                    consuming,
+                    argument: index,
+                    origin,
+                });
+            }
+        }
+        let _ = node;
+        Ok(entries)
+    }
+    /// Whether the by-value parameter at `index` has a copy type, so its
+    /// argument contributes a read rather than a consumption [EFF-5].
+    fn is_copy_place_type(
+        &self,
+        check_context: &CheckContext<'_>,
+        signature: &FunctionSignature,
+        index: usize,
+    ) -> Option<bool> {
+        let parameter = signature.parameters.get(index)?;
+        self.is_copy_type(check_context, parameter.ty).ok()
+    }
     /// [OP-11] a `swap` over a copy place is a hard error at the first
     /// `borrow_expr`, with the restructuring `read the two values and assign
     /// them back`.
@@ -1017,19 +1077,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// not about one of its two symmetric operands.
     fn reject_swap_over_copy(
         &self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        if !self.is_swap_row(signature) || !self.judges_class_spelling() {
+        if !Checker::is_swap_row(signature) || !Checker::judges_class_spelling(check_context) {
             return Ok(());
         }
         let Some(first) = signature.parameters.first() else {
             return Ok(());
         };
-        if !self.is_copy_type(first.ty)? {
+        if !self.is_copy_type(check_context, first.ty)? {
             return Ok(());
         }
-        self.issue_node(
+        self.declarations.issue_node(
             SemanticRule::Op11,
             node,
             SemanticIssueKind::SwapOverCopyPlace {
@@ -1038,13 +1099,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             },
         )
     }
-
-    /// [OP-11] the one operation whose two reference arguments may name the
-    /// same place.
-    fn is_swap_row(&self, signature: &FunctionSignature) -> bool {
-        signature.name == "swap"
-    }
-
     /// [EFF-5] clause 3: every live reference, including an actual argument,
     /// receives each substituted effect's ordinary invalidation [REF-2].
     /// Only an access at or below its captured target preserves that target;
@@ -1078,42 +1132,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 bindings,
                 &entry.place,
                 &event,
-                Some(self.tree.path(node)?),
+                Some(self.declarations.tree.path(node)?),
             )?;
         }
         Ok(())
     }
-
-    /// [EFF-2] the caller's own row: each projected entry rooted in a current
-    /// formal contributes that formal's corresponding path, and an entry
-    /// rooted only in local storage contributes none.
-    fn project_call_effects(
-        &self,
-        node: NodeId,
-        caller: &FunctionSignature,
-        entries: &[SubstitutedEntry],
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        effects: &mut EffectSet,
-    ) -> Result<(), CheckStop> {
-        for entry in entries {
-            for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
-                if !caller
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.declaration == path.path.root)
-                {
-                    continue;
-                }
-                if entry.write {
-                    effects.add_write(path);
-                } else {
-                    effects.add_read(path);
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Captures one already-checked actual's pre-transfer goal image.
     ///
     /// This runs after the actual expression has acquired all of its checked
@@ -1124,6 +1147,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     #[allow(clippy::too_many_arguments)]
     pub(in crate::semantic::check) fn call_goal_argument(
         &self,
+        check_context: &CheckContext<'_>,
         caller: super::super::super::super::model::FunctionId,
         call: &crate::NodePath,
         ordinal: u32,
@@ -1184,14 +1208,19 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // different immutable constant. ENT-2's value identity is the
             // actual holder, never that conservative loan ceiling.
             let place_parent = self
+                .declarations
                 .tree
                 .first_child_with(atom, Production::BorrowExpr)?
                 .unwrap_or(atom);
             let place = self
+                .declarations
                 .tree
                 .first_child_with(place_parent, Production::Place)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            if self.call_goal_place_contains_subscript(place)? {
+            if self
+                .declarations
+                .call_goal_place_contains_subscript(place)?
+            {
                 return Ok(GoalExpression::Datum(GoalDatum::EvaluatedValue {
                     function: caller,
                     occurrence: EvaluatedValueOccurrence::CallArgument {
@@ -1203,7 +1232,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     ty: expected_type,
                 }));
             }
-            let (image, _) = self.call_goal_place_inner(place, bindings)?;
+            let (image, _) = self.call_goal_place_inner(check_context, place, bindings)?;
             if image.ty() != expected_type {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
@@ -1220,10 +1249,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
 
         let place = self
+            .declarations
             .tree
             .first_child_with(atom, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if self.call_goal_place_contains_subscript(place)? {
+        if self
+            .declarations
+            .call_goal_place_contains_subscript(place)?
+        {
             return Ok(GoalExpression::Datum(GoalDatum::EvaluatedValue {
                 function: caller,
                 occurrence: EvaluatedValueOccurrence::CallArgument {
@@ -1296,32 +1329,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 arguments: vec![measured],
             });
         }
-        let (image, holder_pending) = self.call_goal_place_inner(place, bindings)?;
+        let (image, holder_pending) = self.call_goal_place_inner(check_context, place, bindings)?;
         if holder_pending || image.ty() != expected_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(image)
     }
-
-    /// A place may nest another place under a `deref` pbase. Search the whole
-    /// source place, not only its outer suffix list, so a future admitted
-    /// `deref(boxes[i])` actual receives the same ephemeral treatment and is
-    /// never misidentified as a rereadable place.
-    fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {
-        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        if self.last_subscript(&suffixes)?.is_some() {
-            return Ok(true);
-        }
-        let pbase = self
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(nested) = self.tree.first_child_with(pbase, Production::Place)? else {
-            return Ok(false);
-        };
-        self.call_goal_place_contains_subscript(nested)
-    }
-
     /// Forms a caller-visible referent datum. A root that is itself one of the
     /// caller's borrow parameters remains opaque and therefore retains one
     /// `Deref`; a local borrow/reborrow has already resolved through its holder
@@ -1360,7 +1373,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
                 PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
-                    return self.unsupported(
+                    return self.declarations.unsupported(
                         super::super::super::super::UnsupportedSemanticFeature::CompositeValues,
                         node,
                     );
@@ -1385,104 +1398,112 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         };
         Ok(GoalExpression::Datum(datum))
     }
-
     /// Resolves one non-indexed own actual to its concrete caller datum while
     /// preserving own-box dereference and field order. Dereferencing a borrow
     /// holder consumes the holder boundary exactly once and leaves the
     /// ultimate referent image produced above.
     fn call_goal_place_inner(
         &self,
+        check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(GoalExpression, bool), CheckStop> {
         let pbase = self
+            .declarations
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let (mut expression, holder_pending) = if self
-            .has_fixed(pbase, crate::FixedTerminal::Deref)?
-        {
-            let nested = self
-                .tree
-                .first_child_with(pbase, Production::Place)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let (nested, nested_holder_pending) = self.call_goal_place_inner(nested, bindings)?;
-            if nested_holder_pending {
-                (nested, false)
+        let (mut expression, holder_pending) =
+            if self.declarations.tree.place_base(pbase)?.is_dereference() {
+                let nested = self
+                    .declarations
+                    .tree
+                    .dereferenced_place(pbase)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                let (nested, nested_holder_pending) =
+                    self.call_goal_place_inner(check_context, nested, bindings)?;
+                if nested_holder_pending {
+                    (nested, false)
+                } else {
+                    let CheckedType::Nominal(nominal) = nested.ty() else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
+                    else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    (
+                        nested
+                            .with_projection(GoalProjection::Deref, referent)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        false,
+                    )
+                }
             } else {
-                let CheckedType::Nominal(nominal) = nested.ty() else {
+                let usage =
+                    self.declarations
+                        .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+                let ResolvedTarget::Source { declaration, class } = usage.target() else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
-                let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                (
-                    nested
-                        .with_projection(GoalProjection::Deref, referent)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                    false,
-                )
-            }
-        } else {
-            let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
-            let ResolvedTarget::Source { declaration, class } = usage.target() else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            match class {
-                DeclarationClass::Value => {
-                    let local = bindings
-                        .get(&declaration)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if let Some(reference) = &local.reference {
-                        (
-                            match reference.paths.as_slice() {
-                                [path] if !path.has_descendant() => {
-                                    self.goal_referent_image(path, local.ty, place)?
-                                }
-                                // [REF-1] a joined reference still denotes
-                                // one selected referent, but no member of its
-                                // possible-target set is its unconditional
-                                // value. Keep the reference's identity so
-                                // proof kills can resolve every candidate.
-                                _ => GoalExpression::Datum(GoalDatum::Place {
+                match class {
+                    DeclarationClass::Value => {
+                        let local = bindings
+                            .get(&declaration)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        if let Some(reference) = &local.reference {
+                            (
+                                match reference.paths.as_slice() {
+                                    [path] if !path.has_descendant() => {
+                                        self.goal_referent_image(path, local.ty, place)?
+                                    }
+                                    // [REF-1] a joined reference still denotes
+                                    // one selected referent, but no member of its
+                                    // possible-target set is its unconditional
+                                    // value. Keep the reference's identity so
+                                    // proof kills can resolve every candidate.
+                                    _ => GoalExpression::Datum(GoalDatum::Place {
+                                        root: local.binding,
+                                        projections: Vec::new(),
+                                        ty: local.ty,
+                                    }),
+                                },
+                                true,
+                            )
+                        } else {
+                            (
+                                GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,
                                 }),
-                            },
-                            true,
-                        )
-                    } else {
+                                false,
+                            )
+                        }
+                    }
+                    DeclarationClass::NamedConst => {
+                        let constant = self
+                            .constants
+                            .get(&declaration)
+                            .copied()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                         (
-                            GoalExpression::Datum(GoalDatum::Place {
-                                root: local.binding,
+                            GoalExpression::Datum(GoalDatum::NamedConst {
+                                declaration,
                                 projections: Vec::new(),
-                                ty: local.ty,
+                                ty: self.constant(constant)?.ty,
                             }),
                             false,
                         )
                     }
+                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                 }
-                DeclarationClass::NamedConst => {
-                    let constant = self
-                        .constants
-                        .get(&declaration)
-                        .copied()
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    (
-                        GoalExpression::Datum(GoalDatum::NamedConst {
-                            declaration,
-                            projections: Vec::new(),
-                            ty: self.constant(constant)?.ty,
-                        }),
-                        false,
-                    )
-                }
-                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            }
-        };
+            };
 
-        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        let suffixes = self
+            .declarations
+            .tree
+            .children_with(place, Production::Psuffix)?;
         if holder_pending && !suffixes.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1496,11 +1517,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 && let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
             {
                 let name = self
+                    .declarations
                     .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
                     .spelling()
                     .to_owned();
                 if name != "inner" {
-                    return self.issue_node(
+                    return self.declarations.issue_node(
                         SemanticRule::Type9,
                         suffix,
                         SemanticIssueKind::type_mismatch(
@@ -1514,7 +1536,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 continue;
             }
-            let (fields, selected) = self.resolve_struct_path(std::slice::from_ref(&suffix), ty)?;
+            let (fields, selected) =
+                self.resolve_struct_path(check_context, std::slice::from_ref(&suffix), ty)?;
             for field in fields {
                 expression = expression
                     .with_projection(GoalProjection::Field(field), selected)
@@ -1522,5 +1545,106 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
         }
         Ok((expression, holder_pending))
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    /// [OP-10] the calls that end the bound a reference into a window was
+    /// formed under.
+    ///
+    /// Of the window operations, `place_back`'s `ensures` carries
+    /// `i < r.len` across the call and `insert_at` only changes a slot's
+    /// occupant, so neither ends it; the rest move a boundary down, move a
+    /// run between two windows, shift every logical index, or remake the
+    /// block whole. Any other callee whose row writes a window's `last` or
+    /// `filled` may take elements back through it as `take_back` and
+    /// `remove_at` do, and no `ensures` is read here to show that it does
+    /// not, so its call ends the bound as well. Every reference into such a
+    /// window dies [REF-2, REF-4].
+    fn invalidate_window_operation_references(
+        &self,
+        signature: &FunctionSignature,
+        entries: &[SubstitutedEntry],
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        const BOUND_ENDING_ROWS: [&str; 7] = [
+            "take_back",
+            "remove_at",
+            "append",
+            "split_off",
+            "place_front",
+            "take_front",
+            "grow",
+        ];
+        let prelude = self.tree.is_prelude_node(signature.node)?;
+        let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
+        for entry in entries {
+            // A row entry names a part or a measure word of the window --
+            // `writes(window.filled)`, `writes(window.len)` -- and the window
+            // whose bound the call ends is the place below that step.
+            let cut = entry
+                .place
+                .path
+                .iter()
+                .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
+                .unwrap_or(entry.place.path.len());
+            let takes_back = !prelude
+                && entry.write
+                && matches!(
+                    entry.place.path.get(cut),
+                    Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
+                );
+            if !window_operation && !takes_back {
+                continue;
+            }
+            let window = ResolvedPlace {
+                root: entry.place.root,
+                path: entry.place.path[..cut].to_vec(),
+            };
+            Checker::invalidate_window_references(bindings, &window);
+        }
+        Ok(())
+    }
+    /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
+    /// call an allocating prelude row.
+    ///
+    /// The five rows the rule names are exactly the allocating [OP-13] and
+    /// [OP-10] records that take a cell from the heap; `slots_new`,
+    /// `ring_new` and `array_filled` build frame-resident shapes and are not
+    /// among them.
+    fn reject_allocating_call_under_no_heap(
+        &self,
+        node: NodeId,
+        signature: &FunctionSignature,
+    ) -> Result<(), CheckStop> {
+        if !self.no_heap || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str()) {
+            return Ok(());
+        }
+        self.issue_node(
+            SemanticRule::Stor8,
+            node,
+            SemanticIssueKind::HeapTypeUnderNoHeap {
+                spelling: signature.name.clone(),
+                mechanical_fix: super::super::super::types::STOR8_NO_HEAP,
+            },
+        )
+    }
+    /// A place may nest another place under a `deref` pbase. Search the whole
+    /// source place, not only its outer suffix list, so a future admitted
+    /// `deref(boxes[i])` actual receives the same ephemeral treatment and is
+    /// never misidentified as a rereadable place.
+    fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {
+        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        if self.tree.last_subscript(&suffixes)?.is_some() {
+            return Ok(true);
+        }
+        let pbase = self
+            .tree
+            .first_child_with(place, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let Some(nested) = self.tree.dereferenced_place(pbase)? else {
+            return Ok(false);
+        };
+        self.call_goal_place_contains_subscript(nested)
     }
 }

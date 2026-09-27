@@ -305,7 +305,7 @@ fn two_writes_of_one_scalar_deny_overlap() {
     assert_eq!(*sides, (PairSide::First, PairSide::Second));
 }
 
-/// Two opens through one factory never overlap. Before v0.74 the reason was
+/// Two opens through one factory never overlap. Before v0.76 the reason was
 /// the one factory both calls write; since then opening waits [WAIT-1], and
 /// a statement holding a waiting call has no overlap permission with any
 /// statement [PAR-1], which the judgment reports before comparing the two

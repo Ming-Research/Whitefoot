@@ -115,7 +115,7 @@ const fn prelude(
 }
 
 /// Distinct OP-1 spellings in normative table order.
-pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
+pub(crate) const OPERATION_FAMILIES: [&str; 89] = [
     "+wrap",
     "-wrap",
     "*wrap",
@@ -163,6 +163,7 @@ pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
     "cvt",
     "cvt.checked",
     "cvt.defined",
+    "cvt.wrap",
     "iand",
     "ior",
     "ixor",
@@ -257,7 +258,7 @@ mod tests {
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
         assert_eq!(PRELUDE_DECLARATIONS.len(), 24);
-        assert_eq!(OPERATION_FAMILIES.len(), 88);
+        assert_eq!(OPERATION_FAMILIES.len(), 89);
         assert_eq!(
             OPERATION_FAMILIES
                 .iter()

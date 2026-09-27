@@ -14,6 +14,9 @@
 //! one. What survives is the read-out, which is a fact about *this* target
 //! and its own right-hand side.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::{BodyChecker, DeclarationInventory};
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
@@ -49,7 +52,7 @@ pub(in crate::semantic::check) struct CommitReadOut {
     read_out: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     /// [OP-12] a read-out spends the target for the rest of the right-hand
     /// side, including later scalar reads or references of its descendants. A
     /// measure reads only its descriptor, so reading an enclosing run's
@@ -60,7 +63,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         descriptor: bool,
     ) -> Result<(), CheckStop> {
-        let targets = self.commit_read_outs.borrow();
+        let targets = &self.body.commit_read_outs;
         let spent = targets.iter().any(|target| {
             target.read_out
                 && target.place.members.iter().any(|member| {
@@ -68,7 +71,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 })
         });
         if spent {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
                 SemanticIssueKind::UseAfterMove {
@@ -79,62 +82,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(())
     }
 
-    /// Whether `place` is the [OP-12] read-out of the target of the commit now
-    /// being checked, recording that read-out when it is.
-    ///
-    /// The moved place is the target place, or a place reached through it. A
-    /// `move` of a strict prefix of the target is an ordinary consuming use
-    /// and is not answered here. The target is read out at most once, because
-    /// after its read-out it is dead for the remainder of the evaluation.
-    pub(in crate::semantic::check) fn take_commit_read_out(&self, place: &ResolvedPlace) -> bool {
-        self.take_commit_storage_read_out(place, false)
-    }
-
-    /// Whether `place[offset]` is the read-out of an element target of the
-    /// commit now being checked [SET-1, MSR-2].
-    ///
-    /// An element target is matched only at an offset provably the same as
-    /// its own: reading one element out and reinitializing another would
-    /// leave the second holding a value that never left and the first holding
-    /// none, so an offset this rule cannot decide keeps the refusal.
-    pub(in crate::semantic::check) fn take_commit_element_read_out(
-        &self,
-        place: &ResolvedPlace,
-    ) -> bool {
-        self.take_commit_storage_read_out(place, true)
-    }
-
-    fn take_commit_storage_read_out(&self, place: &ResolvedPlace, element: bool) -> bool {
-        let mut targets = self.commit_read_outs.borrow_mut();
-        for target in targets.iter_mut() {
-            if target.read_out || target.element != element || target.place.identity != *place {
-                continue;
-            }
-            if !target.read_out_allowed {
-                // [OP-12, DIAG-1] an affine target in actual zero of the
-                // direct RHS call has attempted the atomic spelling. If the
-                // call failed OP-12's result condition, ordinary ownership
-                // consumes the root and the required refusal is OWN-1 at
-                // this argument atom, recorded after its normal check.
-                target.failed_atomic_read_out |= target.argument_zero;
-                continue;
-            }
-            target.read_out = true;
-            return true;
-        }
-        false
-    }
-
     /// Selects the sole direct RHS call that already satisfies [OP-12]'s
     /// complete result condition. This runs before its actuals so only actual
     /// zero can receive the read-out spelling judgment.
     pub(in crate::semantic::check) fn prepare_atomic_update_call(
-        &self,
+        &mut self,
         call: &crate::NodePath,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
         let target_ty = {
-            let targets = self.commit_read_outs.borrow();
+            let targets = &self.body.commit_read_outs;
             let [target] = &targets[..] else {
                 return Ok(());
             };
@@ -147,7 +104,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .postcondition_selectors_for_signature(signature)?
             .iter()
             .any(|selector| selector.variant.is_some());
-        let mut targets = self.commit_read_outs.borrow_mut();
+        let targets = &mut self.body.commit_read_outs;
         let [target] = &mut targets[..] else {
             return Ok(());
         };
@@ -161,23 +118,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(())
     }
 
-    /// Makes the read-out available only while the direct call's first actual
-    /// is checked. Later actuals are ordinary ordered ownership uses.
-    pub(in crate::semantic::check) fn enter_atomic_update_argument(
-        &self,
-        call: &crate::NodePath,
-        ordinal: usize,
-    ) {
-        for target in self.commit_read_outs.borrow_mut().iter_mut() {
-            target.argument_zero = ordinal == 0
-                && target
-                    .call
-                    .as_ref()
-                    .is_some_and(|candidate| candidate == call);
-            target.read_out_allowed = target.atomic_call && target.argument_zero;
-        }
-    }
-
     /// Completes [OP-12]'s failed-result diagnostic after ordinary ownership
     /// has checked the attempted first actual. This is false for later
     /// actuals, so an ordinary complete-binding move there remains [SET-1]'s
@@ -187,14 +127,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
     ) -> Result<(), CheckStop> {
         if !self
+            .body
             .commit_read_outs
-            .borrow()
             .iter()
             .any(|target| target.failed_atomic_read_out)
         {
             return Ok(());
         }
-        self.issue_node(
+        self.types.declarations.issue_node(
             SemanticRule::Own1,
             node,
             SemanticIssueKind::UseAfterMove {
@@ -203,69 +143,50 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         )
     }
 
-    /// [OP-12] the target place of the `set` whose right-hand side is being
-    /// checked, when a call whose declared result is `own T` for that
-    /// target's own type T stands in that right-hand side.
-    ///
-    /// "`set p = f(move p, args...);` for an affine place and
-    /// `set p = f(p, args...);` for a copy one, where the first argument of
-    /// the call is the target place itself, is the atomic in-place update."
-    /// The first-argument condition is the caller's, because only the caller
-    /// holds the actual's resolved path; what this answers is the other half
-    /// — which target this call stands over, and whether the call's result
-    /// condition holds. "A call that fails the result condition is not an
-    /// atomic update and is judged as an ordinary `set`", so a row returning
-    /// anything else yields `None` here and reaches [SET-1]'s ordinary
-    /// judgment untouched.
-    pub(in crate::semantic::check) fn atomic_update_target(
-        &self,
-        call: &crate::NodePath,
-    ) -> Option<ResolvedPlace> {
-        let targets = self.commit_read_outs.borrow();
-        let [target] = &targets[..] else {
-            return None;
-        };
-        if !target.atomic_call || target.call.as_ref() != Some(call) {
-            return None;
-        }
-        Some(target.place.identity.clone())
-    }
-
     /// [GRAM-4, SET-1] one `set` statement.
     pub(super) fn check_commit(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         _counters: &mut super::ControlCounters<'_>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
-        let [target_node] = self.tree.children_with(node, Production::Place)?[..] else {
+        let FunctionContext { check_context, .. } = context;
+        let [target_node] = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Place)?[..]
+        else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
-        let [value_node] = self.tree.children_with(node, Production::Expr)?[..] else {
+        let [value_node] = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Expr)?[..]
+        else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
 
         // [REF-1] a `set` whose target is a reference variable and whose
         // right-hand side is a `borrow_expr` rebinds that name and writes no
         // storage, so [SET-1]'s value-target judgment does not apply to it.
-        if let Some(result) = self.check_reference_rebinding(
-            function,
-            node,
-            target_node,
-            value_node,
-            bindings,
-            scope,
-        )? {
+        if let Some(result) =
+            self.check_reference_rebinding(context, node, target_node, value_node, bindings, scope)?
+        {
             return Ok(result);
         }
 
         // [SET-1] the target is resolved and evaluated first, without reading
         // or consuming the value stored there.
-        let revives = self.commit_revives_binding(target_node, bindings)?;
+        let revives =
+            self.types
+                .declarations
+                .commit_revives_binding(check_context, target_node, bindings)?;
         let mut mutation =
-            self.check_set_target(function, target_node, bindings, scope.loops.len())?;
+            self.check_set_target(context, target_node, bindings, scope.loops.len())?;
         if revives {
             // An entry-dead complete binding has no current owner whose state
             // this initialization could write [SET-1, EFF-2]. Its bare target
@@ -278,7 +199,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // [OP-12] alone recognizes its direct call's first target actual as
         // an atomic read-out rather than a root-killing consume.
         let (value, atomic_read_out) =
-            self.check_commit_value(function, &mutation, value_node, bindings, scope.loops.len())?;
+            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len())?;
         effects = effects.union(value.effects.clone());
 
         // [TYPE-5] "the right-hand side of `set p = e;` must produce exactly
@@ -291,12 +212,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // because its carried type agrees.
         let target_type = mutation.target.ty();
         if value.mode != CheckedMode::Own || target_type != value.expression.ty() {
-            if self.reads_implicitly_through_holder(
+            if self.types.reads_implicitly_through_holder(
                 value.reference_value,
                 value.expression.ty(),
                 RequiredReferent::Exact(target_type),
             )? {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type7,
                     value_node,
                     SemanticIssueKind::MissingDereference {
@@ -304,12 +225,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     },
                 );
             }
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type5,
                 value_node,
                 SemanticIssueKind::type_mismatch(
-                    self.checked_value_name(CheckedMode::Own, target_type)?,
-                    self.checked_value_name(value.mode, value.expression.ty())?,
+                    self.types
+                        .checked_value_name(CheckedMode::Own, target_type)?,
+                    self.types
+                        .checked_value_name(value.mode, value.expression.ty())?,
                 ),
             );
         }
@@ -317,7 +240,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .get(&mutation.declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .live;
-        self.judge_commit_admission(&mutation, target_node, atomic_read_out, bindings)?;
+        self.judge_commit_admission(
+            check_context,
+            &mutation,
+            target_node,
+            atomic_read_out,
+            bindings,
+        )?;
         // [WIN-3, STOR-3] "Assigning over any owned place releases the old
         // value when it is affine." The commit may revive an
         // entry-dead binding, and a right-hand side that reads any target out
@@ -329,29 +258,29 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // Every source rejection of this statement is judged above; a target
         // this compiler cannot lower stops here and nowhere earlier [DIAG-1].
         if let Some(feature) = mutation.unsupported {
-            return self.unsupported(feature, target_node);
+            return self.types.declarations.unsupported(feature, target_node);
         }
         // [REF-2] the write invalidates every live reference whose path this
         // target is a proper prefix of. Writing the storage at the target's
         // own path, or below it, is a content write and invalidates nothing.
         for place in &mutation.place.members {
-            self.invalidate_references_with_separation(
+            self.types.invalidate_references_with_separation(
                 bindings,
                 place,
                 &InvalidationEvent::PrefixWritten,
-                Some(self.tree.path(node)?),
+                Some(self.types.declarations.tree.path(node)?),
             )?;
         }
-        if self.commit_reinitializes_binding(&mutation) {
+        if Checker::commit_reinitializes_binding(&mutation) {
             bindings
                 .get_mut(&mutation.declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .live = true;
         }
 
-        Ok(Self::continuing_statement(
+        Ok(Checker::continuing_statement(
             CheckedStatement::Set {
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 target: mutation.target,
                 value: value.expression,
                 displaces_live_value,
@@ -366,20 +295,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// The context is removed before any rejection leaves this function, so
     /// no later statement of any function can read a stale target.
     fn check_commit_value(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         mutation: &MutationTarget,
         value_node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<(super::super::TypedExpression, bool), CheckStop> {
-        let call = match self.tree.children(value_node)? {
-            [child] if self.tree.production(*child)? == Production::Call => {
-                Some(self.tree.path(*child)?.clone())
+        let call = match self.types.declarations.tree.children(value_node)? {
+            [child] if self.types.declarations.tree.production(*child)? == Production::Call => {
+                Some(self.types.declarations.tree.path(*child)?.clone())
             }
             _ => None,
         };
-        self.commit_read_outs.replace(vec![CommitReadOut {
+        self.body.commit_read_outs = vec![CommitReadOut {
             // [REF-1, OP-12] exact read-out matching uses the unique member
             // where one exists and the holder identity for a true union.
             // After a read-out, liveness ranges over every storage member.
@@ -392,11 +321,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             read_out_allowed: false,
             failed_atomic_read_out: false,
             read_out: false,
-        }]);
-        let outcome = self.check_expression(function, value_node, bindings, loop_depth);
-        let read_out = self
-            .commit_read_outs
-            .take()
+        }];
+        let outcome = self.check_expression(context, value_node, bindings, loop_depth);
+        let read_out = std::mem::take(&mut self.body.commit_read_outs)
             .into_iter()
             .any(|target| target.read_out);
         Ok((outcome?, read_out))
@@ -405,7 +332,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// [SET-1] the premises rechecked after the right-hand side, under
     /// [LIV-1].
     fn judge_commit_admission(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         mutation: &MutationTarget,
         target_node: NodeId,
         atomic_read_out: bool,
@@ -417,13 +345,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // the statement resolved it, or because this statement's own read-out
         // took its value. Every projected, dereferenced or subscripted target
         // still demands a live root.
-        let reinitializes = self.commit_reinitializes_binding(mutation);
+        let reinitializes = Checker::commit_reinitializes_binding(mutation);
         let root_live = bindings
             .get(&mutation.declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .live;
         if !reinitializes && !root_live {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 target_node,
                 SemanticIssueKind::UseAfterMove {
@@ -433,7 +361,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         self.revalidate_mutation_access(mutation.through_reference, bindings, target_node)?;
         let ty = mutation.target.ty();
-        if self.is_copy_type(ty)? || atomic_read_out || !root_live {
+        if self.types.is_copy_type(check_context, ty)? || atomic_read_out || !root_live {
             return Ok(());
         }
         // [WIN-3] assigning over any owned place releases the old value when
@@ -442,16 +370,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // affine case, which this commit admits: the old value takes its
         // compiler-derived release [STOR-3].
         if !matches!(
-            self.linearity_class(ty)?,
+            self.types.linearity_class(check_context, ty)?,
             super::super::linearity::LinearityClass::Linear
         ) {
             return Ok(());
         }
-        self.issue_node(
+        self.types.declarations.issue_node(
             SemanticRule::Win3,
             target_node,
             SemanticIssueKind::LinearAssignmentTarget {
-                target_type: self.checked_type_name(ty)?,
+                target_type: self.types.checked_type_name(ty)?,
                 mechanical_fix: WIN3_LINEAR_TARGET,
             },
         )
@@ -464,22 +392,29 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// commit. A continuing loop rebinding contributes to [REF-1]'s finite
     /// header summaries before the settled structural walk is published.
     fn check_reference_rebinding(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         target_node: NodeId,
         value_node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         scope: ControlScope<'_>,
     ) -> Result<Option<StatementResult>, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
         if !self
+            .types
+            .declarations
             .tree
             .children_with(target_node, Production::Psuffix)?
             .is_empty()
         {
             return Ok(None);
         }
-        let Some(declaration) = self.complete_binding_target(target_node)? else {
+        let Some(declaration) = self
+            .types
+            .declarations
+            .complete_binding_target(check_context, target_node)?
+        else {
             return Ok(None);
         };
         let Some(local) = bindings.get(&declaration) else {
@@ -493,11 +428,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // [REF-1] only a binding that crosses the current loop's backedge is
         // loop-carried. A local declared inside that loop, and every binding
         // outside a loop, may be rebound to a different path shape.
-        let value = self.check_expression(function, value_node, bindings, scope.loops.len())?;
+        let value = self.check_expression(context, value_node, bindings, scope.loops.len())?;
         let Some(reference) = value.reference.clone() else {
             // [TYPE-7] a `set` whose target is a reference variable and whose
             // right-hand side is a value is not a rebinding.
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type7,
                 target_node,
                 SemanticIssueKind::MissingDereference {
@@ -513,12 +448,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             || value.expression.ty() != expected_type
             || reference.kind != previous_kind
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type5,
                 value_node,
                 SemanticIssueKind::type_mismatch(
-                    self.checked_value_name(expected_mode, expected_type)?,
-                    self.checked_value_name(value.mode, value.expression.ty())?,
+                    self.types
+                        .checked_value_name(expected_mode, expected_type)?,
+                    self.types
+                        .checked_value_name(value.mode, value.expression.ty())?,
                 ),
             );
         }
@@ -534,9 +471,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 loop_id: context.id,
                 owner: binding,
             };
-            let summarized = self.loop_reference_summaries.borrow().contains_key(&token);
+            let summarized = self.body.loop_reference_summaries.contains_key(&token);
             if summarized
                 && self.join_loop_reference_summary(
+                    check_context,
                     token,
                     expected_type,
                     previous_kind,
@@ -547,15 +485,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 return Err(CheckStop::ReferenceSummaryChanged);
             }
         }
-        self.record_reference_origins(binding, &reference.paths);
+        self.body
+            .record_reference_origins(binding, &reference.paths);
         let local = bindings
             .get_mut(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         local.reference = Some(reference);
         local.live = true;
-        Ok(Some(Self::continuing_statement(
+        Ok(Some(Checker::continuing_statement(
             CheckedStatement::Set {
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 target: CheckedSetTarget::Place(super::super::super::model::CheckedWritablePlace {
                     binding: local.binding,
                     fields: Vec::new(),
@@ -577,17 +516,112 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// A `deref` target writes a place the reference does not own, and a
     /// projected or subscripted target writes one component of a value, so
     /// neither is that shape.
-    fn commit_reinitializes_binding(&self, mutation: &MutationTarget) -> bool {
+    fn commit_reinitializes_binding(mutation: &MutationTarget) -> bool {
         matches!(&mutation.target, CheckedSetTarget::Place(place) if place.fields.is_empty())
             && mutation.through_reference.is_none()
             && mutation.place.identity.path.is_empty()
             && matches!(mutation.place.identity.root, PlaceRoot::Binding(_))
     }
+}
 
+impl BodyChecker {
+    /// Whether `place` is the [OP-12] read-out of the target of the commit now
+    /// being checked, recording that read-out when it is.
+    ///
+    /// The moved place is the target place, or a place reached through it. A
+    /// `move` of a strict prefix of the target is an ordinary consuming use
+    /// and is not answered here. The target is read out at most once, because
+    /// after its read-out it is dead for the remainder of the evaluation.
+    pub(in crate::semantic::check) fn take_commit_read_out(
+        &mut self,
+        place: &ResolvedPlace,
+    ) -> bool {
+        self.take_commit_storage_read_out(place, false)
+    }
+    /// Whether `place[offset]` is the read-out of an element target of the
+    /// commit now being checked [SET-1, MSR-2].
+    ///
+    /// An element target is matched only at an offset provably the same as
+    /// its own: reading one element out and reinitializing another would
+    /// leave the second holding a value that never left and the first holding
+    /// none, so an offset this rule cannot decide keeps the refusal.
+    pub(in crate::semantic::check) fn take_commit_element_read_out(
+        &mut self,
+        place: &ResolvedPlace,
+    ) -> bool {
+        self.take_commit_storage_read_out(place, true)
+    }
+    fn take_commit_storage_read_out(&mut self, place: &ResolvedPlace, element: bool) -> bool {
+        let targets = &mut self.commit_read_outs;
+        for target in targets.iter_mut() {
+            if target.read_out || target.element != element || target.place.identity != *place {
+                continue;
+            }
+            if !target.read_out_allowed {
+                // [OP-12, DIAG-1] an affine target in actual zero of the
+                // direct RHS call has attempted the atomic spelling. If the
+                // call failed OP-12's result condition, ordinary ownership
+                // consumes the root and the required refusal is OWN-1 at
+                // this argument atom, recorded after its normal check.
+                target.failed_atomic_read_out |= target.argument_zero;
+                continue;
+            }
+            target.read_out = true;
+            return true;
+        }
+        false
+    }
+    /// Makes the read-out available only while the direct call's first actual
+    /// is checked. Later actuals are ordinary ordered ownership uses.
+    pub(in crate::semantic::check) fn enter_atomic_update_argument(
+        &mut self,
+        call: &crate::NodePath,
+        ordinal: usize,
+    ) {
+        for target in self.commit_read_outs.iter_mut() {
+            target.argument_zero = ordinal == 0
+                && target
+                    .call
+                    .as_ref()
+                    .is_some_and(|candidate| candidate == call);
+            target.read_out_allowed = target.atomic_call && target.argument_zero;
+        }
+    }
+    /// [OP-12] the target place of the `set` whose right-hand side is being
+    /// checked, when a call whose declared result is `own T` for that
+    /// target's own type T stands in that right-hand side.
+    ///
+    /// "`set p = f(move p, args...);` for an affine place and
+    /// `set p = f(p, args...);` for a copy one, where the first argument of
+    /// the call is the target place itself, is the atomic in-place update."
+    /// The first-argument condition is the caller's, because only the caller
+    /// holds the actual's resolved path; what this answers is the other half
+    /// — which target this call stands over, and whether the call's result
+    /// condition holds. "A call that fails the result condition is not an
+    /// atomic update and is judged as an ordinary `set`", so a row returning
+    /// anything else yields `None` here and reaches [SET-1]'s ordinary
+    /// judgment untouched.
+    pub(in crate::semantic::check) fn atomic_update_target(
+        &self,
+        call: &crate::NodePath,
+    ) -> Option<ResolvedPlace> {
+        let targets = &self.commit_read_outs;
+        let [target] = &targets[..] else {
+            return None;
+        };
+        if !target.atomic_call || target.call.as_ref() != Some(call) {
+            return None;
+        }
+        Some(target.place.identity.clone())
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
     /// Whether this written target is a complete binding that is already
     /// dead, which is the one shape [SET-1] reinitializes from dead.
     fn commit_revives_binding(
         &self,
+        check_context: &CheckContext<'_>,
         target_node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<bool, CheckStop> {
@@ -598,7 +632,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         {
             return Ok(false);
         }
-        let Some(declaration) = self.complete_binding_target(target_node)? else {
+        let Some(declaration) = self.complete_binding_target(check_context, target_node)? else {
             return Ok(false);
         };
         Ok(bindings.get(&declaration).is_some_and(|local| !local.live))

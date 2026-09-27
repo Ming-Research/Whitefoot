@@ -46,7 +46,9 @@ fn assert_self_tail_lowering(source: &[u8]) {
                 .expect("tail transfer emits")
                 .into_string();
             module.push_str(
-                &crate::driver::launcher::render(program, "main").expect("ordinary test launcher"),
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
             );
             module
         });

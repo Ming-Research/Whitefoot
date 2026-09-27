@@ -11,15 +11,19 @@ rarely insert at the same place.
 
 ## Numeric conversions and value evidence
 
-- **Select the modular conversion companion.** The
-  [conversion comparison](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  recommends integer-only `cvt.wrap` for direct low-bit extraction and modular
-  signedness conversion. It is deferred from the exact conversion family
-  because it selects an additional result policy. Validate all integer
-  width/sign classes, especially negative signed inputs widened to unsigned
-  destinations, and ensure changed values publish no exact input equality.
-  Reopen when the owner selects this companion for implementation; remove
-  after its selected rules and ordinary-path evidence land.
+- **Validate matching operation origins across named call arguments.** With
+  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
+  `reduced == 1_u8` keeps the direct comparison and the fully expanded
+  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
+  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
+  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
+  through a parameter or passing the matching literal avoids this boundary.
+  Assess whether consistent call-side origin normalization would recover
+  useful proofs without enumerating intermediate expansion combinations.
+  Require matching aliases, replaced inputs, joins and bounded proof cost;
+  any additional accepted route needs its own specification decision. Defer
+  from the modular conversion operation, which adds no proof family; reopen
+  when a real caller needs this named-value form.
 
 - **Select direct rounded/saturated float conversion policies.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
@@ -308,72 +312,45 @@ rarely insert at the same place.
   blocks a program or an experiment, and close when that comparison is made
   and the owner rules on it.
 
-- **The checker/engine acceptance contract is written nowhere.**
-  `entailment_rejection` (`compiler/src/semantic/check.rs`, 567 lines) decides
-  acceptance by listing the engine's outcome lists by hand, maps obligation
-  families to rules twice and selects OP-14 by the callee spelling
-  `free_empty`. A mandatory outcome list added without a matching arm would be
-  accepted. The [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#f2-rules-implemented-twice-with-nothing-checking-that-they-agree)
-  proposes explicit obligation records, one disposition each and one
-  acceptance query (its P1.3), which `design/compiler/acceptance-records.md`
-  now records. Validate with identical verdicts, rules and locations on the
-  conformance corpus and test programs, and a deliberately dropped
-  disposition that rejects. Close when acceptance is one query over the
-  records.
-
-- **Rules recognized by spelling or implemented twice.** OP-14 is selected
-  by the callee spelling `free_empty` (`compiler/src/semantic/check.rs`) and
-  the backend recognizes OP-11's row by symbol spelling
-  (`compiler/src/backend/emitter.rs`); both hold only because TYPE-6 rejects a
-  source declaration that collides with the prelude. CALL-6's consistency
-  check keeps its own closure (`compiler/src/semantic/check/publication.rs`)
-  beside the ENT-4 closure the specification names, and INV-1 affine formation
-  and call-goal images are each formed in both the checker and the flow.
+- **Rules recognized by spelling or implemented twice.** The checker's
+  operand-row table (`compiler/src/semantic/check/generics/operands.rs`)
+  recognizes the OP-10, OP-11 and OP-14 rows by their prelude spelling, and
+  an OP-14 record takes its rule from it; the backend recognizes OP-11's row
+  by symbol spelling (`compiler/src/backend/emitter.rs`). Both hold only
+  because TYPE-6 rejects a source declaration that collides with the
+  prelude. CALL-6's consistency check keeps its own closure
+  (`compiler/src/semantic/check/publication.rs`) beside the ENT-4 closure the
+  specification names, and INV-1 affine formation and call-goal images are
+  each formed in both the checker and the flow.
   Select by PRE-1 operation identity, route CALL-6 through an isolated
   ordinary query, and form each image once. Validate with identical verdicts
   and a prelude-spelled source declaration that still reaches neither path.
   Reopen when a prelude collision rule changes.
 
-- **Some one-argument row pairs are refused at every call.** EFF-5 leaves a
-  pair of one argument's entries uncompared when their declared paths overlap
-  at every position, and lists the step pairs that decide that. The list
-  omits a range position beside an index position or a window part, which no
-  OWN-7 family separates either. So `reads(values[start..end]),
-  writes(values[slot])` is compared, never separated, and refused at every
-  call, including `start: 0_u64, end: 2_u64, slot: 3_u64`. The writer can
-  declare `reads(values), writes(values[slot])` instead, which is callable
-  but reads all of `values` in every PAR-1 footprint. The EFF-2 repair
-  suggests exactly the refused row: a body that reads the length of
-  `deref(values)[start..end]` and writes `deref(values)[slot]`, declared
-  `writes(values[slot])`, is told to declare `reads(values[start..end].len),
-  writes(values[slot])`, a row no call admits, against DIAG-1. The ground of
-  that suggestion in `design/compiler/rejection-payloads.md`, that every pair
-  such a row leaves on one parameter either overlaps whatever its positions
-  are or depends on positions each call proves, does not hold for these
-  pairs. Two repairs keep that ground: add these pairs to EFF-5's list and
-  make `overlaps_at_every_position` answer by the same OWN-7 judgment instead
-  of stopping at any range step, or give OWN-7 a family that separates an
-  index from a range. Either changes EFF-5 or OWN-7 and the owner decides.
-  Validate with that call accepted, a caller fact outside `slot` surviving,
-  the EFF-2 suggestion accepted at a call, and two index positions and two
-  range positions of one argument still compared. Found while stacking the
-  repair-wording and one-argument-row changes; reopen with the owner's
-  direction.
-
 - **Most repairs outside the goal families have no pinned pair.**
   `compiler/diagnostic-repairs` pins every repair with its rejected source
   and a program for each alternative, and keeps the words in one module;
-  `driver::pinned_repairs` holds 66 pairs, nearly all for goals, effect rows
+  `driver::pinned_repairs` holds 75 pairs, nearly all for goals, effect rows
   and TYPE-2's opaque-struct refusals, while most of the eighty-odd sites
   across the checker that print a fixed repair sentence have none. Among
   them are TYPE-2's "build it with a construction function [OP-13]" for a
   storage shape or a cell, OWN-1's "write `move p` for the affine place" and
-  "use the copy place without `move`", and TYPE-9's inline-shape and
-  content-move repairs. Some cannot be carried out as written: TYPE-9's
+  "use the copy place without `move`", TYPE-9's inline-shape and
+  content-move repairs, and EFF-5's "these two entries of the callee's row
+  may reach overlapping places through one argument", whose pair v0.74
+  accepts now that an index and a range can be proved apart: every pair of
+  one argument's declared paths a call compares now has a position to
+  prove, so only a joined argument naming two places still reaches it. Some cannot be carried out as written: TYPE-9's
   content-move repair writes `free_empty(move b)` without the argument name
   GRAM-11 requires and offers the cell's scope-exit release to a content
   whose elements are linear, and PROV-6's partial-consume repair writes the
-  placeholder `let N(f: a, ...) = move v;`. Pin each with a program per
+  placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
+  offers that placeholder as its second route for every linear binding,
+  although an opaque host handle such as `ReadFile` cannot be taken apart
+  [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
+  value of an unbounded type parameter can only be moved whole; the
+  [beyond-memory article](articles/beyond-memory.md) shows it for
+  `ReadFile`. Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -433,19 +410,6 @@ rarely insert at the same place.
   read, write and move out on such a parameter. Found in the review of the
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
-
-- **An index beside a window's `last` is never separated at a call.** WIN-2
-  separates a live `r[i]` from `r.last` once `i != r.len - 1` is proved, and
-  `separation` answers that for two places, but the call-site candidates
-  `separable_by_position` hands to the entailment fragment include only an
-  index beside `next` or `free`. So a pair such as `reads(r[i])`,
-  `writes(r.last)`, from one argument or two, is refused at every call even
-  where the caller proves `i` live and not last. Add a candidate that proves
-  liveness and `i != r.len - 1` in the call's entry state, beside the `Live`
-  candidate; validate with an accepted call that proves both, a refused call
-  that proves only liveness, and the pair's PAR-1 judgment unchanged. Found
-  in the stack review; the pair is rare, so reopen when a window operation
-  needs it.
 
 ## Containers and storage lowering
 
@@ -1090,6 +1054,24 @@ rarely insert at the same place.
   Found in the review of the holder-read fix; reopen when a program rebinds a
   reference parameter on a parallel path.
 
+- **PAR-1 reads nothing for a range formed through a Box.** A `let` whose
+  initializer forms a reference records no read of the place the reference
+  starts from, so PAR-1 permits
+  `let data = box_array_filled::<u64>(count: 2000000_u64, value: 0_u64);`
+  beside `let all = &data.inner[0_u64..2000000_u64];`
+  (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
+  range loads the Box's pointer, which the first statement writes. No
+  program observes it: the lowering hands out only calls, and a member that
+  is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
+  in place needs only its address, so only a path through a Box's `inner`
+  reads its owner. Record a read of the owner above each `inner` step a
+  formed path passes; validate with that pair denied, the rest of the
+  quicksort ledger unchanged, and `let larger = &deref(v)[after..n];` still
+  permitted beside `quicksort(v: smaller);`. Found while checking the
+  parallelism article's ledger; reopen before the lowering admits a member
+  that is not a call.
+
 - **Parallel actualization is decided during translation.** A counted-loop
   split is chosen while its body is being lowered
   (`compiler/src/lowering/builder/split.rs`). The rescue mechanisms follow
@@ -1255,7 +1237,7 @@ rarely insert at the same place.
   payloads (EFF-5, OP-12, REF-2) spell resolved places through
   `render_resolved_place` in `compiler/src/semantic/check/expressions/places.rs`,
   while ENT-6 residuals and goals use `render_place` in
-  `compiler/src/semantic/entailment/flow.rs`, which still renders a payload
+  `compiler/src/semantic/entailment/flow/render.rs`, which still renders a payload
   step by its variant and field ordinals and a literal subscript offset
   without its `_u64` suffix. One renderer shared through a small naming seam
   would remove the drift that produced the `<binding:N>` leak; the cost is
@@ -1277,7 +1259,7 @@ rarely insert at the same place.
   fix left three: the FN-9 `relation` field prints the normalized relation
   with unsuffixed literals, such as `"w.value - 0 <= -1"` for
   `ensures result < 0_T`; the goal-literal renderer in
-  `compiler/src/semantic/entailment/flow.rs` falls back to
+  `compiler/src/semantic/entailment/flow/render.rs` falls back to
   `format!("{other:?}")` for a value it has no source form for, such as an
   array or struct constant; and the SET-1 `InvalidSetTarget` payload prints
   `root_class: format!("{class:?}")`, a resolver class name. Render each in
@@ -1379,9 +1361,13 @@ rarely insert at the same place.
   or limit that shows it: the later stage of the
   [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
   persistent formation, lookup, instance, summary and lowering queries inside
-  a composition through module build units, instance units and fact-based
-  entry checks, selected when edit-build measurements show the composition's
-  rerun to limit a current experiment (a build of an edited entry now forms,
+  a composition, where module build units follow the owned representation
+  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
+  (`design/compiler/incremental-compilation.md`, since the standard library
+  on modules needs a library module checked once and reused by every program
+  that names it), and instance units and fact-based entry checks wait until
+  edit-build measurements show the composition's rerun to limit a current
+  experiment or a consumer needs them (a build of an edited entry now forms,
   resolves and type-checks the whole closure and reuses only its proof
   analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
   build of a 32-module chain, growing with the program); a cold build without
@@ -1436,64 +1422,24 @@ rarely insert at the same place.
 
 ## Code structure
 
-- **The entailment flow module has outgrown one reader.**
-  `compiler/src/semantic/entailment/flow.rs` has 17,275 lines, 15,040 of them
-  in one `impl Analyzer` block; it grew from 8,670 lines on 2026-09-01 over 154
-  commits. `compiler/src/semantic/entailment/state.rs` (7,755 lines, including
-  a 1,729-line inline test module) and the tests in
-  `compiler/src/semantic/tests/entailment.rs` (10,996 lines, 155 tests) grew
-  with it. An agent reads such a file only in slices, and every
-  responsibility's changes land in the same file. Moving methods into files
-  would not separate its state: child modules take `use super::*` and
-  `pub(super)` methods on the one 37-field `Analyzer`, and the section markers
-  no longer match what they enclose. Split the state first into typed
-  sub-contexts, a vocabulary (terms, goals, ledger, atoms), read-only inputs,
-  outputs and walk frames, then move code along the components the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries) lists (its
-  P2.1, which `design/compiler/engine-components.md` now records). `state.rs`
-  can move its test
-  module to its own file and its dense-closure algorithms apart from the fact
-  state and ledger types; the tests can group by the section they exercise.
-  Validate that each move changes no behavior: identical `make check` results
-  and a diff of moved items and module declarations only. Split when no open
-  branch has large edits in these files, or one section at a time; close when
-  every file named here is under 4,000 lines.
-
-- **The checker's program pass shares one file with its signature and goal
-  code.** `compiler/src/semantic/check.rs` has 4,633 lines, 3,830 of them in
-  one `impl Checker` block; the modular compilation work added about 600
-  (module inventories, supplied function actuals, receipt wiring). `check/`
-  already holds sibling `impl Checker` files, so the split moves methods, not
-  types: the program pass (`check_program`, `analyze_function_inventory`,
-  `function_actual_ids`) into `check/program.rs`, the signature and effect-row
-  checks (`check_function_signature_body`, `effect_row_difference`,
-  `render_effect_path`) into `check/signatures.rs`, and goal instantiation
-  (`instantiate_goal_expression`, `instantiate_goal_operation`,
-  `install_expression_call_requirements`) into `check/goals.rs`. Validate that
-  each move changes no behavior: identical `make check` results and a diff of
-  moved items and module declarations only. Close when the file is under 4,000
-  lines. The moves keep the one 49-field `Checker`; separating its state into
-  a type context, a declaration inventory and a per-attempt body checker is
-  the [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries)'s P2.2.
-
-- **LLVM emission writes and then patches text.**
-  `compiler/src/backend/emitter.rs` inserts entry allocas by byte offset and
-  adds the stack-probe attribute by rewriting `define` lines. Which operations
-  open blocks, and so which predecessor a phi names, comes from a hand-kept
-  list (`definition_exit_label`) apart from the code that opens them, and
-  `compiler/src/backend/fragments.rs` re-parses the finished text to split it.
-  A structured function model printed once (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, a design
-  amendment) records exit labels, places allocas and cuts fragments from the
-  model. Validate with byte-identical output, which keeps the backend tests'
-  substring checks as the net. Reopen when an operation that opens blocks is
-  added.
+- **The entailment state module and its tests have outgrown one reader.**
+  `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
+  1,729-line inline test module, and the tests in
+  `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
+  tests. The flow itself is divided into its sub-contexts and component
+  modules (`design/compiler/engine-components.md`), none over 3,200 lines.
+  `state.rs` can move its test module to its own file and its dense-closure
+  algorithms apart from the fact state and ledger types; the tests can group
+  by the flow component they exercise. Validate that each move changes no
+  behavior: identical `make check` results and a diff of moved items and
+  module declarations only. Split when no open branch has large edits in
+  these files; close when both are under 4,000 lines.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
   `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
   function and nominal templates (always created empty), the
-  `elided_store_brand` cell, `CheckedNominalKind::Box`'s `region` field, a
+  `CheckedNominalKind::Box`'s `region` field, a
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
@@ -1514,26 +1460,64 @@ rarely insert at the same place.
   third list. `lib.rs` re-exports modules by glob, so no public item is ever
   reported unused, and the driver's fifteen entry points come in cached and
   uncached twins that drop options: `--graph --check` without `--entry`
-  ignores `--cache`. `--no-overlap` now selects the default lowering while its
-  help text says the default actualizes completion I/O. One library module for
-  native construction and one request type (the
+  ignores `--cache`. One library module for native construction and one
+  request type (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p5-driver-and-api)'s P5.1 and P5.2)
   remove the copies. Validate with identical executables and verdicts from the
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker reads raw syntax.** The checker makes 522 `self.tree` calls
-  and 443 `Production::` matches, learning which alternative was written by
-  probing children; the if/else split is decoded from brace offsets in both
-  `compiler/src/resolution/scopes.rs` and `compiler/src/semantic/tree.rs`; and
-  the checker joins resolution records by linear scans comparing
-  `(role, NodePath)` (`compiler/src/semantic/check/support.rs`). Per-node
-  indexes published by resolution (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1) remove
-  the scans without test changes; a typed syntax access layer (P3.4, a design
-  amendment) confines each grammar amendment to one place. Validate with
-  identical verdicts, timing resolution and checking before and after the
-  indexes. Reopen with the next grammar amendment.
+- **Shared checking identities still retain separate judgment work.** P2.3
+  removes the rollback, structural type mirror and discovery replay, but
+  symbolic and ordinary views conservatively recheck their selected bodies
+  and analyses. This preserves the distinct selector universes and consumed
+  callee claims; retained symbolic bodies also remain in checked-program
+  metadata while lowering selects only the ordinary view. Whether repeated
+  judgment work or retained body storage matters is unmeasured. A later
+  consumer could key reusable judgments by substitution, checking context and
+  consumed claims, or discard unconsumed bodies while retaining their
+  identities. Both changes affect the checker, proof metadata and consumers
+  that address functions by identity. Defer this extra cache/projection
+  machinery until a compiler-cost investigation identifies this work or
+  storage as a blocker; compare cached and fresh verdicts, diagnostics and
+  emitted output and measure the saved work and retained memory before
+  selecting either change. See the
+  [inventory design](../research/investigations/compiler-architecture/DESIGN.md#p23-one-inventory-without-rollback).
+
+- **Syntax views eagerly build the node-path index.** The shared view now
+  serves the graph reader and interface fingerprinting as well as checking;
+  those first two consumers use tokens and extents but never node paths.
+  Constructing their unused path vectors and sorted lookup index adds work
+  whose practical cost is unmeasured. Consider constructing that index on its
+  first path query within the same borrowed view. This adds lazy cache state
+  and is deferred because no current measurement identifies view setup as a
+  blocker. Reopen with the next module-reading performance investigation;
+  require unchanged paths, extents and fingerprints, and measure whether the
+  saved setup work matters before changing the cache policy.
+
+- **Measure the retained emission model's text storage when backend memory matters.**
+  Structured LLVM emission retains definition text for fragment construction
+  and a rendered whole-module string for existing text consumers. This can
+  duplicate instruction bytes; the practical memory and build-time cost is
+  unmeasured. Consider rendering whole-module text lazily or transferring it
+  to the final text consumer once fragment construction is complete. Either
+  change affects the private output/cache boundary and needs unchanged
+  whole-module bytes, fragment bytes and cached/uncached results. Defer from
+  the structural migration because no current experiment identifies this
+  storage as a blocker; reopen when a larger program's backend profile shows
+  material retained text or rendering cost.
+
+- **Review scope misses the conformance adapter's check-integrity group.**
+  `docs/skills/completion-review/scripts/review-scope.sh` classifies every
+  `compiler/` path as code before considering test paths. An adapter-only
+  change under `compiler/tests/conformance/` therefore omits group T even
+  though AGENTS treats that adapter as conformance evidence. Include these
+  adapter/runner paths in the T trigger and cover an adapter-only diff with
+  a scope test. Until then, reviewers must add the applicable T checks by
+  judgment; the compiler-architecture review does so. Defer the tooling
+  change from that compiler migration and reopen when review-scope routing
+  is next changed, requiring both adapter-only inclusion and ordinary-code
+  exclusion to be observed.
 
 ## Open language questions
 
@@ -1924,25 +1908,100 @@ condition under which it is taken up.
   offset rule non-recursive. Reopen when an index-based program needs it,
   after the capture above; validate with kills of the inner element, the
   inner offset and the outer element.
-- **PAR-1 proves no window liveness.** WIN-2 separates `r[i]` from `r.next`
-  and `r.free` only where `i < r.len` is proved. PAR-1's footprints carry an
-  effect row's index as an unknown value, and an offset no captured value
-  names as the same value, so a statement pair meeting on a part and such an
-  index gets no overlap permission even when the subscript was formed in the
-  compared state. This loses permission only. Reopen when a program needs it:
-  carry the row's argument capture into the footprint and ask the
-  entailment fragment for the bound, as EFF-5 already does through
-  `CheckedCallSeparationPositions::Live`.
-- **Loop-header liveness rests on no proof of `i != r.len - 1`.** A loop
-  header's kills stand for every iteration's events, and the flow answers
-  WIN-2's liveness there from the preheader state: `r.len` falls only at an
-  event writing `r.last`, `r.filled` or the whole window, each of which kills
-  every fact below `r[i]` because the ledger never records `i != r.len - 1`.
-  Recording that proof would let a fact survive a `take_back` in a loop body,
-  where a proof made at the header need not hold at a later iteration's
-  event, and would break the header argument above. Whoever first records it
-  must make it event-local as liveness is and revisit the header answer; a
-  loop that calls `take_back` once per iteration is the validating case.
+- **PAR-1 proves no window liveness and no index outside a range.** WIN-2
+  separates `r[i]` from `r.next` and `r.free` only where `i < r.len` is
+  proved, and a range from them only where `hi <= r.len` is. PAR-1's
+  footprints carry an effect row's index and endpoints as unknown values,
+  and an offset no captured value names as the same value, so a statement
+  pair meeting on a part and such an index or range gets no overlap
+  permission even when the subscript or range was formed in the compared
+  state. PAR-1 also poses no query for OWN-7's index-and-range family, so
+  an index beside a range separates only by written literals. This loses
+  permission only. Reopen when a program needs it: carry the row's argument
+  captures into the footprint and ask the entailment fragment for the bound
+  or the ordering, as EFF-5 already does through
+  `CheckedCallSeparationPositions`.
+- **A kill event proves no two positions apart.** OWN-7 separates two
+  indices, two ranges, or an index and a range where the current
+  ProofContext proves them apart, but an ENT-5 kill asks only written
+  literals and the separations an EFF-5 call recorded in the flow's ledger.
+  So in a body that requires `i < j`, a fact over `deref(rows)[i].len` dies
+  at `set deref(rows)[j] = move fresh`, and a later read that needs it is
+  refused although the specification separates the two; a fact at an index
+  before a range a callee writes through dies the same way. Asking the
+  entailment fragment only for a fact whose place meets a written position
+  under the same base, as event liveness asks, keeps the added proofs
+  bounded. Validate with that body accepted and one requiring only
+  `i <= j` still refused. Found while adding OWN-7's index-and-range
+  family; the gap is older than the family.
+- **A call ends a window reference's bound without reading the callee's
+  `ensures`.** OP-10 keeps a reference into a window valid while the bound
+  it was formed under holds, and `place_back`'s `ensures` carries that bound
+  across the call. The checker instead ends it at every call of `take_back`,
+  `remove_at`, `append`, `split_off`, `place_front`, `take_front` or
+  `grow`, and at every other call whose row writes the window's `last` or
+  `filled`, whatever the callee ensures. So `&front[0_u64]` dies at
+  `append(destination: &front, source: &back)` although `append` ensures
+  `deref(destination).len >= deref(entry(destination)).len`, and a slot
+  reference dies at a user function declared `writes(window.last),
+  writes(window.next), writes(window.len)` that takes one element back,
+  places one back and ensures `deref(window).len ==
+  deref(entry(window)).len`. The v0.73 checker accepted the second, since it
+  ended no bound at a user call, which also let a reference outlive a user
+  function that took its slot back. This refuses programs only. Reopen when
+  a program needs such a reference: after the call, ask the entailment
+  fragment whether the bound still holds in the call's exit state, as an
+  event asks liveness in its entry state, and end the reference only where
+  it is unproved. Validate with both programs accepted, the same callee
+  without its `ensures` still ending the reference, and a reference below
+  the slot still dying by REF-2's prefix rule.
+- **Two range steps are identical only as one formation.** OWN-7 compares
+  two ranges, or an index and a range, under containing paths that are
+  identical step for step or differ only in index steps. The checker counts
+  two range steps as identical only when they come from one formation, so
+  after `let left = &deref(values)[a..b];` and
+  `let right = &deref(values)[a..b];`, with `a` and `b` unwritten between
+  them, a call passing `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` is refused with EFF-5 although both frames
+  captured the same endpoints. The v0.73 checker refuses it too. The
+  specification does not say whether two range steps whose captured
+  endpoints are equal are identical; whether the checker proves such steps
+  identical from their endpoints or OWN-7 defines a range step's identity by
+  its formation is the owner's choice. Validate with that call once the
+  ruling admits or refuses it. Found by the recheck of PR #141's
+  containing-path ruling.
+- **An EFF-5 refusal for runs below different range frames names the
+  runs.** For runs `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` of frames `left = &deref(values)[a..b]` and
+  `right = &deref(values)[c..d]`, the residual quotes the complete paths and
+  the repair asks to prove that one ends at or before the other starts,
+  which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
+  The unproved pair is the frames: proving `b <= c` separates everything
+  below them. Name the first pair of differing range steps and ask for their
+  ordering. Validate with `eff5-neg-ranges-below-different-range-frames-overlap`
+  and the same-endpoint program in the item above, each pinned with a
+  repaired source that is accepted. Found by the recheck of PR #141's
+  containing-path ruling.
+- **OP-11 admits equal-depth slots under one identical array or window
+  only.** The checker also admits them under containing paths that differ
+  only in index steps: `swap(first: &deref(outer)[i][k], second:
+  &deref(outer)[j][l])` with nothing relating `i` and `j` is accepted by the
+  v0.73 and v0.74 checkers. Two slots of equal depth are one storage or two
+  disjoint ones, so the acceptance is sound, but the checker admits calls
+  the specification's wording refuses, the gap the owner closed for OWN-7's
+  range families on 2026-09-26. Decide whether OP-11 states the relation
+  the checker implements or the checker requires one identical array or
+  window. Validate with that swap. Found by the recheck of PR #141's
+  containing-path ruling.
+- **A range below a subscript of a range reference is not formed.**
+  `&deref(strip)[i][1_u64..3_u64]`, where `strip` is a range reference, is
+  refused as the unsupported capability `ReferenceFormation` by the v0.73
+  and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
+  any step between the `deref` and the range. REF-4 admits the form, and
+  binding the row first, `let row = &deref(strip)[i];` and then
+  `&deref(row)[1_u64..3_u64]`, is accepted. Validate with the direct form
+  accepted and its separations and REF-2 invalidations matching the bound
+  form. Found by the recheck of PR #141's containing-path ruling.
 - **Member names `len`, `cap` and `head` are classified by spelling in two
   paths.** Contract clauses and subscripted body places pick the measure
   route by the member's name before its type is known, so a writer's field
@@ -1978,3 +2037,24 @@ condition under which it is taken up.
   required source work from removable lowering cost. Defer a broad repeat of all
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
+- **A write refused for a written index parameter does not name that
+  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  under `writes(window[index])` is refused with SET-1's "a reference whose
+  declared row does not write this path", and a call passing `index` with
+  EFF-2's repair `writes(window)`. Neither names the earlier write of
+  `index` that moved the access off the row's position, which a writer who
+  declared `writes(window[index])` needs to see. Name the write, and offer
+  the repair that keeps the row: read `index` into a new binding before
+  writing it. Validate with a pinned pair for each of the two rejections.
+  Found while fixing the EFF-2 attribution after a parameter write.
+- **A goal over an index no spelling names offers routes that cannot
+  establish it.** After `let wr = &rows[k];` and `set k = 1_u64;`, a call's
+  requirement through `wr` reads `rows[?].len`, and FN-8's repair offers an
+  `invariant` whose `use` steps name the facts implying it, or a guard whose
+  condition establishes it. No fact or condition names that row, so
+  neither can succeed, while binding the index first, `let k0 = k;` and
+  `let wr = &rows[k0];`, does. An index a loop-rebound holder carries, also
+  rendered `?`, gets the same two routes, and there forming the reference
+  after the rebinding is what works. Select the route from what the `?`
+  stands for, and pin each pair with a repaired source that is accepted.
+  Found while fixing the completion review of PR #145.

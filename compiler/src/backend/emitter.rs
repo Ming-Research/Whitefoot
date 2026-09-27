@@ -26,6 +26,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
+use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, is_stored_aggregate};
 use crate::target::{
@@ -40,19 +41,18 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrTargetDomainObligation, IrTerminator, IrType, IrValueId,
     IrWindowShape,
 };
-use buffer::{buffer_fill_done_label, buffer_probe_join_label};
 use cleanup::{emit_resource_drop_helpers, emit_value_cleanup, type_requires_cleanup};
-use floor::FLOOR_RUNTIME_FALLBACK;
 pub use floor::FLOOR_STACK_BYTES;
+use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
 pub(crate) use frontier::is_recursion_budget_symbol;
 use frontier::{Grain, RecursiveFrontiers, recursion_budget_symbol};
 pub use parallel::module_requires_parallel_runtime;
 use parallel::{
-    HandedOut, LoopSplitSite, PARALLEL_POOL_QUERY_DECLARATION, PARALLEL_POOL_QUERY_FALLBACK,
-    PARALLEL_RECURSION_BUDGET_DECLARATION, PARALLEL_RECURSION_BUDGET_FALLBACK,
-    PARALLEL_RUNTIME_DECLARATIONS, PARALLEL_RUNTIME_FALLBACK, PARALLEL_SPLIT_BUDGET_DECLARATION,
-    PARALLEL_SPLIT_BUDGET_FALLBACK, ParallelThunks, par_done_label, sequential_clone_set,
+    HandedOut, LoopSplitSite, ParallelThunks, parallel_pool_query_declaration,
+    parallel_pool_query_fallback, parallel_recursion_budget_declaration,
+    parallel_recursion_budget_fallback, parallel_runtime_declarations, parallel_runtime_fallback,
+    parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
     sequential_clone_symbol,
 };
 
@@ -64,16 +64,53 @@ pub enum BackendFailure {
     TextEmission,
 }
 
+impl From<std::fmt::Error> for BackendFailure {
+    fn from(_: std::fmt::Error) -> Self {
+        Self::TextEmission
+    }
+}
+
+/// An emitted LLVM module with the definitions and dependencies its link
+/// fragments need. Text-only consumers can borrow or take its rendered form.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LlvmModule {
+    pub(crate) model: Module,
     text: String,
     ledger: Vec<String>,
 }
 
 impl LlvmModule {
+    /// Consumes the module and returns its complete textual LLVM.
     #[must_use]
     pub fn into_string(self) -> String {
         self.text
+    }
+
+    pub(crate) fn take_actualization_ledger(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.ledger)
+    }
+
+    pub(crate) fn append(&mut self, module: Module) {
+        self.model.append(module);
+        self.text = self.model.render();
+    }
+
+    pub(crate) fn encode(&self) -> Vec<u8> {
+        self.model.encode()
+    }
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        let model = Module::decode(bytes)?;
+        Some(Self {
+            text: model.render(),
+            model,
+            ledger: Vec::new(),
+        })
+    }
+
+    /// Borrows the complete textual LLVM.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.text
     }
 
     /// The non-normative report of what this emission actualized that lowering
@@ -87,6 +124,23 @@ impl LlvmModule {
     #[must_use]
     pub fn actualization_ledger(&self) -> &[String] {
         &self.ledger
+    }
+}
+
+impl core::ops::Deref for LlvmModule {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+impl AsRef<[u8]> for LlvmModule {
+    fn as_ref(&self) -> &[u8] {
+        self.text.as_bytes()
+    }
+}
+impl core::fmt::Display for LlvmModule {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(&self.text)
     }
 }
 
@@ -172,13 +226,13 @@ pub(super) fn emit_llvm_with_window_address_facts(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
-    let mut functions = String::new();
+    let mut functions = Module::default();
     for (ordinal, function) in program.functions().iter().enumerate() {
         // A member of a budgeted component keeps its ordinary symbol and its
         // ordinary signature, and that symbol obtains the initial budget and
         // enters the family. The body itself is emitted once, below.
         if frontiers.grain(ordinal).is_some() {
-            functions.push_str(&emit_recursion_budget_entry(
+            functions.append(emit_recursion_budget_entry(
                 program,
                 function,
                 &frontiers,
@@ -200,7 +254,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                 window_address_facts,
             },
         )?;
-        functions.push_str(&emitter.emit()?);
+        functions.append(emitter.emit()?);
     }
     // The budget-carrying half of each family: one variant per member, the
     // same emitter over the same IR as every other function of this module,
@@ -210,8 +264,8 @@ pub(super) fn emit_llvm_with_window_address_facts(
         let Some(grain) = frontiers.grain(ordinal) else {
             continue;
         };
-        functions.push_str(
-            &FunctionEmitter::new(
+        functions.append(
+            FunctionEmitter::new(
                 program,
                 target,
                 function,
@@ -244,8 +298,8 @@ pub(super) fn emit_llvm_with_window_address_facts(
     };
     for (ordinal, function) in program.functions().iter().enumerate() {
         if u32::try_from(ordinal).is_ok_and(|ordinal| clones.contains(&ordinal)) {
-            functions.push_str(
-                &FunctionEmitter::new(
+            functions.append(
+                FunctionEmitter::new(
                     program,
                     target,
                     function,
@@ -284,11 +338,12 @@ pub(super) fn emit_llvm_with_window_address_facts(
         validate_static_storage(target, program, &heap_record_type)
             .map_err(BackendFailure::TargetLayout)?;
     }
-    let mut text = format!(
-        "; Whitefoot conservative module\nsource_filename = \"whitefoot\"\ntarget datalayout = \"{}\"\ntarget triple = \"{}\"\n\n",
-        target.data_layout(),
-        target.triple(),
-    );
+    let mut text = Module::default();
+    text.text("; Whitefoot conservative module\n");
+    text.header("source_filename = \"whitefoot\"".to_owned());
+    text.header(format!("target datalayout = \"{}\"", target.data_layout()));
+    text.header(format!("target triple = \"{}\"", target.triple()));
+    text.text("\n");
     emit_nominal_declarations(&mut text, program)?;
     emit_global_constants(&mut text, program)?;
     // An allocation this host refuses is the heap twin of an exhausted stack,
@@ -297,13 +352,14 @@ pub(super) fn emit_llvm_with_window_address_facts(
     // function, and no node path because resource availability is not a
     // source-code failure.
     if has_heap_storage {
-        writeln!(
-            text,
-            "@.wf_resource.heap = private unnamed_addr constant {} c\"{}\", align 1",
+        text.global(
+            ".wf_resource.heap".to_owned(),
+            "unnamed_addr constant",
             llvm_storage_type(program, &heap_record_type)?,
-            llvm_bytes(HEAP_RECORD.as_bytes())
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            format!("c\"{}\"", llvm_bytes(HEAP_RECORD.as_bytes())),
+            Some(1),
+            References::default(),
+        );
     }
     // Heap availability is outside source proof. If this module can allocate,
     // it carries one resource-record writer for allocator refusal.
@@ -317,153 +373,175 @@ pub(super) fn emit_llvm_with_window_address_facts(
     if latched_resource_record {
         validate_static_storage(target, program, &TargetStorageType::integer(32))
             .map_err(BackendFailure::TargetLayout)?;
-        text.push_str(RESOURCE_RECORD_LATCH);
+        text.append(resource_record_latch()?);
     }
     let windows = target.triple().contains("windows");
     if writes_a_record {
         if windows {
-            text.push_str("declare i64 @wf__windows_diagnostic_write(ptr, i64)\n");
+            text.declare(Signature::new(
+                "wf__windows_diagnostic_write",
+                "i64",
+                vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+            ));
         } else {
             emit_posix_resource_write(&mut text, target)?;
         }
     }
     if writes_a_record || has_matches {
-        text.push_str("declare void @abort() noreturn\n");
+        let mut abort = Signature::new("abort", "void", Vec::new());
+        abort.suffix = " noreturn".to_owned();
+        text.declare(abort);
     }
     if has_heap_storage || cleanup::program_has_general_run(program)? {
-        text.push_str("declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+        text.declare(Signature::new(
+            "malloc",
+            "ptr",
+            vec![Parameter::unnamed("i64")],
+        ));
+        text.declare(Signature::new(
+            "free",
+            "void",
+            vec![Parameter::unnamed("ptr")],
+        ));
     }
     if latched_resource_record {
-        text.push_str(RESOURCE_RECORD_LATCH_FALLBACK);
-        text.push_str(if windows {
-            WINDOWS_LATCHED_RESOURCE_RECORD_WRITER
+        text.append(resource_record_latch_fallback()?);
+        text.append(if windows {
+            windows_latched_resource_record_writer()?
         } else {
-            LATCHED_RESOURCE_RECORD_WRITER
+            latched_resource_record_writer()?
         });
     } else if writes_a_record {
-        text.push_str(if windows {
-            WINDOWS_SEQUENTIAL_RESOURCE_RECORD_WRITER
+        text.append(if windows {
+            windows_sequential_resource_record_writer()?
         } else {
-            SEQUENTIAL_RESOURCE_RECORD_WRITER
+            sequential_resource_record_writer()?
         });
     } else if has_matches {
-        text.push('\n');
+        text.text("\n");
     }
     if has_heap_storage {
-        writeln!(
-            text,
-            "define private void @wf_resource_abort() noreturn {{\nentry:\n  call void @wf_resource_record_abort(ptr @.wf_resource.heap, i64 {})\n  unreachable\n}}\n",
-            HEAP_RECORD.len()
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut signature = Signature::new("wf_resource_abort", "void", Vec::new());
+        signature.linkage = Linkage::Private;
+        signature.suffix = " noreturn".to_owned();
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(&format!("  call void @wf_resource_record_abort(ptr @.wf_resource.heap, i64 {})\n  unreachable\n", HEAP_RECORD.len()), &["wf_resource_record_abort", ".wf_resource.heap"]);
+        text.define(signature.define(body, "")?);
+        text.text("\n");
     }
-    text.push_str(&drop_helpers);
+    text.append(drop_helpers);
     for intrinsic in intrinsics {
-        match intrinsic {
-            IntrinsicDeclaration::Assume => {
-                writeln!(text, "declare void @llvm.assume(i1)")
-                    .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            IntrinsicDeclaration::MemoryCopy => {
-                writeln!(
-                    text,
-                    "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)"
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            IntrinsicDeclaration::MemoryMove => {
-                writeln!(
-                    text,
-                    "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)"
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-            }
+        let (name, result, parameters) = match intrinsic {
+            IntrinsicDeclaration::Assume => (
+                "llvm.assume".to_owned(),
+                "void".to_owned(),
+                vec!["i1".to_owned()],
+            ),
+            IntrinsicDeclaration::MemoryCopy => (
+                "llvm.memcpy.p0.p0.i64".to_owned(),
+                "void".to_owned(),
+                vec![
+                    "ptr".to_owned(),
+                    "ptr".to_owned(),
+                    "i64".to_owned(),
+                    "i1 immarg".to_owned(),
+                ],
+            ),
+            IntrinsicDeclaration::MemoryMove => (
+                "llvm.memmove.p0.p0.i64".to_owned(),
+                "void".to_owned(),
+                vec![
+                    "ptr".to_owned(),
+                    "ptr".to_owned(),
+                    "i64".to_owned(),
+                    "i1 immarg".to_owned(),
+                ],
+            ),
             IntrinsicDeclaration::Overflow { name, ty } => {
-                writeln!(text, "declare {{ {ty}, i1 }} @{name}({ty}, {ty})")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                (name, format!("{{ {ty}, i1 }}"), vec![ty.clone(), ty])
             }
             IntrinsicDeclaration::UnaryWithFlag { name, ty } => {
-                writeln!(text, "declare {ty} @{name}({ty}, i1)")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                (name, ty.clone(), vec![ty, "i1".to_owned()])
             }
-            IntrinsicDeclaration::Unary { name, ty } => {
-                writeln!(text, "declare {ty} @{name}({ty})")
-                    .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            IntrinsicDeclaration::Binary { name, ty } => {
-                writeln!(text, "declare {ty} @{name}({ty}, {ty})")
-                    .map_err(|_| BackendFailure::TextEmission)?;
-            }
+            IntrinsicDeclaration::Unary { name, ty } => (name, ty.clone(), vec![ty]),
+            IntrinsicDeclaration::Binary { name, ty } => (name, ty.clone(), vec![ty.clone(), ty]),
             IntrinsicDeclaration::Ternary { name, ty } => {
-                writeln!(text, "declare {ty} @{name}({ty}, {ty}, {ty})")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                (name, ty.clone(), vec![ty.clone(), ty.clone(), ty])
             }
             IntrinsicDeclaration::UnaryCast {
                 name,
                 result_ty,
                 argument_ty,
-            } => writeln!(text, "declare {result_ty} @{name}({argument_ty})")
-                .map_err(|_| BackendFailure::TextEmission)?,
-        }
+            } => (name, result_ty, vec![argument_ty]),
+        };
+        text.declare(Signature::new(
+            name,
+            result,
+            parameters.into_iter().map(Parameter::unnamed).collect(),
+        ));
     }
     // [PAR-4] a module that starts no context names no context symbol.
     if thunks.starts_contexts() {
-        text.push('\n');
-        text.push_str(contexts::CONTEXT_RUNTIME_DECLARATIONS);
-        text.push_str(thunks.context_definitions());
+        text.text("\n");
+        text.append(contexts::context_runtime_declarations());
+        text.append(thunks.take_context_definitions());
     }
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
     if thunks.is_used() {
-        text.push('\n');
-        text.push_str(if windows {
-            PARALLEL_RUNTIME_DECLARATIONS
+        text.text("\n");
+        text.append(if windows {
+            parallel_runtime_declarations()?
         } else {
-            PARALLEL_RUNTIME_FALLBACK
+            parallel_runtime_fallback()?
         });
         if !clones.is_empty() {
-            text.push_str(if windows {
-                PARALLEL_POOL_QUERY_DECLARATION
+            text.append(if windows {
+                parallel_pool_query_declaration()?
             } else {
-                PARALLEL_POOL_QUERY_FALLBACK
+                parallel_pool_query_fallback()?
             });
         }
         if thunks.queries_split_budget() {
-            text.push_str(if windows {
-                PARALLEL_SPLIT_BUDGET_DECLARATION
+            text.append(if windows {
+                parallel_split_budget_declaration()?
             } else {
-                PARALLEL_SPLIT_BUDGET_FALLBACK
+                parallel_split_budget_fallback()?
             });
         }
         if thunks.queries_recursion_budget() {
-            text.push_str(if windows {
-                PARALLEL_RECURSION_BUDGET_DECLARATION
+            text.append(if windows {
+                parallel_recursion_budget_declaration()?
             } else {
-                PARALLEL_RECURSION_BUDGET_FALLBACK
+                parallel_recursion_budget_fallback()?
             });
         }
-        text.push_str(thunks.definitions());
+        text.append(thunks.into_definitions());
     } else if thunks.queries_recursion_budget() {
         // A family whose every offer was declined for its frame still asks
         // for its budget, and the symbol it names must be answered.
-        text.push('\n');
-        text.push_str(if windows {
-            PARALLEL_RECURSION_BUDGET_DECLARATION
+        text.text("\n");
+        text.append(if windows {
+            parallel_recursion_budget_declaration()?
         } else {
-            PARALLEL_RECURSION_BUDGET_FALLBACK
+            parallel_recursion_budget_fallback()?
         });
     }
     if !functions.is_empty() {
-        text.push('\n');
-        text.push_str(&functions);
+        text.text("\n");
+        text.append(functions);
     }
     // Unconditional, unlike the parallel runtime's: every program can run out
     // of stack, so every module names the floor and carries its own answer for
     // a link that does not supply one.
-    text.push('\n');
-    text.push_str(FLOOR_RUNTIME_FALLBACK);
+    text.text("\n");
+    text.append(floor_runtime_fallback()?);
+    text.text("\n");
+    text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     Ok(LlvmModule {
-        text: attach_stack_probe(&text, target),
+        text: text.render(),
+        model: text,
         ledger: frontiers.ledger().to_vec(),
     })
 }
@@ -520,6 +598,30 @@ fn incoming_parameter(
     })
 }
 
+fn incoming_parameters(
+    program: &IrProgram,
+    value: IrValueId,
+    parameter: ParameterAbi,
+    facts: &str,
+    references: &mut References,
+) -> Result<Vec<Parameter>, BackendFailure> {
+    Ok(if parameter.is_indirect() {
+        vec![Parameter::named(
+            "ptr",
+            format!("%wf.arg.v{}", value.ordinal()),
+        )]
+    } else if parameter.is_range() {
+        let (pointer, count) = incoming_range_parts(value);
+        vec![
+            Parameter::named(format!("ptr{facts}"), pointer),
+            Parameter::named("i64", count),
+        ]
+    } else {
+        let ty = llvm_type_with_references(program, parameter.ty(), &mut references.types)?;
+        vec![Parameter::named(format!("{ty}{facts}"), value_name(value))]
+    })
+}
+
 /// The element pointer and count a range-reference parameter arrives as.
 fn incoming_range_parts(value: IrValueId) -> (String, String) {
     (
@@ -546,30 +648,41 @@ fn emit_recursion_budget_entry(
     function: &IrFunction,
     frontiers: &RecursiveFrontiers,
     thunks: &mut ParallelThunks,
-) -> Result<String, BackendFailure> {
+) -> Result<Module, BackendFailure> {
     let abi = FunctionAbi::build(program, function)?;
-    let mut output = String::new();
-    write!(
-        output,
-        "define internal {} @{}(",
-        if abi.result().uses_destination() {
-            "void".to_owned()
-        } else {
-            llvm_type(program, abi.result().ty())?
-        },
-        source_symbol(function.name())
-    )
-    .map_err(|_| BackendFailure::TextEmission)?;
-    // The entry forwards its parameters unchanged, so its head declares
-    // exactly the operands it passes on.
+    let mut references = References::default();
+    let result = if abi.result().uses_destination() {
+        "void".to_owned()
+    } else {
+        llvm_type_with_references(program, abi.result().ty(), &mut references.types)?
+    };
+    let mut parameters = Vec::new();
+    if abi.result().uses_destination() {
+        parameters.push(Parameter::named("ptr", RESULT_POINTER));
+    }
+    for ((value, _), parameter) in function.parameters().iter().zip(abi.parameters()) {
+        parameters.extend(incoming_parameters(
+            program,
+            *value,
+            *parameter,
+            "",
+            &mut references,
+        )?);
+    }
+    let mut signature = Signature::new(source_symbol(function.name()), result, parameters);
+    signature.linkage = Linkage::Internal;
+    signature.references = references;
+    let mut output = FunctionBody::default();
+    output.open_block("entry".to_owned());
     let mut arguments = ordinary_call_arguments(program, function, &abi)?;
-    output.push_str(&arguments);
-    output.push_str(") {\nentry:\n");
     let budget = match frontiers.initial().ok_or(BackendFailure::InvalidIr)? {
         crate::RecursionBudget::Off => return Err(BackendFailure::InvalidIr),
         crate::RecursionBudget::Pinned(levels) => levels.get().to_string(),
         crate::RecursionBudget::RuntimeDerived => {
-            output.push_str("  %wf.budget = call i64 @wf__par_recursion_budget()\n");
+            output.instructions(
+                "  %wf.budget = call i64 @wf__par_recursion_budget()\n",
+                &["wf__par_recursion_budget"],
+            );
             thunks.queries_recursion_budget = true;
             "%wf.budget".to_owned()
         }
@@ -579,30 +692,34 @@ fn emit_recursion_budget_entry(
     }
     write!(arguments, "i64 {budget}").map_err(|_| BackendFailure::TextEmission)?;
     let callee = recursion_budget_symbol(function.name());
+    output.symbol(&callee);
     if abi.result().uses_destination() {
-        write!(
-            output,
-            "  call void @{callee}({arguments})\n  ret void\n}}\n\n"
-        )
+        {
+            output.symbol(callee.to_string());
+            write!(output, "  call void @{callee}({arguments})\n  ret void\n")
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
     } else {
         let result = llvm_type(program, abi.result().ty())?;
-        write!(
-            output,
-            "  %wf.entry = call {result} @{callee}({arguments})\n  ret {result} %wf.entry\n}}\n\n"
-        )
+        {
+            output.symbol(callee.to_string());
+            write!(
+                output,
+                "  %wf.entry = call {result} @{callee}({arguments})\n  ret {result} %wf.entry\n"
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
     }
-    Ok(output)
+    let mut module = Module::default();
+    module.define(signature.define(output, "")?);
+    module.text("\n");
+    Ok(module)
 }
 
 /// The block a budgeted world tests its remaining levels in, and the block it
 /// leaves for the sequential clone from.
 const GRAIN_ENTRY_LABEL: &str = "par.grain";
 const GRAIN_SPENT_LABEL: &str = "par.grain.spent";
-
-/// The attribute group every generated definition carries.
-const STACK_PROBE_GROUP: &str = "#0";
 
 /// The spelling of the no-capture parameter attribute this build's assembler
 /// accepts, probed at build time (compiler/backend-facts). LLVM 21 renamed
@@ -615,59 +732,24 @@ fn aliasing_admitted_row(name: &str) -> bool {
     name == "swap" || name.starts_with("swap$")
 }
 
-/// Gives every definition in the assembled module the target's `probe-stack`
-/// attribute, and appends the group it names.
-///
-/// This runs over the finished module rather than at each `define` site so
-/// that what the code establishes is "every generated function" rather than
-/// "every site someone remembered": a definition introduced later carries the
-/// probe without anyone deciding to give it one. [SCOPE-3] containment under
-/// exhaustion is exactly a completeness property — one unprobed large frame
-/// is enough to step over the guard region into a neighbouring thread's live
-/// stack — so completeness is what the emission establishes.
-///
-/// A `define` line always ends in ` {`, after any attribute keyword it
-/// carries, and a definition is always followed by its body, so the suffix
-/// test identifies exactly the definition lines. A rodata constant renders on
-/// one line with its bytes escaped, so no constant's contents can look like a
-/// definition to this scan.
-fn attach_stack_probe(module: &str, target: TargetLayout) -> String {
-    let mut text = String::with_capacity(module.len() + 64);
-    for line in module.split_inclusive('\n') {
-        match line.strip_suffix(" {\n") {
-            Some(head) if head.starts_with("define ") => {
-                text.push_str(head);
-                text.push(' ');
-                text.push_str(STACK_PROBE_GROUP);
-                text.push_str(" {\n");
-            }
-            _ => text.push_str(line),
-        }
-    }
-    text.push_str("\nattributes ");
-    text.push_str(STACK_PROBE_GROUP);
-    text.push_str(" = { \"probe-stack\"=\"");
-    text.push_str(target.stack_probe());
-    text.push_str("\" }\n");
-    text
-}
-
-fn emit_global_constants(output: &mut String, program: &IrProgram) -> Result<(), BackendFailure> {
+fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(), BackendFailure> {
     for constant in program.constants() {
-        writeln!(output, "; const {}", constant.name())
-            .map_err(|_| BackendFailure::TextEmission)?;
-        write!(
-            output,
-            "{} = private unnamed_addr constant {} {}",
-            constant_symbol(constant),
-            llvm_type(program, constant.ty())?,
-            global_constant_value(program, constant.value(), constant.ty())?
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        output.push('\n');
+        output.text(format!("; const {}\n", constant.name()));
+        let mut references = References::default();
+        let ty = llvm_type_with_references(program, constant.ty(), &mut references.types)?;
+        let value =
+            global_constant_value(program, constant.value(), constant.ty(), &mut references)?;
+        output.global(
+            format!(".wf_const.{}", constant.link_name()),
+            "unnamed_addr constant",
+            ty,
+            value,
+            None,
+            references,
+        );
     }
     if !program.constants().is_empty() {
-        output.push('\n');
+        output.text("\n");
     }
     Ok(())
 }
@@ -679,6 +761,7 @@ fn global_constant_value(
     program: &IrProgram,
     value: &IrGlobalValue,
     ty: IrType,
+    references: &mut References,
 ) -> Result<String, BackendFailure> {
     match (value, ty) {
         (IrGlobalValue::Scalar(value), ty) => constant_operand(*value, ty),
@@ -692,7 +775,8 @@ fn global_constant_value(
             }
             let mut text = String::from("[");
             let element_type = program.element(element).ok_or(BackendFailure::InvalidIr)?;
-            let llvm_element_type = llvm_type(program, element_type)?;
+            let llvm_element_type =
+                llvm_type_with_references(program, element_type, &mut references.types)?;
             for (index, value) in elements.iter().enumerate() {
                 if index != 0 {
                     text.push_str(", ");
@@ -700,7 +784,7 @@ fn global_constant_value(
                 write!(
                     text,
                     "{llvm_element_type} {}",
-                    global_constant_value(program, value, element_type)?
+                    global_constant_value(program, value, element_type, references)?
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
@@ -726,8 +810,8 @@ fn global_constant_value(
                 write!(
                     text,
                     "{} {}",
-                    llvm_type(program, field.ty())?,
-                    global_constant_value(program, value, field.ty())?
+                    llvm_type_with_references(program, field.ty(), &mut references.types)?,
+                    global_constant_value(program, value, field.ty(), references)?
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
@@ -739,7 +823,7 @@ fn global_constant_value(
 }
 
 fn emit_nominal_declarations(
-    output: &mut String,
+    module: &mut Module,
     program: &IrProgram,
 ) -> Result<(), BackendFailure> {
     let mut emitted = false;
@@ -755,15 +839,19 @@ fn emit_nominal_declarations(
             continue;
         }
         emitted = true;
-        write!(output, "{} = type {{ ", nominal_symbol(nominal))
-            .map_err(|_| BackendFailure::TextEmission)?;
+        let mut output = String::from("{ ");
+        let mut references = References::default();
         match nominal.kind() {
             IrNominalKind::Struct { fields } => {
                 for (index, field) in fields.iter().enumerate() {
                     if index != 0 {
                         output.push_str(", ");
                     }
-                    output.push_str(&llvm_type(program, field.ty())?);
+                    output.push_str(&llvm_type_with_references(
+                        program,
+                        field.ty(),
+                        &mut references.types,
+                    )?);
                 }
             }
             IrNominalKind::Enum { variants } => {
@@ -771,7 +859,11 @@ fn emit_nominal_declarations(
                 for variant in variants {
                     for field in variant.fields() {
                         output.push_str(", ");
-                        output.push_str(&llvm_type(program, field.ty())?);
+                        output.push_str(&llvm_type_with_references(
+                            program,
+                            field.ty(),
+                            &mut references.types,
+                        )?);
                     }
                 }
             }
@@ -779,10 +871,11 @@ fn emit_nominal_declarations(
                 return Err(BackendFailure::InvalidIr);
             }
         }
-        output.push_str(" }\n");
+        output.push_str(" }");
+        module.named_type(format!("wf.t.{}", nominal.link_name()), output, references);
     }
     if emitted {
-        output.push('\n');
+        module.text("\n");
     }
     Ok(())
 }
@@ -996,7 +1089,11 @@ impl FunctionFramePlan {
             .ok_or(BackendFailure::InvalidIr)
     }
 
-    fn render(&self, program: &IrProgram) -> Result<String, BackendFailure> {
+    fn render(
+        &self,
+        program: &IrProgram,
+        references: &mut References,
+    ) -> Result<String, BackendFailure> {
         if self.target.is_empty() {
             return Ok(String::new());
         }
@@ -1004,7 +1101,7 @@ impl FunctionFramePlan {
             .target
             .physical_fields()
             .iter()
-            .map(|field| llvm_storage_type(program, field))
+            .map(|field| llvm_storage_type_with_references(program, field, &mut references.types))
             .collect::<Result<Vec<_>, _>>()?;
         let mut output = String::new();
         if let Some(alignment) = self.target.independent_slot_alignment() {
@@ -1089,7 +1186,7 @@ struct FunctionEmitter<'program, 'state> {
     window_address_facts: WindowAddressFacts,
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
     incoming: Vec<Vec<Incoming>>,
-    output: String,
+    output: FunctionBody,
     /// Stack slot declarations hoisted to the top of the function's entry block.
     ///
     /// A slot is requested where it is used, but a repeated `alloca` grows the
@@ -1110,14 +1207,6 @@ struct FunctionEmitter<'program, 'state> {
     /// The module's outlined thunks, shared by every function that hands a
     /// call out.
     parallel: &'state mut ParallelThunks,
-    /// The overlap groups *this world* actualizes: the judgment's groups in
-    /// the ordinary lowering, and none at all in a sequential clone.
-    ///
-    /// Every consumer reads this one slice and none reads `function.overlaps()`
-    /// again, which is what keeps the blocks a world emits and the labels its
-    /// phis name from disagreeing: a `par.done` label can be named only where
-    /// the same slice caused the block to be emitted.
-    overlaps: Vec<IrOverlap>,
     /// Values whose defining call is handed to a worker lane [PAR-1
     /// candidate], and the values whose definitions are the join sites that
     /// complete them.
@@ -1230,7 +1319,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 result_slot,
             },
         )?;
-        let mut entry_prelude = frame.render(program)?;
+        let mut output = FunctionBody::default();
+        let mut entry_prelude = frame.render(program, &mut output.references)?;
         if contexts::keeps_context_group(function) {
             entry_prelude.push_str(&contexts::context_group_prelude());
         }
@@ -1241,7 +1331,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             window_address_facts,
             intrinsics,
             incoming: Vec::new(),
-            output: String::new(),
+            output,
             entry_prelude,
             frame,
             storage,
@@ -1249,7 +1339,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             materialized: HashMap::new(),
             temporary: 0,
             parallel,
-            overlaps,
             overlap_handed_out,
             overlap_join_sites,
             ordinary_lane_frames,
@@ -1376,15 +1465,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// run with no pool, so no node under the cut pays a scheduler test, a
     /// null branch or a phi.
     ///
-    /// Returns where the frame prelude belongs, which is this block when there
-    /// is one: an `alloca` is promotable only in the entry block.
+    /// Opening this first block selects it for the frame prelude: an `alloca`
+    /// is promotable only in the entry block.
     ///
     /// `public` is the function's own ABI, which the clone's public symbol
     /// keeps. A register-returned clone returns its value there, and this
     /// variant's body stores it through its own destination.
-    fn emit_grain_entry(&mut self, public: &FunctionAbi) -> Result<Option<usize>, BackendFailure> {
+    fn emit_grain_entry(&mut self, public: &FunctionAbi) -> Result<(), BackendFailure> {
         if self.grain.is_none() {
-            return Ok(None);
+            return Ok(());
         }
         // A branch into the body needs the body to be enterable from one more
         // place. It always is: an IR entry block that were a jump target would
@@ -1395,32 +1484,34 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let arguments = ordinary_call_arguments(self.program, self.function, public)?;
         let spent = RecursiveFrontiers::exhausted(self.function.name());
         let body = block_label(IrBlockId::from_index(0).ok_or(BackendFailure::InvalidIr)?);
-        writeln!(self.output, "{GRAIN_ENTRY_LABEL}:").map_err(|_| BackendFailure::TextEmission)?;
-        let anchor = self.output.len();
-        writeln!(
-            self.output,
-            "  %wf.budget.next = sub i64 %wf.budget, 1\n  \
-             %wf.grain = icmp sgt i64 %wf.budget, 0\n  \
-             br i1 %wf.grain, label %{body}, label %{GRAIN_SPENT_LABEL}\n\
-             {GRAIN_SPENT_LABEL}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(GRAIN_ENTRY_LABEL.to_owned());
+        {
+            write!(self.output, "  %wf.budget.next = sub i64 %wf.budget, 1\n  %wf.grain = icmp sgt i64 %wf.budget, 0\n  br i1 %wf.grain, label %{body}, label %{GRAIN_SPENT_LABEL}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(GRAIN_SPENT_LABEL.to_string());
+        };
         match public.result() {
             ResultAbi::Destination(_) => {
-                writeln!(self.output, "  call void @{spent}({arguments})\n  ret void")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                {
+                    self.output.symbol(spent.to_string());
+                    writeln!(self.output, "  call void @{spent}({arguments})\n  ret void")
+                }
+                .map_err(|_| BackendFailure::TextEmission)?;
             }
             ResultAbi::StoredValue(ty) => {
-                let result = llvm_type(self.program, ty)?;
-                writeln!(
-                    self.output,
-                    "  %wf.spent = call {result} @{spent}({arguments})\n  \
+                let result = self.output.type_name(self.program, ty)?;
+                {
+                    self.output.symbol(spent.to_string());
+                    writeln!(
+                        self.output,
+                        "  %wf.spent = call {result} @{spent}({arguments})\n  \
                      store {result} %wf.spent, ptr {RESULT_POINTER}\n  ret void"
-                )
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             ResultAbi::Value(ty) => {
-                let result = llvm_type(self.program, ty)?;
+                let result = self.output.type_name(self.program, ty)?;
+                self.output.symbol(spent.to_string());
                 writeln!(
                     self.output,
                     "  %wf.spent = call {result} @{spent}({arguments})\n  ret {result} %wf.spent"
@@ -1429,10 +1520,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
         }
         self.grain_next = Some("%wf.budget.next".to_owned());
-        Ok(Some(anchor))
+        Ok(())
     }
 
-    fn emit(mut self) -> Result<String, BackendFailure> {
+    fn emit(mut self) -> Result<Module, BackendFailure> {
         let declaration = self.function.blocks().is_empty();
         let reachable = if declaration {
             Vec::new()
@@ -1457,28 +1548,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             symbol.clone()
         };
-        write!(
-            self.output,
-            "{} {}{} @{body_symbol}(",
-            if declaration { "declare" } else { "define" },
-            if entry { "internal " } else { "" },
-            if abi.result().uses_destination() {
-                "void".to_owned()
-            } else {
-                llvm_type(self.program, abi.result().ty())?
-            },
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        let parameters = self.signature_parameters(&abi)?;
-        let mut head = Vec::with_capacity(parameters.len() + 2);
+        let (mut parameters, mut references) = self.signature_parameters(&abi)?;
+        let result = if abi.result().uses_destination() {
+            "void".to_owned()
+        } else {
+            llvm_type_with_references(self.program, abi.result().ty(), &mut references.types)?
+        };
         if abi.result().uses_destination() {
-            head.push(format!("ptr {RESULT_POINTER}"));
+            parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
-        head.extend(parameters.iter().cloned());
+        let mut signature = Signature::new(body_symbol.clone(), result, parameters);
+        signature.references = references;
+        if entry {
+            signature.linkage = Linkage::Internal;
+        }
+        let mut module = Module::default();
         if declaration {
-            self.output.push_str(&head.join(", "));
-            self.output.push_str(")\n\n");
-            return Ok(self.output);
+            // Linked declarations retain their parameter names in whole-module
+            // output; cross-fragment declarations are name-free.
+            module.declare_named(signature);
+            module.text("\n");
+            return Ok(module);
         }
         // A range reference arrives as its element pointer and count; the
         // body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
@@ -1489,7 +1579,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 continue;
             }
             let (pointer, count) = incoming_range_parts(*value);
-            let pair = llvm_type(self.program, parameter.ty())?;
+            let pair = self.output.type_name(self.program, parameter.ty())?;
             let name = value_name(*value);
             writeln!(
                 self.entry_prelude,
@@ -1502,22 +1592,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // is synthesized and is named by no source call: a writer's own
         // signature is the entry's, which is emitted unchanged.
         if self.grain.is_some() {
-            head.push("i64 %wf.budget".to_owned());
+            signature
+                .parameters
+                .push(Parameter::named("i64", "%wf.budget"));
         }
-        self.output.push_str(&head.join(", "));
-        self.output.push_str(") {\n");
-        let mut prelude_anchor = self.emit_grain_entry(&public)?;
+        self.emit_grain_entry(&public)?;
         for (index, block) in self.function.blocks().iter().enumerate() {
             if !reachable[index] {
                 continue;
             }
             self.materialized.clear();
             let block_id = IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
-            writeln!(self.output, "{}:", block_label(block_id))
-                .map_err(|_| BackendFailure::TextEmission)?;
-            if index == 0 && prelude_anchor.is_none() {
-                prelude_anchor = Some(self.output.len());
-            }
+            self.output.open_block(block_label(block_id));
             self.emit_block_parameters(block_id, block)?;
             if index == 0 {
                 // A result can alias any consumed caller input. Snapshot
@@ -1549,24 +1635,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_instruction(block_id, instruction_index, instruction)?;
             }
             self.emit_terminator(block_id, block.terminator())?;
-        }
-        self.output.push_str("}\n\n");
-        if !self.entry_prelude.is_empty() {
-            let anchor = prelude_anchor.ok_or(BackendFailure::InvalidIr)?;
-            self.output.insert_str(anchor, &self.entry_prelude);
+            self.output.finish_ir_block(block_id)?;
         }
         if entry {
-            let text = self.public_entry(&symbol, &body_symbol, &public, &abi, parameters)?;
-            self.output.push_str(&text);
+            let public_entry = self.public_entry(&symbol, &body_symbol, &public, &abi)?;
+            module.define(signature.define(self.output, &self.entry_prelude)?);
+            module.text("\n");
+            module.append(public_entry);
+        } else {
+            module.define(signature.define(self.output, &self.entry_prelude)?);
+            module.text("\n");
         }
-        Ok(self.output)
+        Ok(module)
     }
 
     /// Every parameter of this definition's signature, with the facts the
     /// checked program proved about each (compiler/backend-facts), and
     /// without the destination pointer or a variant's budget.
-    fn signature_parameters(&self, abi: &FunctionAbi) -> Result<Vec<String>, BackendFailure> {
+    fn signature_parameters(
+        &self,
+        abi: &FunctionAbi,
+    ) -> Result<(Vec<Parameter>, References), BackendFailure> {
         let mut parameters = Vec::with_capacity(abi.parameters().len());
+        let mut references = References::default();
         for (index, ((value, _), parameter)) in self
             .function
             .parameters()
@@ -1575,14 +1666,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .enumerate()
         {
             let facts = self.reference_parameter_facts(index, parameter.ty())?;
-            parameters.push(incoming_parameter(
+            parameters.extend(incoming_parameters(
                 self.program,
                 *value,
                 *parameter,
                 &facts,
+                &mut references,
             )?);
         }
-        Ok(parameters)
+        Ok((parameters, references))
     }
 
     /// A register-returned definition's public entry: the slot its body
@@ -1599,24 +1691,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         body_symbol: &str,
         public: &FunctionAbi,
         body: &FunctionAbi,
-        mut head: Vec<String>,
-    ) -> Result<String, BackendFailure> {
+    ) -> Result<Module, BackendFailure> {
         let ty = public.result().ty();
-        let result = llvm_type(self.program, ty)?;
+        let (mut parameters, mut references) = self.signature_parameters(body)?;
+        let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
         let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.program)?;
+            .render(self.program, &mut references)?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
-            head.push("i64 %wf.budget".to_owned());
+            parameters.push(Parameter::named("i64", "%wf.budget"));
             arguments.push_str(", i64 %wf.budget");
         }
-        Ok(format!(
-            "define {result} @{symbol}({}) {{\nentry:\n{frame}  \
-             call void @{body_symbol}({arguments})\n  \
-             %wf.returned = load {result}, ptr {RESULT_POINTER}\n  \
-             ret {result} %wf.returned\n}}\n\n",
-            head.join(", ")
-        ))
+        let mut signature = Signature::new(symbol, result.clone(), parameters);
+        signature.references = references;
+        let mut output = FunctionBody::default();
+        output.open_block("entry".to_owned());
+        output.symbol(body_symbol);
+        write!(output, "  call void @{body_symbol}({arguments})\n  %wf.returned = load {result}, ptr {RESULT_POINTER}\n  ret {result} %wf.returned\n")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        let mut module = Module::default();
+        module.define(signature.define(output, &frame)?);
+        module.text("\n");
+        Ok(module)
     }
 
     /// Source checking retains the conservative continuation of every loop
@@ -1696,21 +1792,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // structural exit. Its block parameters have no incoming
                 // values: define them locally so its checked continuation
                 // remains valid LLVM without inventing a predecessor edge.
-                writeln!(
-                    self.output,
-                    "  {} = freeze {} poison",
-                    self.value_name(*parameter),
-                    llvm_type(self.program, *ty)?
-                )
+                {
+                    let emitted_type_1 = self.output.type_name(self.program, *ty)?;
+                    writeln!(
+                        self.output,
+                        "  {} = freeze {} poison",
+                        self.value_name(*parameter),
+                        emitted_type_1
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 continue;
             }
-            write!(
-                self.output,
-                "  {} = phi {} ",
-                self.value_name(*parameter),
-                llvm_type(self.program, *ty)?
-            )
+            {
+                let emitted_type_1 = self.output.type_name(self.program, *ty)?;
+                write!(
+                    self.output,
+                    "  {} = phi {} ",
+                    self.value_name(*parameter),
+                    emitted_type_1
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission)?;
             for (edge_index, edge) in incoming.iter().enumerate() {
                 let argument = *edge
@@ -1723,17 +1825,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if edge_index != 0 {
                     self.output.push_str(", ");
                 }
-                write!(
-                    self.output,
-                    "[ {}, %{} ]",
-                    self.value_name(argument),
-                    block_exit_label(
-                        edge.predecessor,
-                        self.block(edge.predecessor)?,
-                        &self.overlaps,
-                    )
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
+                self.output
+                    .incoming(self.value_name(argument), edge.predecessor);
             }
             self.output.push('\n');
         }
@@ -2085,13 +2178,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if !matches!(ty, IrType::Address(referent) if referent.ty() == global.ty()) {
                     return Err(BackendFailure::InvalidIr);
                 }
-                writeln!(
-                    self.output,
-                    "  {} = getelementptr inbounds {}, ptr {}, i64 0",
-                    self.value_name(result),
-                    llvm_type(self.program, global.ty())?,
-                    constant_symbol(global)
-                )
+                {
+                    let emitted_type_1 = self.output.type_name(self.program, global.ty())?;
+                    self.output
+                        .symbol(format!(".wf_const.{}", global.link_name()));
+                    writeln!(
+                        self.output,
+                        "  {} = getelementptr inbounds {}, ptr {}, i64 0",
+                        self.value_name(result),
+                        emitted_type_1,
+                        constant_symbol(global)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)
             }
             IrOperation::ProjectAddress {
@@ -2145,12 +2243,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         .map_err(|_| BackendFailure::TextEmission);
                 }
                 self.emit_drops(drops)?;
-                writeln!(
-                    self.output,
-                    "  ret {} {}",
-                    llvm_type(self.program, abi.result().ty())?,
-                    self.value_name(*value)
-                )
+                {
+                    let emitted_type_0 = self.output.type_name(self.program, abi.result().ty())?;
+                    writeln!(
+                        self.output,
+                        "  ret {} {}",
+                        emitted_type_0,
+                        self.value_name(*value)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)
             }
             IrTerminator::Match {
@@ -2179,12 +2280,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                     .map_err(|_| BackendFailure::TextEmission)?;
                 }
-                writeln!(
-                    self.output,
-                    "  ]\n{}:\n  call void @abort()\n  unreachable",
-                    invalid_tag_label(block)
-                )
-                .map_err(|_| BackendFailure::TextEmission)
+                {
+                    let emission_argument_0 = invalid_tag_label(block);
+
+                    writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                    self.output.open_block(emission_argument_0.to_string());
+                    {
+                        self.output.symbol("abort");
+                        write!(self.output, "  call void @abort()\n  unreachable\n")
+                    }?;
+                    Ok::<_, BackendFailure>(())
+                }
             }
         }
     }
@@ -2218,7 +2324,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 };
                 let tag_only = data.is_tag_only_enum();
-                let enum_llvm = llvm_type(self.program, IrType::Nominal(nominal))?;
+                let enum_llvm = self
+                    .output
+                    .type_name(self.program, IrType::Nominal(nominal))?;
                 let tag_ty = if tag_only {
                     enum_llvm.clone()
                 } else {
@@ -2303,12 +2411,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrDropSubject::Value(value) => self.value_operand(value).map(Some),
             IrDropSubject::Place(address) => {
                 let snapshot = format!("%{}", self.next_temporary()?);
-                writeln!(
-                    self.output,
-                    "  {snapshot} = load {}, ptr {}",
-                    llvm_type(self.program, drop.ty())?,
-                    self.value_name(address)
-                )
+                {
+                    let emitted_type_0 = self.output.type_name(self.program, drop.ty())?;
+                    writeln!(
+                        self.output,
+                        "  {snapshot} = load {}, ptr {}",
+                        emitted_type_0,
+                        self.value_name(address)
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 Ok(Some(snapshot))
             }
@@ -2422,20 +2533,36 @@ fn llvm_storage_type(
     program: &IrProgram,
     ty: &TargetStorageType,
 ) -> Result<String, BackendFailure> {
+    llvm_storage_type_with_references(program, ty, &mut BTreeSet::new())
+}
+
+fn llvm_storage_type_with_references(
+    program: &IrProgram,
+    ty: &TargetStorageType,
+    references: &mut BTreeSet<String>,
+) -> Result<String, BackendFailure> {
     match ty {
-        TargetStorageType::Source(ty) => llvm_type(program, *ty),
+        TargetStorageType::Source(ty) => llvm_type_with_references(program, *ty, references),
         TargetStorageType::Integer(width) if matches!(width, 1 | 8 | 16 | 32 | 64) => {
             Ok(format!("i{width}"))
         }
         TargetStorageType::Integer(_) => Err(BackendFailure::InvalidIr),
         TargetStorageType::Array { element, length } => Ok(format!(
             "[{length} x {}]",
-            llvm_storage_type(program, element)?
+            llvm_storage_type_with_references(program, element, references)?
         )),
     }
 }
 
 pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, BackendFailure> {
+    llvm_type_with_references(program, ty, &mut BTreeSet::new())
+}
+
+pub(super) fn llvm_type_with_references(
+    program: &IrProgram,
+    ty: IrType,
+    references: &mut BTreeSet<String>,
+) -> Result<String, BackendFailure> {
     match ty {
         IrType::Unit => Ok("i8".to_owned()),
         IrType::Bool => Ok("i1".to_owned()),
@@ -2450,9 +2577,10 @@ pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, Backe
         IrType::Array { length: 0, .. } => Ok("[0 x i8]".to_owned()),
         IrType::Array { element, length } => Ok(format!(
             "[{length} x {}]",
-            llvm_type(
+            llvm_type_with_references(
                 program,
-                program.element(element).ok_or(BackendFailure::InvalidIr)?
+                program.element(element).ok_or(BackendFailure::InvalidIr)?,
+                references
             )?
         )),
         // A `&[T]` range reference is a pointer and one count [REF-4]; it is
@@ -2466,9 +2594,10 @@ pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, Backe
         // names its element count.
         IrType::Buffer { element } => Ok(format!(
             "{{ i64, [0 x {}] }}",
-            llvm_type(
+            llvm_type_with_references(
                 program,
-                program.element(element).ok_or(BackendFailure::InvalidIr)?
+                program.element(element).ok_or(BackendFailure::InvalidIr)?,
+                references
             )?
         )),
         // compiler/storage-representation: header first, so the inline and
@@ -2487,9 +2616,10 @@ pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, Backe
             let element = if length == 0 {
                 "i8".to_owned()
             } else {
-                llvm_type(
+                llvm_type_with_references(
                     program,
                     program.element(element).ok_or(BackendFailure::InvalidIr)?,
+                    references,
                 )?
             };
             Ok(match shape {
@@ -2504,9 +2634,10 @@ pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, Backe
             element,
             capacity: None,
         } => {
-            let element = llvm_type(
+            let element = llvm_type_with_references(
                 program,
                 program.element(element).ok_or(BackendFailure::InvalidIr)?,
+                references,
             )?;
             Ok(match shape {
                 IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
@@ -2528,6 +2659,7 @@ pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, Backe
                 };
                 Ok(if variants.len() <= 2 { "i1" } else { "i32" }.to_owned())
             } else {
+                references.insert(format!("wf.t.{}", nominal.link_name()));
                 Ok(nominal_symbol(nominal))
             }
         }
@@ -2612,87 +2744,6 @@ fn variant_field_base(
 /// The member of the overlap group `result` joins whose join settles the
 /// block's label, if `result` is a join site at all. Its `par.done` block is
 /// where the block continues. Ordinary lane calls join newest first.
-fn overlap_join_tail(overlaps: &[IrOverlap], result: IrValueId) -> Option<IrValueId> {
-    overlaps
-        .iter()
-        .find(|overlap| overlap.join_site() == Some(result))?
-        .handed_out()
-        .first()
-        .copied()
-}
-
-/// Account for every instruction that opens an LLVM block when naming phis.
-fn block_exit_label(block_id: IrBlockId, block: &IrBlock, overlaps: &[IrOverlap]) -> String {
-    let mut label = block_label(block_id);
-    for (index, instruction) in block.instructions().iter().enumerate() {
-        definition_exit_label(block_id, index, instruction, &mut label);
-        if let IrInstruction::Define { result, .. } = instruction
-            && let Some(last) = overlap_join_tail(overlaps, *result)
-        {
-            label = par_done_label(last);
-        }
-    }
-    label
-}
-
-/// The label one ordinary instruction's own emission leaves the block at, for
-/// the operations whose lowering opens a further LLVM block.
-fn definition_exit_label(
-    _block_id: IrBlockId,
-    _index: usize,
-    instruction: &IrInstruction,
-    label: &mut String,
-) {
-    match instruction {
-        IrInstruction::Define {
-            result,
-            operation:
-                IrOperation::Integer {
-                    operation:
-                        IrIntegerOperation::DivideChecked | IrIntegerOperation::RemainderChecked,
-                    ..
-                },
-            ..
-        } => *label = integer_continue_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::ArrayFill { .. },
-            ..
-        } => *label = array_fill_done_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::BoxNew { .. },
-            ..
-        } => *label = box_new_ready_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::BufferFill { .. },
-            ..
-        } => *label = buffer_fill_done_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::BufferProbeSkip { .. },
-            ..
-        } => *label = buffer_probe_join_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::RunShift { .. },
-            ..
-        } => *label = runs::run_shift_done_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::RunTransfer { .. },
-            ..
-        } => *label = runs::run_transfer_done_label(*result),
-        IrInstruction::Define {
-            result,
-            operation: IrOperation::WindowBlockNew { .. } | IrOperation::WindowGrow { .. },
-            ..
-        } => *label = runs::window_block_ready_label(*result),
-        _ => {}
-    }
-}
-
 fn block_label(block: IrBlockId) -> String {
     if block.ordinal() == 0 {
         "entry".to_owned()
@@ -2768,7 +2819,7 @@ pub(crate) fn overlapped_clone_symbol(sequential: &str) -> Option<String> {
 /// expose the thread-local errno cell through different accessors. This stays
 /// in the emitted module, including when no floor runtime is linked.
 fn emit_posix_resource_write(
-    text: &mut String,
+    output: &mut Module,
     target: TargetLayout,
 ) -> Result<(), BackendFailure> {
     let errno = if target.triple().contains("apple-darwin") {
@@ -2776,29 +2827,38 @@ fn emit_posix_resource_write(
     } else {
         "__errno_location"
     };
-    writeln!(
-        text,
-        r#"declare i64 @write(i32, ptr, i64)
-declare ptr @{errno}()
-
-define private i64 @wf_resource_write(ptr %bytes, i64 %length) {{
-entry:
-  br label %write
-write:
-  %written = call i64 @write(i32 2, ptr %bytes, i64 %length)
-  %failed = icmp slt i64 %written, 0
-  br i1 %failed, label %error, label %done
-error:
-  %errno = call ptr @{errno}()
-  %code = load i32, ptr %errno, align 4
-  %interrupted = icmp eq i32 %code, 4
-  br i1 %interrupted, label %write, label %done
-done:
-  ret i64 %written
-}}
-"#
-    )
-    .map_err(|_| BackendFailure::TextEmission)
+    output.declare(Signature::new(
+        "write",
+        "i64",
+        vec![
+            Parameter::unnamed("i32"),
+            Parameter::unnamed("ptr"),
+            Parameter::unnamed("i64"),
+        ],
+    ));
+    output.declare(Signature::new(errno, "ptr", Vec::new()));
+    output.text("\n");
+    let mut signature = Signature::new(
+        "wf_resource_write",
+        "i64",
+        vec![
+            Parameter::named("ptr", "%bytes"),
+            Parameter::named("i64", "%length"),
+        ],
+    );
+    signature.linkage = Linkage::Private;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  br label %write\n", &[]);
+    body.open_block("write".to_owned());
+    body.instructions("  %written = call i64 @write(i32 2, ptr %bytes, i64 %length)\n  %failed = icmp slt i64 %written, 0\n  br i1 %failed, label %error, label %done\n", &["write"]);
+    body.open_block("error".to_owned());
+    body.instructions(&format!("  %errno = call ptr @{errno}()\n  %code = load i32, ptr %errno, align 4\n  %interrupted = icmp eq i32 %code, 4\n  br i1 %interrupted, label %write, label %done\n"), &[errno]);
+    body.open_block("done".to_owned());
+    body.instructions("  ret i64 %written\n", &[]);
+    output.define(signature.define(body, "")?);
+    output.text("\n");
+    Ok(())
 }
 
 /// The heap-resource record writer of a module with one thread.
@@ -2807,12 +2867,66 @@ done:
 /// aborts the process without unwinding. There is no one to arbitrate with, so
 /// there is no latch: these are the bytes every module emitted before the
 /// overlapped world existed, and they are what a default build still gets.
-const SEQUENTIAL_RESOURCE_RECORD_WRITER: &str = "\ndefine private void @wf_resource_record_abort(ptr %message, i64 %length) noreturn {\nentry:\n  br label %write.loop\nwrite.loop:\n  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\nwrite.incomplete:\n  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\nwrite.more:\n  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\nabort:\n  call void @abort()\n  unreachable\n}\n\n";
+pub(super) fn sequential_resource_record_writer() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf_resource_record_abort",
+        "void",
+        vec![
+            Parameter::named("ptr", "%message"),
+            Parameter::named("i64", "%length"),
+        ],
+    );
+    signature.linkage = Linkage::Private;
+    signature.suffix = " noreturn".to_owned();
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  br label %write.loop\n", &[]);
+    body.open_block("write.loop".to_owned());
+    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf_resource_write"]);
+    body.open_block("write.incomplete".to_owned());
+    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
+    body.open_block("write.more".to_owned());
+    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
+    body.open_block("abort".to_owned());
+    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
-/// Windows twin of [`SEQUENTIAL_RESOURCE_RECORD_WRITER`]. The private runtime
+/// Windows twin of [`sequential_resource_record_writer`]. The private runtime
 /// call writes the same bytes to the process diagnostic channel without
 /// importing the POSIX file-descriptor ABI into a COFF module.
-const WINDOWS_SEQUENTIAL_RESOURCE_RECORD_WRITER: &str = "\ndefine private void @wf_resource_record_abort(ptr %message, i64 %length) noreturn {\nentry:\n  br label %write.loop\nwrite.loop:\n  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\nwrite.incomplete:\n  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\nwrite.more:\n  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\nabort:\n  call void @abort()\n  unreachable\n}\n\n";
+pub(super) fn windows_sequential_resource_record_writer() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf_resource_record_abort",
+        "void",
+        vec![
+            Parameter::named("ptr", "%message"),
+            Parameter::named("i64", "%length"),
+        ],
+    );
+    signature.linkage = Linkage::Private;
+    signature.suffix = " noreturn".to_owned();
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  br label %write.loop\n", &[]);
+    body.open_block("write.loop".to_owned());
+    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf__windows_diagnostic_write"]);
+    body.open_block("write.incomplete".to_owned());
+    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
+    body.open_block("write.more".to_owned());
+    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
+    body.open_block("abort".to_owned());
+    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 /// The module's own answer for the shared record latch, and the only state the
 /// resource-record path carries.
@@ -2825,17 +2939,41 @@ const WINDOWS_SEQUENTIAL_RESOURCE_RECORD_WRITER: &str = "\ndefine private void @
 /// "no execution writes a second one" a mechanism rather than an argument.
 ///
 /// The `weak` definition here is the same standalone answer
-/// [`floor::FLOOR_RUNTIME_FALLBACK`] gives: an emitted module must link and run
+/// [`floor::floor_runtime_fallback`] gives: an emitted module must link and run
 /// without the floor's translation unit, and the real definition replaces this
 /// one whenever that unit is linked, which is every ordinary build. Zero until
 /// some thread writes a record, and no path outside the writer reads it, so a
 /// program that writes none pays nothing for it.
-const RESOURCE_RECORD_LATCH: &str = "@.wf_resource_record.latch = private global i32 0, align 4\n";
+pub(super) fn resource_record_latch() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.global(
+        ".wf_resource_record.latch".to_owned(),
+        "global",
+        "i32".to_owned(),
+        "0".to_owned(),
+        Some(4),
+        References::default(),
+    );
+    Ok(module)
+}
 
 /// The module's standalone definition of the shared latch's accessor.
-const RESOURCE_RECORD_LATCH_FALLBACK: &str = "\ndefine weak ptr @wf__floor_record_latch() {\nentry:\n  ret ptr @.wf_resource_record.latch\n}\n";
+pub(super) fn resource_record_latch_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.text("\n");
+    let mut signature = Signature::new("wf__floor_record_latch", "ptr", vec![]);
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions(
+        "  ret ptr @.wf_resource_record.latch\n",
+        &[".wf_resource_record.latch"],
+    );
+    module.define(signature.define(body, "")?);
+    Ok(module)
+}
 
-/// [`SEQUENTIAL_RESOURCE_RECORD_WRITER`]'s work under a first-writer-wins latch,
+/// [`sequential_resource_record_writer`]'s work under a first-writer-wins latch,
 /// emitted
 /// where the module can have more than one thread inside it — that is, where
 /// it writes a heap-resource record and hands a call out.
@@ -2858,11 +2996,75 @@ const RESOURCE_RECORD_LATCH_FALLBACK: &str = "\ndefine weak ptr @wf__floor_recor
 /// The park spins on a *volatile* load rather than an empty loop, so no
 /// optimizer may delete the loop and let a losing thread fall through into a
 /// second record.
-const LATCHED_RESOURCE_RECORD_WRITER: &str = "\ndefine private void @wf_resource_record_abort(ptr %message, i64 %length) noreturn {\nentry:\n  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\nwrite.loop:\n  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\nwrite.incomplete:\n  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\nwrite.more:\n  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\nabort:\n  call void @abort()\n  unreachable\npark:\n  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n}\n\n";
+pub(super) fn latched_resource_record_writer() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf_resource_record_abort",
+        "void",
+        vec![
+            Parameter::named("ptr", "%message"),
+            Parameter::named("i64", "%length"),
+        ],
+    );
+    signature.linkage = Linkage::Private;
+    signature.suffix = " noreturn".to_owned();
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\n", &["wf__floor_record_latch"]);
+    body.open_block("write.loop".to_owned());
+    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf_resource_write"]);
+    body.open_block("write.incomplete".to_owned());
+    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
+    body.open_block("write.more".to_owned());
+    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
+    body.open_block("abort".to_owned());
+    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    body.open_block("park".to_owned());
+    body.instructions(
+        "  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n",
+        &[],
+    );
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
-/// Windows twin of [`LATCHED_RESOURCE_RECORD_WRITER`], sharing the floor
+/// Windows twin of [`latched_resource_record_writer`], sharing the floor
 /// runtime's first-writer latch while using the native diagnostic channel.
-const WINDOWS_LATCHED_RESOURCE_RECORD_WRITER: &str = "\ndefine private void @wf_resource_record_abort(ptr %message, i64 %length) noreturn {\nentry:\n  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\nwrite.loop:\n  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\nwrite.incomplete:\n  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\nwrite.more:\n  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\nabort:\n  call void @abort()\n  unreachable\npark:\n  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n}\n\n";
+pub(super) fn windows_latched_resource_record_writer() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    module.text("\n");
+    let mut signature = Signature::new(
+        "wf_resource_record_abort",
+        "void",
+        vec![
+            Parameter::named("ptr", "%message"),
+            Parameter::named("i64", "%length"),
+        ],
+    );
+    signature.linkage = Linkage::Private;
+    signature.suffix = " noreturn".to_owned();
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  %latch = call ptr @wf__floor_record_latch()\n  %acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst\n  %won = extractvalue { i32, i1 } %acquired, 1\n  br i1 %won, label %write.loop, label %park\n", &["wf__floor_record_latch"]);
+    body.open_block("write.loop".to_owned());
+    body.instructions("  %cursor = phi ptr [ %message, %entry ], [ %next, %write.more ]\n  %remaining = phi i64 [ %length, %entry ], [ %left, %write.more ]\n  %written = call i64 @wf__windows_diagnostic_write(ptr %cursor, i64 %remaining)\n  %complete = icmp eq i64 %written, %remaining\n  br i1 %complete, label %abort, label %write.incomplete\n", &["wf__windows_diagnostic_write"]);
+    body.open_block("write.incomplete".to_owned());
+    body.instructions("  %progress = icmp sgt i64 %written, 0\n  br i1 %progress, label %write.more, label %abort\n", &[]);
+    body.open_block("write.more".to_owned());
+    body.instructions("  %next = getelementptr i8, ptr %cursor, i64 %written\n  %left = sub i64 %remaining, %written\n  br label %write.loop\n", &[]);
+    body.open_block("abort".to_owned());
+    body.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    body.open_block("park".to_owned());
+    body.instructions(
+        "  %parked = load volatile i32, ptr %latch, align 4\n  br label %park\n",
+        &[],
+    );
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 fn llvm_bytes(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len() * 3);

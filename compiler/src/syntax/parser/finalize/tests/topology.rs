@@ -41,7 +41,7 @@ fn one_finalizer_proves_bundle_root_counts_and_ordered_source_extents() {
 
 fn assert_mutant(
     source: &[u8],
-    mutate: impl for<'source> FnOnce(&mut ParsedBundle<'_, '_, 'source>),
+    mutate: impl FnOnce(&mut ParsedBundle),
     expected: FinalizeCompilerFailure,
 ) {
     let inputs = [SourceInput::new("mutant.wf", source)];

@@ -1,4 +1,7 @@
 use super::super::model::CheckedExpression;
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::TypeContext;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
@@ -19,7 +22,7 @@ use super::super::model::{
     CheckedType, ValueInitializerKind,
 };
 use super::references::{InvalidationEvent, REF3_RETURN_AN_INDEX, ReferenceInfo};
-use super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
+use super::{CheckStop, Checker, EffectSet, LocalBinding};
 use crate::semantic::places::PlaceRoot;
 pub(super) use commit::CommitReadOut;
 use loops::{BreakState, LoopContext};
@@ -121,10 +124,10 @@ pub(super) struct ControlScope<'state> {
     pub(super) give_context: Option<&'state GiveContext>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_block(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         statement_wrappers: &[NodeId],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
@@ -138,9 +141,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let mut give_states = Vec::new();
         let mut break_states = Vec::new();
         for wrapper in statement_wrappers {
-            let statement = self.tree.only_child(*wrapper)?;
+            let statement = self.types.declarations.tree.only_child(*wrapper)?;
             if !can_continue {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     if direct_give {
                         SemanticRule::Give1
                     } else {
@@ -154,7 +157,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     },
                 );
             }
-            let checked = self.check_statement(function, statement, bindings, counters, scope)?;
+            let checked = self.check_statement(context, statement, bindings, counters, scope)?;
             can_continue = checked.can_continue;
             effects = effects.union(checked.effects);
             all_paths_deliver = checked.all_paths_deliver;
@@ -177,49 +180,63 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     pub(super) fn check_statement(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
-        self.check_statement_body(function, node, bindings, counters, scope)
+        self.check_statement_body(context, node, bindings, counters, scope)
     }
 
     fn check_statement_body(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
-        match self.tree.production(node)? {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
+        match self.types.declarations.tree.production(node)? {
             Production::LetStmt | Production::ContractDefine => {
-                self.check_let(function, node, bindings, counters, scope)
+                self.check_let(context, node, bindings, counters, scope)
             }
             Production::ExprStmt => {
                 let call = self
+                    .types
+                    .declarations
                     .tree
                     .first_child_with(node, Production::Call)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                let value = self.check_call(function, call, bindings, scope.loops.len())?;
-                let node_path = self.tree.path(node)?.clone();
+                let value = self.check_call(context, call, bindings, scope.loops.len())?;
+                let node_path = self.types.declarations.tree.path(node)?.clone();
                 // A discarded borrow-mode result is a reference, never the
                 // owner of its referent: no drop or release may run for it
                 // [REF-1, STOR-3]. Only an own-mode affine result is dropped.
                 let statement = if value.mode != CheckedMode::Own
-                    || self.is_copy_type(value.expression.ty())?
+                    || self
+                        .types
+                        .is_copy_type(check_context, value.expression.ty())?
                 {
                     CheckedStatement::Evaluate {
                         node_path,
                         value: value.expression,
                     }
                 } else {
-                    self.validate_scope_release(value.expression.ty(), "discarded result", node)?;
+                    self.types.validate_scope_release(
+                        check_context,
+                        value.expression.ty(),
+                        "discarded result",
+                        node,
+                    )?;
                     let drops = self
-                        .drop_paths(value.expression.ty(), Vec::new())?
+                        .types
+                        .drop_paths(check_context, value.expression.ty(), Vec::new())?
                         .into_iter()
                         .map(|(fields, ty)| CheckedProjectedDrop { fields, ty })
                         .collect();
@@ -229,26 +246,37 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         drops,
                     }
                 };
-                Ok(Self::continuing_statement(statement, value.effects))
+                Ok(Checker::continuing_statement(statement, value.effects))
             }
             Production::InvariantStmt => {
-                self.check_local_invariant(node, bindings, function, scope.loops.len())
+                self.check_local_invariant(context, node, bindings, scope.loops.len())
             }
             // [FN-1, GRAM-4] a `return` writes exactly as many expressions as
             // the enclosing declaration writes results, and expression i
             // produces result ordinal i. A count mismatch is the ordinary
             // FN-1 return-shape rejection at the `return_stmt`.
             Production::ReturnStmt
-                if self.tree.children_with(node, Production::Expr)?.len()
+                if self
+                    .types
+                    .declarations
+                    .tree
+                    .children_with(node, Production::Expr)?
+                    .len()
                     != function.results.len() =>
             {
-                self.issue_node(SemanticRule::Fn1, node, SemanticIssueKind::ReturnMismatch)
+                self.types.declarations.issue_node(
+                    SemanticRule::Fn1,
+                    node,
+                    SemanticIssueKind::ReturnMismatch,
+                )
             }
             Production::ReturnStmt if function.results.len() > 1 => {
-                self.check_result_list_return(function, node, bindings, scope)
+                self.check_result_list_return(context, node, bindings, scope)
             }
             Production::ReturnStmt => {
                 let expression_node = self
+                    .types
+                    .declarations
                     .tree
                     .first_child_with(node, Production::Expr)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
@@ -261,8 +289,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 // a base [OP-4] does not admit — as though repairing that
                 // could make the return legal, when the restructuring
                 // [REF-3] names is to return an index instead.
-                if self.complete_borrow_expression(expression_node)?.is_some() {
-                    return self.issue_node(
+                if self
+                    .types
+                    .declarations
+                    .complete_borrow_expression(expression_node)?
+                    .is_some()
+                {
+                    return self.types.declarations.issue_node(
                         SemanticRule::Ref3,
                         expression_node,
                         SemanticIssueKind::EscapingReference {
@@ -270,25 +303,33 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         },
                     );
                 }
-                self.check_return_implicit_read(function, expression_node, bindings)?;
+                self.types.declarations.check_return_implicit_read(
+                    context,
+                    expression_node,
+                    bindings,
+                )?;
                 let mut value =
-                    self.check_expression(function, expression_node, bindings, scope.loops.len())?;
+                    self.check_expression(context, expression_node, bindings, scope.loops.len())?;
                 // [REF-3] a `return_stmt` whose selected expression is a
                 // reference is the escape violation itself, and [FN-1] forms
                 // no candidate there.
-                self.reject_escaping_reference(&value, expression_node)?;
+                self.types
+                    .declarations
+                    .reject_escaping_reference(&value, expression_node)?;
                 if value.expression.ty() != function.result {
                     return Err(CheckStop::source_issue(SemanticIssue {
                         rule: SemanticRule::Fn1,
                         location: SemanticLocation::SourceNode(
-                            self.tree.path(node)?.clone(),
-                            self.tree.coordinate(expression_node)?,
+                            self.types.declarations.tree.path(node)?.clone(),
+                            self.types.declarations.tree.coordinate(expression_node)?,
                         ),
                         kind: SemanticIssueKind::ReturnMismatch,
                         request: None,
                     }));
                 }
-                let drops = self.live_affine_drops(bindings, &HashSet::new(), node)?;
+                let drops =
+                    self.types
+                        .live_affine_drops(check_context, bindings, &HashSet::new(), node)?;
                 if let CheckedExpression::UserCall {
                     tail_transfer,
                     call,
@@ -296,11 +337,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 } = &mut value.expression
                     && *tail_transfer
                 {
-                    *tail_transfer = self.check_self_tail_releases(call, bindings)?;
+                    *tail_transfer =
+                        self.check_self_tail_releases(check_context, call, bindings)?;
                 }
                 Ok(StatementResult {
                     statement: CheckedStatement::Return {
-                        node_path: self.tree.path(node)?.clone(),
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         value: value.expression,
                         drops,
                     },
@@ -316,7 +358,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // Bool match the `match` spelling produced, so everything below
             // the checker sees one statement kind for both.
             Production::IfStmt => {
-                let matched = self.check_if(function, node, bindings, counters, scope, false)?;
+                let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
                         scrutinee: matched.scrutinee,
@@ -333,7 +375,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 })
             }
             Production::MatchStmt => {
-                let matched = self.check_match(function, node, bindings, counters, scope, false)?;
+                let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
                         scrutinee: matched.scrutinee,
@@ -350,19 +392,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 })
             }
             Production::GiveStmt => {
-                let Some(context) = scope.give_context else {
-                    return self.issue_node(
+                let Some(give_context) = scope.give_context else {
+                    return self.types.declarations.issue_node(
                         SemanticRule::Give1,
                         node,
                         SemanticIssueKind::InvalidGive,
                     );
                 };
                 let expression_node = self
+                    .types
+                    .declarations
                     .tree
                     .first_child_with(node, Production::Expr)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 let value =
-                    self.check_expression(function, expression_node, bindings, scope.loops.len())?;
+                    self.check_expression(context, expression_node, bindings, scope.loops.len())?;
                 // [GIVE-1] derivation is agreement over the closed delivery
                 // set: the first delivering `give` produces the binding's
                 // exact mode and type, and every later one must match them.
@@ -372,27 +416,33 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 // kind and the binder's path set is the union over the
                 // delivery set.
                 if let Some(reference) = &value.reference {
-                    context.deliver_reference(reference);
+                    give_context.deliver_reference(reference);
                 }
-                match context.delivered.get() {
-                    None => context.delivered.set(Some(delivered)),
+                match give_context.delivered.get() {
+                    None => give_context.delivered.set(Some(delivered)),
                     Some(earlier) if earlier == delivered => {}
                     Some((mode, ty)) => {
-                        return self.issue_node(
+                        return self.types.declarations.issue_node(
                             SemanticRule::Give1,
                             node,
                             SemanticIssueKind::type_mismatch(
-                                self.checked_value_name(mode, ty)?,
-                                self.checked_value_name(value.mode, value.expression.ty())?,
+                                self.types.checked_value_name(mode, ty)?,
+                                self.types
+                                    .checked_value_name(value.mode, value.expression.ty())?,
                             ),
                         );
                     }
                 }
                 Ok(StatementResult {
                     statement: CheckedStatement::Give {
-                        node_path: self.tree.path(node)?.clone(),
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         value: value.expression,
-                        drops: self.live_affine_drops(bindings, &context.preserved, node)?,
+                        drops: self.types.live_affine_drops(
+                            check_context,
+                            bindings,
+                            &give_context.preserved,
+                            node,
+                        )?,
                     },
                     can_continue: false,
                     effects: value.effects,
@@ -405,26 +455,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // [GRAM-4, SET-1] every written `set` is one commit: the
             // targets are resolved and judged first, then the whole
             // right-hand side, then the three admission conditions.
-            Production::SetStmt => self.check_commit(function, node, bindings, counters, scope),
-            Production::LoopStmt => self.check_loop(function, node, bindings, counters, scope),
+            Production::SetStmt => self.check_commit(context, node, bindings, counters, scope),
+            Production::LoopStmt => self.check_loop(context, node, bindings, counters, scope),
             Production::ForStmt => {
-                self.check_counted_range(function, node, bindings, counters, scope)
+                self.check_counted_range(context, node, bindings, counters, scope)
             }
-            Production::BreakStmt => self.check_break(node, bindings, scope),
+            Production::BreakStmt => self.types.check_break(check_context, node, bindings, scope),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
     }
 
     fn check_let(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
     ) -> Result<StatementResult, CheckStop> {
+        let FunctionContext { function, .. } = context;
         let first_binding = *counters.next_binding;
-        let result = self.check_let_body(function, node, bindings, counters, scope)?;
+        let result = self.check_let_body(context, node, bindings, counters, scope)?;
         // Every binding form shares the same destination judgment. In
         // particular, a value initializer can deliver storage allocated in
         // a region nested inside its own destination's scope.
@@ -434,14 +485,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .collect::<Vec<_>>();
         destinations.sort_by_key(|local| local.binding.0);
         for local in destinations {
-            self.check_confined_destination(function, local.ty, Some(local.declaration), node)?;
+            Checker::check_confined_destination(function, local.ty, Some(local.declaration), node)?;
         }
         Ok(result)
     }
 
     fn check_let_body(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
@@ -449,23 +500,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     ) -> Result<StatementResult, CheckStop> {
         // [PROV-6, GRAM-4] the destructuring consume is the one `let`
         // alternative whose operand place is a direct child of the statement.
-        if let Some(place) = self.tree.first_child_with(node, Production::Place)? {
+        if let Some(place) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Place)?
+        {
             return self
-                .check_destructuring_consume(function, node, place, bindings, counters, scope);
+                .check_destructuring_consume(context, node, place, bindings, counters, scope);
         }
         // [GRAM-4, CALL-4] a binder list takes its right-hand side's result
         // ordinals; a `call` directly under the `let_stmt` is that form and
         // no other selects it.
-        if let Some(call) = self.tree.first_child_with(node, Production::Call)? {
-            return self.check_destructuring_let(function, node, call, bindings, counters, scope);
+        if let Some(call) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Call)?
+        {
+            return self.check_destructuring_let(context, node, call, bindings, counters, scope);
         }
         // [TYPE-5] a `let` binder's mode and type are derived, never written:
         // exactly what its selected right-hand side produces. Each arm below
         // therefore checks that right-hand side first and reads the binding's
         // mode and type off the result.
-        let declaration = self.declaration_at(node, DeclarationRole::Let)?;
+        let declaration = self
+            .types
+            .declarations
+            .declaration_at(node, DeclarationRole::Let)?;
         let declaration_id = declaration.id();
-        let binding = Self::allocate_binding(counters.next_binding)?;
+        let binding = Checker::allocate_binding(counters.next_binding)?;
         counters
             .binding_names
             .push(declaration.spelling().to_owned());
@@ -473,16 +537,24 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // [GIVE-1] a value initializer is a `match` or an `if`. Both derive the
         // binder from their delivery set and share every judgment below, so
         // only the checker that produces the delivery set differs.
-        let value_match = self.tree.first_child_with(node, Production::ValueMatch)?;
-        let value_if = self.tree.first_child_with(node, Production::ValueIf)?;
+        let value_match = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::ValueMatch)?;
+        let value_if = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::ValueIf)?;
         if let Some(initializer) = value_match.or(value_if) {
             let matched = if value_if.is_some() {
-                self.check_if(function, initializer, bindings, counters, scope, true)?
+                self.check_if(context, initializer, bindings, counters, scope, true)?
             } else {
-                self.check_match(function, initializer, bindings, counters, scope, true)?
+                self.check_match(context, initializer, bindings, counters, scope, true)?
             };
             if !matched.all_paths_deliver {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Give1,
                     initializer,
                     SemanticIssueKind::InvalidGive,
@@ -495,7 +567,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let Some((mode, expected)) = matched.delivered else {
                 let binding = declaration.spelling().to_owned();
                 let form = if value_if.is_some() { "if" } else { "match" };
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Give1,
                     node,
                     SemanticIssueKind::EmptyDeliverySet {
@@ -507,7 +579,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 );
             };
             let result_range_element = if mode == CheckedMode::Range {
-                Some(self.intern_element(expected)?)
+                Some(self.types.intern_element(expected)?)
             } else {
                 None
             };
@@ -527,7 +599,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             if matched.can_continue
                 && let Some(reference) = &reference
             {
-                self.record_reference_origins(binding, &reference.paths);
+                self.body
+                    .record_reference_origins(binding, &reference.paths);
             }
             if matched.can_continue
                 && bindings
@@ -543,6 +616,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             compiler_updated: false,
                             reference,
                             refinement_witnesses: Vec::new(),
+                            call_value: false,
                         },
                     )
                     .is_some()
@@ -551,7 +625,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
             return Ok(StatementResult {
                 statement: CheckedStatement::ValueMatchLet {
-                    node_path: self.tree.path(node)?.clone(),
+                    node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: if value_if.is_some() {
                         ValueInitializerKind::ValueIf
                     } else {
@@ -575,11 +649,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             });
         }
         if let Some(propagate) = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::PropagateLetRhs)?
         {
             return self.check_propagate_let(
-                function,
+                context,
                 node,
                 propagate,
                 declaration_id,
@@ -588,22 +664,26 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 scope,
             );
         }
-        let contract_definition = self.tree.production(node)? == Production::ContractDefine;
+        let contract_definition =
+            self.types.declarations.tree.production(node)? == Production::ContractDefine;
         let expression_owner = if contract_definition {
             node
         } else {
-            self.tree
+            self.types
+                .declarations
+                .tree
                 .first_child_with(node, Production::OrdinaryLetRhs)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?
         };
         let expression_node = self
+            .types
+            .declarations
             .tree
             .first_child_with(expression_owner, Production::Expr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         // An `ordinary_let_rhs` is always self-typed [TYPE-5], so it is
         // checked with no expectation and the binder takes what it produces.
-        let value =
-            self.check_expression(function, expression_node, bindings, scope.loops.len())?;
+        let value = self.check_expression(context, expression_node, bindings, scope.loops.len())?;
         let mode = value.mode;
         let expected = value.expression.ty();
         // [REF-1] a binder whose initializer is a `borrow_expr`, and a binder
@@ -617,7 +697,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // Contract definitions use temporary binding namespaces and are
         // erased, so they do not contribute to the executable body's map.
         if !contract_definition && let Some(reference) = &reference {
-            self.record_reference_origins(binding, &reference.paths);
+            self.body
+                .record_reference_origins(binding, &reference.paths);
         }
         if bindings
             .insert(
@@ -632,62 +713,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: false,
                     reference,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()
         {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        Ok(Self::continuing_statement(
+        Ok(Checker::continuing_statement(
             CheckedStatement::Let {
-                node_path: self.tree.path(node)?.clone(),
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 binding,
                 value: value.expression,
             },
             value.effects,
         ))
-    }
-
-    /// The compiler-derived releases one edge leaving a scope carries
-    /// [STOR-3, LIV-1], and the [PROV-6] refusal of a value that is linear in
-    /// this scope and has no derived release to carry it there.
-    fn live_affine_drops(
-        &self,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        preserved: &HashSet<DeclarationId>,
-        edge: NodeId,
-    ) -> Result<Vec<CheckedDrop>, CheckStop> {
-        let mut live = bindings
-            .iter()
-            .filter_map(|(declaration, local)| {
-                (local.live && local.mode == CheckedMode::Own && !preserved.contains(declaration))
-                    .then_some((*declaration, local.clone()))
-            })
-            .collect::<Vec<_>>();
-        live.sort_by_key(|entry| std::cmp::Reverse(entry.1.binding.0));
-        let mut drops = Vec::new();
-        for (_, local) in &live {
-            let name = self
-                .resolved
-                .declarations()
-                .iter()
-                .find(|declaration| declaration.id() == local.declaration)
-                .map_or_else(String::new, |declaration| declaration.spelling().to_owned());
-            self.validate_scope_release(local.ty, &name, edge)?;
-        }
-        for (_, local) in live {
-            if !self.is_copy_type(local.ty)? {
-                let paths = self.drop_paths(local.ty, Vec::new())?;
-                for (fields, ty) in paths {
-                    drops.push(CheckedDrop {
-                        binding: local.binding,
-                        fields,
-                        ty,
-                    });
-                }
-            }
-        }
-        Ok(drops)
     }
 
     fn allocate_binding(next_binding: &mut u32) -> Result<BindingId, CheckStop> {
@@ -708,5 +748,51 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             give_states: Vec::new(),
             break_states: Vec::new(),
         }
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// The compiler-derived releases one edge leaving a scope carries
+    /// [STOR-3, LIV-1], and the [PROV-6] refusal of a value that is linear in
+    /// this scope and has no derived release to carry it there.
+    fn live_affine_drops(
+        &self,
+        check_context: &CheckContext<'_>,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        preserved: &HashSet<DeclarationId>,
+        edge: NodeId,
+    ) -> Result<Vec<CheckedDrop>, CheckStop> {
+        let mut live = bindings
+            .iter()
+            .filter_map(|(declaration, local)| {
+                (local.live && local.mode == CheckedMode::Own && !preserved.contains(declaration))
+                    .then_some((*declaration, local.clone()))
+            })
+            .collect::<Vec<_>>();
+        live.sort_by_key(|entry| std::cmp::Reverse(entry.1.binding.0));
+        let mut drops = Vec::new();
+        for (_, local) in &live {
+            let name = self
+                .declarations
+                .resolved
+                .declarations()
+                .iter()
+                .find(|declaration| declaration.id() == local.declaration)
+                .map_or_else(String::new, |declaration| declaration.spelling().to_owned());
+            self.validate_scope_release(check_context, local.ty, &name, edge)?;
+        }
+        for (_, local) in live {
+            if !self.is_copy_type(check_context, local.ty)? {
+                let paths = self.drop_paths(check_context, local.ty, Vec::new())?;
+                for (fields, ty) in paths {
+                    drops.push(CheckedDrop {
+                        binding: local.binding,
+                        fields,
+                        ty,
+                    });
+                }
+            }
+        }
+        Ok(drops)
     }
 }

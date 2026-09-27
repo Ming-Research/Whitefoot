@@ -8,16 +8,13 @@ use super::support::{
     CANONICAL_LIMITS, FINALIZE_LIMITS, reaches_canonical_syntax, rendered_bytes, with_parsed,
 };
 
-fn audit_source(
-    source: &[u8],
-    audit: impl for<'classified, 'lexed, 'source> FnOnce(CanonicalOutcome<'classified, 'lexed, 'source>),
-) {
+fn audit_source(source: &[u8], audit: impl FnOnce(CanonicalOutcome)) {
     let inputs = [SourceInput::new("format.wf", source)];
     with_parsed(&inputs, |parsed| {
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
             panic!("complete derivation must finalize");
         };
-        audit(audit_canonical(finalized, CANONICAL_LIMITS));
+        audit(audit_canonical(*finalized, CANONICAL_LIMITS));
     });
 }
 
@@ -79,7 +76,7 @@ fn ordered_canonical_sources_keep_independent_forests() {
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
             panic!("ordered canonical bundle must finalize");
         };
-        let CanonicalOutcome::Complete(unit) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+        let CanonicalOutcome::Complete(unit) = audit_canonical(*finalized, CANONICAL_LIMITS) else {
             panic!("each ordered source forest must pass independently");
         };
         assert_eq!(unit.root_extent().len(), 3);
@@ -214,7 +211,7 @@ fn ordered_sources_stop_at_the_first_form2_mismatch() {
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
             panic!("ordered bundle must finalize");
         };
-        let CanonicalOutcome::SourceIssue(issue) = audit_canonical(finalized, CANONICAL_LIMITS)
+        let CanonicalOutcome::SourceIssue(issue) = audit_canonical(*finalized, CANONICAL_LIMITS)
         else {
             panic!("second source must provide first FORM-2 mismatch");
         };
@@ -244,7 +241,7 @@ fn tree_mutation_with_the_original_tape_cannot_publish_canonical_syntax() {
         };
         node.production = crate::syntax::grammar::Production::Item;
         assert!(matches!(
-            audit_canonical(finalized, CANONICAL_LIMITS),
+            audit_canonical(*finalized, CANONICAL_LIMITS),
             CanonicalOutcome::CompilerFailure(CanonicalCompilerFailure::InvalidFinalizedTree)
         ));
     });
@@ -255,7 +252,7 @@ fn tree_mutation_with_the_original_tape_cannot_publish_canonical_syntax() {
         };
         finalized.topology.terminals[0].local_ordinal = 1;
         assert!(matches!(
-            audit_canonical(finalized, CANONICAL_LIMITS),
+            audit_canonical(*finalized, CANONICAL_LIMITS),
             CanonicalOutcome::CompilerFailure(
                 CanonicalCompilerFailure::TerminalBindingDisagreement
             )
@@ -302,7 +299,7 @@ fn canonical_audit_resource_edges_are_explicit_and_deterministic() {
             let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
                 panic!("resource fixture must finalize");
             };
-            let outcome = audit_canonical(finalized, limits);
+            let outcome = audit_canonical(*finalized, limits);
             assert!(
                 matches!(
                     outcome,
@@ -322,7 +319,7 @@ fn canonical_audit_resource_edges_are_explicit_and_deterministic() {
             panic!("path fixture must finalize");
         };
         let outcome = audit_canonical(
-            finalized,
+            *finalized,
             CanonicalLimits {
                 max_path_components: 0,
                 ..CANONICAL_LIMITS

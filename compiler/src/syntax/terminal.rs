@@ -836,7 +836,7 @@ mod tests {
         // `std` qualifier [MOD-10] first occurs beside `pkg` in that header. The graph
         // productions close [GRAM-2], so `entry` now first occurs there, before
         // the primitive type atoms, and a call's `musttail` first occurs in
-        // [GRAM-5] after the comparison atoms. v0.74's `waits` [WAIT-1]
+        // [GRAM-5] after the comparison atoms. v0.76's `waits` [WAIT-1]
         // follows the declaration's `->` and `mustpar` [PAR-4] first occurs on
         // `for_stmt` [GRAM-4], just before `for`.
         assert_eq!(FixedTerminal::Alias as u8, 1);

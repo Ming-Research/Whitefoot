@@ -7,7 +7,42 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_semantics, with_semantics_dark};
+use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
+
+#[test]
+fn wrapping_conversion_goal_identity_retains_its_operand_support() {
+    for (replacement, actual, accepted) in [
+        ("", "value", true),
+        ("    set value = other;\n", "value", false),
+        ("", "other", false),
+    ] {
+        let source = format!(
+            "fn selected(value: u32) -> result: unit pure contract {{\n  define byte = cvt.wrap::<u32, u8>(value);\n  requires byte == 1_u8;\n}} {{\n  return unit;\n}}\n\nfn forward(value: u32, other: u32) -> result: unit pure {{\n  let byte = cvt.wrap::<u32, u8>(value);\n  if byte == 1_u8 {{\n{replacement}    selected(value: {actual});\n  }}\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        if accepted {
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("the identical supported modular goal must transfer: {outcome:?}");
+                };
+                let function = checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "forward")
+                    .expect("forward function");
+                let [call] = function.entailment.call_goals.as_slice() else {
+                    panic!("one modular requirement must be checked");
+                };
+                assert_eq!(call.disposition, CallGoalDisposition::Discharged);
+            });
+        } else {
+            super::assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedCallRequirement(detail)
+                    if detail.instantiated_goal.contains("cvt.wrap::<u32, u8>"))
+            });
+        }
+    }
+}
 
 /// A reference is a local name for a path and its validity is a fact [REF-1,
 /// REF-2]; the value fact a requirement needs is killed exactly when a write
@@ -738,22 +773,20 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("unused generic requirement must survive symbolic checking: {outcome:?}");
         };
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             1
         );
         assert_eq!(checked.data.functions[0].name, "main");
-        let positive = checked
-            ._resolved
+        let positive = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -788,7 +821,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_nominal_bearing_generic_requirement_survives_the_symbolic_checkpoint_as_metadata() {
+fn a_nominal_bearing_generic_requirement_retains_symbolic_identity_as_metadata() {
     // v0.59 reached the symbolic nominal through `buffer_fits::<Pair<T>>(n)`.
     // [OP-9]'s allocation-size predicate "has no writer-callable spelling" in
     // v0.60, so a measure over `Slots<Pair<T>, 1>` retains the nominal as the
@@ -808,12 +841,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("symbolic nominal requirements must remain valid metadata: {outcome:?}");
         };
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -882,8 +914,8 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("Pair<T>'s nominal identity must address checked metadata");
         assert!(retained.name.starts_with("Pair<"));
         assert!(
-            index >= checked.data.executable_nominal_count,
-            "metadata-only symbolic nominals must follow the executable prefix"
+            !checked.data.executable_nominals.contains(&nominal),
+            "metadata-only symbolic nominals must remain outside the executable view"
         );
         let CheckedNominalKind::Struct { fields } = &retained.kind else {
             panic!("Pair<T> must retain its checked struct shape");
@@ -912,7 +944,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("the symbolic const requirement must be retained: {outcome:?}");
         };
@@ -920,8 +952,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let derived = checked.data.derived_consts[0];
         assert!(matches!(derived.left, CheckedConst::Parameter(_)));
         assert_eq!(derived.right, CheckedConst::Value(1));
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -972,8 +1003,7 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let concrete = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.name == "positive")
             .collect::<Vec<_>>();
         assert_eq!(concrete.len(), 2);
@@ -1016,21 +1046,19 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("transitive symbolic validation must retain canonical entries: {outcome:?}");
         };
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             1
         );
-        let inner = checked
-            ._resolved
+        let inner = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -1038,8 +1066,7 @@ fn main() -> status: std::process::ExitStatus pure {
             })
             .expect("inner source declaration")
             .id();
-        let outer = checked
-            ._resolved
+        let outer = resolved
             .declarations()
             .iter()
             .find(|declaration| {

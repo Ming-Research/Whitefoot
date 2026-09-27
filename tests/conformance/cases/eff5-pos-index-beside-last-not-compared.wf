@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn read_then_take(window: &Slots<u64, 8>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {
+  requires i < deref(window).len;
+} {
+  doc "Returns element i plus the last element, which it takes out of the window. EFF-5, WIN-2: an index position overlaps window.last whatever its value, because one writes(window.last) covers every take_back the body makes, so a call does not compare the two entries and this body is checked against both.";
+  let kept = deref(window)[i];
+  let last = take_back(window: window);
+  let total = kept +wrap last;
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call passes i 1, the last slot itself, and one argument supplies both entries, so the call compares nothing: the body reads the element and then takes it back. The program observes the element counted twice.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  let total = read_then_take(window: &window, i: 1_u64);
+  if total == 4_u64 {
+    if window.len == 1_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

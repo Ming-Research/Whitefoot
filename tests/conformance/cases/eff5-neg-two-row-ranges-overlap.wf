@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn mark_run(values: &Array<u64, 4>, lo: u64, hi: u64, a: u64, b: u64) -> result: unit reads(values[lo..hi]), writes(values[a..b]) contract {
+  requires lo <= hi;
+  requires hi <= 4_u64;
+  requires a <= b;
+  requires b <= 4_u64;
+} {
+  doc "Writes the length of the run values[lo..hi] into the first element of values[a..b]. EFF-5: one argument supplies both ranges, and whether they overlap depends on the values, so every call compares them.";
+  let run = &deref(values)[lo..hi];
+  let count = deref(run).len;
+  let out = &deref(values)[a..b];
+  if 0_u64 < deref(out).len {
+    set deref(out)[0_u64] = count;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call passes the read run 0..2 and the written run 1..4, which share element 1, so no OWN-7 ordering separates them.";
+  let values = array_filled::<u64, 4>(value: 9_u64);
+  mark_run(values: &values, lo: 0_u64, hi: 2_u64, a: 1_u64, b: 4_u64);
+  return exit_status(code: 0_u8);
+}

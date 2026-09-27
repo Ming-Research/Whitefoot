@@ -17,7 +17,7 @@ fn complete_inventory_is_pinned() {
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
-    // v0.74 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
+    // v0.76 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
     // the optional `mustpar` of `for_stmt`, and the alternation of the
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
     assert_eq!(DECISIONS.len(), 161);

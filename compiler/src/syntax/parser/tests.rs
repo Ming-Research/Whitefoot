@@ -62,11 +62,12 @@ fn minimal_function_and_multi_source_items_form_one_program_root() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let token_count = classified.tokens().len() as u64;
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("minimal multi-source program must parse");
     };
     assert_eq!(parsed.top_level_item_count(), Some(2));
-    assert_eq!(parsed.terminal_count(), classified.tokens().len() as u64);
+    assert_eq!(parsed.terminal_count(), token_count);
     assert_eq!(parsed.classified_bundle().source_bundle().len(), 2);
 }
 
@@ -91,7 +92,7 @@ fn ordered_sources_report_the_first_invalid_record() {
     ) else {
         panic!("ordered source fixture must classify");
     };
-    let ParseOutcome::SourceIssue(issue) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::SourceIssue(issue) = parse(classified, PARSE_LIMITS) else {
         panic!("the first invalid source record must reject");
     };
     assert_eq!(issue.rule(), SyntaxRule::Form1);
@@ -129,7 +130,7 @@ return unit;
     ) else {
         panic!("shared-prefix fixture must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     assert!(
         matches!(outcome, ParseOutcome::Complete(_)),
         "every shared-prefix form must parse deterministically: {outcome:?}"
@@ -178,7 +179,7 @@ return unit;
     ) else {
         panic!("added-form fixture must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     let ParseOutcome::Complete(parsed) = outcome else {
         panic!("added-form fixture must parse: {outcome:?}");
     };
@@ -234,7 +235,7 @@ return unit;
     ) else {
         panic!("angle fixture must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     assert!(
         matches!(outcome, ParseOutcome::Complete(_)),
         "comparisons and delimited type application must parse: {outcome:?}"
@@ -254,7 +255,7 @@ return unit;
     ) else {
         panic!("undelimited fixture must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     let ParseOutcome::SourceIssue(issue) = outcome else {
         panic!("a type-argument list without `::` must fail to derive: {outcome:?}");
     };
@@ -283,7 +284,7 @@ fn one_empty_record_derives_before_the_later_form2_audit() {
     ) else {
         panic!("empty source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("empty item sequence must derive");
     };
     assert_eq!(parsed.top_level_item_count(), Some(0));
@@ -305,7 +306,7 @@ fn unknown_ident_construct_uses_closed_form1_override() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::SourceIssue(issue) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::SourceIssue(issue) = parse(classified, PARSE_LIMITS) else {
         panic!("unknown construct must be a source issue");
     };
     assert_eq!(issue.rule(), SyntaxRule::Form1);
@@ -329,7 +330,7 @@ fn dotted_call_spelling_uses_bounded_form3_override() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::SourceIssue(issue) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::SourceIssue(issue) = parse(classified, PARSE_LIMITS) else {
         panic!("dotted call spelling must be rejected");
     };
     assert_eq!(issue.rule(), SyntaxRule::Form3);
@@ -353,7 +354,7 @@ fn nested_call_in_atom_only_argument_uses_gram9_override() {
     ) else {
         panic!("test source must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     let ParseOutcome::SourceIssue(issue) = outcome else {
         panic!("nested call must be rejected: {outcome:?}");
     };
@@ -394,7 +395,7 @@ fn mandatory_name_and_numeric_pattern_mismatches_keep_their_owners() {
         ) else {
             panic!("test source must classify");
         };
-        let outcome = parse(&classified, PARSE_LIMITS);
+        let outcome = parse(classified, PARSE_LIMITS);
         let ParseOutcome::SourceIssue(issue) = outcome else {
             panic!("name or numeric mismatch must reject: {outcome:?}");
         };
@@ -427,7 +428,7 @@ fn item_head_with_a_wrong_name_shape_is_a_name_slot_mismatch() {
         ) else {
             panic!("test source must classify");
         };
-        let outcome = parse(&classified, PARSE_LIMITS);
+        let outcome = parse(classified, PARSE_LIMITS);
         let ParseOutcome::SourceIssue(issue) = outcome else {
             panic!("wrong name shape must reject: {source:?}");
         };
@@ -452,7 +453,7 @@ fn non_name_program_leftover_expects_only_source_end() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::SourceIssue(issue) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::SourceIssue(issue) = parse(classified, PARSE_LIMITS) else {
         panic!("top-level literal leftover must reject");
     };
     assert_eq!(issue.rule(), SyntaxRule::Gram2);
@@ -481,7 +482,7 @@ fn fixed_word_program_leftover_is_a_grammar_shape_mismatch() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::SourceIssue(issue) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::SourceIssue(issue) = parse(classified, PARSE_LIMITS) else {
         panic!("top-level statement must reject");
     };
     assert_eq!(issue.rule(), SyntaxRule::Gram2);
@@ -512,7 +513,7 @@ fn element_limit_is_explicit_and_failure_atomic() {
         limit: ParseLimit::Elements,
         maximum: 0,
         actual: 1,
-    }) = parse(&classified, limits)
+    }) = parse(classified, limits)
     else {
         panic!("first element must hit the exact element ceiling");
     };
@@ -533,7 +534,7 @@ fn envelope_and_each_control_stack_limit_are_distinct() {
         panic!("empty transport must classify as an envelope candidate");
     };
     assert!(matches!(
-        parse(&empty_classified, PARSE_LIMITS),
+        parse(empty_classified, PARSE_LIMITS),
         ParseOutcome::InvocationFailure(ParseInvocationFailure::EmptySourceBundle)
     ));
 
@@ -576,7 +577,7 @@ fn envelope_and_each_control_stack_limit_are_distinct() {
         ),
     ] {
         let ParseOutcome::ResourceFailure(ParseResourceFailure::LimitExceeded { limit, .. }) =
-            parse(&classified, limits)
+            parse(classified.clone(), limits)
         else {
             panic!("each zero control ceiling must fail explicitly");
         };
@@ -601,7 +602,7 @@ fn sufficient_limits_produce_identical_derivation_metrics() {
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::Complete(first) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(first) = parse(classified.clone(), PARSE_LIMITS) else {
         panic!("first sufficient limits must parse");
     };
     let larger = ParseLimits {
@@ -610,7 +611,7 @@ fn sufficient_limits_produce_identical_derivation_metrics() {
         max_frames: PARSE_LIMITS.max_frames * 2,
         max_elements: PARSE_LIMITS.max_elements * 2,
     };
-    let ParseOutcome::Complete(second) = parse(&classified, larger) else {
+    let ParseOutcome::Complete(second) = parse(classified, larger) else {
         panic!("second sufficient limits must parse");
     };
     assert_eq!(first.terminal_count(), second.terminal_count());
@@ -722,7 +723,7 @@ fn main() -> result: unit pure {}
     ) else {
         panic!("full fixture must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     let ParseOutcome::Complete(parsed) = outcome else {
         panic!("full fixture must parse: {outcome:?}");
     };
@@ -741,7 +742,7 @@ fn main() -> result: unit pure {}
     ) else {
         panic!("graph fixture must classify");
     };
-    let graph_outcome = super::parse_graph(&graph_classified, PARSE_LIMITS);
+    let graph_outcome = super::parse_graph(graph_classified, PARSE_LIMITS);
     let ParseOutcome::Complete(graph_parsed) = graph_outcome else {
         panic!("graph fixture must parse: {graph_outcome:?}");
     };
@@ -816,25 +817,18 @@ const COUNTED_RANGE_STATEMENT: &[u8] = b"fn probe(lower: u64, upper: u64) -> res
 
 const LOCAL_INVARIANT_STATEMENT: &[u8] = b"fn probe(left: i32, right: i32) -> result: unit pure {\n  invariant ordered: left + 1_i32 <= right + 1_i32 {\n    use 2 times (left <= right);\n    use prior_order;\n  }\n  return unit;\n}\n";
 
-fn parse_active(
-    name: &'static str,
-    source: &'static [u8],
-) -> ParseOutcome<'static, 'static, 'static> {
-    // Tests leak their small fixtures so the borrowed pipeline stays simple.
-    let inputs = Box::leak(Box::new([SourceInput::new(name, source)]));
-    let bundle = Box::leak(Box::new(bundle(inputs)));
-    let LexOutcome::Complete(lexed) = lex(bundle, LEX_LIMITS) else {
+fn parse_active(name: &'static str, source: &'static [u8]) -> ParseOutcome {
+    let bundle = bundle(&[SourceInput::new(name, source)]);
+    let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
         panic!("fixture must lex");
     };
-    let lexed = Box::leak(Box::new(lexed));
     let TerminalOutcome::Complete(classified) = classify_terminals(
-        lexed,
+        &lexed,
         ACTIVE_KERNEL_SPEC_HASH,
         TerminalLimits { max_tokens: 65_536 },
     ) else {
         panic!("fixture must classify");
     };
-    let classified = Box::leak(Box::new(classified));
     parse(classified, PARSE_LIMITS)
 }
 

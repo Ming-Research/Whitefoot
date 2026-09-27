@@ -4,6 +4,45 @@ use super::{compile, compile_and_run};
 
 mod binary_value;
 
+#[test]
+fn conversion_fragments_retain_saturating_intrinsic_declarations() {
+    let source = br#"fn integer_domain(value: i64) -> result: Bool pure {
+  return cvt.defined::<i64, f64>(value);
+}
+
+fn float_domain(value: f64) -> result: Bool pure {
+  return cvt.defined::<f64, u64>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = crate::compile(
+        &[crate::SourceInput::new("conversion.wf", source)],
+        crate::CompilerLimits::default(),
+    )
+    .expect("conversion source compiles");
+    let fragments = crate::split_module(&module, crate::FragmentGranularity::Function)
+        .expect("conversion module splits");
+    for (symbol, declaration) in [
+        (
+            "@wf_integer_domain(",
+            "declare i64 @llvm.fptosi.sat.i64.f64(double)",
+        ),
+        (
+            "@wf_float_domain(",
+            "declare i64 @llvm.fptoui.sat.i64.f64(double)",
+        ),
+    ] {
+        let fragment = fragments
+            .iter()
+            .find(|fragment| fragment.contains(&format!("define i1 {symbol}")))
+            .expect("conversion definition has a fragment");
+        assert!(fragment.contains(declaration), "{fragment}");
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum NumericKind {
     SignedInteger,

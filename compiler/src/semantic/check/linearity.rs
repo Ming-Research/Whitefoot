@@ -7,13 +7,15 @@
 //! compiler-derived release and `dispose p;` both walk; the linearity
 //! predicate is that graph read against what the scope holds.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::{DeclarationInventory, TypeContext};
 use std::collections::HashSet;
 
 use crate::syntax::NodeId;
 use crate::{Production, SemanticIssueKind, SemanticRule, TerminalPredicate};
 
 use super::super::model::{CheckedNominalKind, CheckedType, NominalId};
-use super::{CheckStop, Checker};
+use super::CheckStop;
 
 /// [OWN-1, PROV-6] the class read from a type's two capabilities, copy and
 /// drop, and the class a type parameter's bound grants its body.
@@ -66,14 +68,13 @@ impl LinearityClass {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> TypeContext<'unit> {
     /// [PROV-6, STOR-5] whether this type is or reaches a view, which owns
     /// nothing and contributes no release-graph node.
     pub(in crate::semantic) fn is_loan_bearing(&self, ty: CheckedType) -> Result<bool, CheckStop> {
         let mut visited = HashSet::new();
         self.loan_bearing_with(ty, &mut visited)
     }
-
     fn loan_bearing_with(
         &self,
         ty: CheckedType,
@@ -100,7 +101,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             _ => Ok(false),
         }
     }
-
     /// The types one nominal owns directly [PROV-6]: its fields, its enum
     /// variant payloads and its `box` referent.
     fn owned_components(&self, id: NominalId) -> Result<Vec<CheckedType>, CheckStop> {
@@ -114,40 +114,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             CheckedNominalKind::Opaque => Vec::new(),
         })
     }
-
-    /// [STOR-3, FN-10] whether the release graph can execute an action.
-    /// The capability class alone is insufficient: a nocopy aggregate of
-    /// scalars and a statically empty run both have empty releases.
-    pub(super) fn has_nonempty_release(&self, ty: CheckedType) -> Result<bool, CheckStop> {
-        let mut pending = vec![ty];
-        let mut visited = HashSet::new();
-        while let Some(current) = pending.pop() {
-            if !visited.insert(current) {
-                continue;
-            }
-            match current {
-                CheckedType::Generic(_) if !self.is_copy_type(current)? => return Ok(true),
-                CheckedType::Nominal(id) => {
-                    if matches!(self.nominal(id)?.kind, CheckedNominalKind::Box { .. }) {
-                        return Ok(true);
-                    }
-                    pending.extend(self.owned_components(id)?);
-                }
-                CheckedType::Array { element, length } if length.value() != Some(0) => {
-                    pending.push(self.element_type(element)?);
-                }
-                CheckedType::Window {
-                    element, capacity, ..
-                } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
-                    pending.push(self.element_type(element)?);
-                }
-                CheckedType::Buffer { element } => pending.push(self.element_type(element)?),
-                _ => {}
-            }
-        }
-        Ok(false)
-    }
-
     /// [PROV-6] the nodes of this type's release graph, each visited once.
     ///
     /// A loan-bearing value contributes no node, which is why a view can
@@ -188,7 +154,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         Ok(nodes)
     }
-
     /// [PROV-6] whether any node of this type's release graph carries the
     /// `nodrop` modifier, this type's own node included.
     pub(in crate::semantic) fn owns_modifier_linear_node(
@@ -204,7 +169,44 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         Ok(None)
     }
-
+    /// [STOR-3, FN-10] whether the release graph can execute an action.
+    /// The capability class alone is insufficient: a nocopy aggregate of
+    /// scalars and a statically empty run both have empty releases.
+    pub(super) fn has_nonempty_release(
+        &self,
+        check_context: &CheckContext<'_>,
+        ty: CheckedType,
+    ) -> Result<bool, CheckStop> {
+        let mut pending = vec![ty];
+        let mut visited = HashSet::new();
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            match current {
+                CheckedType::Generic(_) if !self.is_copy_type(check_context, current)? => {
+                    return Ok(true);
+                }
+                CheckedType::Nominal(id) => {
+                    if matches!(self.nominal(id)?.kind, CheckedNominalKind::Box { .. }) {
+                        return Ok(true);
+                    }
+                    pending.extend(self.owned_components(id)?);
+                }
+                CheckedType::Array { element, length } if length.value() != Some(0) => {
+                    pending.push(self.element_type(element)?);
+                }
+                CheckedType::Window {
+                    element, capacity, ..
+                } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
+                    pending.push(self.element_type(element)?);
+                }
+                CheckedType::Buffer { element } => pending.push(self.element_type(element)?),
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
     /// [PROV-6] the linearity class of a value of this type in the scope now
     /// being checked.
     ///
@@ -219,24 +221,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// under that bound and the bound is what the body was written for.
     pub(in crate::semantic) fn linearity_class(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
     ) -> Result<LinearityClass, CheckStop> {
         if let CheckedType::Generic(declaration) = ty {
-            return self.generic_parameter_class(declaration);
+            return self.generic_parameter_class(check_context, declaration);
         }
-        if self.is_copy_type(ty)? {
+        if self.is_copy_type(check_context, ty)? {
             return Ok(LinearityClass::Copy);
         }
-        Ok(if self.linear_release_obligation(ty)?.is_some() {
-            LinearityClass::Linear
-        } else {
-            LinearityClass::Affine
-        })
+        Ok(
+            if self.linear_release_obligation(check_context, ty)?.is_some() {
+                LinearityClass::Linear
+            } else {
+                LinearityClass::Affine
+            },
+        )
     }
-
     /// [PROV-6] The linear node, if any, in this type's release graph.
     pub(super) fn linear_release_obligation(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
     ) -> Result<Option<String>, CheckStop> {
         // The marked nominal is named as the source writes its type, with an
@@ -249,25 +254,26 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // not on a nominal node, so inspect each graph node explicitly.
         for node in self.release_graph_nodes(ty)? {
             if let CheckedType::Generic(declaration) = node
-                && self.generic_parameter_class(declaration)? == LinearityClass::Linear
+                && self.generic_parameter_class(check_context, declaration)?
+                    == LinearityClass::Linear
             {
                 return Ok(Some(format!(
                     "the absent bound of {}, which grants its body no drop capability",
-                    self.declaration_spelling(declaration)?
+                    self.declarations.declaration_spelling(declaration)?
                 )));
             }
         }
         Ok(None)
     }
-
     /// Validates that the complete graph admits a compiler-derived release.
     pub(in crate::semantic::check) fn validate_scope_release(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         name: &str,
         node: NodeId,
     ) -> Result<(), CheckStop> {
-        let linear = self.linear_release_obligation(ty)?;
+        let linear = self.linear_release_obligation(check_context, ty)?;
         self.release_graph_nodes(ty)?;
         if linear.is_none() {
             return Ok(());
@@ -281,16 +287,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // reaching a scope exit is refused here whatever its length. Under
         // [STOR-8]'s one trusted heap, this graph carries no writer-visible
         // provider effect.
-        self.reject_linear_value_not_consumed(ty, name, node)?;
+        self.reject_linear_value_not_consumed(check_context, ty, name, node)?;
         Ok(())
     }
-
     /// [PROV-6] a value linear in this scope may not reach a scope exit by a
     /// compiler-derived release: in this scope no derived release exists to
     /// carry it. The two routes that remain are the whole move and the whole
     /// destructuring.
     pub(in crate::semantic) fn reject_linear_value_not_consumed(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         name: &str,
         node: NodeId,
@@ -300,10 +306,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // with no bound it must consume the value exactly once and may never
         // drop it. The obligation names the absent bound rather than a
         // nominal, because at the symbolic instance no nominal carries it.
-        let Some(marked) = self.linear_release_obligation(ty)? else {
+        let Some(marked) = self.linear_release_obligation(check_context, ty)? else {
             return Ok(());
         };
-        self.issue_node::<()>(
+        self.declarations.issue_node::<()>(
             SemanticRule::Prov6,
             node,
             SemanticIssueKind::LinearValueNotConsumed {
@@ -315,21 +321,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         )?;
         Ok(())
     }
-
     /// [PROV-6, WIN-3] a field consume kills its whole owner. Only the
     /// unselected residual needs drop; linearity of the moved field does
     /// not make an otherwise droppable residual an error.
     pub(in crate::semantic) fn reject_partial_consume(
         &self,
+        check_context: &CheckContext<'_>,
         root: CheckedType,
         selected: &[u32],
         node: NodeId,
     ) -> Result<(), CheckStop> {
-        for (_, residual) in self.residual_drop_paths(root, selected)? {
-            let Some(obligation) = self.linear_release_obligation(residual)? else {
+        for (_, residual) in self.residual_drop_paths(check_context, root, selected)? {
+            let Some(obligation) = self.linear_release_obligation(check_context, residual)? else {
                 continue;
             };
-            self.issue_node::<()>(
+            self.declarations.issue_node::<()>(
                 SemanticRule::Prov6,
                 node,
                 SemanticIssueKind::LinearValuePartiallyConsumed {
@@ -341,7 +347,124 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         Ok(())
     }
+    /// [PROV-6, FN-2] the class a type parameter's bound grants its body.
+    ///
+    /// A `gparam` writes a `capability_bound`, a numeric marker TYPEID —
+    /// `Int` or `Float`, each of which implies copy [OP-1, OWN-1] — or no
+    /// bound at all, which grants no capability and is the linear class. The
+    /// reader is over the parameter's own declaration and never over a use of
+    /// it.
+    pub(in crate::semantic) fn generic_parameter_class(
+        &self,
+        check_context: &CheckContext<'_>,
+        declaration: crate::DeclarationId,
+    ) -> Result<LinearityClass, CheckStop> {
+        let record = self
+            .declarations
+            .resolved
+            .declarations()
+            .iter()
+            .find(|candidate| candidate.id() == declaration)
+            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+        let node = self
+            .declarations
+            .tree
+            .node_with_path(record.origin().node())
+            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+        if self.declarations.tree.production(node)? == Production::Type {
+            // A group binder's application is the `pack_use` holding its
+            // `targs`, or the `type_path` of a qualified group written
+            // beside them.
+            let mut application = node;
+            loop {
+                match self.declarations.tree.production(application)? {
+                    Production::PackUse => break,
+                    Production::Gparam | Production::BindingDecl => {
+                        application = self
+                            .declarations
+                            .tree
+                            .group_application(application)?
+                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+                        break;
+                    }
+                    _ => {
+                        application = self
+                            .declarations
+                            .tree
+                            .parent(application)?
+                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+                    }
+                }
+            }
+            for parameter in self.expand_formal_parameters(check_context, application)? {
+                if let super::generics::GenericParameter::Type {
+                    declaration: candidate,
+                    bound,
+                } = parameter
+                    && candidate == declaration
+                {
+                    return Ok(match bound {
+                        super::generics::GenericBound::Class(class) => class,
+                        super::generics::GenericBound::Int
+                        | super::generics::GenericBound::Float => LinearityClass::Copy,
+                    });
+                }
+            }
+            return Err(crate::SemanticCompilerFailure::InvalidResolution.into());
+        }
+        if let Some(class) = self.declarations.written_linearity_bound(node)? {
+            return Ok(class);
+        }
+        // A `gparam` with no `capability_bound` child writes a numeric marker
+        // after its colon, or nothing: the colon tells the two apart.
+        Ok(
+            if self
+                .declarations
+                .tree
+                .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Colon))?
+                .is_some()
+            {
+                LinearityClass::Copy
+            } else {
+                LinearityClass::Linear
+            },
+        )
+    }
+    /// [PROV-6] an instantiation whose argument's class does not satisfy the
+    /// written bound is refused at the call, naming the parameter, the bound
+    /// and the argument.
+    ///
+    /// The bound is a capability filter, so it is a ceiling and not an
+    /// equality: no bound accepts every class, `drop` accepts copy and
+    /// affine, and `copy` accepts copy alone.
+    pub(in crate::semantic) fn check_linearity_bound(
+        &self,
+        check_context: &CheckContext<'_>,
+        parameter: &str,
+        bound: LinearityClass,
+        argument: CheckedType,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
+        let actual = self.linearity_class(check_context, argument)?;
+        if actual.satisfies(bound) {
+            return Ok(());
+        }
+        let argument = self.checked_type_name(argument)?;
+        self.declarations.issue_node::<()>(
+            SemanticRule::Prov6,
+            node,
+            SemanticIssueKind::LinearityBoundMismatch {
+                parameter: parameter.to_owned(),
+                bound: bound.bound_spelling(),
+                argument,
+                actual: actual.spelling(),
+            },
+        )?;
+        Ok(())
+    }
+}
 
+impl<'unit> DeclarationInventory<'unit> {
     /// Whether a `struct_decl` or `enum_decl` node writes `nodrop`, the
     /// modifier that removes the drop capability and copy with it [OWN-1].
     pub(in crate::semantic) fn declaration_is_linear(
@@ -353,7 +476,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Nodrop))?
             .is_some())
     }
-
     /// Whether a `struct_decl` or `enum_decl` node writes `nocopy`, the
     /// modifier that removes the copy capability alone [OWN-1, GRAM-2].
     pub(in crate::semantic) fn declaration_is_nocopy(
@@ -365,7 +487,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Nocopy))?
             .is_some())
     }
-
     /// [PROV-6, GRAM-2] the class a `gparam`'s written capability bound
     /// grants, when it writes one: `copy` grants both capabilities and `drop`
     /// grants drop alone, which are the copy and affine classes read at the
@@ -393,115 +514,5 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
         }
         Err(crate::SemanticCompilerFailure::InvalidCanonicalTree.into())
-    }
-
-    /// [PROV-6, FN-2] the class a type parameter's bound grants its body.
-    ///
-    /// A `gparam` writes a `capability_bound`, a numeric marker TYPEID —
-    /// `Int` or `Float`, each of which implies copy [OP-1, OWN-1] — or no
-    /// bound at all, which grants no capability and is the linear class. The
-    /// reader is over the parameter's own declaration and never over a use of
-    /// it.
-    pub(in crate::semantic) fn generic_parameter_class(
-        &self,
-        declaration: crate::DeclarationId,
-    ) -> Result<LinearityClass, CheckStop> {
-        let record = self
-            .resolved
-            .declarations()
-            .iter()
-            .find(|candidate| candidate.id() == declaration)
-            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
-        let node = self
-            .tree
-            .node_with_path(record.origin().node())
-            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
-        if self.tree.production(node)? == Production::Type {
-            // A group binder's application is the `pack_use` holding its
-            // `targs`, or the `type_path` of a qualified group written
-            // beside them.
-            let mut application = node;
-            loop {
-                match self.tree.production(application)? {
-                    Production::PackUse => break,
-                    Production::Gparam | Production::BindingDecl => {
-                        application = self
-                            .tree
-                            .group_application(application)?
-                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
-                        break;
-                    }
-                    _ => {
-                        application = self
-                            .tree
-                            .parent(application)?
-                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
-                    }
-                }
-            }
-            for parameter in self.expand_formal_parameters(application)? {
-                if let super::generics::GenericParameter::Type {
-                    declaration: candidate,
-                    bound,
-                } = parameter
-                    && candidate == declaration
-                {
-                    return Ok(match bound {
-                        super::generics::GenericBound::Class(class) => class,
-                        super::generics::GenericBound::Int
-                        | super::generics::GenericBound::Float => LinearityClass::Copy,
-                    });
-                }
-            }
-            return Err(crate::SemanticCompilerFailure::InvalidResolution.into());
-        }
-        if let Some(class) = self.written_linearity_bound(node)? {
-            return Ok(class);
-        }
-        // A `gparam` with no `capability_bound` child writes a numeric marker
-        // after its colon, or nothing: the colon tells the two apart.
-        Ok(
-            if self
-                .tree
-                .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Colon))?
-                .is_some()
-            {
-                LinearityClass::Copy
-            } else {
-                LinearityClass::Linear
-            },
-        )
-    }
-
-    /// [PROV-6] an instantiation whose argument's class does not satisfy the
-    /// written bound is refused at the call, naming the parameter, the bound
-    /// and the argument.
-    ///
-    /// The bound is a capability filter, so it is a ceiling and not an
-    /// equality: no bound accepts every class, `drop` accepts copy and
-    /// affine, and `copy` accepts copy alone.
-    pub(in crate::semantic) fn check_linearity_bound(
-        &self,
-        parameter: &str,
-        bound: LinearityClass,
-        argument: CheckedType,
-        node: NodeId,
-    ) -> Result<(), CheckStop> {
-        let actual = self.linearity_class(argument)?;
-        if actual.satisfies(bound) {
-            return Ok(());
-        }
-        let argument = self.checked_type_name(argument)?;
-        self.issue_node::<()>(
-            SemanticRule::Prov6,
-            node,
-            SemanticIssueKind::LinearityBoundMismatch {
-                parameter: parameter.to_owned(),
-                bound: bound.bound_spelling(),
-                argument,
-                actual: actual.spelling(),
-            },
-        )?;
-        Ok(())
     }
 }

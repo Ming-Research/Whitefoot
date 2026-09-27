@@ -19,20 +19,34 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.value_type(value) != Some(*referent) {
             return Err(BackendFailure::InvalidIr);
         }
-        let referent_type = llvm_type(self.program, *referent)?;
+        let referent_type = self.output.type_name(self.program, *referent)?;
         let nonnull = self.next_temporary()?;
         let oom = format!("box.new.oom.v{}", result.ordinal());
         // The shared label helper keeps this block split visible to
         // `block_exit_label`, so a phi in a successor names the right
         // predecessor.
         let ready = box_new_ready_label(result);
-        writeln!(
-            self.output,
-            "  {} = call ptr @malloc(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n{oom}:\n  call void @wf_resource_abort()\n  unreachable\n{ready}:",
-            self.value_name(result),
-            self.value_name(result),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = self.value_name(result);
+            let emission_argument_1 = self.value_name(result);
+
+            {
+                self.output.symbol("malloc");
+                write!(
+                    self.output,
+                    "  {emission_argument_0} = call ptr @malloc(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                )
+            }?;
+            self.output.open_block(oom.to_string());
+            {
+                self.output.symbol("wf_resource_abort");
+                write!(
+                    self.output,
+                    "  call void @wf_resource_abort()\n  unreachable\n"
+                )
+            }?;
+            self.output.open_block(ready.to_string());
+        };
         let destination = self.value_name(result);
         self.store_value_at(value, &destination)
     }
@@ -55,20 +69,26 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let release = *release;
-        writeln!(
-            self.output,
-            "  {} = load {}, ptr {}",
-            self.value_name(result),
-            llvm_type(self.program, ty)?,
-            self.value_name(value)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        if release == crate::IrReleaseClass::General {
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  call void @free(ptr {})",
+                "  {} = load {}, ptr {}",
+                self.value_name(result),
+                emitted_type_1,
                 self.value_name(value)
             )
+        }
+        .map_err(|_| BackendFailure::TextEmission)?;
+        if release == crate::IrReleaseClass::General {
+            {
+                self.output.symbol("free");
+                writeln!(
+                    self.output,
+                    "  call void @free(ptr {})",
+                    self.value_name(value)
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(())
@@ -87,13 +107,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != *referent || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
-        writeln!(
-            self.output,
-            "  {} = load {}, ptr {}",
-            self.value_name(result),
-            llvm_type(self.program, ty)?,
-            self.value_name(value)
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  {} = load {}, ptr {}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(value)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 }

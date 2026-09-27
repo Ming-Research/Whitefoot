@@ -2,7 +2,7 @@ mod format;
 mod render;
 
 use crate::syntax::terminal::TerminalPredicate;
-use crate::{ByteOffset, SourceId};
+use crate::{ByteOffset, ClassifiedBundle, SourceId};
 
 use crate::syntax::parser::{DerivationElement, SyntaxCoordinate};
 
@@ -63,10 +63,10 @@ impl AuditWork {
     }
 }
 
-fn terminal_element<'source>(
-    finalized: &FinalizedBundle<'_, '_, 'source>,
+fn terminal_element(
+    finalized: &FinalizedBundle,
     ordinal: usize,
-) -> Result<(crate::lexer::Token<'source>, TerminalPredicate), Stop> {
+) -> Result<(crate::lexer::Token, TerminalPredicate), Stop> {
     let record = finalized
         .topology
         .terminals
@@ -84,16 +84,17 @@ fn terminal_element<'source>(
     Ok((token, predicate))
 }
 
-fn expected_terminal_bytes<'a, 'source>(
-    token: crate::lexer::Token<'source>,
+/// The bytes a terminal renders as: a fixed terminal's own spelling, and
+/// otherwise the token's source bytes; `None` for a token the bundle does
+/// not hold.
+fn expected_terminal_bytes(
+    classified: &ClassifiedBundle,
+    token: crate::lexer::Token,
     predicate: TerminalPredicate,
-) -> &'a [u8]
-where
-    'source: 'a,
-{
+) -> Option<&[u8]> {
     match predicate {
-        TerminalPredicate::Fixed(fixed) => fixed.spelling_bytes(),
-        _ => token.span().bytes(),
+        TerminalPredicate::Fixed(fixed) => Some(fixed.spelling_bytes()),
+        _ => classified.token_bytes(token),
     }
 }
 
@@ -246,7 +247,7 @@ fn mismatch_issue(
 }
 
 fn preflight_sources(
-    finalized: &FinalizedBundle<'_, '_, '_>,
+    finalized: &FinalizedBundle,
     limits: CanonicalLimits,
     work: &mut AuditWork,
 ) -> Result<(), Stop> {
@@ -278,13 +279,13 @@ fn preflight_sources(
 }
 
 fn audit(
-    finalized: &FinalizedBundle<'_, '_, '_>,
+    finalized: &FinalizedBundle,
     limits: CanonicalLimits,
     work: &mut AuditWork,
 ) -> Result<Option<CanonicalIssue>, Stop> {
     preflight_sources(finalized, limits, work)?;
     let gaps = build_gap_styles(&finalized.topology, limits, work)?;
-    let classified = finalized.parsed.classified;
+    let classified = &finalized.parsed.classified;
     for (source, file) in classified.source_bundle().iter() {
         work.spend(1)?;
         let source_index = usize::try_from(source.ordinal())
@@ -375,8 +376,11 @@ fn audit(
             {
                 return Err(CanonicalCompilerFailure::TerminalBindingDisagreement.into());
             }
-            let actual_terminal = token.span().bytes();
-            let expected_terminal = expected_terminal_bytes(token, predicate);
+            let actual_terminal = classified
+                .token_bytes(token)
+                .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+            let expected_terminal = expected_terminal_bytes(classified, token, predicate)
+                .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
             expected_source_len = expected_source_len
                 .checked_add(
                     u64::try_from(expected_terminal.len())
@@ -470,10 +474,7 @@ fn audit(
 
 /// Audits exact per-source FORM-2 bytes from the finalized derivation tree.
 #[must_use]
-pub fn audit_canonical<'classified, 'lexed, 'source>(
-    finalized: FinalizedBundle<'classified, 'lexed, 'source>,
-    limits: CanonicalLimits,
-) -> CanonicalOutcome<'classified, 'lexed, 'source> {
+pub fn audit_canonical(finalized: FinalizedBundle, limits: CanonicalLimits) -> CanonicalOutcome {
     let mut work = AuditWork::new(limits.max_work);
     match audit(&finalized, limits, &mut work) {
         Ok(None) => CanonicalOutcome::Complete(CanonicalSyntaxUnit { finalized }),

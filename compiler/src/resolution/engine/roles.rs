@@ -15,7 +15,7 @@ use super::{
 };
 
 pub(super) fn classify_roles(
-    syntax: &CanonicalSyntaxUnit<'_, '_, '_>,
+    syntax: &CanonicalSyntaxUnit,
     scopes: &ScopeBuild,
 ) -> Result<Vec<ClassifiedRole>, ResolutionCompilerFailure> {
     let topology = &syntax.finalized.topology;
@@ -161,7 +161,7 @@ fn direct_terminals_by_owner(
 #[allow(clippy::too_many_arguments)]
 fn classify_node(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct_table: &[Vec<usize>],
     production: Production,
     owner: NodeId,
@@ -966,7 +966,7 @@ fn child_with(
 
 /// One name terminal's spelling and source coordinate.
 fn path_segment(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     terminal: usize,
 ) -> Result<PathSegment, ResolutionCompilerFailure> {
     let token = classified
@@ -974,8 +974,11 @@ fn path_segment(
         .get(terminal)
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
         .token();
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
     Ok(PathSegment {
-        spelling: std::str::from_utf8(token.span().bytes())
+        spelling: std::str::from_utf8(bytes)
             .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?
             .to_owned(),
         coordinate: token_coordinate(classified, terminal)?,
@@ -983,7 +986,7 @@ fn path_segment(
 }
 
 fn token_coordinate(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     terminal: usize,
 ) -> Result<SyntaxCoordinate, ResolutionCompilerFailure> {
     let id = classified
@@ -1000,7 +1003,7 @@ fn token_coordinate(
 /// qualifier, and its alias root and module segments are path selectors of
 /// that same carrier. Returns the final TYPEID's coordinate.
 fn add_path_use(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct_table: &[Vec<usize>],
     carrier: NodeId,
     path: NodeId,
@@ -1058,7 +1061,7 @@ fn add_path_use(
 /// construct use of `carrier` resolved among the variants of the owner whose
 /// TYPEID sits at `owner`.
 fn add_member(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     carrier: NodeId,
     member: usize,
     owner: SyntaxCoordinate,
@@ -1093,7 +1096,7 @@ fn add_member(
 /// type-owned variant construction [TYPE-6].
 fn classify_callee(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct_table: &[Vec<usize>],
     callee: NodeId,
     roles: &mut Vec<RawRole>,
@@ -1342,7 +1345,7 @@ fn ancestor_with_production(
 }
 
 fn name_predicate(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     terminal: usize,
 ) -> Option<TerminalPredicate> {
     let set = classified.tokens().get(terminal)?.terminals();
@@ -1358,7 +1361,7 @@ fn name_predicate(
 
 /// Whether one node writes this exact fixed terminal directly.
 fn has_fixed_terminal(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct: &[usize],
     terminal: FixedTerminal,
 ) -> bool {
@@ -1372,7 +1375,7 @@ fn has_fixed_terminal(
 }
 
 fn add_single(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminals: &[usize],
     kind: RawRoleKind,
@@ -1386,7 +1389,7 @@ fn add_single(
 }
 
 fn add_all(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminals: &[usize],
     kind: RawRoleKind,
@@ -1414,7 +1417,7 @@ fn add_all(
 /// context-free [GRAM-5].
 #[allow(clippy::too_many_arguments)]
 fn classify_projection_names(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     names: &[usize],
     subscript: bool,
@@ -1426,30 +1429,23 @@ fn classify_projection_names(
     if subscript {
         return add_single(classified, owner, names, index_kind, roles, counts);
     }
-    match names {
-        [field] if name_predicate(classified, *field) == Some(TerminalPredicate::Identifier) => {
-            add_complete(classified, owner, *field, field_kind, roles, counts)
-        }
-        [variant, field]
-            if name_predicate(classified, *variant) == Some(TerminalPredicate::TypeIdentifier)
-                && name_predicate(classified, *field) == Some(TerminalPredicate::Identifier) =>
-        {
-            add_complete(
-                classified,
-                owner,
-                *variant,
-                RawRoleKind::DeferredUse(DeferredUseRole::PayloadVariant),
-                roles,
-                counts,
-            )?;
-            add_complete(classified, owner, *field, field_kind, roles, counts)
-        }
-        _ => Err(ResolutionCompilerFailure::InvalidRoleShape),
+    let member = crate::syntax::views::MemberForm::read(classified, names)
+        .map_err(|_| ResolutionCompilerFailure::InvalidRoleShape)?;
+    if let Some(variant) = member.variant {
+        add_complete(
+            classified,
+            owner,
+            variant,
+            RawRoleKind::DeferredUse(DeferredUseRole::PayloadVariant),
+            roles,
+            counts,
+        )?;
     }
+    add_complete(classified, owner, member.field, field_kind, roles, counts)
 }
 
 fn add_complete(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminal: usize,
     kind: RawRoleKind,
@@ -1462,7 +1458,10 @@ fn add_complete(
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
         .token();
     let id = token.id();
-    let spelling = std::str::from_utf8(token.span().bytes())
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    let spelling = std::str::from_utf8(bytes)
         .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?
         .to_owned();
     let count = counts
@@ -1488,7 +1487,7 @@ fn add_complete(
 }
 
 fn add_generic_suffix(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminal: usize,
     roles: &mut Vec<RawRole>,
@@ -1504,7 +1503,9 @@ fn add_generic_suffix(
         return Ok(());
     }
     let token = classified_token.token();
-    let bytes = token.span().bytes();
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
     if bytes.len() < 3 || !matches!(&bytes[..2], b"0_" | b"1_") {
         return Ok(());
     }

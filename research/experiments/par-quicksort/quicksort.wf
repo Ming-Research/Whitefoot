@@ -69,14 +69,14 @@ fn sorted(v: &[u64]) -> ok: Bool reads(v) {
   return True();
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let data = box_array_filled::<u64>(count: 2000000_u64, value: 0_u64);
   let all = &data.inner[0_u64..2000000_u64];
   fill(v: all);
   quicksort(v: all);
   let ok = sorted(v: all);
   if ok {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }

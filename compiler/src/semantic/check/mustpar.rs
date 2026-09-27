@@ -12,7 +12,10 @@ use super::super::loop_permission::LoopVerdict;
 use super::super::model::{CheckedFunction, CheckedMustpar};
 use super::super::permission::{FunctionPermissions, PermissionVerdict};
 use super::super::permission_ledger::{denied_detail, loop_denied_detail};
-use super::{CheckStop, Checker, FunctionSignature, PermissionLedgerSource};
+use super::{
+    CheckContext, CheckStop, Checker, DeclarationInventory, FunctionSignature,
+    PermissionLedgerSource,
+};
 
 /// Where a marked call stands, read from its parents.
 enum CallPosition {
@@ -24,7 +27,7 @@ enum CallPosition {
     Other,
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl DeclarationInventory<'_> {
     pub(super) fn is_mustpar_marked(&self, node: NodeId) -> Result<bool, CheckStop> {
         Ok(self
             .tree
@@ -65,19 +68,24 @@ impl Checker<'_, '_, '_, '_> {
             },
         )
     }
+}
+
+impl Checker<'_, '_> {
 
     /// Reject a marked call written where no form of [PAR-4] admits one:
     /// outside a statement's own call, including a contract clause and a
     /// constant, which the body check never reaches.
-    pub(super) fn check_mustpar_positions(&self) -> Result<(), CheckStop> {
+    pub(super) fn check_mustpar_positions(&mut self) -> Result<(), CheckStop> {
         for call in self
+            .types
+            .declarations
             .tree
-            .descendants_with(self.tree.root(), Production::Call)?
+            .descendants_with(self.types.declarations.tree.root(), Production::Call)?
         {
-            if self.is_mustpar_marked(call)?
-                && matches!(self.call_position(call)?, CallPosition::Other)
+            if self.types.declarations.is_mustpar_marked(call)?
+                && matches!(self.types.declarations.call_position(call)?, CallPosition::Other)
             {
-                return self.invalid_mustpar(
+                return self.types.declarations.invalid_mustpar(
                     call,
                     "mustpar marks the call of an expression statement or of an ordinary let right-hand side",
                 );
@@ -91,12 +99,13 @@ impl Checker<'_, '_, '_, '_> {
     /// and returns a droppable result, so the started context shares no
     /// storage with the context that starts it.
     pub(super) fn check_waiting_mustpar(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        let CallPosition::ExpressionStatement(statement) = self.call_position(node)? else {
-            return self.invalid_mustpar(
+        let CallPosition::ExpressionStatement(statement) = self.types.declarations.call_position(node)? else {
+            return self.types.declarations.invalid_mustpar(
                 node,
                 "a mustpar call whose callee waits is the call of an expression statement",
             );
@@ -106,7 +115,7 @@ impl Checker<'_, '_, '_, '_> {
             .iter()
             .find(|parameter| parameter.mode.is_reference())
         {
-            return self.invalid_mustpar(
+            return self.types.declarations.invalid_mustpar(
                 node,
                 &format!(
                     "every parameter of a waiting callee started by mustpar is a value parameter, and `{}` is a reference parameter",
@@ -115,16 +124,17 @@ impl Checker<'_, '_, '_, '_> {
             );
         }
         if self
-            .linear_release_obligation(signature.result)?
+            .types
+            .linear_release_obligation(check_context, signature.result)?
             .is_some()
         {
-            return self.invalid_mustpar(
+            return self.types.declarations.invalid_mustpar(
                 node,
                 "the result of a waiting callee started by mustpar has the drop capability",
             );
         }
-        let path = self.tree.path(statement)?.clone();
-        self.waiting.borrow_mut().context_starts.push(path);
+        let path = self.types.declarations.tree.path(statement)?.clone();
+        self.body.waiting.context_starts.push(path);
         Ok(())
     }
 
@@ -133,13 +143,13 @@ impl Checker<'_, '_, '_, '_> {
     /// whose callee does not wait. A waiting callee's marker was judged when
     /// its call was checked.
     pub(super) fn collect_mustpar_markers(
-        &self,
+        &mut self,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
         let mut independent = Vec::new();
-        for node in self.tree.descendants_with(signature.node, Production::ForStmt)? {
-            if self.is_mustpar_marked(node)? {
-                let path = self.tree.path(node)?.clone();
+        for node in self.types.declarations.tree.descendants_with(signature.node, Production::ForStmt)? {
+            if self.types.declarations.is_mustpar_marked(node)? {
+                let path = self.types.declarations.tree.path(node)?.clone();
                 independent.push(CheckedMustpar {
                     statement: path.clone(),
                     marker: path,
@@ -147,32 +157,32 @@ impl Checker<'_, '_, '_, '_> {
                 });
             }
         }
-        for call in self.tree.descendants_with(signature.node, Production::Call)? {
-            if !self.is_mustpar_marked(call)? {
+        for call in self.types.declarations.tree.descendants_with(signature.node, Production::Call)? {
+            if !self.types.declarations.is_mustpar_marked(call)? {
                 continue;
             }
-            let marker = self.tree.path(call)?.clone();
-            if self.waiting.borrow().calls.contains(&marker) {
+            let marker = self.types.declarations.tree.path(call)?.clone();
+            if self.body.waiting.calls.contains(&marker) {
                 continue;
             }
-            let statement = match self.call_position(call)? {
+            let statement = match self.types.declarations.call_position(call)? {
                 CallPosition::ExpressionStatement(statement)
                 | CallPosition::LetRightHandSide(statement) => statement,
                 CallPosition::Other => {
-                    return self.invalid_mustpar(
+                    return self.types.declarations.invalid_mustpar(
                         call,
                         "mustpar marks the call of an expression statement or of an ordinary let right-hand side",
                     );
                 }
             };
             independent.push(CheckedMustpar {
-                statement: self.tree.path(statement)?.clone(),
+                statement: self.types.declarations.tree.path(statement)?.clone(),
                 marker,
                 counted_loop: false,
             });
         }
         independent.sort_by(|left, right| left.marker.components().cmp(right.marker.components()));
-        self.waiting.borrow_mut().independent = independent;
+        self.body.waiting.independent = independent;
         Ok(())
     }
 
@@ -180,11 +190,11 @@ impl Checker<'_, '_, '_, '_> {
     /// first marker in source order whose statement the judgment does not
     /// permit is refused, carrying the denial the ledger would print.
     pub(super) fn validate_mustpar(
-        &self,
+        &mut self,
         functions: &[CheckedFunction],
         permissions: &[FunctionPermissions],
     ) -> Result<(), CheckStop> {
-        let source = PermissionLedgerSource { tree: &self.tree };
+        let source = PermissionLedgerSource { tree: &self.types.declarations.tree };
         let mut refused: Vec<(NodePath, String)> = Vec::new();
         for (function, table) in functions.iter().zip(permissions) {
             for marked in &function.waiting.independent {
@@ -228,12 +238,14 @@ impl Checker<'_, '_, '_, '_> {
             return Ok(());
         };
         let node = self
+            .types
+            .declarations
             .tree
             .node_with_path(&marker)
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         Err(CheckStop::source_issue(SemanticIssue {
             rule: SemanticRule::Par4,
-            location: SemanticLocation::SourceNode(marker, self.tree.coordinate(node)?),
+            location: SemanticLocation::SourceNode(marker, self.types.declarations.tree.coordinate(node)?),
             kind: SemanticIssueKind::InvalidMustpar { condition },
             request: None,
         }))

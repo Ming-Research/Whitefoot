@@ -1,12 +1,11 @@
+use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, Signature};
 use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::target::TargetLayout;
 use crate::{IrReleaseClass, IrVariant, IrWindowShape};
 
-use super::{
-    BackendFailure, IrNominalKind, IrProgram, IrType, llvm_type, nominal_symbol, variant_field_base,
-};
+use super::{BackendFailure, IrNominalKind, IrProgram, IrType, variant_field_base};
 
 /// One release action per node type of the release graph [PROV-6].
 ///
@@ -22,8 +21,8 @@ use super::{
 pub(super) fn emit_resource_drop_helpers(
     program: &IrProgram,
     target: TargetLayout,
-) -> Result<String, BackendFailure> {
-    let mut output = String::new();
+) -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
     for ty in program_types(program)? {
         let IrType::Nominal(id) = ty else {
             continue;
@@ -36,20 +35,24 @@ pub(super) fn emit_resource_drop_helpers(
             continue;
         }
 
-        let aggregate_ty = llvm_type(program, ty)?;
+        let mut output = FunctionBody::default();
+        let aggregate_ty = output.type_name(program, ty)?;
         let symbol = drop_helper_symbol(nominal);
-        writeln!(
-            output,
-            "define private void @{symbol}({aggregate_ty} %value) {{"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut signature = Signature::new(
+            symbol,
+            "void",
+            vec![Parameter::named(aggregate_ty.clone(), "%value")],
+        );
+        signature.linkage = Linkage::Private;
+        signature.references = output.references.clone();
         emit_enum_cleanup_body(program, &mut output, variants, ty, &aggregate_ty)?;
-        output.push_str("}\n\n");
+        module.define(signature.define(output, "")?);
+        module.text("\n");
     }
     for ty in cleanup_run_types(program)? {
-        emit_run_drop_helper(program, target, &mut output, ty)?;
+        emit_run_drop_helper(program, target, &mut module, ty)?;
     }
-    Ok(output)
+    Ok(module)
 }
 
 /// [PROV-6, WIN-1] one run's release: its window is visited, in ascending
@@ -65,10 +68,11 @@ pub(super) fn emit_resource_drop_helpers(
 fn emit_run_drop_helper(
     program: &IrProgram,
     target: TargetLayout,
-    output: &mut String,
+    module: &mut Module,
     ty: IrType,
 ) -> Result<(), BackendFailure> {
-    let run_llvm = llvm_type(program, ty)?;
+    let mut output = FunctionBody::default();
+    let run_llvm = output.type_name(program, ty)?;
     let symbol = run_drop_helper_symbol(program, ty)?;
     // A runtime-capacity block is reached only through the `Box` that owns
     // it [TYPE-9], so its helper takes the block pointer; every other run is
@@ -81,11 +85,15 @@ fn emit_run_drop_helper(
     } else {
         run_llvm.clone()
     };
-    writeln!(
-        output,
-        "define private void @{symbol}({parameter} %value) {{\nentry:"
-    )
-    .map_err(|_| BackendFailure::TextEmission)?;
+    let mut signature = Signature::new(symbol, "void", vec![Parameter::named(parameter, "%value")]);
+    signature.linkage = Linkage::Private;
+    if !matches!(
+        ty,
+        IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+    ) {
+        signature.references = output.references.clone();
+    }
+    output.open_block("entry".to_owned());
     let element = match ty {
         IrType::Buffer { element } => {
             writeln!(
@@ -155,7 +163,7 @@ fn emit_run_drop_helper(
         _ => return Err(BackendFailure::InvalidIr),
     };
     let element_ty = program.element(element).ok_or(BackendFailure::InvalidIr)?;
-    let element_llvm = llvm_type(program, element_ty)?;
+    let element_llvm = output.type_name(program, element_ty)?;
     let address_index = if crate::target::element_has_zero_stride(target, program, element_ty)
         .map_err(BackendFailure::TargetLayout)?
     {
@@ -163,20 +171,26 @@ fn emit_run_drop_helper(
     } else {
         "%physical"
     };
-    writeln!(
-        output,
-        "  br label %walk\nwalk:\n  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\nbody:\n  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n  %element = load {element_llvm}, ptr %element.pointer"
-    )
-    .map_err(|_| BackendFailure::TextEmission)?;
+    {
+        writeln!(output, "  br label %walk").map_err(|_| BackendFailure::TextEmission)?;
+        output.open_block("walk".to_string());
+        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
+        output.open_block("body".to_string());
+        write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n  %element = load {element_llvm}, ptr %element.pointer\n").map_err(|_| BackendFailure::TextEmission)?;
+    };
     let mut temporary = 0_u32;
     emit_value_cleanup(
         program,
-        output,
+        &mut output,
         &mut temporary,
         element_ty,
         "%element".to_owned(),
     )?;
-    output.push_str("  %next = add i64 %index, 1\n  br label %walk\ndone:\n  ret void\n}\n\n");
+    output.push_str("  %next = add i64 %index, 1\n  br label %walk\n");
+    output.open_block("done".to_owned());
+    output.push_str("  ret void\n");
+    module.define(signature.define(output, "")?);
+    module.text("\n");
     Ok(())
 }
 
@@ -386,7 +400,7 @@ enum CleanupJob {
 
 pub(super) fn emit_value_cleanup(
     program: &IrProgram,
-    output: &mut String,
+    output: &mut FunctionBody,
     temporary: &mut u32,
     ty: IrType,
     operand: String,
@@ -401,15 +415,19 @@ pub(super) fn emit_value_cleanup(
 
 fn emit_cleanup_jobs(
     program: &IrProgram,
-    output: &mut String,
+    output: &mut FunctionBody,
     temporary: &mut u32,
     mut jobs: Vec<CleanupJob>,
 ) -> Result<(), BackendFailure> {
     while let Some(job) = jobs.pop() {
         match job {
             CleanupJob::FreePointer(pointer) => {
-                writeln!(output, "  call void @free(ptr {pointer})")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                output.symbol("free");
+                {
+                    output.symbol("free");
+                    writeln!(output, "  call void @free(ptr {pointer})")
+                }
+                .map_err(|_| BackendFailure::TextEmission)?;
             }
             CleanupJob::Field {
                 aggregate_ty,
@@ -418,11 +436,14 @@ fn emit_cleanup_jobs(
                 field_ty,
             } => {
                 let value = next_temporary(temporary)?;
-                writeln!(
-                    output,
-                    "  %{value} = extractvalue {} {aggregate}, {index}",
-                    llvm_type(program, aggregate_ty)?
-                )
+                {
+                    let emitted_type_0 = output.type_name(program, aggregate_ty)?;
+                    writeln!(
+                        output,
+                        "  %{value} = extractvalue {} {aggregate}, {index}",
+                        emitted_type_0
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 jobs.push(CleanupJob::Value {
                     ty: field_ty,
@@ -459,12 +480,19 @@ fn emit_cleanup_jobs(
                             // itself this is the recursive edge, and the
                             // depth is the value's own.
                             if type_requires_cleanup(program, ty)? {
-                                writeln!(
-                                    output,
-                                    "  call void @{}({} {operand})",
-                                    drop_helper_symbol(nominal),
-                                    nominal_symbol(nominal)
-                                )
+                                output.symbol(drop_helper_symbol(nominal));
+                                {
+                                    let emitted_type_1 = output.type_name(program, ty)?;
+                                    {
+                                        output.symbol(drop_helper_symbol(nominal));
+                                        writeln!(
+                                            output,
+                                            "  call void @{}({} {operand})",
+                                            drop_helper_symbol(nominal),
+                                            emitted_type_1
+                                        )
+                                    }
+                                }
                                 .map_err(|_| BackendFailure::TextEmission)?;
                             }
                         }
@@ -497,10 +525,14 @@ fn emit_cleanup_jobs(
                                         if type_requires_cleanup(program, element)? {
                                             let symbol = run_drop_helper(program, *referent)?
                                                 .ok_or(BackendFailure::InvalidIr)?;
-                                            writeln!(
-                                                output,
-                                                "  call void @{symbol}(ptr {operand})"
-                                            )
+                                            output.symbol(&symbol);
+                                            {
+                                                output.symbol(symbol.to_string());
+                                                writeln!(
+                                                    output,
+                                                    "  call void @{symbol}(ptr {operand})"
+                                                )
+                                            }
                                             .map_err(|_| BackendFailure::TextEmission)?;
                                         }
                                     }
@@ -509,11 +541,14 @@ fn emit_cleanup_jobs(
                                 continue;
                             }
                             let loaded = next_temporary(temporary)?;
-                            writeln!(
-                                output,
-                                "  %{loaded} = load {}, ptr {operand}",
-                                llvm_type(program, *referent)?
-                            )
+                            {
+                                let emitted_type_0 = output.type_name(program, *referent)?;
+                                writeln!(
+                                    output,
+                                    "  %{loaded} = load {}, ptr {operand}",
+                                    emitted_type_0
+                                )
+                            }
                             .map_err(|_| BackendFailure::TextEmission)?;
                             if *release == IrReleaseClass::General {
                                 jobs.push(CleanupJob::FreePointer(operand));
@@ -540,9 +575,13 @@ fn emit_cleanup_jobs(
                     if type_requires_cleanup(program, element)? {
                         let symbol =
                             run_drop_helper(program, ty)?.ok_or(BackendFailure::InvalidIr)?;
-                        let run_llvm = llvm_type(program, ty)?;
-                        writeln!(output, "  call void @{symbol}({run_llvm} {operand})")
-                            .map_err(|_| BackendFailure::TextEmission)?;
+                        let run_llvm = output.type_name(program, ty)?;
+                        output.symbol(&symbol);
+                        {
+                            output.symbol(symbol.to_string());
+                            writeln!(output, "  call void @{symbol}({run_llvm} {operand})")
+                        }
+                        .map_err(|_| BackendFailure::TextEmission)?;
                     }
                 }
                 IrType::Unit
@@ -570,16 +609,16 @@ fn next_temporary(counter: &mut u32) -> Result<String, BackendFailure> {
 /// cleanup, from the entry label through the closing `ret`.
 fn emit_enum_cleanup_body(
     program: &IrProgram,
-    output: &mut String,
+    output: &mut FunctionBody,
     variants: &[IrVariant],
     ty: IrType,
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
-    writeln!(
-        output,
-        "entry:\n  %tag = extractvalue {aggregate_ty} %value, 0"
-    )
-    .map_err(|_| BackendFailure::TextEmission)?;
+    {
+        output.open_block("entry".to_string());
+        writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
+            .map_err(|_| BackendFailure::TextEmission)?;
+    };
     writeln!(output, "  switch i32 %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
     for variant in variants {
@@ -595,7 +634,7 @@ fn emit_enum_cleanup_body(
 
     let mut temporary = 0_u32;
     for variant in variants {
-        writeln!(output, "variant.{}:", variant.tag()).map_err(|_| BackendFailure::TextEmission)?;
+        output.open_block(format!("variant.{}", variant.tag()));
         let base = variant_field_base(variants, variant.tag())?;
         let mut jobs = Vec::new();
         for (field, declaration) in variant.fields().iter().enumerate().rev() {
@@ -614,6 +653,10 @@ fn emit_enum_cleanup_body(
         output.push_str("  br label %done\n");
     }
 
-    output.push_str("invalid:\n  call void @abort()\n  unreachable\ndone:\n  ret void\n");
+    output.symbol("abort");
+    output.open_block("invalid".to_owned());
+    output.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    output.open_block("done".to_owned());
+    output.push_str("  ret void\n");
     Ok(())
 }

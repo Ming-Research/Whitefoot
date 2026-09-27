@@ -20,8 +20,8 @@ impl IrBuilder<'_> {
         error_drops: &[CheckedDrop],
         context: &PropagationContext,
     ) -> Result<(), LoweringFailure> {
-        let result_nominal = self.erased(result_nominal);
-        let return_nominal = self.erased(return_nominal);
+        let result_nominal = self.erased(result_nominal)?;
+        let return_nominal = self.erased(return_nominal)?;
         if self.result != IrType::Nominal(return_nominal)
             || context.function.is_empty()
             || context.node_path.components().is_empty()

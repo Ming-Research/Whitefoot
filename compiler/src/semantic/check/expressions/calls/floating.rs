@@ -1,3 +1,4 @@
+use crate::semantic::check::FunctionContext;
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
@@ -6,9 +7,7 @@ use crate::{DeclarationId, SemanticCompilerFailure, SemanticIssueKind, SemanticR
 use super::super::super::super::model::{
     CheckedExpression, CheckedFloatOperation, CheckedMode, CheckedType,
 };
-use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
-};
+use super::super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 
 pub(super) fn is_float_operation(spelling: &str) -> bool {
     float_operation(spelling).is_some()
@@ -44,23 +43,30 @@ fn float_operation(spelling: &str) -> Option<CheckedFloatOperation> {
     })
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_float_operation(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         spelling: &str,
-        function: &FunctionSignature,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         let operation =
             float_operation(spelling).ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        self.reject_named_operation_arguments(node, spelling)?;
+        self.types
+            .declarations
+            .reject_named_operation_arguments(node, spelling)?;
         let operand_count = operation.operand_count();
         if operand_count > 0 {
-            self.reject_written_operation_type_argument(node)?;
+            self.types
+                .declarations
+                .reject_written_operation_type_argument(node)?;
         }
-        let atoms = self.operation_atoms(node, operand_count)?;
+        let atoms = self
+            .types
+            .declarations
+            .operation_atoms(node, operand_count)?;
         let mut arguments = Vec::with_capacity(atoms.len());
         let mut effects = EffectSet::NONE;
         // [OP-2] the selected type is the first operand's exact type. `finf`
@@ -68,15 +74,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // written result type and they are the one float row that reads it.
         let mut selected = None;
         for atom in atoms {
-            let argument = self.check_atom(function, atom, bindings, loop_depth)?;
+            let argument = self.check_atom(context, atom, bindings, loop_depth)?;
             let operand_type = *selected.get_or_insert(argument.expression.ty());
             if argument.mode != CheckedMode::Own || argument.expression.ty() != operand_type {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type5,
                     atom,
                     SemanticIssueKind::type_mismatch(
-                        format!("own {}", self.checked_type_name(operand_type)?),
-                        self.checked_value_name(argument.mode, argument.expression.ty())?,
+                        format!("own {}", self.types.checked_type_name(operand_type)?),
+                        self.types
+                            .checked_value_name(argument.mode, argument.expression.ty())?,
                     ),
                 );
             }
@@ -85,17 +92,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         let operand_type = match selected {
             Some(operand_type) => operand_type,
-            None => self.retained_operation_type_argument(node, function)?,
+            None => self.retained_operation_type_argument(context, node)?,
         };
         if !matches!(
             operand_type,
             CheckedType::Float(_) | CheckedType::GenericFloat(_)
         ) {
-            return self.issue_node(SemanticRule::Op1, node, SemanticIssueKind::InvalidOperation);
+            return self.types.declarations.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::InvalidOperation,
+            );
         }
         Ok(TypedExpression::owned(
             CheckedExpression::FloatOperation {
-                carrier: self.tree.path(node)?.clone(),
+                carrier: self.types.declarations.tree.path(node)?.clone(),
                 operation,
                 operand_type,
                 arguments,

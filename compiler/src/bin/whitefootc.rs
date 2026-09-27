@@ -374,7 +374,7 @@ fn run_module_program(
     graph_path: &Path,
     cache: Option<&BuildCache>,
     report: &mut BuildReport,
-) -> Result<Option<String>, Stop> {
+) -> Result<Option<whitefoot::LlvmModule>, Stop> {
     let (graph, sources) = read_module_program(graph_path)?;
     let inputs = module_inputs(&sources);
     let limits = CompilerLimits::default();
@@ -725,7 +725,7 @@ fn json_string(text: &str) -> String {
 /// Writes or links one emitted module as the options select.
 fn finish(
     options: &Options,
-    module: &str,
+    module: &whitefoot::LlvmModule,
     cache: Option<&BuildCache>,
     report: &mut BuildReport,
 ) -> Result<(), Stop> {
@@ -745,11 +745,18 @@ fn finish(
         return Ok(());
     }
     require_runner(module)?;
+    let splitting = std::time::Instant::now();
+    let fragments = options
+        .fragments
+        .map(|granularity| split_module(module, granularity))
+        .transpose()
+        .map_err(|failure| Stop::toolchain(failure.to_string()))?;
+    report.split = splitting.elapsed();
     compile_executable(
         module,
         options.output.as_deref().unwrap_or(Path::new("a.out")),
         cache,
-        options.fragments,
+        fragments.as_deref(),
         options.full_lto,
         report,
     )
@@ -874,7 +881,7 @@ fn compile_executable(
     llvm: &str,
     output: &Path,
     cache: Option<&BuildCache>,
-    fragments: Option<FragmentGranularity>,
+    fragments: Option<&[String]>,
     full_lto: bool,
     report: &mut BuildReport,
 ) -> Result<(), String> {
@@ -968,7 +975,7 @@ fn link_cached_objects(
     compiled: &[&str],
     llvm: &str,
     output: &Path,
-    fragments: Option<FragmentGranularity>,
+    fragments: Option<&[String]>,
     report: &mut BuildReport,
 ) -> Result<(), String> {
     let host = host_compiler_identity()?;
@@ -1016,15 +1023,8 @@ fn link_cached_objects(
         report.count_object(reused);
         objects.push(object);
     }
-    let splitting = std::time::Instant::now();
-    let parts = match fragments {
-        Some(granularity) => {
-            split_module(llvm, granularity).map_err(|failure| failure.to_string())?
-        }
-        None => vec![llvm.to_owned()],
-    };
+    let parts = fragments.map_or_else(|| vec![llvm.to_owned()], <[String]>::to_vec);
     report.fragments = parts.len();
-    report.split = splitting.elapsed();
     for (index, text) in parts.iter().enumerate() {
         // Relative names keep the staging directory, which differs per
         // invocation, out of the compiler's inputs.
@@ -1277,8 +1277,8 @@ struct Options {
     emit_llvm: bool,
     /// Actualize the permission judgment's eligible groups on worker lanes.
     ///
-    /// Compute outlining is off by default; compiler-owned completion I/O
-    /// remains enabled independently. The compute path is free when requested
+    /// Outlining is off by default: the default build emits every call, I/O
+    /// included, as an ordinary call. The compute path is free when requested
     /// and no pool is asked for.
     ///
     /// Outlining a call is not free — it passes its arguments through a memory
@@ -1308,7 +1308,7 @@ struct Options {
     /// not a cost of the second copy, and it moves in both directions.
     ///
     /// Compute permission is never an obligation: without `--par`, compute
-    /// outlining stays off while completion keeps its own lowering. On every
+    /// outlining stays off and every call keeps the ordinary lowering. On every
     /// maintained native target, `WF_WORKERS=0` or `1` selects the sequential
     /// compute world, and invalid settings fail before the program body.
     /// Partial worker startup keeps the available workers; complete startup
@@ -1326,14 +1326,14 @@ struct Options {
     recursive_frontier: Option<RecursionBudget>,
     /// Emit the module a compiler with no overlap lowering at all emits.
     ///
-    /// This is the sequential reference build, and it exists for one reason:
-    /// measurement. The default compilation actualizes compiler-owned
-    /// completion I/O, so without this switch there is no way to compile one
-    /// source into the program that reaches the host through ordinary direct
-    /// calls and compare the two. Every I/O call becomes an ordinary call:
-    /// nothing is submitted, nothing is joined, and the completion runtime
-    /// does not join the link. It is not a performance option a writer picks
-    /// for a shipped program — the default build is what ships — and it
+    /// This is the sequential reference build that measurements name. The
+    /// default compilation selects the same lowering, so the two emit the same
+    /// module: every call, I/O included, is an ordinary call, and each I/O
+    /// call carries out its request through the linked completion runtime and
+    /// returns when it completes. The switch keeps a measurement's reference
+    /// explicit, and it may not be written together with `--par`, which
+    /// selects the opposite lowering. It is not a performance option a writer
+    /// picks for a shipped program — the default build is what ships — and it
     /// changes no acceptance, no claim, and no published value.
     no_overlap: bool,
     /// Print the non-normative permission ledger on stdout.
@@ -2468,13 +2468,14 @@ mod tests {
         for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
             let cache =
                 super::open_cache(&root.join(format!("{granularity:?}"))).expect("open the cache");
-            let build = |llvm: &str| {
+            let build = |llvm: &whitefoot::LlvmModule| {
                 let mut report = super::BuildReport::default();
+                let fragments = super::split_module(llvm, granularity).expect("the model splits");
                 super::compile_executable(
                     llvm,
                     &executable,
                     Some(&cache),
-                    Some(granularity),
+                    Some(&fragments),
                     false,
                     &mut report,
                 )

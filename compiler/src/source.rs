@@ -46,37 +46,19 @@ impl ByteOffset {
     }
 }
 
-/// A validated half-open byte range bound to one exact bundle source.
-///
-/// The borrowed source file is the identity boundary: this handle can expose
-/// only the bytes against which its offsets were validated. Persisted artifact
+/// A validated half-open byte range of one bundle source: the source and
+/// byte offsets that [`SourceBundle::span`] checked against it. The span
+/// holds no borrow of the bundle; its bytes are read through the bundle that
+/// validated it ([`SourceBundle::span_bytes`]). Persisted artifact
 /// coordinates will instead require the enclosing source-binding identity.
-#[derive(Clone, Copy)]
-pub struct SourceSpan<'bundle> {
+#[derive(Clone, Copy, Debug)]
+pub struct SourceSpan {
     source: SourceId,
     start: ByteOffset,
     end: ByteOffset,
-    start_index: usize,
-    end_index: usize,
-    file: &'bundle SourceFile,
 }
 
-/// A span is printed by the name a reader is shown for its source, because a
-/// lexical rejection carries it straight to the writer and the bundle key can
-/// be a positional name for a host path the closed spelling cannot hold.
-impl fmt::Debug for SourceSpan<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SourceSpan")
-            .field("source", &self.source)
-            .field("path", &self.file.display_path())
-            .field("start", &self.start)
-            .field("end", &self.end)
-            .finish()
-    }
-}
-
-impl<'bundle> SourceSpan<'bundle> {
+impl SourceSpan {
     /// Returns the source containing the complete span.
     #[must_use]
     pub const fn source(self) -> SourceId {
@@ -93,18 +75,6 @@ impl<'bundle> SourceSpan<'bundle> {
     #[must_use]
     pub const fn end(self) -> ByteOffset {
         self.end
-    }
-
-    /// Returns the exact source file against which this span was validated.
-    #[must_use]
-    pub const fn file(self) -> &'bundle SourceFile {
-        self.file
-    }
-
-    /// Returns the exact bytes covered by the validated half-open range.
-    #[must_use]
-    pub fn bytes(self) -> &'bundle [u8] {
-        &self.file.bytes()[self.start_index..self.end_index]
     }
 }
 
@@ -367,7 +337,7 @@ impl ModuleId {
 
 /// The part a writer source plays in its module [MOD-2]: the module's one
 /// interface record, `module.wfm`, or one of its implementation records.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SourceRole {
     /// The module's interface, `module.wfm`.
     Interface,
@@ -631,12 +601,41 @@ impl SourceLimits {
 /// File order is caller-supplied source identity, not normative compilation-
 /// unit or declaration order. The current lexer never crosses a file boundary.
 /// Language meaning for multi-file composition remains separately gated.
-#[derive(Debug, Eq, PartialEq)]
+///
+/// A bundle is a shared handle: every syntax stage keeps one, and a clone is
+/// another handle on the same sources, so no stage borrows another's input.
+#[derive(Clone, Eq, PartialEq)]
 pub struct SourceBundle {
+    data: std::sync::Arc<BundleData>,
+}
+
+/// The sources and modules one bundle shares among its handles.
+#[derive(Eq, PartialEq)]
+struct BundleData {
     files: Vec<SourceFile>,
     total_bytes: u64,
     modules: Vec<ModuleRecord>,
     module_program: bool,
+}
+
+impl fmt::Debug for SourceBundle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SourceBundle")
+            .field("files", &self.data.files)
+            .field("total_bytes", &self.data.total_bytes)
+            .field("modules", &self.data.modules)
+            .field("module_program", &self.data.module_program)
+            .finish()
+    }
+}
+
+impl From<BundleData> for SourceBundle {
+    fn from(data: BundleData) -> Self {
+        Self {
+            data: std::sync::Arc::new(data),
+        }
+    }
 }
 
 fn try_reserve_exact<T>(
@@ -680,7 +679,8 @@ fn find_duplicate_paths(
 
 impl SourceBundle {
     pub(crate) fn includes_prelude(&self) -> bool {
-        self.files
+        self.data
+            .files
             .iter()
             .filter(|file| file.prelude.is_some())
             .count()
@@ -707,9 +707,9 @@ impl SourceBundle {
             Some((records, modules)) => {
                 let mut bundle = Self::with_prelude_records(&records, limits)?;
                 bundle.modules = modules;
-                Ok(bundle)
+                Ok(bundle.into())
             }
-            None => Self::with_prelude_records(inputs, limits),
+            None => Self::with_prelude_records(inputs, limits).map(Self::from),
         }
     }
 
@@ -717,7 +717,7 @@ impl SourceBundle {
     fn with_prelude_records(
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
-    ) -> Result<Self, SourceBundleError> {
+    ) -> Result<BundleData, SourceBundleError> {
         if inputs.is_empty() {
             return Err(SourceBundleError::EmptySourceSequence);
         }
@@ -742,14 +742,14 @@ impl SourceBundle {
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
     ) -> Result<Self, SourceBundleError> {
-        Self::from_inputs(inputs, limits, inputs.len())
+        Self::from_inputs(inputs, limits, inputs.len()).map(Self::from)
     }
 
     fn from_inputs(
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
         writer_count: usize,
-    ) -> Result<Self, SourceBundleError> {
+    ) -> Result<BundleData, SourceBundleError> {
         let source_count = inputs.len();
 
         let source_count_u64 =
@@ -883,7 +883,7 @@ impl SourceBundle {
             });
         }
 
-        Ok(Self {
+        Ok(BundleData {
             files,
             total_bytes,
             modules: vec![ModuleRecord::new(Vec::new(), Vec::new())],
@@ -909,51 +909,51 @@ impl SourceBundle {
         let mut bundle = Self::with_prelude_records(inputs, limits)?;
         bundle.modules = modules;
         bundle.module_program = true;
-        Ok(bundle)
+        Ok(bundle.into())
     }
 
     /// Returns every registered module in graph row order; a source bundle
     /// has exactly its synthetic root module [MOD-9].
     #[must_use]
     pub fn modules(&self) -> &[ModuleRecord] {
-        &self.modules
+        &self.data.modules
     }
 
     /// Returns one registered module.
     #[must_use]
     pub fn module(&self, id: ModuleId) -> Option<&ModuleRecord> {
-        self.modules.get(id.index())
+        self.data.modules.get(id.index())
     }
 
     /// Reports whether this bundle is a module program rather than a source
     /// bundle forming one synthetic root module [MOD-9].
     #[must_use]
-    pub const fn is_module_program(&self) -> bool {
-        self.module_program
+    pub fn is_module_program(&self) -> bool {
+        self.data.module_program
     }
 
     /// Returns the number of ordered source files.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.files.len()
+        self.data.files.len()
     }
 
     /// Returns whether the closed input contains no source files.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.data.files.is_empty()
     }
 
     /// Returns the checked sum of all source byte lengths.
     #[must_use]
-    pub const fn total_bytes(&self) -> u64 {
-        self.total_bytes
+    pub fn total_bytes(&self) -> u64 {
+        self.data.total_bytes
     }
 
     /// Returns source files in caller-supplied transport order.
     #[must_use]
     pub fn files(&self) -> &[SourceFile] {
-        &self.files
+        &self.data.files
     }
 
     /// Looks up a source by its bundle-order identity.
@@ -961,13 +961,13 @@ impl SourceBundle {
     pub fn file(&self, source: SourceId) -> Option<&SourceFile> {
         usize::try_from(source.ordinal())
             .ok()
-            .and_then(|index| self.files.get(index))
+            .and_then(|index| self.data.files.get(index))
     }
 
     /// Iterates in transport order with derived source identities.
     pub fn iter(&self) -> impl Iterator<Item = (SourceId, &SourceFile)> {
         (0_u32..)
-            .zip(self.files.iter())
+            .zip(self.data.files.iter())
             .map(|(ordinal, file)| (SourceId::from_ordinal(ordinal), file))
     }
 
@@ -977,7 +977,7 @@ impl SourceBundle {
         source: SourceId,
         start: ByteOffset,
         end: ByteOffset,
-    ) -> Result<SourceSpan<'_>, SpanError> {
+    ) -> Result<SourceSpan, SpanError> {
         let file = self.file(source).ok_or(SpanError::UnknownSource(source))?;
         if start > end {
             return Err(SpanError::Reversed { start, end });
@@ -986,18 +986,17 @@ impl SourceBundle {
         if end.value() > source_len {
             return Err(SpanError::OutOfBounds { end, source_len });
         }
-        let start_index = usize::try_from(start.value())
-            .map_err(|_| SpanError::OutOfBounds { end, source_len })?;
-        let end_index =
-            usize::try_from(end.value()).map_err(|_| SpanError::OutOfBounds { end, source_len })?;
-        Ok(SourceSpan {
-            source,
-            start,
-            end,
-            start_index,
-            end_index,
-            file,
-        })
+        Ok(SourceSpan { source, start, end })
+    }
+
+    /// Returns the bytes a span of this bundle covers; `None` for a span
+    /// whose range this bundle's source does not hold, which only a span
+    /// another bundle validated can name.
+    #[must_use]
+    pub fn span_bytes(&self, span: SourceSpan) -> Option<&[u8]> {
+        let start = usize::try_from(span.start.value()).ok()?;
+        let end = usize::try_from(span.end.value()).ok()?;
+        self.file(span.source)?.bytes().get(start..end)
     }
 }
 

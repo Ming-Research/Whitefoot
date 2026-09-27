@@ -282,14 +282,14 @@ mod tests {
         else {
             panic!("ordinary prelude terminals");
         };
-        let parsed = parse(&classified, limits.parser);
+        let parsed = parse(classified, limits.parser);
         let ParseOutcome::Complete(parsed) = parsed else {
             panic!("ordinary prelude grammar: {parsed:?}");
         };
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
             panic!("ordinary prelude topology");
         };
-        let canonical = audit_canonical(finalized, limits.canonical);
+        let canonical = audit_canonical(*finalized, limits.canonical);
         let CanonicalOutcome::Complete(canonical) = canonical else {
             panic!("ordinary prelude canonical bytes: {canonical:?}");
         };
@@ -297,14 +297,13 @@ mod tests {
         let ResolutionOutcome::Complete(resolved) = resolved else {
             panic!("ordinary prelude resolution: {resolved:?}");
         };
-        let checked = check_semantics(resolved);
+        let checked = check_semantics(&resolved);
         let SemanticOutcome::Complete(checked) = checked else {
             panic!("ordinary declaration and owned transfer: {checked:?}");
         };
         let signatures = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.body.is_none())
             .count();
         // [PRE-1] keeps no host record: the host signatures are the standard
@@ -312,15 +311,14 @@ mod tests {
         // compiler-owned rows — the nine construction functions [OP-13], the
         // nine window operations [OP-10], `swap` [OP-11] and `free_empty`
         // [OP-14] — are every one of them generic, so [FN-2] gives them a
-        // checked function only per concrete instance and this unit, which
+        // ordinary checked function only per concrete instance and this unit, which
         // calls none of them, has no instance of any.
         assert_eq!(signatures, 0);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert!(
                 !checked
                     .data
-                    .functions
-                    .iter()
+                    .executable_functions()
                     .any(|function| function.name == row),
                 "{row} is generic and this unit instantiates it nowhere"
             );
@@ -328,14 +326,12 @@ mod tests {
         assert!(
             !checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .any(|function| function.name == "main")
         );
         let transferred = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "transfer")
             .expect("ordinary source function");
         assert!(transferred.body.is_some());

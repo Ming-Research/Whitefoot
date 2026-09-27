@@ -1994,7 +1994,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// no loan: the helper's declared `writes(factory)` projects onto the caller's
 /// path, and that place is neither iteration-own nor a proved range.
 ///
-/// Since v0.74 the host functions that acquire and close wait [WAIT-1], so
+/// Since v0.76 the host functions that acquire and close wait [WAIT-1], so
 /// the wrapper waits too, and a body holding a waiting call is refused by
 /// that condition before its writes are consulted: a user function that
 /// waits denies the loop exactly as a host function does. The shared-write
@@ -2031,7 +2031,7 @@ fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> resu
 /// The direct PRE-1 declaration's ordinary factory, input and destination
 /// writes prevent loop-iteration overlap under the same condition. v0.58
 /// directory_next returns multiple results, outside PAR-2's direct-let shape;
-/// read_next preserves this test's single-result trigger. Since v0.74
+/// read_next preserves this test's single-result trigger. Since v0.76
 /// read_next waits, and the waiting condition refuses the loop first.
 #[test]
 fn a_direct_read_state_transition_writes_enclosing_storage() {

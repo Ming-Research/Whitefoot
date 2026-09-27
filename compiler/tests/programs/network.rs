@@ -303,7 +303,7 @@ fn the_fanout_loop_has_only_ordinary_counted_permission() {
     // The serve loop's `close_listener` expression statement is judged by its
     // call's row, exactly as a let-bound call is, so the loop is no longer
     // refused for that spelling. It is refused for what it does. Before
-    // v0.74 the reported condition was the `outcome` it carries between
+    // v0.76 the reported condition was the `outcome` it carries between
     // iterations; `serve_one` now waits [WAIT-1], and a body holding a waiting
     // call is refused by that condition first [PAR-2].
     let ledger = program_permission_ledger("tcp_fanout.wf");

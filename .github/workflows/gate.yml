@@ -79,8 +79,9 @@ jobs:
           echo "CARGO_BUILD_JOBS=$processors" >> "$GITHUB_ENV"
           echo "RUST_TEST_THREADS=$processors" >> "$GITHUB_ENV"
 
-      # `spec-archives` reads `main` as a local ref: it compares released
-      # specification archives with the merge base. A CI checkout
+      # `spec-archives` and `readme-translation` read `main` as a local ref:
+      # they compare released specification archives, and the README with its
+      # translation, with the merge base. A CI checkout
       # has the remote-tracking ref only, so name it locally here. On a push to
       # main the checkout already sits on that branch, and git refuses to force
       # a branch the worktree has checked out, so the ref is only created when

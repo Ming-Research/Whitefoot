@@ -340,6 +340,28 @@ and applied (`design/log.md`, 2026-09-25).
    which can stay alongside the dispositions to spare them. Validation:
    identical verdicts, rules and locations on the corpus. Tree: a new
    decision, `design/compiler/acceptance-records.md` (owner-approved).
+   Done on the follow-up branch. The checker forms the records in one walk
+   over each completed function (`semantic/check/obligations.rs`), exhaustive
+   over every statement, expression and place form, once call requirements
+   are installed, rather than at each admission site: the walk sees only the
+   final attempt's body and cannot miss a form without failing to compile,
+   and it is independent of the engine's walk and reachability. The records
+   carry the rule, fixed once; OP-14 comes from the checker's operand-row
+   table, not the callee spelling. The engine answers each record by its
+   site, family and conjunct (`answer_records`), a separation also by its
+   query, and records and judgments sharing one identity pair in the order
+   they were made, so the contract rests on their counts agreeing. The
+   completion review found two separations at one call sharing an identity
+   before the query was part of it: a valid program failed as a contract
+   disagreement, and a unit test now pins it. Acceptance
+   (`semantic/check/acceptance.rs`) reports the first
+   undischarged answered record in the former order, and treats unanswered
+   records alone, or a judgment that answers none, as a compiler failure,
+   since they mean the checker and the engine disagree and are no source
+   rejection. The corpus and the module graphs emit identical LLVM,
+   diagnostics and exit codes. With the engine's place-subscript judgment
+   disabled, 54 programs the unchanged compiler rejects fail closed instead,
+   where the former acceptance, given the same engine, accepted 43 of them.
 
 ### P2. Component boundaries
 
@@ -353,6 +375,25 @@ and applied (`design/log.md`, 2026-09-25).
    verdicts; the 155 entailment tests read only `FunctionEntailment`.
    Supersedes the current `docs/todo.md` plan for `flow.rs`. Tree: a new
    decision, `design/compiler/engine-components.md` (owner-approved).
+   Done on the follow-up branch, in three behavior-preserving steps.
+   - **Sub-contexts.** The 36 fields became `Input`, `Vocabulary` (the ledger
+     and the ordinals numbering its roots included), `Output` and `Frames`.
+   - **Receivers.** Each of the 386 methods then took as its receiver the
+     narrowest part that it and its callees touch: 76 are on `Input`, 58 on
+     `Vocabulary`, 154 on `Reasoning` (inputs with the vocabulary), 22 on
+     `Judging` (with outputs), 36 stay on `Analyzer`, which owns the walk,
+     and 40 became free functions.
+   - **Modules.** The methods moved into the component modules listed above,
+     with `sources`, `results`, `conversions` and `operation_facts` kept. The
+     types and the entry points stay in `flow.rs`, now 2,366 lines; no module
+     exceeds 3,200.
+
+   The corpus and the module graphs emit identical LLVM, diagnostics and
+   exit codes after each step, and the unit tests, the entailment tests'
+   ledgers included, pass. Main changed the flow while the branch was open,
+   and the merge reapplied the three steps to main's flow with the one-shot
+   scripts that made them, which reproduce the original steps byte for byte;
+   the merged compiler was checked the same way against main's.
 2. **Checker components.** A `TypeContext` that can intern during body checks
    (removing `DeferredNominal`'s restarts of whole function walks), a
    read-only `DeclarationInventory` and a per-attempt `BodyChecker` owning its
@@ -361,13 +402,47 @@ and applied (`design/log.md`, 2026-09-25).
    consume judgments. Cost: large. Validation: identical verdicts; no semantic
    test constructs a `Checker`. Tree: none, unless the generic change below
    is taken with it.
+
+   The component stage is implemented on this branch. `DeclarationInventory`
+   owns the read-only syntax and resolution access shared by preflight and
+   body checking. `TypeContext` owns type and callable formation and interns
+   a requested instance at its use, removing `DeferredNominal` and its
+   whole-body retry. `BodyChecker` owns one attempt's scratch; only loop
+   reference summaries and superseded-binding summaries survive the existing
+   finite loop retry. `AnalysisState` owns the cross-function products.
+   `Checker` borrows those components for a judgment; the component methods
+   moved in this stage receive their owner directly. Immutable `CheckContext` and
+   `FunctionContext` values replace the module, template-authority and
+   postcondition scope cells. These are implementation boundaries within the
+   existing checker-facts and generic-validation decisions. That component
+   stage left preflight duplication, generic rollback and the `Stable*`
+   bridge for the subsequent P2.3 inventory migration described below.
+
+   Place formation now shares type-directed member selection for ordinary
+   fields, Box contents, addressed storage and borrowed paths. `ElaboratedPlace`
+   carries the selected type, expression and resolved origins into the read,
+   measure, set and consume judgments; ordinary owned reads and writes no
+   longer probe a field chain and resolve it again to reach Box content.
+   Indexed and borrowed paths use that same member formation and the common
+   offset judgment. Formation remains staged where diagnostic order requires
+   it: an affine indexed read judges its class before its main offset, a write
+   judges readonly members before ordinary member validity, and a complete
+   binding assignment may reinitialize a dead root. These use judgments do not
+   reimplement member lookup. Existing checked expression variants retain the
+   backend's output contract. The field-error probe remains only on the invalid
+   bare-reference assignment path to preserve its diagnostic priority.
+
+   The effect-row coverage and suggested-row judgments now live with effect
+   attribution in `references.rs`, leaving the composition entry point below
+   its previous oversized-source threshold. No language rule changes.
 3. **Generic validation without rollback.** Grow-only interning keyed by
    structure, the executable set chosen by reachability, and validation and
    preflight as views over one inventory. This removes the table rollback,
-   the `Stable*` type mirror and the preflight duplicates and, by reading,
-   the second structural check of every body. Cost: large. Tree: it removes
-   the ground of the refusal in `design/compiler/generic-validation-scope.md`
-   (identities discarded at the checkpoint), so it needs the owner's ruling.
+   the `Stable*` type mirror, preflight identity duplicates and discovery
+   replay. Body and analysis reuse requires equal judgment inputs; the
+   implemented migration conservatively retains separate checks. Cost: large.
+   The owner-approved replacement of the scratch-inventory decision in
+   `design/compiler/generic-validation-scope.md` is implemented below.
 
 ### P3. Identity and ownership
 
@@ -385,16 +460,69 @@ and applied (`design/log.md`, 2026-09-25).
 2. **Stable declaration keys.** Resolution mints a key per declaration and an
    item-relative key per occurrence; receipts, read sets and link names use
    them instead of respelled `Debug` text and item ordinals. Cost: medium.
+   Done on the follow-up branch.
+   - **Keys.** An item's key is the declaration that heads it, by home (the
+     module's package, path and which of its records, or the PRE-1 records),
+     role and spelling; a file-local alias is keyed by the source that binds
+     it. A heading declaration takes its item's key, and every other
+     declaration is placed within its item by the child path from the item's
+     node and its role and subtoken ordinals, so the variants of two enums
+     that share a name stay apart. A node's occurrence key is its item's key
+     and the path below it. A repeated key in a resolved unit is a compiler
+     failure.
+   - **Consumers.** Symbol prefixes, receipts and read sets read the keys.
+     Receipts still render the checked function with `Debug`; what changed
+     is that each program-wide identity in that text is spelled by the key
+     resolution minted, not by a spelling the receipt module assembles from
+     declaration records and item ordinals. A function's interface
+     declaration and its definition are two keys and still one receipt
+     spelling, since a receipt one check records is read by another: once
+     the module verdicts of a four-module program record 25 analyses, its
+     entry build records none, on main and here, and spelling the two apart
+     analyzes one function afresh. A read set follows uses from item key to
+     item key.
 3. **Owned syntax and an owned checked program.** Tokens become a source id
    and a byte range; `CheckedProgram` stops holding the resolved unit and
    `IrProgram` drops `_checked`. Formed interfaces can then be kept between
    checks, which the owner-selected prelude and standard-library work also
    needs. Cost: large (the 228 lifetime-bearing lines). Tree: this is the
    representation step the composition staging deferred on edit-latency
-   grounds alone; see the amendment below.
+   grounds alone; see [Relation to recorded decisions](#relation-to-recorded-decisions).
+   Done on the follow-up branch (`IrProgram` had already dropped `_checked`
+   with P4.4).
+   - **Syntax.** Only four fields borrowed: a span its file, the lexed
+     bundle its source bundle, the classified bundle the lexed bundle and the
+     parsed bundle the classified bundle; every later stage already held its
+     predecessor by value. The source bundle is now a shared handle, a span
+     is its source and byte offsets read through that bundle, the lexed and
+     classified bundles keep a handle on it, and the parsed bundle owns the
+     classified bundle. The classified bundle no longer keeps the lexemes and
+     trivia, which no stage after classification read. The three source
+     lifetimes, on 239 lines in 55 files, are gone, and the driver's syntax
+     step returns the canonical unit instead of lending it to a
+     continuation.
+   - **Checked program.** Checking borrows the resolved unit, and the checked
+     program holds only what checking concluded. The driver keeps the
+     resolved unit beside it and hands it to the consumers that read
+     resolution records: interface rendering, pending declarations, read
+     sets, entry admission and the executable caller.
+
+   Nothing keeps a formed interface between checks yet; module build units
+   are that step. Every step emits identical LLVM, diagnostics and exit
+   codes on the corpus and the module graphs.
 4. **A typed syntax access layer** used by resolution, the checker, the graph
    reader and the driver, with alternatives normalized once. Cost: large,
-   migrated file by file. Tree: a new decision (amendment).
+   migrated file by file. Tree: `design/compiler/typed-syntax-access.md`
+   (owner-approved). Implemented in `compiler/src/syntax/views.rs`: the
+   former semantic grammar helpers now borrow canonical syntax directly;
+   conditionals, member/payload selections, place bases and ranges, module
+   rows and entries, item names and documentation extents have shared views.
+   Resolution and checking share conditional and member alternatives; graph
+   reading and driver fingerprints no longer build their own direct-token
+   indexes. Semantic and graph errors are mapped at their stage boundaries.
+   Generic traversal still selects the judgments a stage owns; it does not
+   decode these alternatives again. The syntax view does not expose raw
+   topology to semantic, graph or driver consumers.
 
 ### P4. Lowering and backend
 
@@ -411,8 +539,9 @@ and applied (`design/log.md`, 2026-09-25).
    become recorded facts, allocas go into the entry block, and fragments are
    cut from the model instead of re-parsed text. Cost: medium to large.
    Validation: byte-identical output, which keeps the backend tests' 547
-   substring checks (`.contains(`) as the regression net. Tree: a new
-   decision (amendment).
+   substring checks (`.contains(`) as the regression net. Tree:
+   `design/compiler/structured-emission.md` (owner-approved and implemented
+   on this branch).
 3. **Remove region specialization** down to the call table, reachability and
    interning. Cost: small. No tree change. Done on this branch: the
    `$release$` symbols proved unreachable, since every function has one
@@ -468,18 +597,183 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 
 1. Now, with no tree change: P1.1, P1.2, P3.1, P4.3, P4.4 and P5.3. These
    restore recorded decisions, remove defects or dead code, and are small or
-   medium.
-2. With amendments ruled: P6, P1.3 and P2.1, then P2.2.
+   medium. Done in [PR #128](https://github.com/mbbill/Whitefoot/pull/128),
+   P1.1 in part; the rest of P1.1 is an acceptance question in
+   `docs/todo.md`.
+2. With amendments ruled: P6, P1.3 and P2.1, then P2.2. P6 is done in
+   [PR #128](https://github.com/mbbill/Whitefoot/pull/128), P1.3 and P2.1 in
+   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2's components and shared
+   place formation are implemented on this branch.
 3. Identity and ownership, P3.2 and P3.3, before the prelude and
    standard-library work, which needs formed interfaces that outlive one
-   check. P3.4 follows as the checker is migrated.
+   check. Done in [PR #146](https://github.com/mbbill/Whitefoot/pull/146);
+   module build units follow them
+   ([Relation to recorded decisions](#relation-to-recorded-decisions)).
+   P3.4 follows as the checker is migrated.
 4. P4.1 and P4.2 when the next parallel-lowering or backend experiment needs
    them, or earlier if parallel work stalls on the current structure.
 5. P5.1 and P5.2 whenever a harness or entry point changes next.
 
+P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
+described in [Approved architectural decisions](#approved-architectural-decisions).
+P2.3's retained inventories, P3.4's shared syntax views and P4.2's
+structured emission follow P2.2's shared place formation on this branch.
+P4.1 still needs an amendment when its experiment is selected.
+`docs/todo.md` tracks every remaining proposal under its topic.
+
 Every restructuring step changes no behavior. It is validated by `make
 check`, identical verdicts and diagnostics on the conformance corpus and
 test programs, and, for lowering and the backend, byte-identical LLVM.
+Each commit of a step is compared with the compiler built from main, both
+built with the `gate` profile:
+
+- Every `.wf` source under `tests/programs`, `tests/conformance/cases` and
+  `tests/codegen` is compiled with `--emit-llvm`, once plain and once with
+  `--par`.
+- Every module graph under `tests` is checked with `--check-modules` when it
+  names no entry, and is otherwise built with `--emit-llvm --entry` for each
+  entry, plain and with `--par`.
+- The LLVM, the standard output and error, and the exit code of each run are
+  compared byte for byte. At `e52b9a6f` this is 1,594 sources and 177 graph
+  runs.
+
+A check forms proof receipts only with `--cache`, which this comparison does
+not pass, so a change to receipts is tested by the driver tests that build
+with a cache.
+
+## Approved architectural decisions
+
+The owner approved P2.3, P3.4 and P4.2 before implementation, including the
+review finding that P4.2's model must retain named type definitions, their
+transitive dependencies and attribute-group uses. Their decisions now live
+under `design/compiler/`; all three are implemented on this branch.
+They change compiler structure, not language rules. P2.2's shared place
+formation precedes these implementations.
+
+### P2.3: one inventory without rollback
+
+The approved revision replaces the first decision of
+`design/compiler/generic-validation-scope.md` and its refusal of reusing
+nongeneric validation analyses. The other decisions remain unchanged. The
+former refusal was justified by discarded function and nominal identities;
+keeping identities invalidates that ground, but does not by itself establish
+that an analysis can be reused.
+
+Use structurally keyed, grow-only type and function inventories within one
+check. Symbolic validation, selector preflight and concrete checking select
+views of this inventory. Symbolic validation still judges every canonical
+generic body and its reachable callees, including declarations never called
+by an executable. Concrete instances written in generic bodies retain their
+ordinary required checks. Executable reachability selects what is lowered,
+not what source declarations are checked. Symbolic and concrete contexts,
+template spelling authority and per-site target obligations remain distinct.
+Reuse a checked body or analysis only when its substitution, checking context
+and consumed callee claims agree; sharing an id alone is insufficient.
+
+This removes `nominal_checkpoint` restoration, the `Stable*` bridge and the
+separate preflight inventory. It permits eliminating duplicate structural
+checks where those inputs agree, without assuming that every current second
+check is redundant. The structural benefit follows from retaining identities;
+the compile-time benefit is unmeasured. Cost and risk are high: the current
+rollback also separates symbolic-only metadata from executable types, and
+the replacement must retain that distinction explicitly.
+
+Keeping rollback is viable but preserves the mirrored representation and
+replay. Reusing every same-id result is refused because equal identity does
+not imply equal symbolic context or available postconditions. Revisit the
+reuse boundary if a concrete consumer needs a context not expressible by the
+proposed views. Validation must compare the corpus and module graphs as in
+Order, cover uncalled generic bodies, schema-written concrete instances,
+symbolic publication and cached/uncached agreement, and demonstrate that
+symbolic-only inventory growth does not reach executable output.
+
+The implementation gives ordered checking membership its own home in
+`compiler/src/semantic/check/inventory.rs`, alongside type formation. This
+serves shared nominal and callable identity across preflight, symbolic and
+ordinary judgments; it is removed if these judgments no longer share an
+inventory. A view retains discovery order as well as membership, because the
+ordinary view's order determines executable type and function order. Lowering
+uses explicit maps from retained identities to that view instead of assuming
+an executable prefix. A failed preflight formation retains its identity but
+must retry incomplete formation in a later judgment. Structural spelling and
+the existing schema-discovery ordering key walk the retained types directly;
+neither builds a mirrored type graph for later reconstruction. Judgment
+products keep their checking context: retaining a header alone does not
+authorize reusing a body's proof or a consumed callee claim. The implementation
+conservatively checks each selected body and its analyses afresh in the
+symbolic and ordinary views; existing cross-invocation proof receipts still
+require their complete canonical input key. Retained symbolic judgments do
+not publish summaries into the ordinary view.
+
+### P3.4: typed syntax access
+
+`design/compiler/typed-syntax-access.md` records the approved views. The
+implementation moves the existing grammar-aware helper layer from
+`semantic/tree.rs` to `syntax/views.rs`, borrowing `CanonicalSyntaxUnit` and
+retaining its nodes, terminal indexes, source extents and owned storage.
+`semantic/tree.rs` only maps the shared view failure into the semantic stage's
+existing compiler failure. Resolution and checking consume one conditional
+block decoder and one member/payload-name form; place suffixes preserve index
+and range alternatives, and place bases preserve explicit dereference. The
+graph reader consumes module-path, row and entry forms. Driver fingerprinting
+consumes item/name and documentation-range views, retaining its own choice of
+which source text contributes to a fingerprint. The old graph and driver
+terminal-owner indexes are removed. No semantic judgment moved into syntax.
+Parser tables still derive from the active specification under
+`compiler/build-inputs`.
+
+The benefit is one grammar interpretation for every migrated form. Cost is
+large across consumers; the risk is losing distinctions or source positions
+that a judgment needs. A second owned AST offers stronger representation
+separation but adds identity mapping and storage with no current consumer.
+The proposal therefore uses views, and can be reconsidered if a consumer
+needs independent syntax lifetime or mutation. Validate each migration with
+identical diagnostics, verdicts and LLVM on Order's corpus and graph probe;
+grammar alternatives and source locations must retain their existing tests.
+
+### P4.2: structured emission
+
+`design/compiler/structured-emission.md` records the approved model. The
+former emitter and `backend/fragments.rs` reconstructed structure from text:
+alloca insertion uses byte offsets, attributes rewrite definition lines,
+phi predecessors rely on a separately maintained exit-label classification,
+and fragment construction parses emitted headers and references. A shared
+emission model records these facts as they are constructed, then renders
+either the whole module or selected fragments.
+
+The model owns headers, blocks and their actual final labels, entry allocas,
+attributes, named type definitions and their transitive dependencies,
+attribute-group uses, definitions and symbol references. Instruction text can remain
+text where no consumer needs its structure; this is not another optimizer.
+The fragment ownership and dependency algorithm, linkage transformations,
+native ABI and target qualification keep their current contracts. Internal
+interfaces may evolve in this private crate. This does not select P4.1's
+parallel IR pass or change the two-worlds graph-transfer decision.
+
+The implementation keeps the printing model in
+`compiler/src/backend/emission.rs`, beside its emitter and fragment consumer;
+it exists to give those consumers one definition and dependency inventory and
+is removed if textual LLVM emission is replaced. Instructions remain text,
+while block starts, actual exits, deferred phi inputs, entry allocations,
+headers, linkage and dependencies are recorded before whole-module rendering.
+The driver carries this model through launcher construction and the existing
+entry-module cache. The compiler-private cache encoding retains these records
+because caching only LLVM would force the fragment path to reconstruct them.
+This extends the existing cache product rather than introducing a stable
+artifact format. The native linker consumes already selected fragment texts.
+Compile-time and memory costs of retaining the printing model are unmeasured;
+the change is selected for ownership and removal of repeated reconstruction.
+
+Cost is medium to large, spanning every helper that opens a block and every
+definition that can be split into a fragment. The benefit is removal of
+independent reconstruction, not a measured runtime improvement. Maintaining
+the present patching with more substring tests is cheaper initially but
+leaves duplicated facts. An LLVM binding is unnecessary for this boundary.
+Revisit the model's granularity if a real target consumer needs structured
+instructions. Require byte-identical whole-module and per-fragment output,
+plain and parallel, alongside Order's checks and the existing native backend
+and incremental fragment tests; fragment comparison is needed in addition
+to whole-module equality.
 
 ## Relation to recorded decisions
 

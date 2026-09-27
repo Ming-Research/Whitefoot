@@ -188,6 +188,7 @@ fn emit_lowered(source: &[u8], overlap: OverlapLowering) -> String {
     let inputs = [SourceInput::new("test.wf", source)];
     crate::compile_with_overlap(&inputs, crate::CompilerLimits::default(), overlap)
         .expect("ordinary compiler and executable builder must emit")
+        .into_string()
 }
 
 /// [`emit`] through the test-only checker entry that forces the
@@ -209,19 +210,20 @@ fn emit_arithmetic_obligations(source: &[u8]) -> String {
     ) else {
         panic!("backend test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("backend test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("backend test source must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("backend test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("backend test source must resolve");
     };
-    let SemanticOutcome::Complete(checked) = check_semantics_arithmetic_obligations(resolved)
+    let SemanticOutcome::Complete(checked) = check_semantics_arithmetic_obligations(&resolved)
     else {
         panic!("backend test source must check under the arithmetic switch");
     };
@@ -238,7 +240,11 @@ fn emit_arithmetic_obligations(source: &[u8]) -> String {
     let mut llvm = emit_llvm(&ir)
         .expect("lowered program must emit")
         .into_string();
-    llvm.push_str(&crate::driver::launcher::render(&ir, "main").expect("ordinary test launcher"));
+    llvm.push_str(
+        &crate::driver::launcher::render(&ir, "main")
+            .expect("ordinary test launcher")
+            .render(),
+    );
     llvm
 }
 
@@ -261,19 +267,20 @@ fn emit_division_obligations(source: &[u8]) -> String {
     ) else {
         panic!("backend test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("backend test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("backend test source must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("backend test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("backend test source must resolve");
     };
-    let SemanticOutcome::Complete(checked) = check_semantics_division_obligations(resolved) else {
+    let SemanticOutcome::Complete(checked) = check_semantics_division_obligations(&resolved) else {
         panic!("backend test source must check under the division switch");
     };
     assert!(
@@ -289,7 +296,11 @@ fn emit_division_obligations(source: &[u8]) -> String {
     let mut llvm = emit_llvm(&ir)
         .expect("lowered program must emit")
         .into_string();
-    llvm.push_str(&crate::driver::launcher::render(&ir, "main").expect("ordinary test launcher"));
+    llvm.push_str(
+        &crate::driver::launcher::render(&ir, "main")
+            .expect("ordinary test launcher")
+            .render(),
+    );
     llvm
 }
 
@@ -317,6 +328,7 @@ fn compile_sources(sources: &[(&str, &[u8])]) -> String {
     crate::native_test_support::timed("whitefoot-compile", || {
         compile_program(&inputs, crate::CompilerLimits::default())
             .expect("normal compiler pipeline must emit")
+            .into_string()
     })
 }
 

@@ -31,8 +31,8 @@ use split::{Synthesis, SynthesisCell};
 use storage::collect_addressed_bindings;
 
 #[cfg(test)]
-pub fn lower_checked<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub fn lower_checked(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
 ) -> Result<IrProgram, LoweringFailure> {
     lower_checked_with_layout(checked, overlap, TargetLayout::host()?)
@@ -41,8 +41,8 @@ pub fn lower_checked<'classified, 'lexed, 'source>(
 /// Select optional target-fitting loop shapes after semantic acceptance, using
 /// the same target that will qualify and emit their transported signatures.
 #[cfg(test)]
-pub(crate) fn lower_checked_with_layout<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub(crate) fn lower_checked_with_layout(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
 ) -> Result<IrProgram, LoweringFailure> {
@@ -53,8 +53,8 @@ pub(crate) fn lower_checked_with_layout<'classified, 'lexed, 'source>(
 /// the same target that will qualify and emit their transported signatures,
 /// emitting only the functions `roots` reach through their calls when roots
 /// are given: a module program entry's build [MOD-9].
-pub(crate) fn lower_checked_from<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub(crate) fn lower_checked_from(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,
@@ -95,14 +95,17 @@ pub(crate) fn lower_checked_from<'classified, 'lexed, 'source>(
         OverlapLowering::Off => OverlapLowering::Off,
         _ => OverlapLowering::On,
     };
-    // Each checked nominal's IR nominal before physical merging: the lowering
-    // alias the checker assigned it.
-    let erasure = checked
-        .data
-        .nominal_lowering_alias
-        .iter()
-        .map(|alias| IrNominalId(alias.0))
-        .collect::<Vec<_>>();
+    // Interpret the ordinary view's order, independently of when another
+    // checking view first interned a nominal identity.
+    let mut erasure = vec![None; checked.data.nominals.len()];
+    let mut families = std::collections::HashMap::new();
+    for (ordinal, source) in checked.data.executable_nominals.iter().enumerate() {
+        let family = checked.data.nominal_lowering_alias[source.0 as usize];
+        let id = *families.entry(family).or_insert(IrNominalId(
+            u32::try_from(ordinal).map_err(|_| LoweringFailure::CounterOverflow)?,
+        ));
+        erasure[source.0 as usize] = Some(id);
+    }
     let (base_elements, base_element_map) = physical_types::base_elements(&checked.data, &erasure)?;
     let base_types = TypeLowering {
         nominals: &erasure,
@@ -116,6 +119,7 @@ pub(crate) fn lower_checked_from<'classified, 'lexed, 'source>(
         base_nominals,
         base_elements,
         base_element_map,
+        erasure,
     );
     let map = types.map()?;
     let nominals = types.nominals;
@@ -342,20 +346,21 @@ fn lower_nominals(
     erasure: TypeLowering<'_>,
     data: &CheckedProgramData,
 ) -> Result<Vec<IrNominal>, LoweringFailure> {
-    let names = link_names(
-        (0..data.executable_nominal_count)
-            .map(|index| data.nominal_spellings.get(index).and_then(Option::as_deref)),
-    );
-    data.nominals
-        .get(..data.executable_nominal_count)
-        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+    let names = link_names(data.executable_nominals.iter().map(|id| {
+        data.nominal_spellings
+            .get(id.0 as usize)
+            .and_then(Option::as_deref)
+    }));
+    data.executable_nominals
         .iter()
         .zip(names)
         .enumerate()
-        .map(|(index, (nominal, link_name))| {
-            if nominal.id.0 as usize != index {
-                return Err(LoweringFailure::InvalidCheckedProgram);
-            }
+        .map(|(index, (source, link_name))| {
+            let nominal = data
+                .nominals
+                .get(source.0 as usize)
+                .filter(|nominal| nominal.id == *source)
+                .ok_or(LoweringFailure::InvalidCheckedProgram)?;
             let kind = match &nominal.kind {
                 CheckedNominalKind::Struct { fields } => IrNominalKind::Struct {
                     fields: fields
@@ -397,7 +402,11 @@ fn lower_nominals(
             Ok(IrNominal {
                 name: nominal.name.clone(),
                 link_name,
-                stable: data.nominal_spellings.get(index).cloned().flatten(),
+                stable: data
+                    .nominal_spellings
+                    .get(source.0 as usize)
+                    .cloned()
+                    .flatten(),
                 id: IrNominalId(
                     u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
                 ),
@@ -741,12 +750,8 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// One nominal's lowered identity: the IR nominal it lowers as.
-    fn erased(&self, id: crate::NominalId) -> IrNominalId {
-        self.erasure
-            .nominals
-            .get(id.0 as usize)
-            .copied()
-            .unwrap_or(IrNominalId(id.0))
+    fn erased(&self, id: crate::NominalId) -> Result<IrNominalId, LoweringFailure> {
+        crate::lowering::erased_nominal(self.erasure, id)
     }
 
     /// This builder's own shared half, for the builders it creates.
@@ -1049,7 +1054,7 @@ impl<'program> IrBuilder<'program> {
                 } => {
                     let aggregate = self.expression(expression)?;
                     self.note_call_result(expression, aggregate)?;
-                    let erased = self.erased(*nominal);
+                    let erased = self.erased(*nominal)?;
                     if self.value_type(aggregate)? != IrType::Nominal(erased) {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     }
@@ -1375,7 +1380,7 @@ impl<'program> IrBuilder<'program> {
         }
         self.terminate(IrTerminator::Match {
             scrutinee,
-            enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type),
+            enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
             targets: arms
                 .iter()
                 .zip(&arm_blocks)
@@ -1396,7 +1401,7 @@ impl<'program> IrBuilder<'program> {
                 let CheckedEnumType::Nominal(nominal) = enum_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
-                let nominal = self.erased(nominal);
+                let nominal = self.erased(nominal)?;
                 let mut releases = Vec::with_capacity(arm.covered.len());
                 for drop in &arm.covered {
                     let [field] = drop.fields.as_slice() else {
@@ -1420,7 +1425,7 @@ impl<'program> IrBuilder<'program> {
                 let CheckedEnumType::Nominal(nominal) = enum_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
-                let nominal = self.erased(nominal);
+                let nominal = self.erased(nominal)?;
                 let binder_ty = lower_type(self.erasure, binder.ty)?;
                 let value = if binder.mode == CheckedMode::Own {
                     self.define(
@@ -1841,7 +1846,7 @@ impl<'program> IrBuilder<'program> {
             ),
             CheckedExpression::BoxDeref { nominal, value, .. } => {
                 let value = self.expression(value)?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 let IrNominalKind::Box { referent, .. } = self
                     .nominals
                     .get(nominal.index())
@@ -1897,7 +1902,7 @@ impl<'program> IrBuilder<'program> {
                         } => {
                             let address = self.project_address_path(root, path)?;
                             let owner = self.load_storage_value(address)?;
-                            let nominal = self.erased(*nominal);
+                            let nominal = self.erased(*nominal)?;
                             let _ = lower_type(self.erasure, *referent)?;
                             self.define(
                                 IrType::Unit,
@@ -1926,7 +1931,7 @@ impl<'program> IrBuilder<'program> {
                     .iter()
                     .map(|field| self.expression(field))
                     .collect::<Result<Vec<_>, _>>()?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 self.define(
                     IrType::Nominal(nominal),
                     IrOperation::ConstructStruct { nominal, fields },
@@ -1942,7 +1947,7 @@ impl<'program> IrBuilder<'program> {
                     .iter()
                     .map(|field| self.expression(field))
                     .collect::<Result<Vec<_>, _>>()?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 self.define(
                     IrType::Nominal(nominal),
                     IrOperation::ConstructEnum {
@@ -1998,7 +2003,7 @@ impl<'program> IrBuilder<'program> {
                 ..
             } => {
                 let aggregate = self.expression(value)?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 self.define(
                     lower_type(self.erasure, *ty)?,
                     IrOperation::ProjectStruct {

@@ -957,7 +957,9 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
             .expect("the reduced capture ABI must emit")
             .into_string();
         module.push_str(
-            &crate::driver::launcher::render(program, "main").expect("ordinary test launcher"),
+            &crate::driver::launcher::render(program, "main")
+                .expect("ordinary test launcher")
+                .render(),
         );
         module
     });

@@ -24,12 +24,35 @@
 use std::fmt::Write;
 
 use super::parallel::{ThunkFrame, thunk_definition};
-use super::{BackendFailure, FunctionEmitter, llvm_type};
+use super::{BackendFailure, FunctionEmitter};
 use crate::backend::abi::FunctionAbi;
+use crate::backend::emission::{Module, Parameter, References, Signature};
 use crate::{IrConstant, IrFunction, IrInstruction, IrOperation, IrType, IrValueId};
 
 /// The bridge's three context entry points.
-pub(crate) const CONTEXT_RUNTIME_DECLARATIONS: &str = "declare ptr @wf__context_prepare(i64)\ndeclare void @wf__context_launch(ptr, ptr, ptr)\ndeclare void @wf__context_join(ptr)\n";
+pub(super) fn context_runtime_declarations() -> Module {
+    let mut module = Module::default();
+    module.declare(Signature::new(
+        "wf__context_prepare",
+        "ptr",
+        vec![Parameter::unnamed("i64")],
+    ));
+    module.declare(Signature::new(
+        "wf__context_launch",
+        "void",
+        vec![
+            Parameter::unnamed("ptr"),
+            Parameter::unnamed("ptr"),
+            Parameter::unnamed("ptr"),
+        ],
+    ));
+    module.declare(Signature::new(
+        "wf__context_join",
+        "void",
+        vec![Parameter::unnamed("ptr")],
+    ));
+    module
+}
 
 /// The group one starting activation keeps, named in its entry prelude.
 const GROUP: &str = "%wf.ctx.group";
@@ -72,17 +95,26 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let mut field_types = Vec::with_capacity(arguments.len() + 1);
+        let mut frame_references = References::default();
         let mut operands = Vec::with_capacity(arguments.len());
         for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
             }
-            let parameter_type = llvm_type(self.program, parameter.ty())?;
+            let parameter_type = super::llvm_type_with_references(
+                self.program,
+                parameter.ty(),
+                &mut frame_references.types,
+            )?;
             let operand = self.value_operand(*argument)?;
             operands.push(format!("{parameter_type} {operand}"));
             field_types.push(parameter_type);
         }
-        let result_type = llvm_type(self.program, abi.result().ty())?;
+        let result_type = super::llvm_type_with_references(
+            self.program,
+            abi.result().ty(),
+            &mut frame_references.types,
+        )?;
         let result_field = field_types.len();
         field_types.push(result_type.clone());
         let frame_type = format!("{{ {} }}", field_types.join(", "));
@@ -92,6 +124,7 @@ impl FunctionEmitter<'_, '_> {
         if budget.is_some() {
             return Err(BackendFailure::InvalidIr);
         }
+        self.output.references.extend(&frame_references);
         let thunk = self.parallel.register_context(self.function.name(), |symbol| {
             thunk_definition(
                 symbol,
@@ -100,12 +133,16 @@ impl FunctionEmitter<'_, '_> {
                     field_types: &field_types,
                     result: result_field,
                     budget: None,
+                    references: &frame_references,
                 },
                 &abi,
                 &callee,
                 &result_type,
             )
         })?;
+        self.output.symbol(thunk.trim_start_matches('@'));
+        self.output.symbol("wf__context_prepare");
+        self.output.symbol("wf__context_launch");
         let end = format!("%{}", self.next_temporary()?);
         let bytes = format!("%{}", self.next_temporary()?);
         let frame = format!("%{}", self.next_temporary()?);
@@ -132,6 +169,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Waits for every context this activation started.
     pub(super) fn emit_context_join(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
+        self.output.symbol("wf__context_join");
         writeln!(self.output, "  call void @wf__context_join(ptr {GROUP})")
             .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)

@@ -1,31 +1,34 @@
+use crate::semantic::check::FunctionContext;
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
 use super::super::super::super::model::{
-    CheckedConversionMode, CheckedExpression, CheckedMode, CheckedType,
+    CheckedConversionMode, CheckedExpression, CheckedMode, CheckedNumericType, CheckedType,
 };
 use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, PreludeType, TypedExpression,
+    CheckStop, Checker, EffectSet, LocalBinding, PreludeType, TypedExpression,
 };
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_conversion(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         mode: CheckedConversionMode,
         spelling: &str,
-        function: &FunctionSignature,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         if self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::FieldinitList)?
             .is_some()
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Gram11,
                 node,
                 SemanticIssueKind::InvalidNamedArguments {
@@ -34,36 +37,55 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 },
             );
         }
-        let [source, destination] = self.numeric_type_arguments(node, function, true)?;
+        let [source, destination] = self.numeric_type_arguments(context, node, true)?;
+        if mode == CheckedConversionMode::Wrap
+            && [source, destination].iter().any(|endpoint| {
+                !matches!(
+                    endpoint,
+                    CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
+                )
+            })
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::InvalidOperation,
+            );
+        }
         let result = match mode {
-            CheckedConversionMode::Exact => destination.ty(),
+            CheckedConversionMode::Exact | CheckedConversionMode::Wrap => destination.ty(),
             CheckedConversionMode::Defined => CheckedType::Bool,
             CheckedConversionMode::Checked => {
-                let error = CheckedType::Nominal(self.prelude_nominal(PreludeType::NarrowError)?);
+                let error =
+                    CheckedType::Nominal(self.types.prelude_nominal(PreludeType::NarrowError)?);
                 CheckedType::Nominal(
-                    self.prelude_nominal(PreludeType::Result(destination.ty(), error))?,
+                    self.types
+                        .prelude_nominal(PreludeType::Result(destination.ty(), error))?,
                 )
             }
         };
         let atom = self
+            .types
+            .declarations
             .operation_atoms(node, 1)?
             .into_iter()
             .next()
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let argument = self.check_atom(function, atom, bindings, loop_depth)?;
+        let argument = self.check_atom(context, atom, bindings, loop_depth)?;
         if argument.expression.ty() != source.ty() || argument.mode != CheckedMode::Own {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type5,
                 atom,
                 SemanticIssueKind::type_mismatch(
-                    format!("own {}", self.checked_type_name(source.ty())?),
-                    self.checked_value_name(argument.mode, argument.expression.ty())?,
+                    format!("own {}", self.types.checked_type_name(source.ty())?),
+                    self.types
+                        .checked_value_name(argument.mode, argument.expression.ty())?,
                 ),
             );
         }
         Ok(TypedExpression::owned(
             CheckedExpression::NumericConversion {
-                carrier: self.tree.path(node)?.clone(),
+                carrier: self.types.declarations.tree.path(node)?.clone(),
                 mode,
                 source,
                 destination,

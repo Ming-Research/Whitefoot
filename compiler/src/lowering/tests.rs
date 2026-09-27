@@ -619,9 +619,7 @@ fn with_ir_mode<ResultValue>(
 
 fn with_checked<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        crate::semantic::CheckedProgram<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(crate::semantic::CheckedProgram) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     let Ok(bundle) = SourceBundle::with_prelude(&inputs, SOURCE_LIMITS) else {
@@ -639,19 +637,20 @@ fn with_checked<ResultValue>(
     ) else {
         panic!("lowering test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("lowering test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("lowering test derivation must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("lowering test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("lowering test source must resolve");
     };
-    let outcome = check_semantics(resolved);
+    let outcome = check_semantics(&resolved);
     let SemanticOutcome::Complete(checked) = outcome else {
         panic!("lowering test source must check: {outcome:?}");
     };
@@ -711,7 +710,7 @@ fn main() -> status: std::process::ExitStatus pure {
     with_checked(source, |checked| {
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("accepted call inventory must close");
-        for function in &checked.data.functions {
+        for function in checked.data.executable_functions() {
             let variants = plan
                 .variants
                 .iter()
@@ -719,7 +718,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .count();
             assert_eq!(
                 variants, 1,
-                "{}: one heap leaves one release environment, and every source \
+                "{}: one heap leaves one release environment, and every ordinary \
                  definition is still emitted",
                 function.name
             );
@@ -733,10 +732,13 @@ fn main() -> status: std::process::ExitStatus pure {
                 "every call names a variant of this inventory"
             );
         }
-        assert!(
+        assert_eq!(
             plan.variants
-                .windows(2)
-                .all(|pair| pair[0].source.0 <= pair[1].source.0)
+                .iter()
+                .map(|variant| variant.source)
+                .collect::<Vec<_>>(),
+            checked.data.executable_functions,
+            "physical order follows ordinary discovery order"
         );
     });
 }

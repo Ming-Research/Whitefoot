@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-2, REF-4: part = &outer[0_u64..2_u64], so set deref(part)[1_u64] = move empty replaces outer[1_u64] whole, a proper prefix of held = &outer[1_u64][0_u64]. The write goes through a range frame and is one step longer than outer[1_u64], but it selects the same storage, so reading held afterwards is refused.";
+  let outer = slots_new::<Slots<u64, 4>, 3>();
+  let a = slots_new::<u64, 4>();
+  let b = slots_new::<u64, 4>();
+  place_back(window: &b, value: 5_u64);
+  place_back(window: &outer, value: move a);
+  place_back(window: &outer, value: move b);
+  if outer.len == 2_u64 {
+    if outer[1_u64].len == 1_u64 {
+      let held = &outer[1_u64][0_u64];
+      let part = &outer[0_u64..2_u64];
+      let empty = slots_new::<u64, 4>();
+      set deref(part)[1_u64] = move empty;
+      let seen = deref(held);
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

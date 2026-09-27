@@ -16,7 +16,7 @@ fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The guard bounds rows[1_u64].len by cells.len. The call's argument forms its range at the call, &rows[1_u64..3_u64], and [EFF-5] substitutes that formation's path, rows extended by its range step, into the row's writes(part). [OWN-7] leaves the range step overlapping the index step of rows[1_u64], so the projected write reaches that element's descriptor storage and [CALL-3] kills the guarded measure fact exactly as it would through a bound range reference. The loop's cells[c] therefore owes c < cells.len with no fact to discharge it, and OP-4 rejects; the callee really does replace rows[1_u64] with an eight-element run.";
+  doc "The guard bounds rows[1_u64].len by cells.len. The call's argument forms its range at the call, &rows[1_u64..3_u64], and [EFF-5] substitutes that formation's path, rows extended by its range step, into the row's writes(part). Element 1 lies inside that range, so [OWN-7] leaves the range step overlapping the index step of rows[1_u64]; the projected write therefore reaches that element's descriptor storage and [CALL-3] kills the guarded measure fact exactly as it would through a bound range reference. The loop's cells[c] therefore owes c < cells.len with no fact to discharge it, and OP-4 rejects; the callee really does replace rows[1_u64] with an eight-element run.";
   let rows = slots_new::<Slots<u64, 8>, 4>();
   let first = slots_new::<u64, 8>();
   let second = slots_new::<u64, 8>();

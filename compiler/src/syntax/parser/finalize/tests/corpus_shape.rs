@@ -84,7 +84,7 @@ fn forbidden_forms(source: &[u8]) -> Option<Forbidden> {
     else {
         return None;
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, limits.parser) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, limits.parser) else {
         return None;
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
@@ -118,7 +118,7 @@ fn forbidden_forms(source: &[u8]) -> Option<Forbidden> {
 ///
 /// `arm := TYPEID "(" fieldbind_list? ")" "=>" "{" stmt* "}"`, so the arm's
 /// first terminal is the constructor name.
-fn bool_arms(finalized: &FinalizedBundle<'_, '_, '_>, node: NodeId) -> usize {
+fn bool_arms(finalized: &FinalizedBundle, node: NodeId) -> usize {
     let Some(children) = finalized.topology.node_children(node) else {
         return 0;
     };
@@ -141,17 +141,14 @@ fn bool_arms(finalized: &FinalizedBundle<'_, '_, '_>, node: NodeId) -> usize {
 }
 
 /// The source bytes of one terminal, addressed by its ordinal.
-fn terminal_bytes<'source>(
-    finalized: &FinalizedBundle<'_, '_, 'source>,
-    ordinal: u64,
-) -> Option<&'source [u8]> {
+fn terminal_bytes(finalized: &FinalizedBundle, ordinal: u64) -> Option<&[u8]> {
     let index = usize::try_from(ordinal).ok()?;
     let record = finalized.topology.terminals.get(index)?;
     let element = finalized.parsed.tree.elements.get(record.element_index)?;
     let DerivationElement::Terminal { token, .. } = *element else {
         return None;
     };
-    Some(token.span().bytes())
+    finalized.classified_bundle().token_bytes(token)
 }
 
 /// Whether this `if_stmt` or `value_if` owns a braced `else` whose whole

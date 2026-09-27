@@ -2000,7 +2000,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// call has no overlap permission [PAR-1, WAIT-1], so the pair below, whose
 /// first member writes through the linked I/O library, is not offered.
 ///
-/// Before v0.74 this pair was offered and the test observed the I/O body
+/// Before v0.76 this pair was offered and the test observed the I/O body
 /// running on a worker thread under a join observer. A worker that waits
 /// strands every join beneath it (`docs/todo.md` recorded that defect), and
 /// the language now excludes it, so what that test observed can no longer be
@@ -2558,5 +2558,6 @@ fn whitefoot_compile_layout(source: &[u8]) -> (String, Vec<String>) {
         crate::CompilerLimits::default(),
         crate::OverlapLowering::On,
     )
+    .map(|(module, ledger)| (module.into_string(), ledger))
     .expect("layout source must compile")
 }

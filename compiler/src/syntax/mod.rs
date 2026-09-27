@@ -13,6 +13,7 @@ mod outcome;
 mod parser;
 /// The active specification's context-free terminal partition.
 pub mod terminal;
+pub(crate) mod views;
 
 pub use classifier::classify_terminals;
 pub use outcome::{

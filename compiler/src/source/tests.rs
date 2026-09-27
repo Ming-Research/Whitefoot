@@ -198,20 +198,27 @@ fn record_limits_precede_path_validation_and_owned_copy() {
     ));
 }
 
+/// A span is validated against its bundle's source and read through a
+/// bundle: equal coordinates read each bundle's own bytes.
 #[test]
-fn spans_are_half_open_and_bound_to_their_exact_source() {
+fn spans_are_half_open_and_read_through_their_bundle() {
     let bundle = make_bundle(&[input("span.wf", b"abcd")]);
     let source = SourceId::from_ordinal(0);
     let middle = bundle
         .span(source, ByteOffset::new(1), ByteOffset::new(3))
         .unwrap();
-    assert_eq!(middle.bytes(), b"bc");
-    assert_eq!(middle.file().logical_path().as_str(), "span.wf");
+    assert_eq!(bundle.span_bytes(middle), Some(&b"bc"[..]));
+    assert_eq!(
+        bundle
+            .file(middle.source())
+            .map(|file| file.logical_path().as_str()),
+        Some("span.wf")
+    );
 
     let eof = bundle
         .span(source, ByteOffset::new(4), ByteOffset::new(4))
         .unwrap();
-    assert_eq!(eof.bytes(), b"");
+    assert_eq!(bundle.span_bytes(eof), Some(&b""[..]));
     assert!(matches!(
         bundle.span(source, ByteOffset::new(3), ByteOffset::new(2)),
         Err(SpanError::Reversed { .. })
@@ -233,8 +240,9 @@ fn spans_are_half_open_and_bound_to_their_exact_source() {
     let other_middle = same_length
         .span(source, ByteOffset::new(1), ByteOffset::new(3))
         .unwrap();
-    assert_eq!(middle.bytes(), b"bc");
-    assert_eq!(other_middle.bytes(), b"XY");
+    assert_eq!(bundle.span_bytes(middle), Some(&b"bc"[..]));
+    assert_eq!(same_length.span_bytes(other_middle), Some(&b"XY"[..]));
+    assert_eq!(same_length.span_bytes(middle), Some(&b"XY"[..]));
 }
 
 #[test]

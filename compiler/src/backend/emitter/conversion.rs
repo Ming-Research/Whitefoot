@@ -13,8 +13,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         value: IrValueId,
     ) -> Result<(), BackendFailure> {
         if self.value_type(value) != Some(source_type)
-            || (mode == IrConversionMode::Exact && result_type != destination_type)
+            || (matches!(mode, IrConversionMode::Exact | IrConversionMode::Wrap)
+                && result_type != destination_type)
             || (mode == IrConversionMode::Defined && result_type != IrType::Bool)
+            || (mode == IrConversionMode::Wrap
+                && !matches!(
+                    (source_type, destination_type),
+                    (IrType::Integer { .. }, IrType::Integer { .. })
+                ))
         {
             return Err(BackendFailure::InvalidIr);
         }
@@ -22,8 +28,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             if !matches!(source_type, IrType::Integer { .. } | IrType::Float { .. }) {
                 return Err(BackendFailure::InvalidIr);
             }
-            if mode == IrConversionMode::Exact {
-                let ty = llvm_type(self.program, source_type)?;
+            if matches!(mode, IrConversionMode::Exact | IrConversionMode::Wrap) {
+                let ty = self.output.type_name(self.program, source_type)?;
                 // `select` is a representation copy. Floating arithmetic here
                 // could quiet a signaling NaN or change a signed zero.
                 return writeln!(
@@ -91,7 +97,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         };
         let total = source_width < destination_width
             && (source_signed == destination_signed || (!source_signed && destination_signed));
-        if mode == IrConversionMode::Exact {
+        if matches!(mode, IrConversionMode::Exact | IrConversionMode::Wrap) {
             return self.emit_integer_cast(
                 &self.value_name(result),
                 value,
@@ -170,9 +176,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         valid: &str,
     ) -> Result<(), BackendFailure> {
         let error_type = self.checked_result_error_type(result_type, destination_type, &[0])?;
-        let result_ty = llvm_type(self.program, result_type)?;
-        let destination_ty = llvm_type(self.program, destination_type)?;
-        let error_ty = llvm_type(self.program, error_type)?;
+        let result_ty = self.output.type_name(self.program, result_type)?;
+        let destination_ty = self.output.type_name(self.program, destination_type)?;
+        let error_ty = self.output.type_name(self.program, error_type)?;
         let ok_tag = self.next_temporary()?;
         let ok_value = self.next_temporary()?;
         let error_tag = self.next_temporary()?;
