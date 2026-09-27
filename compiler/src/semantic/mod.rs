@@ -76,6 +76,8 @@ pub enum SemanticRule {
     Mod5,
     /// A public signature naming an unpublished field [MOD-6].
     Mod6,
+    /// `mustpar`: its position and the condition its form states.
+    Par4,
     /// Exact mode/type agreement.
     Type5,
     /// Constructor/variant owner agreement.
@@ -174,6 +176,8 @@ pub enum SemanticRule {
     Fn9,
     /// Guaranteed direct self-tail call and activation replacement.
     Fn10,
+    /// A waiting call outside the body of a waiting function.
+    Wait1,
     /// Contract vocabulary, the result ordinal, the routes, and where the
     /// relations land.
     Call4,
@@ -255,6 +259,8 @@ impl SemanticRule {
             Self::Fn8 => "FN-8",
             Self::Fn9 => "FN-9",
             Self::Fn10 => "FN-10",
+            Self::Wait1 => "WAIT-1",
+            Self::Par4 => "PAR-4",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
             Self::Eff2 => "EFF-2",
@@ -332,14 +338,16 @@ impl SemanticRule {
             Self::Fn8 => Self::Fn9,
             Self::Fn9 => Self::Call4,
             Self::Call4 => Self::Fn10,
-            Self::Fn10 => Self::Eff1,
+            Self::Fn10 => Self::Wait1,
+            Self::Wait1 => Self::Eff1,
             Self::Eff1 => Self::Eff2,
             Self::Eff2 => Self::Eff5,
             Self::Eff5 => Self::Err2,
             Self::Err2 => Self::Err3,
             Self::Err3 => Self::Mod5,
             Self::Mod5 => Self::Mod6,
-            Self::Mod6 => Self::Ent2,
+            Self::Mod6 => Self::Par4,
+            Self::Par4 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -405,18 +413,20 @@ impl SemanticRule {
             Self::Fn9 => 43,
             Self::Call4 => 44,
             Self::Fn10 => 45,
-            Self::Eff1 => 46,
-            Self::Eff2 => 47,
-            Self::Eff5 => 48,
-            Self::Err2 => 49,
-            Self::Err3 => 50,
-            Self::Mod5 => 51,
-            Self::Mod6 => 52,
-            Self::Ent2 => 53,
-            Self::Msr3 => 54,
-            Self::Call6 => 55,
-            Self::Inv1 => 56,
-            Self::Prf1 => 57,
+            Self::Wait1 => 46,
+            Self::Eff1 => 47,
+            Self::Eff2 => 48,
+            Self::Eff5 => 49,
+            Self::Err2 => 50,
+            Self::Err3 => 51,
+            Self::Mod5 => 52,
+            Self::Mod6 => 53,
+            Self::Par4 => 54,
+            Self::Ent2 => 55,
+            Self::Msr3 => 56,
+            Self::Call6 => 57,
+            Self::Inv1 => 58,
+            Self::Prf1 => 59,
         }
     }
 }
@@ -994,6 +1004,22 @@ pub enum SemanticIssueKind {
     },
     /// A return expression disagrees with the written function result.
     ReturnMismatch,
+    /// A waiting call outside the body of a waiting function [WAIT-1].
+    WaitingCallOutsideWaitingFunction {
+        /// The waiting callee as written.
+        callee: String,
+        /// Where the call stands: a function that does not wait, or a
+        /// contract block.
+        context: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A `mustpar` statement failed its position or its form's condition
+    /// [PAR-4].
+    InvalidMustpar {
+        /// The failed condition, or the denied permission's reason.
+        condition: String,
+    },
     /// A call-site tail-transfer guarantee failed its named condition.
     InvalidMusttail {
         /// The condition the marked call must satisfy.

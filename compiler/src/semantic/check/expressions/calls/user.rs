@@ -105,6 +105,11 @@ struct FormalCallBoundary {
     contract: CheckedCallContract,
 }
 
+/// [WAIT-1, DIAG-1] the repair for a waiting call in a function that does
+/// not wait. Declaring the enclosing function `waits` admits the call; every
+/// caller of that function then meets the same rule, up to a waiting entry.
+pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
+
 impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
     pub(super) fn check_user_call(
         &self,
@@ -172,6 +177,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
+        // [WAIT-1] a waiting call stands only in the body of a waiting
+        // function, so every function that does not wait is wait-free and
+        // compute overlap never contains a wait [PAR-1, PAR-2].
+        if signature.waits && !function.waits {
+            return self.issue_node(
+                SemanticRule::Wait1,
+                node,
+                SemanticIssueKind::WaitingCallOutsideWaitingFunction {
+                    callee: signature.name.clone(),
+                    context: "a function that does not wait",
+                    mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
+                },
+            );
+        }
+        if signature.waits {
+            let call = self.tree.path(node)?.clone();
+            self.waiting.borrow_mut().calls.push(call);
+            if self.is_mustpar_marked(node)? {
+                self.check_waiting_mustpar(node, signature)?;
+            }
+        }
         let target = signature.id;
         let fields = if let Some(list) = self
             .tree

@@ -1459,6 +1459,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 "the formal row covers actual reads with reads or writes and actual writes with writes",
             );
         }
+        // [FN-4, WAIT-1] a waiting actual may stand only where the formal
+        // waits: a body that calls a formal which does not wait may itself
+        // not wait, and the actual's calls would then wait outside a waiting
+        // function. A formal that waits admits an actual that does not.
+        if bound_actual.waits && !formal.waits {
+            return self.behavior_mismatch(
+                SemanticRule::Fn4,
+                node,
+                "a formal that waits, because the supplied function waits",
+            );
+        }
         let contract = self.check_behavior_contracts(node, instance, formal, &bound_actual)?;
         // [FN-5] the immediate call judgment stays wholly in the formal
         // parameter namespace, including its row roots. Keep a second copy of

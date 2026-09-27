@@ -17325,6 +17325,7 @@ mod indexed_goal_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);
@@ -17529,6 +17530,7 @@ mod range_argument_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);

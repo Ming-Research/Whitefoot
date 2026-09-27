@@ -2265,7 +2265,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
@@ -2306,7 +2306,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   let HandleFactory() = move factory;
@@ -2323,7 +2323,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
@@ -2355,7 +2355,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move directory);
   return exit_status(code: 0_u8);
@@ -2854,7 +2854,7 @@ binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }
@@ -2869,14 +2869,14 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: supply a function whose signature, row and contract meet the formal interface, or weaken the formal interface to what the supplied function declares\n",
         ],
         repaired: &[br#"interface Disposer {
-  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory);
+  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits;
 }
 
 binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }

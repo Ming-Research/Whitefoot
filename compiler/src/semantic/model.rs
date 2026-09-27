@@ -2729,10 +2729,46 @@ pub(crate) struct CheckedFunction {
     /// Finite optional [PAR-1] range questions planned from the complete
     /// structural footprints before entailment walks their first statements.
     pub(crate) permission_separation_queries: Vec<super::permission::PermissionSeparationQuery>,
+    /// [WAIT-1, PAR-4] whether this function waits, which of its calls wait,
+    /// and what its `mustpar` markers state.
+    pub(crate) waiting: CheckedWaiting,
     /// Retained [ENT] analysis summary [DIAG-2]. Semantic acceptance and
     /// diagnostics read it; lowering deliberately does not.
     #[allow(dead_code)]
     pub(crate) entailment: super::entailment::FunctionEntailment,
+}
+
+/// [WAIT-1, PAR-4] the waiting facts of one function body, in source order.
+///
+/// Permission reads `calls` to deny overlap to a statement that waits, and
+/// the `mustpar` validation reads `independent` against the finished
+/// permission table. Lowering reads `waits` and `context_starts`; nothing else
+/// here reaches it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CheckedWaiting {
+    /// Whether the declaration writes `waits` [WAIT-1].
+    pub(crate) waits: bool,
+    /// Every call whose selected callee waits, by call node: through a
+    /// function-kind formal, the formal's `waits` decides [WAIT-1].
+    pub(crate) calls: Vec<NodePath>,
+    /// Every construct a `mustpar` marks under PAR-4's first two forms, whose
+    /// statement the permission judgment must permit.
+    pub(crate) independent: Vec<CheckedMustpar>,
+    /// Every `expr_stmt` PAR-4's third form starts in a context of its own.
+    pub(crate) context_starts: Vec<NodePath>,
+}
+
+/// One `mustpar` whose statement is proved by [PAR-1] or [PAR-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedMustpar {
+    /// The marked statement: the `for_stmt`, or the `expr_stmt` or `let_stmt`
+    /// holding the marked call.
+    pub(crate) statement: NodePath,
+    /// The marked node a refusal cites: the `for_stmt` or the `call`.
+    pub(crate) marker: NodePath,
+    /// Whether the marker stands on a `for_stmt` [PAR-2] rather than a call
+    /// [PAR-1].
+    pub(crate) counted_loop: bool,
 }
 
 /// One [OWN-7] separation question the checker could not settle by syntax.

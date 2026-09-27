@@ -54,7 +54,7 @@ const ORACLE: &[u8] = br#"fn opaque_length(n: u64) -> result: u64 pure contract 
   return n;
 }
 
-fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) contract {
+fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = deref(source).len;
   requires length <= source_length;
 } {
@@ -78,7 +78,7 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
   return Ok<unit, std::io::IoError>(value: unit);
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Runs three equivalence byte walks, publishes their recorded positions, then runs one argument-selected boundary walk with a typed exhaustion status.";
   let std::process::Inputs(args: args, cwd: unused_cwd, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in) = move inputs;
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);

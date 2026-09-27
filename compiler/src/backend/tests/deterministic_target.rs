@@ -759,7 +759,7 @@ pub(super) fn run_emitted_on_deterministic_host(
 }
 
 /// An ordinary entry that explicitly closes its initial working directory.
-const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
   return std::process::exit_status(code: 0_u8);
@@ -769,7 +769,7 @@ const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) 
 /// A command that reads its own invocation vector and reaches no host object
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
-    br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+    br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let total = std::text::args_count(args: &args);
@@ -789,7 +789,7 @@ const READS_ITS_ARGUMENTS: &[u8] =
 /// while also binding the initial working directory so exactly one resource
 /// in the program releases with a close.
 const WRITES_THEN_RELEASES_BOTH: &[u8] =
-    br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) {
+    br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) waits {
   let bytes = array_filled::<u8, 3>(value: 65_u8);
   set bytes[1_u64] = 66_u8;
   set bytes[2_u64] = 67_u8;
@@ -812,7 +812,7 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
@@ -828,7 +828,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
 fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
     let arms = class_arms(8, named, default);
     format!(
-        r#"fn exercise(factory: &std::io::HandleFactory, cwd: &std::fs::DirectoryRead) -> status: std::process::ExitStatus reads(cwd), writes(factory) {{
+        r#"fn exercise(factory: &std::io::HandleFactory, cwd: &std::fs::DirectoryRead) -> status: std::process::ExitStatus reads(cwd), writes(factory) waits {{
   let name = array_filled::<u8, 1>(value: 65_u8);
   let component = &name[0_u64..1_u64];
   match std::fs::open_file(factory: factory, root: cwd, name: component, start: 0_u64, end: 1_u64) {{
@@ -843,7 +843,7 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
   }}
 }}
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   let outcome = std::process::exit_status(code: 0_u8);
   set outcome = exercise(factory: &factory, cwd: &cwd);
@@ -1288,7 +1288,7 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // The heap is the one [STOR-8] heap and a `Box` is what puts this module
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
-    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
@@ -1339,7 +1339,7 @@ pub(super) fn assert_zero_write_outcome() {
         "return std::process::exit_status(code: 199_u8);",
     );
     let source = format!(
-        r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+        r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = array_filled::<u8, 2>(value: 119_u8);

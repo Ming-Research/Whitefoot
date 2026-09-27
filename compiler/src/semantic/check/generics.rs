@@ -1179,6 +1179,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             result_list,
             effects_node: effects,
             declared_effects,
+            waits: self
+                .tree
+                .direct_token_with(
+                    template.node,
+                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+                )?
+                .is_some(),
             formal_parameter: None,
             substitution,
         })

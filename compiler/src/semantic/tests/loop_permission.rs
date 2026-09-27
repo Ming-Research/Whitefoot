@@ -1993,9 +1993,15 @@ fn main() -> status: std::process::ExitStatus pure {
 /// v0.59 cited the unique factory loan the helper held to return. v0.60 has
 /// no loan: the helper's declared `writes(factory)` projects onto the caller's
 /// path, and that place is neither iteration-own nor a proved range.
+///
+/// Since v0.74 the host functions that acquire and close wait [WAIT-1], so
+/// the wrapper waits too, and a body holding a waiting call is refused by
+/// that condition before its writes are consulted: a user function that
+/// waits denies the loop exactly as a host function does. The shared-write
+/// condition keeps its own cases above, none of which waits.
 #[test]
 fn an_ordinary_directory_wrapper_writes_enclosing_storage() {
-    let source = br#"fn probe(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: u64 reads(root), writes(factory) {
+    let source = br#"fn probe(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: u64 reads(root), writes(factory) waits {
   match std::fs::open_directory_source(factory: factory, directory: root) {
     Ok(value: listing) => {
       let closed = std::fs::close_directory_source(factory: factory, source: move listing);
@@ -2007,7 +2013,7 @@ fn an_ordinary_directory_wrapper_writes_enclosing_storage() {
   }
 }
 
-fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: unit reads(root), writes(factory) {
+fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: unit reads(root), writes(factory) waits {
   let total = 0_u64;
   for @scan (i in 0_u64..4_u64) {
     let seen = probe(factory: factory, root: root);
@@ -2017,18 +2023,19 @@ fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> resu
 }
 "#;
     assert!(matches!(
-        denied(source, "main", 2),
-        LoopDenial::SharedWrite { .. }
+        denied(source, "main", 5),
+        LoopDenial::WaitingCall { .. }
     ));
 }
 
 /// The direct PRE-1 declaration's ordinary factory, input and destination
 /// writes prevent loop-iteration overlap under the same condition. v0.58
 /// directory_next returns multiple results, outside PAR-2's direct-let shape;
-/// read_next preserves this test's single-result trigger.
+/// read_next preserves this test's single-result trigger. Since v0.74
+/// read_next waits, and the waiting condition refuses the loop first.
 #[test]
 fn a_direct_read_state_transition_writes_enclosing_storage() {
-    let source = br#"fn main(factory: &std::io::HandleFactory, input: &std::io::InputStream, destination: &[u8]) -> result: unit writes(factory), writes(input), writes(destination) contract {
+    let source = br#"fn main(factory: &std::io::HandleFactory, input: &std::io::InputStream, destination: &[u8]) -> result: unit writes(factory), writes(input), writes(destination) waits contract {
   requires 1_u64 <= deref(destination).len;
 } {
   let total = 0_u64;
@@ -2040,8 +2047,8 @@ fn a_direct_read_state_transition_writes_enclosing_storage() {
 }
 "#;
     assert!(matches!(
-        denied(source, "main", 2),
-        LoopDenial::SharedWrite { .. }
+        denied(source, "main", 5),
+        LoopDenial::WaitingCall { .. }
     ));
 }
 

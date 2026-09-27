@@ -14,6 +14,7 @@ mod references;
 mod repairs;
 mod requires;
 mod support;
+mod mustpar;
 mod tail_calls;
 mod type_regions;
 mod types;
@@ -128,6 +129,9 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
+    /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
+    /// whose calls are admitted only in the body of another waiting function.
+    waits: bool,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -592,6 +596,9 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// syntax could not settle, handed to the entailment fragment with the
     /// finished body.
     call_separations: RefCell<Vec<super::model::CheckedCallSeparation>>,
+    /// [WAIT-1, PAR-4] the waiting calls and `mustpar` markers of the function
+    /// being checked, published with its finished body.
+    waiting: RefCell<super::model::CheckedWaiting>,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
     /// the function driver clears this scratch state on every retry.
@@ -1551,6 +1558,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             template_spelling_authority: std::cell::Cell::new(false),
             commit_read_outs: RefCell::new(Vec::new()),
             call_separations: RefCell::new(Vec::new()),
+            waiting: RefCell::new(super::model::CheckedWaiting::default()),
             deferred_loop_reference_uses: RefCell::new(Vec::new()),
             loop_reference_summaries: RefCell::new(HashMap::new()),
             reference_origins: RefCell::new(Vec::new()),
@@ -1585,6 +1593,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
 
     fn check_program(&mut self) -> Result<CheckedProgramData, CheckStop> {
         self.check_musttail_positions()?;
+        self.check_mustpar_positions()?;
         let items = self.item_declarations()?;
         self.collect_behavior_groups(&items)?;
         self.reject_instantiation_cycles(&items)?;
@@ -1755,6 +1764,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
         let permission = analyze_permission(&functions, &permission_signatures);
+        // [PAR-4] a `mustpar` requires the permission the table just judged;
+        // the table itself stays the same whichever markers are written.
+        self.validate_mustpar(&functions, &permission.functions)?;
         // The ledger is rendered here because only the checker still holds the
         // syntax tree the citations name. It is pure presentation over the
         // table above and reaches no decision.
@@ -2265,6 +2277,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let tail_rejections = self.musttail_rejections.borrow().len();
         let outcome = loop {
             self.call_separations.borrow_mut().clear();
+            *self.waiting.borrow_mut() = super::model::CheckedWaiting::default();
             self.contract_queries.borrow_mut().truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
@@ -2429,6 +2442,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if !self.deferred_loop_reference_uses.borrow().is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
+        self.collect_mustpar_markers(signature)?;
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
@@ -2551,6 +2565,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 separations
             },
             permission_separation_queries: Vec::new(),
+            waiting: super::model::CheckedWaiting {
+                waits: signature.waits,
+                ..std::mem::take(&mut *self.waiting.borrow_mut())
+            },
             entailment: super::entailment::FunctionEntailment::default(),
         };
         Ok(CheckedFunctionInventory {

@@ -368,6 +368,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             entailment: FunctionEntailment::default(),
         })
     }
