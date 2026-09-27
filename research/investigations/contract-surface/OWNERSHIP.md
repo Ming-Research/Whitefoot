@@ -534,6 +534,41 @@ The grouped ownership-surface TODO records this dependency and its reopening
 condition. These four live nodes have not been revised for an unapproved
 access spelling.
 
+## Selected postfix caret
+
+The owner selected `^` after comparing C-like access, uniform prefix access,
+and explicit postfix symbols. The intended complete path grammar is:
+
+```text
+place   := pbase psuffix*
+pbase   := IDENT | "entry" "(" IDENT ")"
+psuffix := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "^"
+```
+
+Before measuring the caret grammar, require the full v0.75 grammar to retain
+strong LL(2), and a deliberately overlapping caret suffix to fail at
+`psuffix`. The unchanged generator has no `Caret` predicate. The existing
+driver therefore removes the prefix `deref` production and uses its now
+unused fixed `Deref` predicate for the new suffix. Renaming that disjoint
+predicate to `Caret` preserves prediction sets; this tests the token grammar,
+not a lexer accepting `^` or a parser consuming caret source. The negative
+control adds both a standalone suffix and a suffix followed by a dot and an
+identifier, which compete with ordinary suffix composition. Require GRAM-1
+specifically at `psuffix`, rather than accepting any experiment failure.
+
+Run the existing guarded build command above, then:
+
+```sh
+perl .github/run-check.pl reference-caret-grammar /tmp/whitefoot-reference-access-grammar spec/kernel-spec.md caret
+perl .github/run-check.pl reference-caret-conflict /tmp/whitefoot-reference-access-grammar spec/kernel-spec.md caret-conflict-control
+```
+
+Raw-source feasibility has a separate premise: add `^` to GRAM-1's standalone
+punctuation. No existing word, numeric, operator or compound-punctuation form
+contains that byte, so it needs no context-sensitive splitting or change to
+arithmetic mode tokens. The current scanner rejects `^`; token-grammar
+success must not be reported as implemented syntax.
+
 ## Validation and remaining uncertainty
 
 The original criteria were published in commit `3ece3c54c` before the v0.69

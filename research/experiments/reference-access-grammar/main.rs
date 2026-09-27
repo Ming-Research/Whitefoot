@@ -36,6 +36,16 @@ fn candidate(source: &str, name: &str) -> String {
     }
     let source = replace_once(source, BASE, POSTFIX_BASE);
     match name {
+        // The unchanged generator has no Caret terminal. Once removed from
+        // pbase, Deref is an unused, disjoint fixed predicate: relabel it as
+        // the proposed standalone `^` punctuation for this token-grammar
+        // comparison only. This does not scan or accept caret source bytes.
+        "caret" => replace_once(source, SUFFIX, &format!("{SUFFIX} | \"deref\"")),
+        "caret-conflict-control" => replace_once(
+            source,
+            SUFFIX,
+            &format!("{SUFFIX} | \"deref\" | \"deref\" \".\" IDENT"),
+        ),
         "dot-star" => replace_once(source, SUFFIX, &format!("{SUFFIX} | \".\" \"*\"")),
         "arrow-step" => replace_once(source, SUFFIX, &format!("{SUFFIX} | \"->\"")),
         "arrow-members" => {
@@ -94,6 +104,8 @@ fn main() {
         "arrow-prefix",
         "arrow-total",
         "conflict-control",
+        "caret",
+        "caret-conflict-control",
     ];
     for name in names {
         if selected.as_deref().is_some_and(|selected| selected != name) {
@@ -101,7 +113,7 @@ fn main() {
         }
         let text = candidate(&source, name);
         let result = std::panic::catch_unwind(|| generator::generate(name, &text));
-        if name == "conflict-control" {
+        if name.ends_with("conflict-control") {
             let error =
                 result.expect_err("negative control incorrectly admitted a conflicting grammar");
             let message = error
@@ -109,15 +121,25 @@ fn main() {
                 .map(String::as_str)
                 .or_else(|| error.downcast_ref::<&str>().copied())
                 .unwrap_or("");
+            let production = if name == "caret-conflict-control" {
+                "`psuffix`"
+            } else {
+                "`pbase`"
+            };
             assert!(
-                message.contains("[GRAM-1]") && message.contains("`pbase`"),
+                message.contains("[GRAM-1]") && message.contains(production),
                 "negative control failed for an unrelated reason: {message}"
             );
             println!("{name}: expected GRAM-1 prediction conflict");
         } else {
             let table = result.unwrap_or_else(|error| std::panic::resume_unwind(error));
             assert!(!table.is_empty(), "empty generated grammar");
-            println!("{name}: strong LL(2)");
+            if name == "caret" {
+                assert!(table.contains("FixedTerminal::Deref"), "missing caret surrogate");
+                println!("caret: strong LL(2), using Deref as the fresh ^ predicate");
+            } else {
+                println!("{name}: strong LL(2)");
+            }
         }
     }
     assert!(
