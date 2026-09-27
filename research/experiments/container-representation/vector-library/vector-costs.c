@@ -416,13 +416,9 @@ static void check(void) {
                             if (v == WHITEFOOT) {
                                 wf_requests = requests; wf_peak = peak_bytes; wf_bytes = requested_bytes;
                             } else {
-                                // WF uses the ordinary capacity constructor on known-reserve
-                                // paths; these C controls retain new + reserve. Every such
-                                // vector accounts for exactly one additional empty header.
-                                size_t extra = path == 1 ? 0 : path == 0 ? rounds[r] : 1;
-                                require(requests == wf_requests + extra, "expected construction allocation delta");
-                                require(peak_bytes == wf_peak + (extra ? 16 : 0), "expected construction peak delta");
-                                require(requested_bytes == wf_bytes + 16 * extra, "expected construction byte delta");
+                                require(requests == wf_requests, "matched allocation count");
+                                require(peak_bytes == wf_peak, "matched peak backing bytes");
+                                require(requested_bytes == wf_bytes, "matched requested bytes");
                             }
                         }
                         ++configurations;
@@ -491,9 +487,7 @@ static void check_accounting(enum Variant variant, bool wide, uint64_t count,
     require(peak_overlap_upper_bytes >= peak_bytes, "requested-overlap upper bound");
     if (variant >= RUST_VECTOR) return;
     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
-    const bool direct_capacity = variant == WHITEFOOT && path != 1;
-    size_t per_requests = direct_capacity ? 1 : 2;
-    size_t per_bytes = (direct_capacity ? 16 : 32) + (count + 1) * stride;
+    size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
     size_t per_peak = per_bytes;
     if (path == 1) {
         per_requests = 1; per_bytes = 16; per_peak = 16;
@@ -620,12 +614,6 @@ int main(int argc, char **argv) {
         (void)checked_run(WHITEFOOT, true, 3, 1, 17, 1);
         (void)wf_cost_allocate(1);
         check_accounting(WHITEFOOT, true, 3, 1, 1);
-    }
-    else if (strcmp(argv[1], "fail-construction") == 0) {
-        (void)checked_run(WHITEFOOT, true, 3, 1, 17, 0);
-        void *empty = wf_cost_allocate(16);
-        wf_cost_release(empty);
-        check_accounting(WHITEFOOT, true, 3, 1, 0);
     }
 #else
     else if (strcmp(argv[1], "measure") == 0) {

@@ -107,10 +107,7 @@ ecosystem-check: ecosystem-build
 	  grep -Fx 'vector library costs: independent logical-order checksum' $(ECO_BUILD)/fail-checksum.txt; \
 	  if $(ECO_BUILD)/vector-costs-account$(EXE) fail-cleanup > $(ECO_BUILD)/fail-cleanup.txt 2>&1; then \
 	    echo 'Unreleased allocation was accepted' >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
-	  grep -Fx 'vector library costs: complete cleanup' $(ECO_BUILD)/fail-cleanup.txt; \
-	  if $(ECO_BUILD)/vector-costs-account$(EXE) fail-construction > $(ECO_BUILD)/fail-construction.txt 2>&1; then \
-	    echo 'Extra empty backing was accepted' >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
-	  grep -Fx 'vector library costs: independent allocation count, byte and peak formula' $(ECO_BUILD)/fail-construction.txt
+	  grep -Fx 'vector library costs: complete cleanup' $(ECO_BUILD)/fail-cleanup.txt
 	@set -eu; \
 	  if grep -Eq '@wf_(cost_allocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/whitefoot-timed.ll; then \
 	    echo 'Timed Whitefoot includes allocation observer hooks' >&2; exit 1; fi; \

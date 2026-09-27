@@ -1086,7 +1086,9 @@ G compilation; there is no measured benefit yet.
 
 ### G construction and correctness
 
-The G library SHA-256 is
+G's source is pinned at
+[`0c9ce44e9d640855d9479239b07fa936e4163071`](https://github.com/mbbill/Whitefoot/tree/0c9ce44e9d640855d9479239b07fa936e4163071).
+Its library SHA-256 is
 `a794890d707ed494aab3cc51e2cbc9a77e37d38c39ff0cf7880bd785751fe0de`,
 and its public module record is
 `0abae00637fc124e50289e1114fe0944ada28d3b978e67f739ed2d93feffba52`.
@@ -1169,13 +1171,123 @@ policy, while the shared wrapper's own path shrinks from 29 to 25 instructions.
 This wrapper change is separate from removing an allocation on reserved.
 
 Reuse and suffix already had only one timed construction in F and retain it
-in G. The actual mutation and consumption paths gain no hot-loop work.
-Initial-length guards were already absent from F's optimized code, so there
+in G. All fourteen scalar/wide trace, work, tail, truncate, insert, remove
+and growth-helper bodies compare equal after normalizing branch targets and
+constant references; the actual mutation and consumption paths gain no
+hot-loop work. The scratch comparison was tightened after review: it no
+longer resurrects an overwritten address register's earlier constant page
+or accepts raw instruction equality as a fallback. All fourteen bodies still
+pass strict normalized comparison, and changing either a branch target or
+a constant-load offset makes that check fail. Initial-length guards were
+already absent from F's optimized code, so there
 is no additional runtime-check removal to credit to the new ensures clauses.
 Code placement changes remain: both trace entries move +168 bytes; scalar
 work/tail +64; wide work/tail/truncate -72; scalar truncate -104; and the
 growth helpers -40. These observations precede full-matrix timing and do
 not themselves establish a runtime improvement or a saving per suffix cycle.
+
+### G paired timing: growth regression prevents selection
+
+G fails the prerecorded no-useful-regression criterion. Scalar growth at
+256 takes 2.967/2.954 ms in cohorts 0/1, against F's 2.873/2.872 ms:
+G/F is 1.032718/1.028552. The candidate minimum exceeds the control maximum
+in both cohorts, by factors 1.022145/1.004096. Rust median drift in that
+cell is 0.996986/0.991976 and C++ drift 1.000310/1.007123; a uniform native
+slowdown does not explain the WF regression. The aggregate standard-target
+count improves, but does not override this cell or the recorded criterion.
+
+The hoped-for reserved gain appears in medians without strict separation in
+both cohorts. Scalar reserved at 16 improves to 2.834/2.786 ms from
+3.358/3.347 ms, ratios 0.843955/0.832387. Its first G sample in cohort 0 is
+7.867 ms; all seven samples remain in the result, giving observed upper
+ratios (`maximum G / minimum F`) 2.352572/0.844704. Scalar reserved at 256
+has ratios 0.947399/0.944700 and upper ratios 1.008130/0.952962. Neither
+qualifies as a strict two-cohort gain. No outlier is dropped, no warmup rule
+is changed afterward, and favorable medians alone do not select G.
+
+Across all 36 useful cells, there is one strict regression, zero strict gains
+and 35 with overlap in at least one cohort. Nine cells have lower medians in
+both cohorts, ten higher and seventeen mixed. The six suffix-zero cells
+remain unranked controls. These are comparisons of finite observed sample
+ranges, not confidence intervals. F remains the supported comparison base;
+this record does not recommend the measured G caller migration for selection.
+
+The fresh [F control samples](ecosystem-capacity-control-samples.csv) and
+[G samples](ecosystem-capacity-g-samples.csv) each contain 4,116 rows.
+Their SHA-256 values are
+`c9b4b972216e150b6668898ce8e8a9aff9d2c6ae93dc5f886e86f0e92e19db6d` and
+`74ef634b7161e8952e087677b41806f62657c20fa34058b5502bd127f1e01f40`.
+All keys, work, rounds, traces, checksums and sample IDs 0–6 agree. Both
+complete reductions and target reductions pass. The source pins are F's
+`3347fcb4b705990b5b3a9d66887a30ca9e632374` and G's revision above; the
+committed source bytes were checked against the frozen input manifest.
+Earlier F series remain separate and are not pooled with this pair.
+
+Both frozen images ran sequentially under one guard with
+`measure 1048576 7`: F 80.284 s, then G 80.796 s, both exit 0.
+The outer guard took 161.19 s with no queue wait or busy retry. Source,
+compiler, LLVM, image, timed native inputs, runtime objects and accounting
+hashes were unchanged before and after timing. The one-shot runner was
+removed afterward. Construction, correctness and native inspection costs
+are separate from these complete-matrix execution times.
+
+The table covers every useful cell. Ranges span cohort medians and all
+ratios describe whole traces. The last column compares G with each cohort's
+slower standard median, separately from the target's sample-separation test.
+
+| Bytes | Path | G / F at 16 | at 256 | at 4096 | G ms at 4096 | G / slower standard at 4096 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 0.832–0.844 | 0.945–0.947 | 1.000–1.002 | 1.678–1.687 | 0.796–0.805 |
+| 8 | growth | 1.050–1.053 | 1.029–1.033 | 0.996–0.998 | 2.070–2.071 | 0.856–0.878 |
+| 8 | reuse | 0.992–0.997 | 0.999–1.007 | 1.003–1.003 | 1.653–1.656 | 0.797–0.799 |
+| 8 | suffix-1 | 1.002–1.005 | 0.999–1.008 | 0.999–1.005 | 2.957–2.967 | 1.005–1.007 |
+| 8 | suffix-2 | 0.996–1.003 | 0.958–1.007 | 0.982–0.998 | 2.379–2.387 | 1.454–1.460 |
+| 8 | suffix-3 | 0.995–0.996 | 0.986–1.020 | 0.991–1.003 | 1.928–1.935 | 1.105–1.106 |
+| 256 | reserved | 0.985–0.986 | 1.000–1.003 | 1.003–1.013 | 40.819–41.249 | 0.938–0.938 |
+| 256 | growth | 0.995–1.005 | 1.001–1.004 | 0.988–0.994 | 52.291–52.565 | 1.012–1.017 |
+| 256 | reuse | 0.998–1.002 | 1.004–1.008 | 0.996–0.998 | 40.620–40.694 | 0.935–0.938 |
+| 256 | suffix-1 | 1.003–1.004 | 0.997–1.005 | 1.002–1.004 | 22.712–22.737 | 1.361–1.361 |
+| 256 | suffix-2 | 0.999–1.016 | 0.990–1.001 | 0.983–1.001 | 23.021–23.294 | 1.057–1.068 |
+| 256 | suffix-3 | 0.999–1.000 | 0.992–1.016 | 1.002–1.002 | 26.515–26.535 | 1.011–1.012 |
+
+The slower-standard reduction gives fresh F 12 passes / 11 deficits /
+13 inconclusive, and G 13 / 10 / 13, plus six unranked controls each.
+Every useful target meets the duration and cohort-spread qualifications;
+the minimum useful WF sample across the pair is 1.506 ms. Every
+sub-millisecond observation is suffix-zero. F's scalar suffix-2 direct-C
+comparison at 256 is unstable (103.961%); G's wide suffix-zero take/swap C
+at 256 and scalar suffix-2 direct C at 4096 are unstable (24.707% and
+23.995%). Those controls support no ranking or attribution. Across useful
+cells, Rust median drift is 0.963–1.021 and C++ 0.959–1.036; some source C
+controls vary more, including direct C 0.909–1.757.
+
+The native evidence establishes the reserved allocation removal and the
+smaller shared wrapper, while mutation/consumption bodies remain unchanged.
+It does not assign the growth regression to allocation, code placement,
+register scheduling or a hardware stall. The source-required accounting
+reduction remains correct even though the optimized timed reuse and suffix
+paths had already eliminated their empty allocation. Those two facts do
+not establish a universal runtime benefit from the caller migration.
+
+The additive API is correct; the tested API/caller combination fails the
+performance criterion. Its complete source and validation remain reproducible
+at the G pin above, rather than being treated as an unavailable language
+capability. Reopen it with a concrete ordinary caller decomposition that
+separates reserved construction from the shared unreserved wrapper, checking
+the latter's native path before another full comparison. That new evidence
+must still preserve all useful cells; neither a favorable reserved median
+nor the source accounting reduction is sufficient. No such successor has
+been compiled or measured here.
+
+After this failed trial, only the seven G implementation, public-interface,
+caller, test and accounting-formula files were restored byte-for-byte to
+`afa117cd7b92b2314339198905c34d731ef29a44`, the F source state. G's reports,
+accounting, full samples and source pin remain intact. This restores the
+supported working base; it does not establish an intrinsic loss for the
+correct additive API. The already built compiler and `.build/capacity-g`
+artifacts still embed G and remain identified as that rejected trial. A new
+source trial must rebuild the embedded library before using its compiler;
+no replay-until-win or unchanged-hypothesis retiming is selected.
 
 ## Historical source-composition evidence
 

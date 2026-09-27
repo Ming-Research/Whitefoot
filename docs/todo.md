@@ -1927,8 +1927,14 @@ condition under which it is taken up.
   handle or adjacent layout. Compare full allocation bytes, dependent accesses,
   initialization, movement/growth and cleanup against both ordinary alternatives;
   no new layout or construction spelling is selected without that evidence.
-- **Bitmask fact.** `x & (c - 1) < c` for a power-of-two `c`, which would
-  remove the per-probe bounds compare in hash tables.
+- **HashMap bucket indexing.** ENT-3.S7's [tested unsigned operand bounds](../tests/conformance/cases/ent3-pos-stage8b-bit-sources.wf)
+  already derive `iand(x, c - 1) < c` for positive `c`. The
+  [current native inspection](../research/experiments/container-representation/map-library/RESULTS.md#query-dispatch-and-inlining-in-the-practical-image)
+  finds one initial remainder before the probe loop; its per-probe comparison
+  handles wrap. After the capacity controls, test a source power-of-two mask
+  with the unchanged modulo fallback, preserving exact capacities and bucket
+  distribution. The proposed helper is uncompiled; require proof acceptance,
+  selected-path division removal and qualified paired timings.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
   `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
