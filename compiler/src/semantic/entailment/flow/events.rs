@@ -150,7 +150,7 @@ impl Input<'_, '_> {
         let mut descriptor = support.clone();
         descriptor.path.push(PlaceStep::Measure(measure));
         // The fact's own place goes first: [WIN-2]'s liveness is a question
-        // about the window above its index [`Reasoning::event_live_indices`].
+        // about the window above its index [`Reasoning::event_live_bounds`].
         self.resolved_places_overlap(separations, &descriptor, written)
     }
 
@@ -295,9 +295,9 @@ impl Input<'_, '_> {
     /// `borrow_expr` written here exactly as `&x[i]` is: it names its source's
     /// resolved places extended by the formation's own range step [REF-4,
     /// OWN-7], the same path a bound range reference would name. That step
-    /// against an index step of the same base is a pair no admitted family
-    /// separates, so a write through it reaches every element fact of that
-    /// base unless the paths separate earlier.
+    /// against an index step of the same base separates only where the index
+    /// is proved outside the range, so a write through it reaches every
+    /// other element fact of that base unless the paths separate earlier.
     pub(super) fn argument_referents(
         &self,
         argument: &CheckedExpression,
@@ -866,20 +866,26 @@ impl Reasoning<'_, '_, '_> {
         states.record_writes(events);
     }
 
-    /// [WIN-2, ENT-5] the indices the entry state of `events` proves live.
+    /// [WIN-2, ENT-5] the indices the entry state of `events` proves live,
+    /// and the ranges it proves to end at or below their window's length.
     ///
-    /// Only an index directly below a window whose `next`, `free` or `last`
-    /// one of the events writes is asked about, through the place that holds
+    /// Only an index directly below a window whose `next` or `free` one of
+    /// the events writes is asked about, through the place that holds
     /// it: a term's, a goal's or an entry image's own path, whose prefix
     /// above the index is the window. The bound `i < r.len` is the one
     /// [OP-4] owed where the subscript was formed, judged again here over the
     /// same terms. A prefix that resolves to more than one place names no one
     /// window whose length a proof bounds, so its index stays unproved.
-    pub(super) fn event_live_indices(
+    ///
+    /// A range is asked about in the resolved places of the same holders,
+    /// since a range step is reached through the reference its formation
+    /// bound: `hi <= r.len` is the [REF-4] bound owed where it was formed,
+    /// judged again here.
+    pub(super) fn event_live_bounds(
         &mut self,
         states: &ProofFlowState,
         events: &[KillEvent],
-    ) -> LiveIndices {
+    ) -> LiveBounds {
         let mut written_parts = HashSet::new();
         for event in events {
             let (KillEvent::Write { place, .. } | KillEvent::EntryImageHolderWrite { place, .. }) =
@@ -889,16 +895,15 @@ impl Reasoning<'_, '_, '_> {
             };
             for written in self.input.places.resolve(place.root, &place.path) {
                 for (depth, step) in written.path.iter().enumerate() {
-                    if matches!(
-                        step,
-                        PlaceStep::Part(WindowPart::Next | WindowPart::Free | WindowPart::Last)
-                    ) {
+                    // [WIN-2] every position overlaps `last` whatever its
+                    // bound, so a write of it asks for none.
+                    if matches!(step, PlaceStep::Part(WindowPart::Next | WindowPart::Free)) {
                         written_parts.insert((written.root, depth));
                     }
                 }
             }
         }
-        let mut live = LiveIndices::new();
+        let mut live = LiveBounds::default();
         if written_parts.is_empty() {
             return live;
         }
@@ -922,7 +927,7 @@ impl Reasoning<'_, '_, '_> {
                 .map(|image| image.place.clone()),
         );
         let mut asked = HashSet::new();
-        for place in places {
+        for place in &places {
             for (depth, step) in place.path.iter().enumerate() {
                 let PlaceStep::Index(index) = *step else {
                     continue;
@@ -941,7 +946,29 @@ impl Reasoning<'_, '_, '_> {
                 if written_parts.contains(&(resolved.root, resolved.path.len()))
                     && self.index_live_proof(&window, index, states).is_some()
                 {
-                    live.insert((resolved.clone(), index));
+                    live.indices.insert((resolved.clone(), index));
+                }
+            }
+        }
+        let mut asked_ranges = HashSet::new();
+        for place in &places {
+            for resolved in self.input.places.resolve(place.root, &place.path) {
+                for (depth, step) in resolved.path.iter().enumerate() {
+                    let PlaceStep::Range(range) = *step else {
+                        continue;
+                    };
+                    let window = ResolvedPlace {
+                        root: resolved.root,
+                        path: resolved.path[..depth].to_vec(),
+                    };
+                    if written_parts.contains(&(window.root, depth))
+                        && asked_ranges.insert((window.clone(), range))
+                        && self
+                            .range_within_length_proof(&window, range, states)
+                            .is_some()
+                    {
+                        live.ranges.insert((window, range));
+                    }
                 }
             }
         }
@@ -1097,7 +1124,7 @@ impl Analyzer<'_, '_> {
         self.record_continuing(states, events);
         self.vocabulary.promote_flow_contradiction(states);
         let ledger = states.separations.clone();
-        let live = self.reasoning().event_live_indices(states, events);
+        let live = self.reasoning().event_live_bounds(states, events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,
@@ -1117,13 +1144,13 @@ impl Analyzer<'_, '_> {
         states: &mut ProofFlowState,
         events: &[KillEvent],
         mut transfer_event: impl FnMut(&mut Self, &KillEvent) -> FlowEventId,
-    ) -> LiveIndices {
+    ) -> LiveBounds {
         if !events.is_empty() {
             self.vocabulary.promote_flow_contradiction(states);
         }
         self.record_continuing(states, events);
         let ledger = states.separations.clone();
-        let live = self.reasoning().event_live_indices(states, events);
+        let live = self.reasoning().event_live_bounds(states, events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,

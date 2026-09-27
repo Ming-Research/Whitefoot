@@ -543,6 +543,7 @@ impl<'unit> Checker<'unit> {
                             compiler_updated: false,
                             reference,
                             refinement_witnesses: Vec::new(),
+                            call_value: false,
                         },
                     )
                     .is_some()
@@ -632,6 +633,7 @@ impl<'unit> Checker<'unit> {
                     compiler_updated: false,
                     reference,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()

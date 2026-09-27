@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn churn(source: &Slots<u64, 8>, target: &Slots<u64, 8>, i: u64) -> result: u64 reads(source[i]), writes(target.last), writes(target.next), writes(target.len) contract {
+  requires i < deref(source).len;
+  requires 2_u64 <= deref(target).len;
+} {
+  let before = deref(source)[i];
+  let a = take_back(window: target);
+  let b = take_back(window: target);
+  place_back(window: target, value: 77_u64);
+  let after = deref(source)[i];
+  return after -wrap before;
+}
+
+fn main() -> status: ExitStatus pure {
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  place_back(window: &window, value: 3_u64);
+  let d = churn(source: &window, target: &window, i: 1_u64);
+  if d == 75_u64 {
+    return exit_status(code: 42_u8);
+  }
+  return exit_status(code: 0_u8);
+}

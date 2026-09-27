@@ -848,15 +848,15 @@ struct PreparedCall {
     parents: Vec<DerivationId>,
     transfer_events: Vec<FlowEventId>,
     kills: Vec<KillEvent>,
-    /// The indices the call's entry state proves live [WIN-2]: every part a
-    /// row names is interpreted at call entry, so each of `kills` is judged
-    /// against this one set.
-    live: LiveIndices,
+    /// The bounds by `r.len` the call's entry state proves [WIN-2]: every
+    /// part a row names is interpreted at call entry, so each of `kills` is
+    /// judged against this one set.
+    live: LiveBounds,
 }
 
 impl PreparedCall {
     /// The separations each of `kills` is judged under: the edge's ledger
-    /// and the liveness the call's entry state proved [WIN-2, ENT-5].
+    /// and the bounds by `r.len` the call's entry state proved [WIN-2, ENT-5].
     fn entry_separations<'call>(
         &'call self,
         ledger: &'call SeparationLedger,
@@ -1403,8 +1403,8 @@ fn remap_postcondition(
     remap_aggregate(&mut proof.aggregate);
 }
 
-/// [OWN-7]'s two proof-carrying separations and [WIN-2]'s one conditional
-/// row, recorded in the structural flow state.
+/// [OWN-7]'s three proof-carrying separations, recorded in the structural
+/// flow state; [WIN-2]'s rows bound by `r.len` are never recorded.
 ///
 /// A captured index or endpoint is an immutable mathematical value [OWN-7,
 /// REF-1], so the proposition remains true; its proof is nevertheless
@@ -1416,7 +1416,9 @@ fn remap_postcondition(
 struct SeparationLedger {
     distinct_indices: std::collections::HashSet<(CaptureId, CaptureId)>,
     disjoint_ranges: std::collections::HashSet<(CapturedRange, CapturedRange)>,
-    not_last: std::collections::HashSet<(ResolvedPlace, CaptureId)>,
+    /// Indices proved outside a range: before its start, at or after its
+    /// end, or beside an empty range [OWN-7].
+    outside_ranges: std::collections::HashSet<(CaptureId, CapturedRange)>,
 }
 
 impl SeparationLedger {
@@ -1428,6 +1430,10 @@ impl SeparationLedger {
     fn record_ranges_disjoint(&mut self, left: CapturedRange, right: CapturedRange) {
         self.disjoint_ranges.insert((left, right));
         self.disjoint_ranges.insert((right, left));
+    }
+
+    fn record_index_outside_range(&mut self, index: CapturedValue, range: CapturedRange) {
+        self.outside_ranges.insert((index.capture, range));
     }
 
     fn intersection<'a>(mut ledgers: impl Iterator<Item = &'a Self>) -> Self {
@@ -1444,9 +1450,10 @@ impl SeparationLedger {
             rest.iter()
                 .all(|ledger| ledger.disjoint_ranges.contains(pair))
         });
-        common
-            .not_last
-            .retain(|pair| rest.iter().all(|ledger| ledger.not_last.contains(pair)));
+        common.outside_ranges.retain(|pair| {
+            rest.iter()
+                .all(|ledger| ledger.outside_ranges.contains(pair))
+        });
         common
     }
 }
@@ -1469,8 +1476,14 @@ impl SeparationOracle for SeparationLedger {
         false
     }
 
-    fn index_is_not_last(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
-        self.not_last.contains(&(window.clone(), index.capture))
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        self.outside_ranges.contains(&(index.capture, range))
+    }
+
+    /// Like liveness, a range's bound by `r.len` holds at the event it was
+    /// proved for and is never carried along the edge [WIN-2].
+    fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
+        false
     }
 
     /// The ledger answers at one program point: the actuals of one call
@@ -1481,12 +1494,17 @@ impl SeparationOracle for SeparationLedger {
     }
 }
 
-/// The window indices one event's entry state proves live [WIN-2], each
-/// keyed by the resolved window it indexes.
-type LiveIndices = HashSet<(ResolvedPlace, CapturedValue)>;
+/// The window positions one event's entry state bounds by their window's
+/// length [WIN-2], each keyed by the resolved window it reads: the indices
+/// it proves live, and the ranges it proves to end at or below `r.len`.
+#[derive(Clone, Debug, Default)]
+struct LiveBounds {
+    indices: HashSet<(ResolvedPlace, CapturedValue)>,
+    ranges: HashSet<(ResolvedPlace, CapturedRange)>,
+}
 
 /// [ENT-5, WIN-2] the separations one kill event is judged under: the edge's
-/// ledger, and the indices the event's entry state proves live.
+/// ledger, and the bounds by `r.len` the event's entry state proves.
 ///
 /// A fact's place need not have been formed where the event happens: its
 /// index may never have been bounded, as in a place a callee's `ensures`
@@ -1494,10 +1512,11 @@ type LiveIndices = HashSet<(ResolvedPlace, CapturedValue)>;
 /// later event only while nothing has moved `r.len` below it. A part write
 /// therefore kills every fact below `r[i]` unless the event's entry state
 /// derives `i < r.len` [ENT-6], which is what makes the append slot of a
-/// `place_back` distinct from `r[i]` rather than possibly `r[i]` itself.
+/// `place_back` distinct from `r[i]` rather than possibly `r[i]` itself; a
+/// fact below `r[lo..hi]` likewise needs `hi <= r.len` derived there.
 struct EventSeparations<'event> {
     ledger: &'event SeparationLedger,
-    live: &'event LiveIndices,
+    live: &'event LiveBounds,
 }
 
 impl SeparationOracle for EventSeparations<'_> {
@@ -1510,11 +1529,15 @@ impl SeparationOracle for EventSeparations<'_> {
     }
 
     fn index_is_live(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
-        self.live.contains(&(window.clone(), index))
+        self.live.indices.contains(&(window.clone(), index))
     }
 
-    fn index_is_not_last(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
-        self.ledger.index_is_not_last(window, index)
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        self.ledger.index_outside_range(index, range)
+    }
+
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
+        self.live.ranges.contains(&(window.clone(), range))
     }
 
     fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {

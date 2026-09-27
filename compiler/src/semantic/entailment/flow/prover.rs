@@ -1694,12 +1694,16 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
-            CapturedTerm::Binding(_) if matches!(value.capture, CaptureId::Source(_)) => {
+            // A superseded binding's capture still names the value its
+            // formation read, which is the immutable term the capture minted.
+            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
+                if matches!(value.capture, CaptureId::Source(_)) =>
+            {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
                 })
             }
-            CapturedTerm::Binding(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Opaque => None,
         }
     }
 
@@ -1873,6 +1877,10 @@ impl Reasoning<'_, '_, '_> {
         Some(proof)
     }
 
+    /// [OWN-7] the proof `affine` gives that two ranges under containing
+    /// paths that are identical step for step or differ only in index steps
+    /// are disjoint, over the images their formations filed or, for a range a
+    /// row takes from a call's arguments, its endpoints' own.
     pub(super) fn prove_range_separation(
         &mut self,
         left: CapturedRange,
@@ -1880,28 +1888,24 @@ impl Reasoning<'_, '_, '_> {
         facts: &FactState,
         affine: &AffineFlowState,
     ) -> Option<ProofResult> {
-        let left_image = affine.ranges.get(&left.start.capture)?.clone();
-        let right_image = affine.ranges.get(&right.start.capture)?.clone();
+        let (left_start, left_end) = self.range_endpoint_images(left, affine)?;
+        let (right_start, right_end) = self.range_endpoint_images(right, affine)?;
         for (ordering, end, start) in [
             (
                 RangeSeparationOrdering::LeftBeforeRight,
-                &left_image.end,
-                &right_image.start,
+                &left_end,
+                &right_start,
             ),
             (
                 RangeSeparationOrdering::RightBeforeLeft,
-                &right_image.end,
-                &left_image.start,
+                &right_end,
+                &left_start,
             ),
-            (
-                RangeSeparationOrdering::LeftEmpty,
-                &left_image.end,
-                &left_image.start,
-            ),
+            (RangeSeparationOrdering::LeftEmpty, &left_end, &left_start),
             (
                 RangeSeparationOrdering::RightEmpty,
-                &right_image.end,
-                &right_image.start,
+                &right_end,
+                &right_start,
             ),
         ] {
             let Ok(inequality) =
@@ -1934,6 +1938,108 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         None
+    }
+
+    /// The affine image of one captured index or endpoint: its own capture's
+    /// image where the call or formation filed one, else the value its term
+    /// has on this edge.
+    fn captured_value_image(
+        &mut self,
+        value: CapturedValue,
+        affine: &AffineFlowState,
+    ) -> Option<AffineForm> {
+        if let Some(image) = affine.indices.get(&value.capture) {
+            return Some(image.clone());
+        }
+        let term = self.captured_index_term(value)?;
+        self.vocabulary.affine_term_value(term, affine)
+    }
+
+    /// A range's two endpoint images: the ones its formation filed [REF-4],
+    /// or each endpoint's own, for a range a row takes from the call's
+    /// arguments [EFF-5].
+    fn range_endpoint_images(
+        &mut self,
+        range: CapturedRange,
+        affine: &AffineFlowState,
+    ) -> Option<(AffineForm, AffineForm)> {
+        if let Some(image) = affine.ranges.get(&range.start.capture) {
+            return Some((image.start.clone(), image.end.clone()));
+        }
+        Some((
+            self.captured_value_image(range.start, affine)?,
+            self.captured_value_image(range.end, affine)?,
+        ))
+    }
+
+    /// The first of `inequalities` the facts on this edge prove.
+    fn prove_first_affine(
+        &mut self,
+        inequalities: impl IntoIterator<Item = Result<AffineInequality, AffineCheckError>>,
+        state: &ProofFlowState,
+    ) -> Option<ProofResult> {
+        inequalities.into_iter().flatten().find_map(|inequality| {
+            let proof = self.prove(
+                ProofContext::new(&state.facts, &state.affine),
+                ProofGoal::Affine {
+                    inequality: &inequality,
+                    right: None,
+                },
+            );
+            (proof.disposition == ProofDisposition::Proved).then_some(proof)
+        })
+    }
+
+    /// [OWN-7] the proof `state` gives that an index lies outside a range of
+    /// the same base: `index < start`, `end <= index`, or `end <= start`.
+    pub(super) fn prove_index_outside_range(
+        &mut self,
+        index: CapturedValue,
+        range: CapturedRange,
+        state: &ProofFlowState,
+    ) -> Option<ProofResult> {
+        let index = self.captured_value_image(index, &state.affine)?;
+        let (start, end) = self.range_endpoint_images(range, &state.affine)?;
+        self.prove_first_affine(
+            [
+                AffineInequality::from_bounded_forms(
+                    &index,
+                    &start,
+                    -1,
+                    &mut AffineCheckState::new(),
+                ),
+                AffineInequality::from_forms(&end, &index, &mut AffineCheckState::new()),
+                AffineInequality::from_forms(&end, &start, &mut AffineCheckState::new()),
+            ],
+            state,
+        )
+    }
+
+    /// [WIN-2] the proof `state` gives that a range of `window` ends at or
+    /// below the window's length, `end <= len(window)`, or is empty.
+    pub(super) fn range_within_length_proof(
+        &mut self,
+        window: &ResolvedPlace,
+        range: CapturedRange,
+        state: &ProofFlowState,
+    ) -> Option<ProofResult> {
+        let (start, end) = self.range_endpoint_images(range, &state.affine)?;
+        let length = self
+            .vocabulary
+            .terms
+            .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))
+            .map(|length| self.vocabulary.measure_atom(length, &state.affine));
+        let within = length.map(|length| {
+            AffineInequality::from_forms(&end, &length, &mut AffineCheckState::new())
+        });
+        self.prove_first_affine(
+            within.into_iter().chain([AffineInequality::from_forms(
+                &end,
+                &start,
+                &mut AffineCheckState::new(),
+            )]),
+            state,
+        )
     }
 
     /// One [PAR-1] range question in the state before its first statement.

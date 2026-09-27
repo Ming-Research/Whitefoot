@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_then_insert(window: &Slots<u64, 8>, lo: u64, hi: u64) -> result: unit reads(window[lo..hi]), writes(window.filled), writes(window.next), writes(window.len) contract {
+  requires lo <= hi;
+  requires hi <= deref(window).len;
+  requires deref(window).len < deref(window).cap;
+} {
+  doc "Inserts the length of the run window[lo..hi] at the front of the window. EFF-5, WIN-2: a run of a window overlaps window.filled whatever its endpoints, as every element does, so a call does not compare reads(window[lo..hi]) with writes(window.filled), and this body is checked against both.";
+  let run = &deref(window)[lo..hi];
+  let count = deref(run).len;
+  insert_at(window: window, index: 0_u64, value: count);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call compares the run with writes(window.next), which its entry state separates because hi 2 is window.len, and does not compare it with writes(window.filled); the program observes the inserted run length before the two elements.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  count_then_insert(window: &window, lo: 0_u64, hi: 2_u64);
+  if window.len == 3_u64 {
+    if window[0_u64] == 2_u64 {
+      if window[1_u64] == 1_u64 {
+        if window[2_u64] == 2_u64 {
+          return exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}

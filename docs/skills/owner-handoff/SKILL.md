@@ -11,16 +11,40 @@ owner and keep supporting detail one step away, in the PR, the amendment or
 the investigation. Write in the owner's language; repository artifacts stay
 English.
 
-1. **Decision cards.** One row for each amendment awaiting a ruling, each
+1. **Decision cards.** One card for each amendment awaiting a ruling, each
    finding awaiting direction and each other choice the owner must make, or
-   "none":
+   "none". A card is a heading carrying its number, then five subheadings in
+   this order, each on its own line with its content below it. Never lay cards
+   out as a table: its narrow columns bury the reasoning.
 
-   | # | Node or topic | Now → proposed | Recommendation and decisive reason | Reversible? | Owner judges |
-   |---|---|---|---|---|---|
+   ```markdown
+   ## Decision card #1
 
-   Link the amendment or evidence that holds the problem, alternatives,
-   tradeoffs and uncertainty. Bring one of them into the card only when it
-   decides the recommendation.
+   ### Topic
+   The question the owner decides, in one sentence; for an amendment or a
+   finding about a design decision, the node it concerns.
+
+   ### Current state
+   What the specification, design or implementation does now, and the
+   evidence that raised the question.
+
+   ### Recommendation
+   The choice proposed and what follows from it.
+
+   ### Reason
+   Why that choice fits its requirements and evidence, and what it costs.
+
+   ### Confidence (1 to 5) and why
+   The number, 5 when the evidence settles the choice and 1 when it rests on
+   judgment alone, then what supports it and what could still overturn it.
+   ```
+
+   Write the headings and their content in the owner's language. Link the
+   amendment or evidence that holds the problem, alternatives, tradeoffs and
+   uncertainty in full; the fields above summarize them, and an alternative
+   enters the card only when it decides the recommendation. Each part after
+   the cards starts with its own `##` heading, so none reads as part of the
+   last card.
 2. **Result.** A few lines: what changed, the validation actually run (full
    gate or focused, and the tested revision), what remains unverified, and the
    PR link.

@@ -793,6 +793,7 @@ impl<'unit> Checker<'unit> {
                         compiler_updated: false,
                         reference,
                         refinement_witnesses,
+                        call_value: false,
                     },
                 )
                 .is_some()

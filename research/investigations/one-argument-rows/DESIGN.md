@@ -232,3 +232,209 @@ Two items outside the ruling surfaced:
   One maintained row had this shape, a unit test declaring
   `reads(packet), reads(packet.Data.value)`, and now declares
   `reads(packet)`.
+
+## Follow-up: an index or a window part beside a range
+
+Rule 1 left three kinds of one-argument pair compared at every call with
+nothing able to separate them: an index position beside a range position,
+and a range position beside `.next`, `.free`, `.last` or `.filled`, for which
+OWN-7 and WIN-2 had no family, and an index position beside `.last`, which
+WIN-2 separates but the checker posed to no call. Every call of such a row
+was refused, `reads(values[start..end]), writes(values[slot])` with
+`start: 0_u64, end: 2_u64, slot: 3_u64` included, and EFF-2 could suggest
+such a row, so rule 3's ground failed for these pairs. Two directions kept
+it: (a) class the pairs with those that overlap at every position, so no
+call compares them; (b) give OWN-7 a family that separates an index from a
+range and WIN-2 rows for a range beside a part, so each call proves the pair
+apart as it proves two indices apart. The owner chose (b) on 2026-09-26. The
+completion review then refuted every separation from `.last`, and the owner
+agreed the same day to fix those pairs as overlapping; see
+[The last filled slot](#the-last-filled-slot).
+
+The rule, in kernel-spec v0.74:
+
+1. [OWN-7] An index step and a range step under containing paths that are
+   identical step for step, or differ only in index steps, are
+   disjoint when the ProofContext proves `index < range.start`,
+   `range.end <= index` or `range.end <= range.start`; a proved separation
+   separates everything below both.
+2. [WIN-2] A range `r[lo..hi]` does not overlap `r.next` or `r.free` when
+   `hi <= r.len` or `hi <= lo` is proved where the places are compared, and
+   overlaps both otherwise. A range formed in that state ends at or below
+   `r.len` there by its REF-4 obligation.
+3. [WIN-2] Every index and every range overlaps `r.last` and `r.filled`,
+   whatever its value. v0.73 separated `r[i]` from `r.last` where
+   `i != r.len - 1` was proved; v0.74 drops that separation.
+4. [EFF-5] An index or range position beside `.last` or `.filled` joins the
+   pairs that overlap at every position, so one argument's such pair is not
+   compared at a call, while two arguments' such pair is compared and
+   refused. Every other pair with a range position stays compared and now
+   has a family.
+
+Why (b): some values separate an index or a range from a range, `.next` or
+`.free`, so those pairs do not overlap at every position, and (a) would call
+a position-dependent pair fixed. Both are sound by the argument under
+[Soundness](#soundness), which holds for any exempted pair. They differ in
+what a caller keeps. Under (a) OWN-7 still has no family, so a write beside
+a range kills every caller fact below it and a call whose read range holds
+the written slot is admitted. Under (b) the call proves the pair apart, and
+the same family keeps a caller fact on an element outside a written range,
+or below a range an append does not reach [CALL-5, ENT-5].
+
+### The last filled slot
+
+The first draft of this follow-up also separated a range from `r.last`
+where `hi < r.len` or `hi <= lo` was proved, and posed v0.73's index row,
+`i != r.len - 1`, at every call. The completion review refuted both. EFF-2
+covers any number of `take_back` calls with one `writes(r.last)` entry, and
+each call lowers `r.len` by one, so after `k` of them the callee has emptied
+every slot from the entry state's `r.len - k` up; `i != r.len - 1` at entry
+bounds only the first. The draft accepted three programs that show it,
+stored under [`probes/`](probes/) with a `review-` prefix:
+
+- `p07`: a callee declared `reads(source[i]), writes(target.last)` takes
+  back twice and places back once. Called with one window for both
+  parameters and `i` one below the last slot, it changed `source[i]` during
+  the call, and the program exited 42.
+- `p20`: a reference to `window[1_u64].value` survived a one-argument call
+  that took back two elements, and the program read the released box.
+- `p21`: the same with a range reference.
+
+A row states no count of take-backs, so no entry-state bound confines the
+slots its `r.last` reaches; a count in the row would be a larger language
+change that no program needs. The owner agreed on 2026-09-26 to overlap
+every index and every range with `r.last`, as with `r.filled` (rule 3). One
+argument's `reads(r[i]), writes(r.last)` then overlaps at every position
+and is not compared, so the probe `window-index-last`, which v0.73 refused,
+is accepted; a pair two arguments supply is refused, and the call ends every
+reference into the window (below). v0.73's separation of an index from
+`r.last` was unsound in the same way for a user row, but no check applied
+it: calls compared the pair and refused it, kill events never answered it,
+and every reference into the window died at `take_back`. Only the prelude's
+`take_back`, which takes back exactly one element, reaches no slot but its
+entry state's `r.len - 1`, and nothing used that either.
+
+### Defects the reviews found beside the rule
+
+- **References after a user call that takes elements back.** The checker
+  ended a window reference's bound [OP-10] only at the prelude's window
+  operations, so a reference into a window outlived a user function whose
+  row writes `r.last` and that took its slot back: `p01` read a released
+  slot through a range reference, `p02` released a box twice through it,
+  and `p03` wrote through the freed box (stored as `review-p01` to
+  `review-p03`). The v0.73 checker accepts all three. A call now also ends
+  that bound for every window whose `last` or `filled` its substituted row
+  writes, as `take_back` and `remove_at` do. It reads no `ensures` for
+  this, so a callee that restores the length still ends the bound;
+  `docs/todo.md` records that loss.
+- **Two ranges a row supplies.** A pair of range positions was proved apart
+  only from the endpoint images of a range formed at the call, so two
+  ranges a row takes from other arguments, `reads(values[lo..hi]),
+  writes(values[a..b])`, were refused even where the entry state proves
+  `hi <= a`. The flow now falls back to each endpoint's own image, so such
+  a call is separated where the ordering is proved and refused otherwise.
+- **A write through a range frame.** The second review found that REF-2's
+  proper-prefix question counted steps, so `outer[0_u64..2_u64][1_u64]`,
+  which selects `outer[1_u64]` through a range frame, was never a prefix of
+  a reference to `outer[1_u64][0_u64]`: a write replacing that element, or
+  a call taking elements back through it, left the reference live. The
+  v0.73 checker accepts these too, and the review's probes read freed
+  memory, corrupted the heap and segfaulted. The question now compares
+  storage depth: a range step followed by another step descends no level of
+  its own, and a run a path ends at lies half a level below its base. One
+  program v0.73 accepted is now refused: a callee declared `writes(part)`,
+  called with `part: &v[0_u64..2_u64]`, writes a place above `v[1_u64]`,
+  so a reference `&v[1_u64]` dies at the call, as `&deref(part)[1_u64]`
+  already did in v0.73 (`ref2-neg-element-reference-after-run-write`).
+
+### Soundness of the families
+
+- A slot `k` of `r[lo..hi]` satisfies `lo <= k < hi`, and each of
+  `index < lo`, `hi <= index` and `hi <= lo` excludes `k = index`. Steps
+  below the index and below the range are relative to different frames, so
+  only a separation proved at this pair separates their descendants.
+- Containing paths. Two containing paths that differ only in index steps
+  select one storage or two: their other steps are identical, so each pair
+  of index steps selects elements of one frame, and where their offsets are
+  equal the paths name one storage, where the orderings apply, and where
+  they differ, different storages. Containing
+  paths that differ in a range step are frames every later step is relative
+  to, so they are not compared. The checker already separated the first
+  kind, and v0.73 accepted two ranges formed at a call below unproved row
+  indices; the owner ruled on 2026-09-26 that OWN-7 state that relation.
+  The cases `own7-pos-*-below-unproved-row-indices-separate` pin the three
+  forms, and `eff5-neg-ranges-below-different-range-frames-overlap` the
+  refused frames.
+- Every slot of a range is below `hi`, so `hi <= r.len` puts it below the
+  append slot and every free slot, and an empty range holds no slot. Every
+  range overlapping `r.last` and `r.filled` is a fixed answer, as it is for
+  every slot.
+- Where the bound is read. A call proves its positions in its entry state.
+  A kill event proves a range bound, as it proves liveness, in its own entry
+  state and never carries it along an edge, since `r.len` changes. The flow's
+  ledger records only the separations of two indices, two ranges, and an
+  index and a range, whose captured values no write changes, and drops them
+  at a join a predecessor lacks.
+- Loop headers. A header's kills stand for every iteration's events and read
+  bounds from the preheader state. A range proved there to end at or below
+  `r.len` stays so at each such event, because `r.len` falls only at a write
+  of `r.last`, `r.filled` or the whole window, and each of those kills every
+  fact below the range, since every range overlaps `r.last` and `r.filled`.
+- PAR-1 poses no index-and-range query, so such a pair overlaps unless its
+  literals decide it. It reads a range either statement forms as within the
+  length, as it reads a subscript either forms as live, under the existing
+  shared-length guard.
+
+### Criterion and results
+
+Criterion: (b) holds when every new conformance case below reaches its
+declared verdict through the ordinary compiler path, every running case
+exits 0, the v0.73 compiler refuses every positive case, and no existing
+case changes its verdict. It was fixed before the cases ran. The review's
+fixes added the `.last`, two-row-range, `ref2` and `op10` rows under the
+same test, except `ref2-pos-reference-survives-user-push` and
+`op10-pos-slot-reference-survives-insert-at`, controls fixed in advance to
+stay accepted on both compilers.
+
+| Case | v0.73 compiler | v0.74 |
+|---|---|---|
+| `own7-pos-index-outside-range-separate` | EFF-5 | exit 0 |
+| `eff5-neg-index-inside-written-range` | EFF-5 | EFF-5 |
+| `eff5-neg-index-beside-range-unproved` | EFF-5 | EFF-5 |
+| `win2-pos-range-within-length-beside-append` | EFF-5 | exit 0 |
+| `eff5-neg-range-reaching-append-slot` | EFF-5 | EFF-5 |
+| `eff5-pos-index-beside-last-not-compared` | EFF-5 | exit 0 |
+| `eff5-pos-range-beside-last-not-compared` | EFF-5 | exit 0 |
+| `eff5-neg-two-arguments-index-beside-last` | EFF-5 | EFF-5 |
+| `eff5-neg-two-arguments-range-beside-last` | EFF-5 | EFF-5 |
+| `eff5-pos-range-beside-filled-not-compared` | EFF-5 | exit 0 |
+| `eff5-pos-two-arguments-range-beside-append` | EFF-5 | exit 0 |
+| `call3-pos-range-write-beside-element-keeps-its-measure` | OP-4 | exit 0 |
+| `ent5-pos-range-element-measure-survives-append` | OP-4 | exit 0 |
+| `own7-pos-two-row-ranges-separate` | EFF-5 | exit 0 |
+| `eff5-neg-two-row-ranges-overlap` | EFF-5 | EFF-5 |
+| `ref2-neg-index-reference-after-user-pop` | exit 0 | REF-2 |
+| `ref2-neg-range-reference-after-user-pop` | exit 0 | REF-2 |
+| `ref2-pos-reference-survives-user-push` | exit 0 | exit 0 |
+| `ref2-neg-reference-after-user-remove` | exit 0 | REF-2 |
+| `op10-pos-slot-reference-survives-insert-at` | exit 0 | exit 0 |
+| `ref2-neg-element-reference-after-range-frame-pop` | exit 0 | REF-2 |
+| `ref2-neg-element-reference-after-range-row-pop` | exit 0 | REF-2 |
+| `ref2-neg-element-reference-after-range-frame-write` | exit 0 | REF-2 |
+| `ref2-neg-element-reference-after-run-write` | exit 0 | REF-2 |
+
+The criterion held. The `ref2-neg` rows are programs the v0.73 checker
+wrongly accepted; `ref2-pos-reference-survives-user-push` shows a user call
+that only appends keeps its bound, and
+`op10-pos-slot-reference-survives-insert-at` that a slot reference survives
+the prelude's `insert_at`, whose `ensures` carries its bound. The pinned repair pair
+`declared-row-omits-a-range-read-beside-a-written-slot.wf` shows EFF-2's
+suggested `reads(values[start..end].len), writes(values[slot])` accepted at
+a call that passes the slot outside the range. Of the probes above,
+`range-positions` and `window-index-last` are accepted by v0.74: the first
+passes positions its entry state proves apart, and the second's pair beside
+`.last` is no longer compared; their table rows record the v0.73 rule, and
+every other probe keeps its verdict. The stored probes predate the move of
+`ExitStatus` and `exit_status` into `std::process`, so a current compiler
+refuses each with TYPE-5; they were rerun here with the two `alias` lines
+the conformance cases declare, followed by a blank line.

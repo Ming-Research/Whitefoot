@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Cell {
+  value: Box<u64>;
+}
+
+fn pop2(window: &Slots<Cell, 4>) -> result: u64 writes(window.last), writes(window.len) contract {
+  requires 2_u64 <= deref(window).len;
+} {
+  let a = take_back(window: window);
+  let b = take_back(window: window);
+  let Cell(value: av) = move a;
+  let Cell(value: bv) = move b;
+  let total = av.inner +wrap bv.inner;
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  let window = slots_new::<Cell, 4>();
+  let b0 = box_new::<u64>(value: 1_u64);
+  let b1 = box_new::<u64>(value: 2_u64);
+  let b2 = box_new::<u64>(value: 3_u64);
+  let c0 = Cell(value: move b0);
+  let c1 = Cell(value: move b1);
+  let c2 = Cell(value: move b2);
+  place_back(window: &window, value: move c0);
+  place_back(window: &window, value: move c1);
+  place_back(window: &window, value: move c2);
+  if window.len == 3_u64 {
+    let part = &window[0_u64..2_u64];
+    let held = &deref(part)[1_u64].value;
+    let t = pop2(window: &window);
+    let seen = deref(held).inner;
+    if seen == 2_u64 {
+      return exit_status(code: 2_u8);
+    }
+    return exit_status(code: 9_u8);
+  }
+  return exit_status(code: 0_u8);
+}

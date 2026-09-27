@@ -1,0 +1,46 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {
+  requires at < deref(part).len;
+} {
+  doc "Replaces one element of the range with a full eight-element run.";
+  let fresh = slots_new::<u64, 8>();
+  for (k in 0_u64..8_u64) {
+    if fresh.len < 8_u64 {
+      place_back(window: &fresh, value: k);
+    }
+  }
+  set deref(part)[at] = move fresh;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The guard bounds rows[1_u64].len by cells.len, and the call writes through &rows[2_u64..3_u64]. Element 1 lies before that range's start, so OWN-7 separates the index step of rows[1_u64] from the range step, CALL-3 leaves the guarded measure fact alive, and the loop's cells[c] reads are proved in bounds. The program observes the refilled element and the sum over rows[1_u64]'s two elements.";
+  let rows = slots_new::<Slots<u64, 8>, 4>();
+  let first = slots_new::<u64, 8>();
+  let second = slots_new::<u64, 8>();
+  let third = slots_new::<u64, 8>();
+  place_back(window: &second, value: 5_u64);
+  place_back(window: &second, value: 6_u64);
+  place_back(window: &rows, value: move first);
+  place_back(window: &rows, value: move second);
+  place_back(window: &rows, value: move third);
+  let cells = array_filled::<u64, 3>(value: 7_u64);
+  let total = 0_u64;
+  if rows.len == 3_u64 {
+    if rows[1_u64].len <= cells.len {
+      refill(part: &rows[2_u64..3_u64], at: 0_u64);
+      for (c in 0_u64..rows[1_u64].len) {
+        let cell = cells[c];
+        set total = total +wrap cell;
+      }
+      if rows[2_u64].len == 8_u64 {
+        if total == 14_u64 {
+          return exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}

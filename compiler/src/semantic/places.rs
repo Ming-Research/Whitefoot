@@ -15,10 +15,11 @@
 //! and a pair no admitted family separates is overlapping. Nothing here may
 //! grow a private second copy of that relation.
 //!
-//! Two of the separations [OWN-7] admits are proofs rather than syntax — two
-//! index steps proved distinct by the fixed [ENT-6] families under [MSR-4]'s
-//! disposition, and two range steps proved disjoint by the four non-strict
-//! orderings. Those reach the entailment fragment through [`SeparationOracle`]
+//! Three of the separations [OWN-7] admits are proofs rather than syntax —
+//! two index steps proved distinct by the fixed [ENT-6] families under
+//! [MSR-4]'s disposition, two range steps proved disjoint by the four
+//! non-strict orderings, and an index step proved outside a range step by
+//! three. Those reach the entailment fragment through [`SeparationOracle`]
 //! and nothing else. A path's captured index and endpoint values are immutable
 //! once captured [REF-1, OWN-7], while the proof that separates two such
 //! values is available only along the control-flow edges it dominates.
@@ -114,6 +115,9 @@ pub(crate) enum CapturedTerm {
     Literal(u64),
     /// The value a live `own` integer binding held at the formation.
     Binding(BindingId),
+    /// The value a binding held at the formation, once a later write of that
+    /// binding has made its spelling name another value [REF-1].
+    Superseded(BindingId),
     /// An in-scope const [CONST-1, CONST-2], fixed at instantiation [FN-2].
     Const(DeclarationId),
     /// A computed value: the fragment sees the goal, not a term this module
@@ -157,7 +161,8 @@ impl CapturedValue {
     /// A binding read uses its declaration/spelling identity here, with writes
     /// invalidating facts supported by that binding. Captured storage identity
     /// in [`Self::provably_same`] still distinguishes its evaluations. Only an
-    /// opaque offset keeps occurrence identity inside a goal datum.
+    /// opaque offset, and a binding's offset after a later write of that
+    /// binding, keep occurrence identity inside a goal datum.
     pub(crate) const fn goal_identity(self) -> Self {
         match self.term {
             CapturedTerm::Literal(_) | CapturedTerm::Const(_) => {
@@ -171,7 +176,9 @@ impl CapturedValue {
             // reads may still straddle a write when the question is which
             // storage each selects.
             CapturedTerm::Binding(_) => Self::new(SPELLING_DETERMINED_CAPTURE, self.term),
-            CapturedTerm::Opaque => self,
+            // The binding's spelling now names a later value, and only the
+            // occurrence still names the one this capture read.
+            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => self,
         }
     }
 
@@ -192,9 +199,10 @@ impl CapturedValue {
         match (self.term, other.term) {
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) => left == right,
             (CapturedTerm::Const(left), CapturedTerm::Const(right)) => left == right,
-            (CapturedTerm::Binding(left), CapturedTerm::Binding(right)) => {
-                left == right && self.capture == other.capture
-            }
+            (
+                CapturedTerm::Binding(left) | CapturedTerm::Superseded(left),
+                CapturedTerm::Binding(right) | CapturedTerm::Superseded(right),
+            ) => left == right && self.capture == other.capture,
             (CapturedTerm::Opaque, CapturedTerm::Opaque) => {
                 self.capture != UNKNOWN_CAPTURE && self.capture == other.capture
             }
@@ -213,12 +221,15 @@ impl CapturedValue {
     }
 
     /// The support one captured value contributes to every measure term of
-    /// the place it occurs in [ENT-5]: the binding it read, where it read
-    /// one.
+    /// the place it occurs in [ENT-5]: the binding it read, where the
+    /// binding's spelling still names that value.
     pub(crate) const fn support(self) -> Option<BindingId> {
         match self.term {
             CapturedTerm::Binding(binding) => Some(binding),
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Opaque => None,
         }
     }
 }
@@ -245,6 +256,18 @@ impl CapturedRange {
             return None;
         };
         (end as i128).checked_sub(start as i128)
+    }
+
+    /// The half of [OWN-7]'s index-and-range separation this module settles
+    /// without a proof: written literals that put the index before the start
+    /// or at or after the end, or make the range empty.
+    const fn literally_excludes(self, index: CapturedValue) -> bool {
+        match (self.start.term, self.end.term, index.term) {
+            (CapturedTerm::Literal(start), CapturedTerm::Literal(end), _) if end <= start => true,
+            (_, CapturedTerm::Literal(end), CapturedTerm::Literal(index)) if end <= index => true,
+            (CapturedTerm::Literal(start), _, CapturedTerm::Literal(index)) => index < start,
+            _ => false,
+        }
     }
 }
 
@@ -336,12 +359,14 @@ enum StepSeparation {
     Overlapping,
 }
 
-/// The two [OWN-7] separations that are proofs rather than syntax, [WIN-2]'s
-/// two conditional answers, and whether [WIN-2]'s fixed answers apply at all.
+/// The three [OWN-7] separations that are proofs rather than syntax,
+/// [WIN-2]'s conditional answers for an index or a range beside a window
+/// part, and whether [WIN-2]'s fixed answers apply at all.
 ///
 /// [OWN-7] decides two index steps "by the fixed [ENT-6] families under
-/// [MSR-4]'s disposition" and two range steps by four named non-strict
-/// orderings, so the relation cannot be purely syntactic. This trait is the
+/// [MSR-4]'s disposition", two range steps by four named non-strict
+/// orderings and an index beside a range by three, so the relation cannot be
+/// purely syntactic. This trait is the
 /// one seam through which it reaches the entailment fragment; every
 /// implementation answers from the fixed families and from nothing else, and
 /// answering `false` to any of its questions is always sound because a pair no
@@ -359,19 +384,20 @@ pub(crate) trait SeparationOracle {
     /// prove distinct.
     fn indices_distinct(&self, left: CapturedValue, right: CapturedValue) -> bool;
 
-    /// Two range steps under one identical containing path proved disjoint by
-    /// one of the four non-strict orderings `left.end <= right.start`,
+    /// Two range steps under containing paths that are identical step for
+    /// step or differ only in index steps, proved disjoint by one of the four
+    /// non-strict orderings `left.end <= right.start`,
     /// `right.end <= left.start`, `left.end <= left.start`, and
     /// `right.end <= right.start`; either empty-range ordering suffices
     /// because formation already proved start no greater than end [OWN-7].
     fn ranges_disjoint(&self, left: CapturedRange, right: CapturedRange) -> bool;
 
     /// [WIN-2]'s liveness: whether `i < r.len` is proved in the state the two
-    /// places are compared in. Only a live `r[i]` is separated from `r.next`,
-    /// `r.free` or `r.last`: an index at or past the length may name the
-    /// append slot or a free one, and past the capacity of a `Ring` it wraps
-    /// onto a filled one [WIN-1]. `window` is the resolved place the two
-    /// steps hang below, which is the `r` the relation `r.len` is read of.
+    /// places are compared in. Only a live `r[i]` is separated from `r.next`
+    /// or `r.free`: an index at or past the length may name the append slot
+    /// or a free one, and past the capacity of a `Ring` it wraps onto a
+    /// filled one [WIN-1]. `window` is the resolved place the two steps hang
+    /// below, which is the `r` the relation `r.len` is read of.
     ///
     /// Answering `false` is always sound. A subscript formed in the compared
     /// state discharged its [OP-4] obligation there, and a reference into a
@@ -381,10 +407,18 @@ pub(crate) trait SeparationOracle {
     /// where the call's entry state derives it [EFF-5].
     fn index_is_live(&self, window: &ResolvedPlace, index: CapturedValue) -> bool;
 
-    /// [WIN-2]'s other conditional row: a live `r[i]` overlaps `r.last`
-    /// unless `i != r.len - 1` is proved. `window` is as for
+    /// An index step and a range step under containing paths that are
+    /// identical step for step or differ only in index steps, proved disjoint
+    /// by one of the three orderings `index < range.start`,
+    /// `range.end <= index` and `range.end <= range.start`: the index lies
+    /// before the range, at or after its end, or the range is empty [OWN-7].
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool;
+
+    /// [WIN-2]'s row for a range of a window beside `r.next` or `r.free`:
+    /// whether `range.end <= r.len`, or `range.end <= range.start`, is proved
+    /// in the state the two places are compared in. `window` is as for
     /// [`Self::index_is_live`].
-    fn index_is_not_last(&self, window: &ResolvedPlace, index: CapturedValue) -> bool;
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool;
 
     /// Whether both places are interpreted against one value of `r.len`.
     ///
@@ -451,6 +485,66 @@ impl ResolvedPlace {
             }
         }
         Ok(carried)
+    }
+
+    /// The same path once `binding` has been written.
+    ///
+    /// An index this path captured from `binding` still holds the value the
+    /// binding had when the path was formed [REF-1], but the binding's
+    /// spelling now names another value, and an index term is interned by
+    /// that spelling [`CapturedValue::goal_identity`]. Such an index keeps
+    /// its occurrence, which still names the value it read, and loses the
+    /// spelling, so no fact about the binding's new value reaches a term over
+    /// this path. A range endpoint needs no conversion: its goal identity is
+    /// already its formation capture.
+    pub(crate) fn supersede_binding(&mut self, binding: BindingId) {
+        for step in &mut self.path {
+            if let PlaceStep::Index(index) = step
+                && index.term == CapturedTerm::Binding(binding)
+            {
+                *index = CapturedValue::new(index.capture, CapturedTerm::Superseded(binding));
+            }
+        }
+    }
+
+    /// The same path once the index `capture` read from `binding` is
+    /// superseded on another incoming edge of a join: the join cannot tell
+    /// the edges apart, so after it the spelling names that value on none
+    /// [`Self::supersede_binding`].
+    pub(crate) fn supersede_capture(&mut self, capture: CaptureId, binding: BindingId) {
+        for step in &mut self.path {
+            if let PlaceStep::Index(index) = step
+                && index.capture == capture
+                && index.term == CapturedTerm::Binding(binding)
+            {
+                *index = CapturedValue::new(capture, CapturedTerm::Superseded(binding));
+            }
+        }
+    }
+
+    /// The indices of this path whose binding's spelling still names them,
+    /// each as its capture and that binding, which a later write of the
+    /// binding supersedes [`Self::supersede_binding`].
+    pub(crate) fn spelled_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
+        self.path.iter().filter_map(|step| match step {
+            PlaceStep::Index(CapturedValue {
+                capture,
+                term: CapturedTerm::Binding(binding),
+            }) => Some((*capture, *binding)),
+            _ => None,
+        })
+    }
+
+    /// The indices of this path a write of their binding superseded, each as
+    /// its capture and that binding.
+    pub(crate) fn superseded_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
+        self.path.iter().filter_map(|step| match step {
+            PlaceStep::Index(CapturedValue {
+                capture,
+                term: CapturedTerm::Superseded(binding),
+            }) => Some((*capture, *binding)),
+            _ => None,
+        })
     }
 
     /// The identity this place carries as an [ENT-2] term.
@@ -578,12 +672,32 @@ impl ResolvedPlace {
             }
             return true;
         }
-        let length_admitted = if include_equal {
-            self.path.len() <= other.path.len()
+        let depth_admitted = if include_equal {
+            self.storage_depth() <= other.storage_depth()
         } else {
-            self.path.len() < other.path.len()
+            self.storage_depth() < other.storage_depth()
         };
-        length_admitted && places_overlap(oracle, self, other)
+        depth_admitted && places_overlap(oracle, self, other)
+    }
+
+    /// How far below its root this path's storage lies, in half levels.
+    ///
+    /// A range selects a run of its base's elements, and the step after it
+    /// selects one of those elements, so `x[a..b][i]` lies at the level of
+    /// `x[k]` although it is one step longer; a run a path ends at lies
+    /// between its base and the base's elements [REF-4]. Counting steps would
+    /// let a write through a range frame miss a reference to the element it
+    /// replaces [REF-2].
+    fn storage_depth(&self) -> usize {
+        let last = self.path.len().saturating_sub(1);
+        self.path
+            .iter()
+            .enumerate()
+            .map(|(position, step)| match step {
+                PlaceStep::Range(_) => usize::from(position == last),
+                _ => 2,
+            })
+            .sum()
     }
 
     pub(crate) fn has_descendant(&self) -> bool {
@@ -741,9 +855,10 @@ fn separation(
             }
         }
         // A live `r[i]`, one whose `i < r.len` is proved where the two places
-        // are compared, never overlaps `r.next` or `r.free`, overlaps `r.last`
-        // unless `i != r.len - 1` is proved, and always overlaps `r.filled`
-        // [WIN-2]; any other `r[i]` overlaps all four. Liveness bounds the
+        // are compared, never overlaps `r.next` or `r.free`; any other `r[i]`
+        // overlaps both, and every `r[i]` overlaps `r.last` and `r.filled`,
+        // because a row's `r.last` stands for every slot its callee's
+        // successive `take_back` calls reach [WIN-2]. Liveness bounds the
         // index by the length the part is defined against only when both
         // read one length.
         (PlaceStep::Index(_), PlaceStep::Part(_)) | (PlaceStep::Part(_), PlaceStep::Index(_))
@@ -755,10 +870,40 @@ fn separation(
         | (PlaceStep::Part(part), PlaceStep::Index(index)) => {
             let separate = match part {
                 WindowPart::Next | WindowPart::Free => oracle.index_is_live(window, index),
-                WindowPart::Filled => false,
-                WindowPart::Last => {
-                    oracle.index_is_live(window, index) && oracle.index_is_not_last(window, index)
-                }
+                WindowPart::Last | WindowPart::Filled => false,
+            };
+            if separate {
+                StepSeparation::Separate
+            } else {
+                StepSeparation::Overlapping
+            }
+        }
+        // An index and a range of one base: separated when the index is
+        // proved before the range or at or after its end, or the range
+        // empty [OWN-7]. Unproved, the index may lie inside the range.
+        (PlaceStep::Index(index), PlaceStep::Range(range))
+        | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
+            if range.literally_excludes(index) || oracle.index_outside_range(index, range) {
+                StepSeparation::Separate
+            } else {
+                StepSeparation::Overlapping
+            }
+        }
+        // A range of a window proved to end at or below `r.len`, or proved
+        // empty, never overlaps `r.next` or `r.free`; every range overlaps
+        // `r.last` and `r.filled`, as every slot does [WIN-2]. The bound is
+        // by the length the part is defined against only when both places
+        // read one length.
+        (PlaceStep::Range(_), PlaceStep::Part(_)) | (PlaceStep::Part(_), PlaceStep::Range(_))
+            if !oracle.window_length_is_shared(window) =>
+        {
+            StepSeparation::Overlapping
+        }
+        (PlaceStep::Range(range), PlaceStep::Part(part))
+        | (PlaceStep::Part(part), PlaceStep::Range(range)) => {
+            let separate = match part {
+                WindowPart::Next | WindowPart::Free => oracle.range_within_length(window, range),
+                WindowPart::Last | WindowPart::Filled => false,
             };
             if separate {
                 StepSeparation::Separate
@@ -779,10 +924,8 @@ fn separation(
         | (PlaceStep::Index(_) | PlaceStep::Range(_) | PlaceStep::Part(_), PlaceStep::Measure(_)) => {
             StepSeparation::Separate
         }
-        // Everything left is a pair no admitted family discharges, including
-        // a range step against an index step or a window part on one base:
-        // [OWN-7] separates two ranges and two indices and says nothing about
-        // a range against either, so the pair is overlapping.
+        // Everything left is a pair no admitted family discharges, so the
+        // pair is overlapping [OWN-7].
         _ => StepSeparation::Overlapping,
     }
 }
@@ -829,26 +972,18 @@ pub(crate) fn places_overlap(
 ///
 /// This is the ordinary [OWN-7] walk asked with every position question
 /// answered by the values alone: two positions that are not provably the
-/// same value may be distinct, a slot may lie below `r.len` and outside
-/// `r.len - 1` [WIN-2], and a range step against any step other than the
-/// identical range may be empty or lie elsewhere, which no admitted family
-/// answers but some values do. The places overlap at every position exactly
+/// same value may be distinct, a slot may lie below `r.len` [WIN-2], and a
+/// range may be empty or lie apart from an index, from another range, or
+/// from `r.len` [OWN-7, WIN-2]. The places overlap at every position exactly
 /// when the walk still finds them overlapping: one is a prefix of the other,
 /// or they first differ at a pair OWN-7 and WIN-2 fix as overlapping, such as
-/// two payload steps naming different variants or a slot against `r.filled`.
+/// two payload steps naming different variants or a slot or a range against
+/// `r.last` or `r.filled`.
 pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
     if left.root != right.root {
         return false;
     }
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
-        let ranged =
-            matches!(left_step, PlaceStep::Range(_)) || matches!(right_step, PlaceStep::Range(_));
-        if ranged {
-            if steps_provably_same(*left_step, *right_step) {
-                continue;
-            }
-            return false;
-        }
         let window = ResolvedPlace {
             root: left.root,
             path: left.path[..depth].to_vec(),
@@ -884,7 +1019,11 @@ impl SeparationOracle for EveryPositionSeparable {
         true
     }
 
-    fn index_is_not_last(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
+        true
+    }
+
+    fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
         true
     }
 
@@ -934,8 +1073,12 @@ pub(crate) fn range_separation_candidate(
 /// The oracle of a consumer that holds no proof state [OWN-7].
 ///
 /// Every proof answer is `false`, which is the relation's own default: a pair
-/// no admitted family discharges overlaps. A consumer that needs the proved
-/// half records the pair for the entailment fragment instead of guessing here.
+/// no admitted family discharges overlaps. The bounds by `r.len` are the
+/// exception: every index or range these consumers meet beside a window part
+/// was formed in the compared state under its bound, or is named by a
+/// reference valid only while that bound holds. A consumer that needs the
+/// proved half records the pair for the entailment fragment instead of
+/// guessing here.
 ///
 /// Every consumer compares places of one program state: an [OP-12] target
 /// against its callee's row, a live reference against a write at that
@@ -967,8 +1110,17 @@ impl SeparationOracle for UnprovedSeparations {
         true
     }
 
-    fn index_is_not_last(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
         false
+    }
+
+    /// Every range these consumers meet beside a window part lies within the
+    /// length of the compared state, as every such index is live there: a
+    /// range formed in that state discharged its [REF-4] bound
+    /// `hi <= r.len` there, and a range reference stays valid only while
+    /// that bound holds [REF-2].
+    fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
+        true
     }
 
     /// Every consumer of this oracle compares places of one state.
@@ -1392,7 +1544,8 @@ mod tests {
         indices: bool,
         ranges: bool,
         live: bool,
-        not_last: bool,
+        index_outside: bool,
+        range_within: bool,
         /// Whether the two places read one `r.len`, which is a question of
         /// state rather than proof: `true` for places of one state.
         one_length: bool,
@@ -1411,8 +1564,12 @@ mod tests {
             self.live
         }
 
-        fn index_is_not_last(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
-            self.not_last
+        fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
+            self.index_outside
+        }
+
+        fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
+            self.range_within
         }
 
         fn window_length_is_shared(&self, _window: &ResolvedPlace) -> bool {
@@ -1428,7 +1585,8 @@ mod tests {
         indices: false,
         ranges: false,
         live: false,
-        not_last: false,
+        index_outside: false,
+        range_within: false,
         one_length: true,
     };
     /// [OWN-7] two places fail to overlap when some step of their common
@@ -1493,7 +1651,8 @@ mod tests {
             indices: true,
             ranges: false,
             live: false,
-            not_last: false,
+            index_outside: false,
+            range_within: false,
             one_length: true,
         };
         let left = place(0, &[PlaceStep::Index(literal(0, 3))]);
@@ -1537,7 +1696,8 @@ mod tests {
             indices: false,
             ranges: true,
             live: false,
-            not_last: false,
+            index_outside: false,
+            range_within: false,
             one_length: true,
         };
         assert!(!PlaceMap::default().overlaps(&proving, &left, &right));
@@ -1577,28 +1737,18 @@ mod tests {
         assert!(PlaceMap::default().overlaps(&DENIED, &left, &right));
     }
 
-    /// [WIN-2] a live `r[i]` never overlaps `r.next` or `r.free`, always
-    /// overlaps `r.filled`, and overlaps `r.last` unless `i != r.len - 1` is
-    /// proved; an `r[i]` not proved live overlaps every part, because its
-    /// index may be the length itself.
+    /// [WIN-2] a live `r[i]` never overlaps `r.next` or `r.free`; every
+    /// `r[i]` overlaps `r.last` and `r.filled`, because a row's `r.last`
+    /// stands for every slot its callee's successive `take_back` calls reach;
+    /// an `r[i]` not proved live overlaps every part, because its index may
+    /// be the length itself.
     #[test]
     fn window_part_answers_are_the_fixed_table() {
         let map = PlaceMap::default();
         let denied = DENIED;
         let live = Proves {
-            indices: false,
-            ranges: false,
             live: true,
-            not_last: false,
-            one_length: true,
-        };
-        let live_not_last = Proves {
-            not_last: true,
-            ..live
-        };
-        let not_last_only = Proves {
-            live: false,
-            ..live_not_last
+            ..DENIED
         };
         let index = place(0, &[PlaceStep::Index(opaque(0))]);
         let part = |part| place(0, &[PlaceStep::Part(part)]);
@@ -1607,8 +1757,6 @@ mod tests {
         assert!(!map.overlaps(&live, &index, &part(WindowPart::Free)));
         assert!(map.overlaps(&live, &index, &part(WindowPart::Filled)));
         assert!(map.overlaps(&live, &index, &part(WindowPart::Last)));
-        assert!(!map.overlaps(&live_not_last, &index, &part(WindowPart::Last)));
-        assert!(map.overlaps(&live_not_last, &index, &part(WindowPart::Filled)));
         for window_part in [
             WindowPart::Next,
             WindowPart::Free,
@@ -1617,13 +1765,110 @@ mod tests {
         ] {
             assert!(map.overlaps(&denied, &index, &part(window_part)));
             assert!(map.overlaps(&denied, &part(window_part), &index));
-            assert!(map.overlaps(&not_last_only, &index, &part(window_part)));
         }
 
         assert!(!map.overlaps(&denied, &part(WindowPart::Filled), &part(WindowPart::Free)));
         assert!(!map.overlaps(&denied, &part(WindowPart::Next), &part(WindowPart::Last)));
         assert!(map.overlaps(&denied, &part(WindowPart::Next), &part(WindowPart::Free)));
         assert!(map.overlaps(&denied, &part(WindowPart::Last), &part(WindowPart::Filled)));
+    }
+
+    /// [OWN-7] an index beside a range of one base is separated only when
+    /// the fixed family proves the index outside the range, or written
+    /// literals put it there. [WIN-2] a range proved within `r.len` is
+    /// separated from `r.next` and `r.free`, never from `r.last` or
+    /// `r.filled`, and from none of them when the two places read different
+    /// lengths.
+    #[test]
+    fn an_index_or_a_part_beside_a_range_is_separated_by_its_bounds() {
+        let map = PlaceMap::default();
+        let range = |start, end| PlaceStep::Range(CapturedRange { start, end });
+        let index = place(0, &[PlaceStep::Index(opaque(0))]);
+        let span = place(0, &[range(opaque(1), opaque(2))]);
+        assert!(map.overlaps(&DENIED, &index, &span));
+        assert!(map.overlaps(&DENIED, &span, &index));
+        let outside = Proves {
+            index_outside: true,
+            ..DENIED
+        };
+        assert!(!map.overlaps(&outside, &index, &span));
+        assert!(!map.overlaps(&outside, &span, &index));
+        let below_index = place(0, &[PlaceStep::Index(opaque(0)), PlaceStep::Field(1)]);
+        assert!(!map.overlaps(&outside, &below_index, &span));
+
+        // Written literals decide without a proof: an index at or after the
+        // end, one before the start, and an empty range separate; an index
+        // inside does not.
+        let written = |start, end| place(0, &[range(literal(1, start), literal(2, end))]);
+        let slot = |at| place(0, &[PlaceStep::Index(literal(0, at))]);
+        assert!(!map.overlaps(&DENIED, &slot(3), &written(0, 2)));
+        assert!(!map.overlaps(&DENIED, &slot(2), &written(0, 2)));
+        assert!(!map.overlaps(&DENIED, &slot(0), &written(1, 4)));
+        assert!(!map.overlaps(&DENIED, &slot(2), &written(2, 2)));
+        assert!(map.overlaps(&DENIED, &slot(1), &written(0, 2)));
+
+        let part = |part| place(0, &[PlaceStep::Part(part)]);
+        let within = Proves {
+            range_within: true,
+            ..DENIED
+        };
+        let two_lengths = Proves {
+            range_within: true,
+            one_length: false,
+            ..DENIED
+        };
+        for window_part in [
+            WindowPart::Next,
+            WindowPart::Free,
+            WindowPart::Filled,
+            WindowPart::Last,
+        ] {
+            assert!(map.overlaps(&DENIED, &span, &part(window_part)));
+            assert!(map.overlaps(&DENIED, &part(window_part), &span));
+            assert!(map.overlaps(&two_lengths, &span, &part(window_part)));
+        }
+        assert!(!map.overlaps(&within, &span, &part(WindowPart::Next)));
+        assert!(!map.overlaps(&within, &part(WindowPart::Free), &span));
+        assert!(map.overlaps(&within, &span, &part(WindowPart::Last)));
+        assert!(map.overlaps(&within, &span, &part(WindowPart::Filled)));
+    }
+
+    /// [EFF-5] a range beside an index or beside `r.next` or `r.free`
+    /// overlaps or not by its positions' values, so the pair is compared;
+    /// beside `r.last` or `r.filled` it overlaps at every position, as a slot
+    /// does, so it is not.
+    #[test]
+    fn a_range_overlaps_at_every_position_only_beside_last_or_filled() {
+        let span = place(
+            0,
+            &[PlaceStep::Range(CapturedRange {
+                start: opaque(1),
+                end: opaque(2),
+            })],
+        );
+        let index = place(0, &[PlaceStep::Index(opaque(0))]);
+        let part = |part| place(0, &[PlaceStep::Part(part)]);
+        assert!(!super::overlaps_at_every_position(&span, &index));
+        assert!(!super::overlaps_at_every_position(&index, &span));
+        for window_part in [WindowPart::Next, WindowPart::Free] {
+            assert!(!super::overlaps_at_every_position(
+                &span,
+                &part(window_part)
+            ));
+            assert!(!super::overlaps_at_every_position(
+                &part(window_part),
+                &span
+            ));
+        }
+        for window_part in [WindowPart::Last, WindowPart::Filled] {
+            assert!(super::overlaps_at_every_position(&span, &part(window_part)));
+            assert!(super::overlaps_at_every_position(&part(window_part), &span));
+            assert!(super::overlaps_at_every_position(
+                &index,
+                &part(window_part)
+            ));
+        }
+        assert!(super::overlaps_at_every_position(&span, &span));
     }
 
     /// Every [WIN-2] part is defined against `r.len`, and a live index is live
@@ -1637,7 +1882,8 @@ mod tests {
             indices: false,
             ranges: false,
             live: true,
-            not_last: true,
+            index_outside: false,
+            range_within: false,
             one_length: false,
         };
         let index = place(0, &[PlaceStep::Index(opaque(0))]);
@@ -1700,5 +1946,73 @@ mod tests {
             .is_proper_prefix_of(&reference)
         );
         assert!(!place(0, &[PlaceStep::Field(1)]).is_proper_prefix_of(&reference));
+    }
+
+    /// [REF-2, REF-4] a range frame descends no level of its own: `x[0..2][1]`
+    /// selects `x[1]`, so it is a proper prefix of `x[1][0]` although both
+    /// paths have two steps, and it is `x[1]`'s own level, not its prefix. A
+    /// run a path ends at lies between its base and the base's elements.
+    #[test]
+    fn a_range_frame_descends_no_level_of_its_own() {
+        let frame = PlaceStep::Range(CapturedRange {
+            start: literal(0, 0),
+            end: literal(1, 2),
+        });
+        let through_frame = place(0, &[frame, PlaceStep::Index(literal(2, 1))]);
+        let element = place(0, &[PlaceStep::Index(literal(3, 1))]);
+        let below = place(
+            0,
+            &[
+                PlaceStep::Index(literal(4, 1)),
+                PlaceStep::Index(literal(5, 0)),
+            ],
+        );
+        assert!(through_frame.may_be_prefix_of(&DENIED, &below, false));
+        assert!(!through_frame.may_be_prefix_of(&DENIED, &element, false));
+        assert!(through_frame.may_be_prefix_of(&DENIED, &element, true));
+
+        let run = place(0, &[frame]);
+        assert!(run.may_be_prefix_of(&DENIED, &element, false));
+        assert!(!element.may_be_prefix_of(&DENIED, &run, true));
+    }
+
+    /// [REF-1, ENT-2] after its binding is written, an index a path captured
+    /// keeps the evaluation it read and loses the binding's spelling: its goal
+    /// identity is its own occurrence, it is still the same value as that
+    /// occurrence, and it no longer depends on the binding. An index of
+    /// another binding keeps its spelling.
+    #[test]
+    fn a_written_binding_supersedes_the_index_a_path_captured_from_it() {
+        let mut path = place(
+            0,
+            &[
+                PlaceStep::Index(binding(0, 1)),
+                PlaceStep::Index(binding(1, 2)),
+            ],
+        );
+        assert_eq!(
+            path.spelled_indices().collect::<Vec<_>>(),
+            [
+                (CaptureId::source(0), BindingId(1)),
+                (CaptureId::source(1), BindingId(2))
+            ]
+        );
+        path.supersede_binding(BindingId(1));
+        let PlaceStep::Index(superseded) = path.path[0] else {
+            unreachable!("the first step is an index");
+        };
+        let PlaceStep::Index(kept) = path.path[1] else {
+            unreachable!("the second step is an index");
+        };
+        assert_eq!(superseded.term, CapturedTerm::Superseded(BindingId(1)));
+        assert_eq!(superseded.goal_identity(), superseded);
+        assert!(superseded.provably_same(binding(0, 1)));
+        assert_eq!(superseded.support(), None);
+        assert_eq!(kept, binding(1, 2));
+        assert_ne!(kept.goal_identity(), kept);
+        assert_eq!(
+            path.spelled_indices().collect::<Vec<_>>(),
+            [(CaptureId::source(1), BindingId(2))]
+        );
     }
 }

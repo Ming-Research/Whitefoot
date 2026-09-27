@@ -215,13 +215,16 @@ impl Reasoning<'_, '_, '_> {
         self.vocabulary.promote_flow_contradiction(states);
         // The header kills stand for the body's events on every iteration,
         // and an index this state proves live stays live at each of them
-        // [WIN-2]: `r.len` falls only at an event that writes `r.last`,
-        // `r.filled` or the whole window [OP-10], each of which kills every
-        // fact below `r[i]` here because no ledger records `i != r.len - 1`,
-        // and a write of `i` kills the fact through its offset support
-        // [ENT-5]. A fact these kills leave therefore meets no such event.
+        // [WIN-2], as a range this state proves to end at or below `r.len`
+        // stays within it: `r.len` falls only at an event that writes
+        // `r.last`, `r.filled` or the whole window [OP-10], each of which
+        // kills every fact below `r[i]` or `r[lo..hi]` here because [WIN-2]
+        // fixes every index and range as overlapping `r.last` and `r.filled`,
+        // a write of `i` kills the fact through its offset support [ENT-5],
+        // and a range's endpoints are captured values no write changes
+        // [OWN-7]. A fact these kills leave therefore meets no such event.
         let ledger = states.separations.clone();
-        let live = self.event_live_indices(states, &kills.events);
+        let live = self.event_live_bounds(states, &kills.events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,

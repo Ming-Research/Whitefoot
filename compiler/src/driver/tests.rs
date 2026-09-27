@@ -1159,6 +1159,77 @@ fn an_uninhabited_function_is_a_library_without_an_unproved_executable_call() {
     assert!(llvm.contains("Executable caller was not admitted"));
 }
 
+/// [PAR-1, OWN-7, WIN-2] a range beside an append is permitted when the
+/// range was formed within the length both statements read, and denied once
+/// the first statement moves that length; an element write beside a range is
+/// permitted when written literals put it outside the range, and denied
+/// inside.
+#[test]
+fn a_range_beside_an_append_or_an_element_write_is_judged_by_its_bounds() {
+    let ledger = ledger_of(
+        "ranges.wf",
+        br#"fn total(part: &[u64]) -> result: u64 reads(part) {
+  let sum = 0_u64;
+  for (k in 0_u64..deref(part).len) {
+    let x = deref(part)[k];
+    set sum = sum +wrap x;
+  }
+  return sum;
+}
+
+fn range_then_append(r: &Slots<u64, 8>) -> result: u64 writes(r) contract {
+  requires deref(r).len == 2_u64;
+} {
+  let a = total(part: &deref(r)[0_u64..2_u64]);
+  place_back(window: r, value: 9_u64);
+  return a;
+}
+
+fn append_then_range(r: &Slots<u64, 8>) -> result: u64 writes(r) contract {
+  requires deref(r).len == 2_u64;
+} {
+  place_back(window: r, value: 9_u64);
+  let a = total(part: &deref(r)[0_u64..3_u64]);
+  return a;
+}
+
+fn write_beside(v: &Array<u64, 8>) -> result: u64 writes(v) {
+  set deref(v)[5_u64] = 4_u64;
+  let a = total(part: &deref(v)[0_u64..2_u64]);
+  return a;
+}
+
+fn write_inside(v: &Array<u64, 8>) -> result: u64 writes(v) {
+  set deref(v)[1_u64] = 4_u64;
+  let a = total(part: &deref(v)[0_u64..2_u64]);
+  return a;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let decisions = ledger
+        .iter()
+        .filter(|line| line.starts_with("PAR permitted") || line.starts_with("PAR denied"))
+        .filter(|line| !line.contains("a return statement"))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decisions,
+        [
+            "PAR permitted   ranges.wf:13  pair(total, place_back)  eligible",
+            "PAR denied      ranges.wf:21  pair(place_back, total)  condition 1: \
+             the write of s1 overlaps the read of s2 at r vs &deref(r)[0_u64..3_u64]",
+            "PAR permitted   ranges.wf:27  pair(a set statement, total)  eligible",
+            "PAR denied      ranges.wf:33  pair(a set statement, total)  condition 1: \
+             the write of s1 overlaps the read of s2 at \
+             set deref(v)[1_u64] = 4_u64; vs &deref(v)[0_u64..2_u64]",
+        ]
+    );
+}
+
 /// The permission ledger of one compiled source, in the order the driver
 /// hands it to `whitefootc --par-ledger`.
 ///

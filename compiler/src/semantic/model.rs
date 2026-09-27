@@ -2758,8 +2758,8 @@ pub(crate) struct CheckedCallSeparation {
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
-    /// The window a [`CheckedCallSeparationPositions::Live`] position
-    /// indexes: the place both paths reach above the divergence.
+    /// The window a position beside one of its parts reads `r.len` of
+    /// [WIN-2]: the place both paths reach above the divergence.
     pub(crate) window: Option<super::places::ResolvedPlace>,
     /// The two substituted paths as the diagnostic renders them.
     pub(crate) left_spelling: String,
@@ -2784,6 +2784,14 @@ pub(crate) enum CheckedCallSeparationPositions {
     /// indexes, which the pair's separation needs proved below that window's
     /// length in the call's entry state.
     Live(super::places::CapturedValue),
+    /// [OWN-7] an index beside a range under containing paths that are
+    /// identical step for step or differ only in index steps, which the
+    /// separation needs proved before the range's start or at or after its
+    /// end, or the range empty.
+    IndexOutsideRange(super::places::CapturedValue, super::places::CapturedRange),
+    /// [WIN-2] a range beside the window's `next` or `free`, which the
+    /// separation needs proved to end at or below `r.len`, or empty.
+    RangeWithinLength(super::places::CapturedRange),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
