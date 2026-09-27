@@ -578,10 +578,17 @@ rarely insert at the same place.
   and both records ASCII loops survive. Map text grows 78.991% and the
   three-module total 28.793%, failing the preregistered provisional 25%/10%
   selection screens. Those are experiment screens, not owner-approved
-  performance ceilings. Runtime gains, full-corpus effects and production O2
-  remain unmeasured; the short construction-cost observations remain
-  unqualified. This does not replace the historical Clang 18 x86-64 runtime
-  evidence above.
+  performance ceilings. Fixed-eight map runtime, full-corpus effects and
+  production O2 remain unmeasured; the short construction-cost observations
+  remain unqualified. A distinct [frozen Vector F runtime diagnostic](../research/experiments/container-representation/ECOSYSTEM.md#frozen-f-runtime-diagnostic-preregistration)
+  subsequently found gains and regressions across all original cells. The
+  two-stage delayed-unroll form improves wide suffix-1 but regresses wide
+  suffix-2/3; ordinary second O3 improves suffix-1 more while regressing small
+  scalar cells and wide suffix-3. Single-stage unroll deferral already inlines
+  truncate, but retains array loops/stack copies and regresses every wide
+  useful cell. These results select no pipeline policy and measure no current
+  fixed-eight lookup runtime. They do not replace the historical Clang 18
+  x86-64 runtime evidence above.
   Candidate levers: loop metadata on the emitted probe loop that leaves it
   to the late unroll pass, after inlining; an unroll threshold or pass order
   in the pipeline the driver requests that runs full unrolling after the
@@ -593,7 +600,8 @@ rarely insert at the same place.
   `.text` across the maintained programs and container bundles stays within
   a stated growth bound, and the maintained paired compute comparison
   passes. Deferred because it is a host inlining-policy question separate
-  from the result ABI, with one program as runtime evidence. Reopen when a
+  from the result ABI, with only historical runtime evidence for the fixed
+  probe lookup. Reopen when a
   maintained workload's time is dominated by an out-of-line container
   lookup, or when the driver's optimization pipeline is revisited.
 

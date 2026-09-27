@@ -726,3 +726,399 @@ To inspect final optimized LLVM, repeat an arm's last Clang invocation with
 `-S -emit-llvm` instead of `-c`, saving a distinct diagnostic file. Never feed
 that file back into the native construction or charge its time to the arm.
 Stop at these artifacts; this reproduction contains no executable link or run.
+
+### Frozen F runtime diagnostic preregistration
+
+Preregistered on 2026-09-27 before native construction or runtime observation.
+This asks a separate performance-first question: can U's demonstrated ordinary
+costed inlining yield a useful runtime improvement that warrants further policy
+study despite the known size growth? The preceding code-only pilot stays
+negative under its original screens. This diagnostic neither changes those
+screens nor selects a production policy, source-name hint or export change.
+
+Use Vector source F, revision `3347fcb4b705990b5b3a9d66887a30ca9e632374`.
+The saved compiler SHA-256 is
+`fe856a7b9ab2827bb30515547a82bc01132b65e4e3110dd0371cdf0cfc88b3eb`;
+the frozen timed and account LLVM hashes are respectively
+`63038feb712920a11bb212eb06f858929186445eac6b2703afea392a9d74aa24` and
+`2ee32650b03a6e1a42f3ef2fe55bc569066e150c86024dd3f6a64a479a0f6518`.
+The frozen timed image is
+`44660c2de9532af3392c3c5fefea363b1915abd03bc9b79f4ba39812425c05f2`;
+its 294-row account CSV is
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+Local originals are under `/private/tmp/whitefoot-vector-single-insert-f/`
+and the family's `.build/single-insert-f/{ecosystem,native}/`; the 31-file
+manifest `runtime-f-inputs.sha256` in the previous private run directory pins
+both drivers, native libraries, all runtime objects and reference artifacts.
+Current G sources and the current default compiler are excluded.
+
+Construct fresh S, R and U timed objects with the preceding arm definitions,
+using only F's frozen raw LLVM. L is omitted because its three earlier objects
+were byte-identical to R. Independently construct matching account objects
+from F's frozen observer LLVM. That input uses exactly F's Makefile rewrite:
+`malloc` to `wf_cost_allocate`, `free` to `wf_cost_release`, `main` to
+`wf_fixture_main`, and `declare noalias nonnull ptr` for the allocation
+declaration. Add no realloc policy or observer work to timed code. Link all
+six with the corresponding frozen driver/Rust/C++ objects and unchanged
+runtime/link order. No Whitefoot or Rust compiler rebuild belongs to this run.
+
+Before timing, fresh S must match the frozen object bytes and linked function
+placement, text and constant bytes; explain non-code identity differences and
+stop on a substantive mismatch. Inspect actual linked assembly for all arms:
+whether F reproduces C's wide truncate boundary, whether U removes it, the
+wide tail boundary, scalar code, digest loads/stores, aggregate transfers,
+stack frames and repeated constants. Preserve every word's checksum use.
+Report object text and linked layout separately; no linked-footprint result
+replaces the earlier size screen. The prior U object had no accounting image
+and supplies no allocation evidence for this run.
+
+Every timed/account image must pass F's original 1,260 configurations and
+8,820 complete executions. All three account outputs must match the frozen
+294 rows byte for byte. Each account image must reject the checksum and
+unreleased-allocation controls with status 1 and the exact existing reason.
+Keep successful construction, successful checks and expected rejection
+statuses/times separate. Any input, oracle, cleanup or accounting mismatch
+stops the diagnostic. Fixed-eight runtime preparation is outside this task;
+its existing native mechanism evidence is sufficient here.
+
+If separately granted after code admission, run one S/R/U trial using the
+unchanged `measure 1048576 7`: 4,116 rows per image, both internal order
+cohorts, all seven implementations, both widths, all three populations, all
+seven paths and seeds 101–107. Report all 36 useful cells and six unranked
+suffix-0 controls. There is no automatic reverse-order batch or replay.
+Root reads the first trial before deciding whether a specific uncertainty
+warrants another run; roughly 240 s of measurement and a 600 s guarded ceiling
+are proposed, separately from construction and checks.
+
+The prospective diagnostic-positive screen is at least one useful cell with
+U/S median at most 0.95 in both cohorts and U's observed maximum below S's
+minimum in both. Require samples of at least 1 ms and cohort-ratio spread at
+most 10%; inter-arm native-control drift above 10% leaves attribution
+unresolved. These are diagnostic screens, not owner performance ceilings or
+confidence intervals. A positive first trial is a lead, not proof of
+repeatability across image orders. Report U/R, R/S, the original slower-native
+comparison and every useful-cell regression; unchanged scalar instructions
+do not exclude layout effects. No average erases a counterexample or the
+existing size failure. Production selection still requires O2, other admitted
+targets/toolchains, all families and the full corpus, stable cold/edited/warm
+compile cost, object/linked text, module/function ThinLTO, full LTO, formal
+paired compute and its null control, exports/callbacks, both execution worlds,
+result-body ordering, cache identity and a design amendment.
+
+The initial grant covered one construction/check batch followed by read-only
+native review, with no runtime measurements. Its local command was:
+
+```sh
+WHITEFOOT_CHECK_TIMEOUT=90 perl .github/run-check.pl generic-pipeline-f-build \
+  bash /private/tmp/whitefoot-generic-pipeline-discriminator/build-runtime-f.sh
+```
+
+That scratch script is an original-run identifier, not a checkout dependency.
+To reproduce its inputs, use a clean checkout of the F revision above and the
+recorded native toolchain. Build its compiler with the earlier guarded Cargo
+command, then run `make -C research/experiments/container-representation/vector-library
+BUILD=.build/pipeline-f ecosystem-build ecosystem-check ecosystem-account`
+under the guard. Verify emitted hashes before interpreting a replay. Use the
+S/R/U Clang stage commands above for each of `whitefoot-timed.ll` and
+`whitefoot-account.ll`, substituting the fresh F input and output paths. For
+each arm and kind, the complete link command is:
+
+```sh
+# Run from that F checkout; arm is S/R/U and kind is timed/account.
+family=research/experiments/container-representation/vector-library
+base="$family/.build/pipeline-f"
+runtime=(ordinary_values.o sched/core.o sched/entry.o completion/runtime.o
+  completion/file_adapter.o completion/bridge.o wf_floor.o sched/prim_host.o
+  completion/wait_host.o completion/file_posix.o completion/linux_io_uring.o
+  ordinary_values_ir.o)
+native=()
+for object in "${runtime[@]}"; do native+=("$base/native/$object"); done
+clang++ -O3 "$base/ecosystem/driver-$kind.o" "$out/$kind-$arm.o" \
+  "$base/ecosystem/cpp-$kind.o" "$base/ecosystem/rust-$kind.a" \
+  "${native[@]}" -pthread -lm -liconv -lSystem -lc -lm \
+  -o "$out/vector-$kind-$arm"
+```
+
+Use `nm -n`, `otool -l`, `otool -s` and `otool -tvV` for stock identity and
+linked code; run each image's `check`, each account image's `account`,
+`fail-checksum` and `fail-cleanup`, reading statuses directly as above. Compare
+account CSVs with `cmp`; the exact negative reasons are in F's Makefile.
+Preserve logs/hashes and separate phase costs. Stop for code review before a
+separately authorized `measure` invocation.
+
+S/R/U construction and checks completed with guard status 0 in 9.62 s (child
+9.51 s). All 58 successful phases returned 0 and all six expected negative
+observations returned 1. Every image passed the complete matrix and all three
+account CSVs matched F. Fresh S timed/account objects are byte-identical to
+F. Linked section bytes and function placement match; every whole-image
+difference is confined to UUID/signature metadata and its recorded extent.
+The signature identifiers reflect the different output basenames. No runtime
+samples were collected. Local artifacts are in `runtime-f/` under the recorded
+private directory, including commands, phases, hashes and linked disassembly.
+
+| F arm | Timed WF text, bytes | Native construction, s | Account construction, s |
+| --- | ---: | ---: | ---: |
+| S | 11,428 | 0.16 | 0.16 |
+| R | 12,156 | 0.24 | 0.24 |
+| U | 14,596 | 0.28 | 0.30 |
+
+The two-stage arms charge both native phases. Six links took 0.30 s, six checks
+4.75 s and three account executions 0.09 s in total; inspection is separate.
+These short, single construction observations retain 0.01 s resolution and
+do not qualify a compile-cost policy. U removes the wide truncate calls but
+retains the wide tail call; R inlines tail but retains truncate. U also changes
+register pressure, stack frames and scalar insertion code, so the future
+runtime discriminator is not the cost of one isolated call.
+
+At 06:16 UTC, before any runtime observation, add a code-only discriminator V:
+compile raw F directly to native object with ordinary O3 plus
+`-mllvm -unroll-full-max-count=0`, without a second LLVM optimization stage.
+The grounds are already-observed U size/construction cost and its first-stage
+remarks: wide truncate inlines at cost 175 against 250 before stage two; the
+earlier map first stage likewise inlines find/remove at 105/140. Thus a second
+complete O3 pipeline is not yet justified by the inlining witness alone.
+This changes no old screen and proposes no production policy.
+
+V must reproduce the wide boundary removal in actual linked code, preserve
+all element consumption/owner transfers, and report surviving fixed-size loops,
+helper calls, stack effects, object text and single-stage cost. Use the same
+31 frozen inputs, two matching images, complete checks, exact F accounting
+comparison and both negative controls. Keep S/R/U artifacts byte-frozen. No
+fixed-eight or records rebuild and no runtime measurement is authorized here.
+The guarded scratch command is `build-runtime-f-v.sh` under the same private
+directory; the portable native step for each kind is:
+
+```sh
+clang -O3 -Wno-override-module -x ir -mllvm -unroll-full-max-count=0 \
+  -c "$base/ecosystem/whitefoot-$kind.ll" -o "$out/$kind-V.o"
+```
+
+The unchanged link/check recipe above was used with `arm=V`, preserving direct
+statuses and phase costs, followed by native review. The V code result had to
+precede any decision about whether to time it.
+
+V completed with guard status 0 in 3.01 s (child 2.99 s): eight successful
+phases returned 0 and both negative controls returned 1 with the expected
+reason. Both full matrices passed and its 294 account rows matched F. All
+31 inputs and the S/R/U artifacts still matched their pinned hashes. Timed
+construction took 0.16 s, account construction 0.17 s, the two links 0.10 s,
+the two checks 1.68 s and account execution 0.03 s. These retain the same
+short-observation qualification. V timed WF text is 12,564 bytes, 9.940% above
+S, compared with U's 27.721%; constant/literal bytes are 84 versus S/R's 932
+and U's 1,044. This is a Vector result, not a pass of the earlier summed
+three-module screen or a selected policy. Artifacts are in `runtime-f-v/`.
+
+Actual linked code confirms that U and V remove all wide truncate references;
+S has five call sites and R seven across the emitted WF bodies, including
+unreferenced public helpers. S's hot tail calls truncate at `0x10000cb48`,
+R's retained tail body at `0x10000cdc0`; U and V tail bodies contain no such
+call. R inlines tail into trace; S/U/V retain that boundary. Generic instance
+`c3abe4db44181f7a` names the wide trace/work/tail functions and
+`d6739d8f89f405bd` the wide truncate helper in these pinned images.
+
+| Total wide linked stack frame, bytes | S | R | U | V |
+| --- | ---: | ---: | ---: | ---: |
+| Trace | 352 | 400 | 368 | 704 |
+| Work | 688 | 688 | 720 | 928 |
+| Tail | 288 | 288 | 368 | 672 |
+
+These are total stack reservations, including saved registers. In wide work,
+S/R reserve 592 local bytes plus 96 saved-register bytes, U reserves 560 plus
+160, and V reserves 848 plus 80. A single `sub sp` in other prologues includes
+their saved-register area; it is not an additional local allocation. No
+execution-time share is inferred from these frame sizes or call counts.
+
+V's smaller code retains a concrete aggregate cost. Tail construction zeros
+a 256-byte stack array, fills it in four vector-loop iterations, copies it
+to a second stack area, then copies it into backing storage. The fill loop
+is at linked addresses `0x10000cb04`–`0x10000cb2c`. After taking the odd final
+element, V copies its 256 bytes back to stack and checksums all 32 words
+through the loop at `0x10000cd30`–`0x10000cd40` (eight-byte step, 256-byte
+limit). U writes constructed vectors directly to the backing and its odd
+consumption reads all words there with an expanded digest chain. U still has
+spill traffic and repeated constant setup; removing the call alone does not
+establish a gain. The second O3 stage therefore is unnecessary for this
+inlining witness, but its later expansion removes materialization that V
+retains. Neither arm is a call-only comparison.
+
+The scalar trace/work/tail and truncate instructions match S against V, and
+R against U, after resolving branch targets/relocations. R/U change scalar
+insertion control flow from S/V; code placement also moves. Thus an observed
+scalar difference cannot automatically be assigned to inlining. Frozen native
+control objects remain identical in every image, but their linked placement
+can change.
+
+For audit, the timed image SHA-256 values for S/R/U/V are respectively
+`21584c4979fd5b7cf2c3522022ee137cc22bc1447bac8de0ce925879ac280b52`,
+`989be5dc5552c1e94999f9a46b67fdc8a5ebe304cd9e47084d7388a636524e38`,
+`1d7bdef6b325059d54c37ca1f59def0c43e208e3ba3807add3a39bd6098802a5`
+and `b498a3bed648da8d65a5d3fadd647786591e6bb6772f46b24046609225ad70b8`.
+The saved `timed-*.linked-native.txt` comes from `otool -tvV` on those images;
+`timed-*.object-symbols.txt`, `*.size.txt` and `phases.tsv` preserve the other
+observations. Inspection LLVM is not counted as native code or fed to another
+native stage.
+
+The F preregistration required unchanged source-level ownership/consumption
+and explicitly reported aggregate transfers, stack work and layout changes;
+it set no native-transfer ceiling. V passed correctness and the inlining
+witness while exposing additional native stack copies. The old C pilot's
+stricter movement/size selection rule remained unchanged and its result stayed
+negative. The unresolved question at this point was whether either complete
+native pipeline would buy useful runtime despite its observed costs, with
+every original cell and control retained. S/R/U/V were frozen pending the
+separate timing grant recorded next.
+
+After this native review and before any runtime observation, the root agent
+authorized one S/R/U/V full-matrix trial in that order, retaining V to
+discriminate the need for U's second pass. Use the unchanged 1,048,576 work / 7
+sample command and 4,116 rows per arm; preserve every outlier. Apply the stated
+first-trial diagnostic screens separately to U/S and V/S, and report U/V plus
+the R control. This is no production selection or threshold revision. Check
+all 31 frozen input hashes and every S/R/U/V construction artifact before and
+after the trial. One 600 s guarded batch is allowed (about 320 s expected),
+with direct per-arm status and elapsed time; no automatic rerun or new arm.
+The local one-shot command is `measure-runtime-f.sh` in the recorded private
+directory. The portable measured command is simply
+`"$out/vector-timed-$arm" measure 1048576 7` for S, R, U, V, saving each stdout
+to a distinct CSV and reading its exit status directly. Account images are
+never timed.
+
+The one trial ran on 2026-09-27 from 06:25:56 to 06:31:24 UTC. S/R/U/V
+returned 0 in 80.12 / 80.33 / 81.15 / 85.68 s; the guard returned 0 in
+328.00 s (child 327.91 s). These are complete-matrix execution costs, not
+per-operation ratios. Each arm emitted all 4,116 unique expected rows
+(16,464 total), with unchanged work/rounds and identical checksums across
+arms. All 31 frozen input hashes and 26 construction artifacts matched before
+and afterward. Every sample and outlier is retained in the committed raw
+[S matrix](vector-library/ecosystem-pipeline-f-s-samples.csv),
+[R matrix](vector-library/ecosystem-pipeline-f-r-samples.csv),
+[U matrix](vector-library/ecosystem-pipeline-f-u-samples.csv) and
+[V matrix](vector-library/ecosystem-pipeline-f-v-samples.csv).
+The private `runtime-f-measure/` directory retains identical originals and
+the phase/status/matrix checks. No replay or extra arm ran.
+
+Each table entry gives the candidate/S median ratio in cohort 0 / cohort 1,
+without pooling. Above one is slower than S. G and L mean all observed
+samples are respectively faster or slower in both cohorts, after duration
+and cohort-ratio qualification; O means overlap in at least one cohort and
+Q fails qualification. Judgments use unrounded samples. A G is not
+automatically the separate 5% diagnostic gain. The six suffix-0 controls
+remain unranked and in every raw matrix.
+
+| Bytes | Path | Count | R/S | U/S | V/S |
+| ---: | --- | ---: | --- | --- | --- |
+| 8 | reserved | 16 | 1.099/1.095 L | 1.001/0.994 O | 1.012/1.006 O |
+| 8 | reserved | 256 | 1.012/0.970 O | 0.983/0.974 O | 0.986/0.972 O |
+| 8 | reserved | 4096 | 0.944/0.995 O | 0.948/1.056 Q | 0.946/0.997 O |
+| 8 | growth | 16 | 1.051/1.005 O | 1.000/1.027 O | 1.014/1.000 O |
+| 8 | growth | 256 | 1.026/0.996 O | 1.066/1.040 O | 1.004/1.005 O |
+| 8 | growth | 4096 | 0.999/0.997 O | 1.007/1.008 O | 1.001/1.003 O |
+| 8 | reuse | 16 | 1.129/1.081 L | 0.980/0.995 O | 0.996/1.023 O |
+| 8 | reuse | 256 | 0.967/0.992 O | 0.964/0.999 O | 0.969/1.003 O |
+| 8 | reuse | 4096 | 0.998/1.001 O | 0.999/1.001 O | 0.999/1.001 O |
+| 8 | suffix-1 | 16 | 0.999/0.997 O | 1.012/0.998 O | 1.001/1.031 O |
+| 8 | suffix-1 | 256 | 1.000/1.001 O | 1.001/1.000 O | 1.002/1.001 O |
+| 8 | suffix-1 | 4096 | 1.022/0.999 O | 0.997/1.001 O | 0.999/1.000 O |
+| 8 | suffix-2 | 16 | 1.030/0.997 O | 0.988/0.995 O | 0.987/0.987 G |
+| 8 | suffix-2 | 256 | 1.038/0.999 O | 0.995/0.996 O | 0.997/0.995 O |
+| 8 | suffix-2 | 4096 | 1.037/0.996 O | 0.997/0.996 O | 0.999/0.994 O |
+| 8 | suffix-3 | 16 | 1.003/0.999 O | 0.988/1.014 O | 0.985/0.983 O |
+| 8 | suffix-3 | 256 | 1.000/1.002 O | 0.986/0.983 O | 1.016/0.987 O |
+| 8 | suffix-3 | 4096 | 1.001/1.002 O | 1.029/0.984 O | 0.985/1.015 O |
+| 256 | reserved | 16 | 1.000/1.002 O | 0.985/0.986 O | 1.364/1.366 L |
+| 256 | reserved | 256 | 1.004/1.003 O | 0.996/0.998 O | 1.390/1.406 L |
+| 256 | reserved | 4096 | 1.000/1.000 O | 0.998/1.000 O | 1.364/1.364 L |
+| 256 | growth | 16 | 1.001/1.006 O | 0.998/1.001 O | 1.279/1.285 L |
+| 256 | growth | 256 | 1.001/0.995 O | 0.999/1.000 O | 1.281/1.273 L |
+| 256 | growth | 4096 | 1.001/0.996 O | 0.988/0.991 O | 1.273/1.272 L |
+| 256 | reuse | 16 | 0.999/0.995 O | 0.985/0.994 O | 1.382/1.380 L |
+| 256 | reuse | 256 | 0.999/1.004 O | 1.014/0.998 O | 1.392/1.397 L |
+| 256 | reuse | 4096 | 0.998/1.003 O | 0.996/1.001 O | 1.361/1.363 L |
+| 256 | suffix-1 | 16 | 0.750/0.751 G | 0.915/0.916 G | 2.135/2.141 L |
+| 256 | suffix-1 | 256 | 0.754/0.749 G | 0.917/0.915 G | 2.138/2.139 L |
+| 256 | suffix-1 | 4096 | 0.751/0.752 G | 0.918/0.916 G | 2.145/2.143 L |
+| 256 | suffix-2 | 16 | 0.996/0.988 O | 1.451/1.447 L | 2.323/2.312 L |
+| 256 | suffix-2 | 256 | 1.011/1.014 O | 1.489/1.487 L | 2.389/2.407 L |
+| 256 | suffix-2 | 4096 | 1.021/0.980 O | 1.495/1.442 L | 2.414/2.307 L |
+| 256 | suffix-3 | 16 | 1.320/1.321 L | 1.428/1.431 L | 2.030/2.034 L |
+| 256 | suffix-3 | 256 | 1.321/1.321 L | 1.425/1.426 L | 2.026/2.030 L |
+| 256 | suffix-3 | 4096 | 1.321/1.323 L | 1.445/1.425 L | 2.028/2.029 L |
+
+U meets the first-trial gain screen in exactly three useful cells: wide
+suffix-1 at each population. R meets the same screen there and is faster than
+U: U/R is 1.216–1.221 across those six cohort comparisons. U has six clear
+counterexamples: every wide suffix-2 and suffix-3 cell is at least 5% slower,
+with disjoint sample ranges in both cohorts. R has five such counterexamples:
+scalar reserved/reuse at 16 (9.5–9.9% and 8.1–12.9% slower), and wide
+suffix-3 at every population (32.0–32.3% slower). V has one range-separated
+gain, scalar suffix-2 at 16 (ratios 0.987075/0.987091), below the 5%
+diagnostic threshold, so it has zero qualifying diagnostic gains. All 18
+wide useful V cells are clear regressions (27.2–141.4% slower).
+R/U/V have respectively 10/16/7 cells with lower medians in both cohorts,
+11/8/24 with higher medians in both, and 15/12/5 with opposite median
+directions. Small or opposite-direction differences are not promoted to
+repeatable gains. The independent target reduction uses the observed-range
+test against each cohort's median-slower Rust/C++ peer, with duration and
+stability qualification. Its counts are:
+
+| Arm | Qualified passes | Robust deficits | Inconclusive | Unranked controls |
+| --- | ---: | ---: | ---: | ---: |
+| S | 13 | 13 | 10 | 6 |
+| R | 13 | 14 | 9 | 6 |
+| U | 13 | 16 | 7 | 6 |
+| V | 7 | 26 | 3 | 6 |
+
+All 36 useful native comparisons in each arm pass the duration/cohort
+qualifications; an inconclusive target has sample overlap or a tie. The
+descriptive median-only wins are 14/14/14/7 and do not replace these counts.
+No arm meets the every-cell native comparison. Target-class changes can
+reflect native variation or overlap and are separate from WF/S changes.
+
+All useful timing samples exceed 1 ms; the smallest WF one is 1.511 ms.
+The 206/198/198/181 shorter rows in S/R/U/V are all suffix-0 controls.
+For useful WF cohort cells, `(max - min) / median > 10%` occurs in S twice
+(cohort 1, wide growth/256 and suffix-2/256), R once (cohort 1, wide
+suffix-2/4096), U twice (cohort 0, scalar reuse/16; cohort 1, wide reuse/16)
+and V never. U's scalar reserved/4096 has opposite median directions and
+11.4% cohort-ratio spread. Rust/C++ inter-arm median drift versus S is at
+most 5.65% for R, 6.30% for U and 6.40% for V, below the 10% screen. These
+checks qualify this single outer order; they do not establish repeatability
+across image orders or formal confidence intervals.
+
+The discriminator separates code mechanisms from a general optimization
+claim. V shows that the second pass is unnecessary to remove truncate calls,
+but its retained loops/materialization accompany large wide regressions. U
+improves on V yet loses to stock on wide suffix-2/3; R's different surviving
+boundaries perform better on suffix-1. No measured loss is apportioned to one
+call, stack frame, copy or compiler pass. These counterexamples reject using
+any tested pipeline as a general solution here, while leaving other costed
+inlining arrangements untested. The original code-only screen stays failed;
+production O2, other targets, full-corpus and incremental-cost evidence remain
+absent. No production policy or compiler source was changed.
+
+Reproduce the native-target reduction with the maintained
+`summarize-ecosystem.pl --targets`, supplying one raw arm at a time; for
+example, from this experiment directory:
+
+```sh
+perl summarize-ecosystem.pl --targets \
+  vector=vector-library/ecosystem-pipeline-f-s-samples.csv
+```
+
+For each candidate/S cell, the observed lower and upper ratios are
+`minimum candidate / maximum S` and `maximum candidate / minimum S` within
+each cohort. G requires both uppers below one; L requires both lowers above
+one. Qualify using paired minimum at least 1 ms and
+`max(cohort median ratio) / min(cohort median ratio) - 1 <= 0.10`.
+The 5% diagnostic screen additionally requires both median ratios at most
+0.95 and native drift within 10%. The local one-shot reducer
+`reduce-runtime-f.py` and `runtime-f-reduction/{comparisons.csv,summary.json}`
+under the original private directory preserve this reduction for independent
+review; the maintained target reducer, formulas and committed raw matrices
+are sufficient to reproduce it without that scratch helper.
+
+Raw CSV SHA-256 values, in S/R/U/V order, are
+`e83ac712ce9af0f9e619a77aaab8bb0c25e46d749aa7db296d2703df3ec3b90a`,
+`4dc6693cead0a59e33dda2851b79e56b4a9c2ffc0eebb37a863e0c72bbd1929b`,
+`0b6c190b4215cda83b4b6a3027f530428b825b949551d30ad11a173693f07d05`
+and `7c64f2694a332de015631e0548200378751fabe5fd4f944a53b1a4c24b1e9b44`.

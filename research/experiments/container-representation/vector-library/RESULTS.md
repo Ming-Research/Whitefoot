@@ -1035,6 +1035,58 @@ is not an insertion benefit. F retains the same allocation policy and the
 same 294 accounting rows; the separate known-capacity-construction proposal
 is not part of this comparison.
 
+### F native suffix consumption against the standard containers
+
+Read-only inspection of the same retained F image above (SHA-256
+`44660c2de9532af3392c3c5fefea363b1915abd03bc9b79f4ba39812425c05f2`)
+separates the consumption algorithms from construction and helper placement.
+The scalar WF suffix path in the actual trace has no tail/truncate call;
+the wide trace still calls tail, which calls truncate. Rust and C++ consume
+the suffix inline in their trace. These are final AArch64 instructions,
+not copies inferred from unoptimized LLVM.
+
+| Executed loop | Scalar instructions and inclusive addresses | Wide instructions and inclusive addresses |
+| --- | --- | --- |
+| WF take/exchange/consume | 12, `0x10000bd5c`–`0x10000bd88` | 88, `0x10000d650`–`0x10000d7ac` |
+| WF remaining back-take/consume | 7, `0x10000bd9c`–`0x10000bdb4` | 53, `0x10000d7d0`–`0x10000d8a0` |
+| Rust forward drain | 4, `0x100011588`–`0x100011594` | 51, `0x100011038`–`0x100011100` |
+| C++ forward consumer | 4, `0x10000e528`–`0x10000e534` | 52, `0x10000eab4`–`0x10000eb80` |
+
+Every wide callback performs sixteen paired loads and 32 multiply-adds.
+Each WF first-half iteration additionally loads and stores the rear record
+with sixteen 16-byte loads and sixteen 16-byte stores; the remainder later
+reads that displaced record again. Each take stores the length. The native
+consumers read forward without payload stores and shorten the vector once.
+C++ also retains an erasure call to `memmove` (`0x10000ebb0` wide,
+`0x10000e554` scalar): its source is the old end and its byte count is zero
+on these suffix paths. That call is overhead, not an element transfer.
+
+| Removed elements | WF wide payload bytes read / written | Rust/C++ payload bytes read / written | WF scalar consumption instructions |
+| --- | ---: | ---: | ---: |
+| 1 | 256 / 0 | 256 / 0 | 16 |
+| 2 | 768 / 256 | 512 / 0 | 34 |
+| 3 | 1024 / 256 | 768 / 0 | 41 |
+
+The scalar totals follow `0x10000bd34` through the return-to-round branch
+at `0x10000bdb8`, including loop entry and transition work. Payload counts
+exclude append, headers, digest storage and the final retained-prefix drain;
+they count executed load/store operands, not cache traffic. No elapsed-time
+percentage follows from instruction or byte counts. In particular suffix-one
+has no exchange to eliminate; its wide boundary, constant setup and code
+placement remain separate costs.
+
+The terminal-pair source trial can eliminate the last exchange for an even
+suffix by holding two owners and consuming them in original order. It is not
+native forward drain. With existing operations, `split_off` needs another
+backing and copies the suffix, repeated `remove_at` at the retained boundary
+shifts a quadratic number of elements, and `take_back` alone reverses callback
+order. A Ring changes representation and cannot pop an interior suffix past
+its retained prefix through its endpoint operations. A borrowed callback
+changes the API's ability to consume arbitrary owned elements. The current
+O(removed), constant-storage take/exchange algorithm therefore remains the
+baseline while the bounded terminal-pair improvement is tested; this
+inspection selects no new primitive, representation or language rule.
+
 ### Source discriminator G: direct known-capacity construction
 
 G adds the ordinary `grow_vector_with_capacity` API and uses it only where
