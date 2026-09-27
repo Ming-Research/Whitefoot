@@ -112,6 +112,14 @@ impl Case {
     pub fn logical_path(&self) -> String {
         format!("{}.wf", self.id)
     }
+
+    /// The package root of a module-form case: the case's own directory,
+    /// which holds its `modules.wfg` and one directory per module [MOD-2].
+    /// `None` for an ordinary one-record case.
+    pub fn module_root(&self) -> Option<PathBuf> {
+        let root = cases_directory().join(&self.id);
+        root.join("modules.wfg").is_file().then_some(root)
+    }
 }
 
 /// The conformance corpus directory, reached from the compiler package.

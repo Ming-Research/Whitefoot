@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A cell constructed from Bool yields the original value through its field inner. Normal exit is observed; this case does not count deallocations.";
   let flag = True();

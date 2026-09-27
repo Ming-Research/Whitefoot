@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface Pick {
+  fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
+    requires k < deref(rows)[i].len;
+  };
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "FN-8, ENT-2, OP-4: a formal's block has the ordinary formation rules. Its requirement forms deref(rows)[i] with no earlier requirement bounding i, so the subscript owes an unproved i < deref(rows).len at the formal's clause, even with no binding or call.";
+  return exit_status(code: 0_u8);
+}

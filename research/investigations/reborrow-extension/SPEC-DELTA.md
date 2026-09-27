@@ -274,7 +274,7 @@ v0.20 validation), with the candidate-position suspension minimality-selected.
 
 ## 8. mcts_mem delta for the lead (apply at v0.31 activation, not before)
 
-`mcts_mem/whitefoot/ownership/no-reborrow.md`: edit Items 3–4 — the admitted
+[mcts_mem/whitefoot/ownership/no-reborrow.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/no-reborrow.md): edit Items 3–4 — the admitted
 family gains the candidate-position child, the call-result borrow holder
 with signature-unambiguous provenance, and the chains they compose;
 remainder-of-life suspension of the candidate `&uniq` parent; deferred list

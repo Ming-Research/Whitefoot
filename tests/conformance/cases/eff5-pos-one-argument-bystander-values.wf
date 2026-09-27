@@ -1,0 +1,163 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct BystanderRecord {
+  value: u8;
+}
+
+fn fresh_records() -> records: Array<BystanderRecord, 4> pure {
+  doc "Element n holds 10 + n, so a read of the wrong element shows in the value.";
+  let first = BystanderRecord(value: 10_u8);
+  let fresh = array_filled::<BystanderRecord, 4>(value: first);
+  set fresh[1_u64].value = 11_u8;
+  set fresh[2_u64].value = 12_u8;
+  set fresh[3_u64].value = 13_u8;
+  return fresh;
+}
+
+fn overwrite_bystander(values: &Array<BystanderRecord, 4>, index: u64) -> result: unit writes(values[index]) contract {
+  requires index < 4_u64;
+} {
+  set deref(values)[index] = BystanderRecord(value: 9_u8);
+  return unit;
+}
+
+fn inspect_requirement(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires i < j;
+  requires j < 4_u64;
+} {
+  let selected = &deref(values)[i].value;
+  overwrite_bystander(values: values, index: j);
+  return deref(selected);
+}
+
+fn inspect_guard(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) {
+  if j < 4_u64 {
+    if i < j {
+      let selected = &deref(values)[i].value;
+      overwrite_bystander(values: values, index: j);
+      return deref(selected);
+    }
+  }
+  return 0_u8;
+}
+
+fn inspect_capture(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires i < j;
+  requires j < 4_u64;
+} {
+  doc "The reference captured element i before i is reassigned to j, so it still names element i.";
+  let selected = &deref(values)[i].value;
+  set i = j;
+  overwrite_bystander(values: values, index: j);
+  return deref(selected);
+}
+
+fn inspect_join(values: &Array<BystanderRecord, 4>, i: u64, j: u64, k: u64, choose: Bool) -> result: u8 reads(values), writes(values[j]) contract {
+  requires i < j;
+  requires k < j;
+  requires j < 4_u64;
+} {
+  let first = &deref(values)[i].value;
+  let second = &deref(values)[k].value;
+  let selected = first;
+  if choose {
+    set selected = &deref(second);
+  }
+  overwrite_bystander(values: values, index: j);
+  return deref(selected);
+}
+
+fn inspect_loop(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires i < j;
+  requires j < 4_u64;
+} {
+  let selected = &deref(values)[i].value;
+  let aliased = selected;
+  for (round in 0_u64..2_u64) {
+    let observed = deref(aliased);
+    overwrite_bystander(values: values, index: j);
+  }
+  return deref(aliased);
+}
+
+fn inspect_direct_write(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires i < j;
+  requires j < 4_u64;
+} {
+  let selected = &deref(values)[i].value;
+  set deref(values)[j] = BystanderRecord(value: 9_u8);
+  return deref(selected);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Each inspecting row reads the whole array and writes element j, one argument supplying both entries [EFF-5]. Every call returns the untouched value of the element its reference names, and the caller then sees 9 in element j.";
+  let required_records = fresh_records();
+  let required = inspect_requirement(values: &required_records, i: 2_u64, j: 3_u64);
+  if required == 12_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if required_records[3_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let guarded_records = fresh_records();
+  let guarded = inspect_guard(values: &guarded_records, i: 1_u64, j: 3_u64);
+  if guarded == 11_u8 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  if guarded_records[3_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  let captured_records = fresh_records();
+  let captured = inspect_capture(values: &captured_records, i: 0_u64, j: 2_u64);
+  if captured == 10_u8 {
+  } else {
+    return exit_status(code: 5_u8);
+  }
+  if captured_records[2_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 6_u8);
+  }
+  let joined_records = fresh_records();
+  let choose_second = True();
+  let joined_second = inspect_join(values: &joined_records, i: 0_u64, j: 3_u64, k: 2_u64, choose: choose_second);
+  if joined_second == 12_u8 {
+  } else {
+    return exit_status(code: 7_u8);
+  }
+  let choose_first = False();
+  let joined_first = inspect_join(values: &joined_records, i: 0_u64, j: 3_u64, k: 2_u64, choose: choose_first);
+  if joined_first == 10_u8 {
+  } else {
+    return exit_status(code: 8_u8);
+  }
+  if joined_records[3_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 9_u8);
+  }
+  let looped_records = fresh_records();
+  let looped = inspect_loop(values: &looped_records, i: 1_u64, j: 2_u64);
+  if looped == 11_u8 {
+  } else {
+    return exit_status(code: 10_u8);
+  }
+  if looped_records[2_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  let direct_records = fresh_records();
+  let direct = inspect_direct_write(values: &direct_records, i: 0_u64, j: 3_u64);
+  if direct == 10_u8 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  if direct_records[3_u64].value == 9_u8 {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  return exit_status(code: 0_u8);
+}

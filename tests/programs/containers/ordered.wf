@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct LeafPair {
   low: u64;
   high: u64;
@@ -14,7 +17,7 @@ fn allocate_split(first: u64, second: u64, third: u64, fourth: u64) -> result: S
   let left = box_new::<LeafPair>(value: left_leaf);
   let right_leaf = LeafPair(low: third, high: fourth);
   let right = box_new::<LeafPair>(value: right_leaf);
-  return Split(separator: third, left: move left, right: move right);
+  return SplitResult::Split(separator: third, left: move left, right: move right);
 }
 
 fn split_full_leaf(first: u64, second: u64, third: u64, candidate: u64) -> result: SplitResult pure contract {
@@ -23,13 +26,13 @@ fn split_full_leaf(first: u64, second: u64, third: u64, candidate: u64) -> resul
 } {
   doc "One actual ordered-node component: insert a distinct key into a full three-key B+ tree leaf, split the sorted four keys into two owning heap cells, and copy the right minimum into the separator. Duplicate input performs no allocation. This is a node primitive, not a complete ordered map or a capacity claim about one.";
   if candidate == first {
-    return Duplicate();
+    return SplitResult::Duplicate();
   }
   if candidate == second {
-    return Duplicate();
+    return SplitResult::Duplicate();
   }
   if candidate == third {
-    return Duplicate();
+    return SplitResult::Duplicate();
   }
   if candidate < first {
     return allocate_split(first: candidate, second: first, third: second, fourth: third);

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn maximum<T: Int>(left: T, right: T) -> result: T pure {
   return imax(left, right);
 }

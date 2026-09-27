@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn ordered(low: u64, high: u64) -> result: Bool pure contract {
   requires low < high;
 } {

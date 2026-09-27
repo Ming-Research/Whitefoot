@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Link {
   value: u64;
   next: Option<Box<Link>>;
@@ -85,19 +88,19 @@ enum Tree {
 }
 
 fn tree() -> result: Tree pure {
-  let left = Leaf(value: 13_u64);
-  let right = Leaf(value: 29_u64);
+  let left = Tree::Leaf(value: 13_u64);
+  let right = Tree::Leaf(value: 29_u64);
   let left_cell = box_new::<Tree>(value: move left);
   let right_cell = box_new::<Tree>(value: move right);
-  let first = Fork(left: move left_cell, right: move right_cell);
-  let middle = Leaf(value: 47_u64);
-  let last = Leaf(value: 61_u64);
+  let first = Tree::Fork(left: move left_cell, right: move right_cell);
+  let middle = Tree::Leaf(value: 47_u64);
+  let last = Tree::Leaf(value: 61_u64);
   let middle_cell = box_new::<Tree>(value: move middle);
   let last_cell = box_new::<Tree>(value: move last);
-  let second = Fork(left: move middle_cell, right: move last_cell);
+  let second = Tree::Fork(left: move middle_cell, right: move last_cell);
   let first_cell = box_new::<Tree>(value: move first);
   let second_cell = box_new::<Tree>(value: move second);
-  return Fork(left: move first_cell, right: move second_cell);
+  return Tree::Fork(left: move first_cell, right: move second_cell);
 }
 
 fn edge(root: &Tree, right: Bool) -> result: u64 reads(root) {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn first_byte(window: &[u8]) -> byte: u8 reads(window) {
   doc "Reads the first byte of a range reference when the range is nonempty.";
   let width = deref(window).len;

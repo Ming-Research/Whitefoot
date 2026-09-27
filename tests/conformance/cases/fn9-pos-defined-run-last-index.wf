@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn last_index(values: &Slots<u8, 12>) -> index: u64 reads(values.len) contract {
   define capacity = deref(values).len;
   requires capacity > 0_u64;

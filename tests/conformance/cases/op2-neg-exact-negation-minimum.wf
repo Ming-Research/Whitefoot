@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   let bad = ineg(-128_i8);
   if bad == -128_i8 {

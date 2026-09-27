@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scalar_overflow(count: u64) -> made: Box<Slots<u64>> pure contract {
   requires count <= 2305843009213693952_u64;
 } {

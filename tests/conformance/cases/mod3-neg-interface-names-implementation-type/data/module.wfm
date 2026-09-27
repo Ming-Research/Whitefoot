@@ -1,0 +1,6 @@
+public struct Wrapper {
+  public value: u8;
+  secret: Hidden;
+}
+
+public fn make() -> wrapper: Wrapper pure doc "Makes a wrapper around seven.";

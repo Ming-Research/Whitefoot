@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn nested_length(values: &[u8], lo: u64, hi: u64) -> function_result: u64 reads(values[lo..hi].len) contract {
   requires lo <= hi;
   requires hi <= deref(values).len;

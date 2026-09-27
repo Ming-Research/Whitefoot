@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bsearch(table: Slots<u32, 8>, spare: u64, target: u32, lo: u64, hi: u64) -> found: Option<u64> pure contract {
   define length = table.len;
   requires spare == length;

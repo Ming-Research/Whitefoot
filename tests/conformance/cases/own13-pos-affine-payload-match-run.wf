@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy struct Pair {
   left: i32;
   right: i32;
@@ -22,8 +25,8 @@ fn inspect(packet: &Packet) -> result: i32 reads(packet) {
 
 fn main() -> status: ExitStatus pure {
   let pair = Pair(left: 41_i32, right: 1_i32);
-  let packet = Data(item: move pair);
-  let fallback = Empty();
+  let packet = Packet::Data(item: move pair);
+  let fallback = Packet::Empty();
   let held = &packet;
   let read = inspect(packet: held);
   if read != 41_i32 {

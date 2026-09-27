@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum Sign {
   Neg(mag: i32);
   Zero();
@@ -6,7 +9,7 @@ nocopy enum Sign {
 
 fn main() -> status: ExitStatus pure {
   doc "A bare use of an affine value must be rejected [OWN-1] (write move).";
-  let a = Neg(mag: 1_i32);
+  let a = Sign::Neg(mag: 1_i32);
   let b = a;
   return exit_status(code: 0_u8);
 }

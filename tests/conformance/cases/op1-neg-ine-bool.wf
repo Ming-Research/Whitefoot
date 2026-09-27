@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn compare(left: Bool, right: Bool) -> return_value: Bool pure {
   return left != right;
 }

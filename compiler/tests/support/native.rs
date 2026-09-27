@@ -18,16 +18,16 @@ fn spine(depth: u64, v: f64) -> result: f64 pure {{
   return fadd.strict(a, b);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let total = spine(depth: {depth}_u64, v: 1.0009765625_f64);
   let bits = reinterpret::<f64, u64>(total);
   let low = iand(bits, 1_u64);
   match cvt.checked::<u64, u8>(low) {{
     Ok(value: byte) => {{
-      return exit_status(code: byte);
+      return std::process::exit_status(code: byte);
     }}
     Err(error: wide) => {{
-      return exit_status(code: 9_u8);
+      return std::process::exit_status(code: 9_u8);
     }}
   }}
 }}
@@ -62,23 +62,23 @@ pub(crate) fn wide_frame_source(depth: u64, slots: u64) -> Vec<u8> {
   return a +wrap b;
 }}
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {{
-  let Inputs(args: args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &factory, directory: move cwd);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+  let std::process::Inputs(args: args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &factory, directory: move cwd);
   let count = 0_u64;
-  set count = args_count(args: &args);
+  set count = std::text::args_count(args: &args);
   match cvt.checked::<u64, u8>(count) {{
     Ok(value: idx) => {{
       let depth = count *wrap {depth}_u64;
       let r = spine(depth: depth, v: 3_u64, i: idx);
       let ok = r > 0_u64;
       if ok {{
-        return exit_status(code: 0_u8);
+        return std::process::exit_status(code: 0_u8);
       }}
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }}
     Err(error: e) => {{
-      return exit_status(code: 9_u8);
+      return std::process::exit_status(code: 9_u8);
     }}
   }}
 }}

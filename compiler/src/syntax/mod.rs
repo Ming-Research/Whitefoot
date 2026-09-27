@@ -27,7 +27,8 @@ pub use parser::{
     FinalizeOutcome, FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, NodePath,
     ParseCompilerFailure, ParseInvocationFailure, ParseLimit, ParseLimits, ParseOutcome,
     ParseResourceFailure, ParseStorage, ParsedBundle, RenderOutcome, RenderedSource,
-    SyntaxCoordinate, SyntaxIssue, SyntaxRule, audit_canonical, finalize, parse, render_canonical,
+    SyntaxCoordinate, SyntaxIssue, SyntaxRule, audit_canonical, finalize, parse, parse_graph,
+    render_canonical,
 };
 
 pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId};

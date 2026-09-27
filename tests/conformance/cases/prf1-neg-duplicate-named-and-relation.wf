@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn duplicate_mixed(alpha: u16, alpha_cap: u16, beta: u16, beta_cap: u16) -> result: unit pure contract {
   requires alpha <= alpha_cap;
   requires beta <= beta_cap;

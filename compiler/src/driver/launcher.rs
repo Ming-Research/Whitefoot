@@ -10,10 +10,13 @@ use crate::backend::abi::{FunctionAbi, ParameterAbi, ResultAbi};
 use crate::backend::emitter::{llvm_type, source_symbol};
 use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 
-pub(crate) fn render(
-    program: &IrProgram<'_, '_, '_>,
-    selected: &str,
-) -> Result<String, BackendFailure> {
+/// The standard library's invocation inputs and exit status, by the
+/// module-qualified spelling that names them apart from any program type of
+/// the same name [PRE-2, MOD-10].
+const INPUTS: &str = "std.process.Inputs";
+const EXIT_STATUS: &str = "std.process.ExitStatus";
+
+pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, BackendFailure> {
     let Some(main) = program
         .functions()
         .iter()
@@ -41,7 +44,7 @@ pub(crate) fn render(
                 if inputs.is_none()
                     && program
                         .nominal(*id)
-                        .is_some_and(|nominal| nominal.name() == "Inputs") =>
+                        .is_some_and(|nominal| nominal.stable_spelling() == Some(INPUTS)) =>
             {
                 inputs = Some(*id);
                 arguments.push("ptr %inputs".to_owned());
@@ -52,7 +55,8 @@ pub(crate) fn render(
     let status = match abi.result() {
         ResultAbi::Destination(IrType::Nominal(id))
             if program.nominal(id).is_some_and(|nominal| {
-                nominal.name() == "ExitStatus" && matches!(nominal.kind(), IrNominalKind::Opaque)
+                nominal.stable_spelling() == Some(EXIT_STATUS)
+                    && matches!(nominal.kind(), IrNominalKind::Opaque)
             }) =>
         {
             Some(id)
@@ -133,18 +137,13 @@ pub(crate) fn render(
 /// facts alone. A failed proof leaves a callable library module, not a runtime
 /// precondition test or an acceptance exception for the selected function.
 pub(super) fn caller_source(
-    checked: &crate::CheckedProgram<'_, '_, '_>,
-    selected: &str,
+    resolved: &crate::ResolvedSyntaxUnit,
+    function: &crate::semantic::CheckedFunction,
 ) -> Option<(String, String)> {
     use crate::Production;
     use crate::syntax::{FinalizedExtent, NodeId};
 
-    let function = checked
-        .data
-        .functions
-        .iter()
-        .find(|function| function.name == selected)?;
-    let resolved = &checked._resolved;
+    let selected = function.name.as_str();
     let origin = resolved
         .declaration(function.declaration)?
         .origin()
@@ -181,6 +180,29 @@ pub(super) fn caller_source(
     let start = usize::try_from(start.value()).ok()?;
     let end = usize::try_from(end.value()).ok()?;
     let mut header = std::str::from_utf8(bytes.get(start..end)?).ok()?.to_owned();
+    // The copied header names types through the selected record's aliases,
+    // which bind in that record alone [MOD-4], so the caller repeats them.
+    let mut aliases = String::new();
+    for node in &tree.nodes {
+        if node.production != Production::AliasDecl {
+            continue;
+        }
+        if let FinalizedExtent::Source {
+            source: alias_source,
+            start: alias_start,
+            end: alias_end,
+        } = node.extent
+            && alias_source == source
+        {
+            let alias_start = usize::try_from(alias_start.value()).ok()?;
+            let alias_end = usize::try_from(alias_end.value()).ok()?;
+            aliases.push_str(std::str::from_utf8(bytes.get(alias_start..alias_end)?).ok()?);
+            aliases.push('\n');
+        }
+    }
+    if !aliases.is_empty() {
+        aliases.push('\n');
+    }
     let suffix = (0_u64..).find(|index| {
         let name = format!("executable_caller_{index}");
         !resolved.declarations().iter().any(|declaration| {
@@ -206,7 +228,7 @@ pub(super) fn caller_source(
     Some((
         name,
         format!(
-            "{header} {{\n  let executable_value_{suffix} = {selected}({arguments});\n  return {transfer}executable_value_{suffix};\n}}\n"
+            "{aliases}{header} {{\n  let executable_value_{suffix} = {selected}({arguments});\n  return {transfer}executable_value_{suffix};\n}}\n"
         ),
     ))
 }

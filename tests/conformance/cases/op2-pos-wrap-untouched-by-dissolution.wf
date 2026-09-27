@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fold(x: u64) -> return_value: u64 pure {
   doc "The arithmetic-mode dissolution attaches obligations to the bare `+`, `-`, `*` constant-operand class only. `.wrap` is total by definition, carries no overflow obligation, needs no discharge, and contributes nothing to the effect row, so an unbounded operand is valid and the row stays `pure`.";
   let y = x *wrap 3_u64;

@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+
+public struct Pair {
+  public left: u64;
+  right: u64;
+}
+
+public interface Touch {
+  fn touch(value: &Pair) -> result: unit reads(value.left), writes(value.right);
+}
+
+public fn main() -> status: ExitStatus pure doc "Exits with status zero.";

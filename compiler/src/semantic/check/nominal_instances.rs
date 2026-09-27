@@ -16,7 +16,7 @@ use super::{
     CheckStop, Checker, ConstructorTemplate, NominalInstance, NominalTemplate, PreludeType,
 };
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
     ///
     /// The modifier is a written one, and [GRAM-2] admits it on a source
@@ -381,11 +381,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     ) -> Result<(), CheckStop> {
         // [TYPE-9] `box<T>` is no longer a grammar atom: `Box<T>` is the
         // prelude's opaque struct and reaches the container branch below.
-        if self
-            .tree
-            .direct_token_with(node, TerminalPredicate::TypeIdentifier)?
-            .is_none()
-        {
+        if !self.tree.names_nominal(node)? {
             return Ok(());
         }
         let usage = self.use_at(node, LexicalUseRole::Type)?;
@@ -654,7 +650,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         self.source_nominal_instances
             .push(Some((template_index, substitution.clone())));
         self.prelude_types.push(None);
-        self.nominals.push(CheckedNominal {
+        self.push_nominal(CheckedNominal {
             id,
             name,
             kind: match template.role {
@@ -923,6 +919,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .get_mut(id.0 as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .kind = kind;
+        self.nominal_table_changed();
         self.nominal_states[id.0 as usize] = 2;
         Ok(())
     }
@@ -1580,6 +1577,31 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         )
     }
 
+    /// [TYPE-2, PRE-2] where an opaque struct a construct names comes from,
+    /// which selects the repair of its refusal. The standard library declares
+    /// opaque structs only in its host modules, each a fieldless host handle
+    /// that a host function forms [PRE-2], so its package decides; a program's
+    /// own opaque struct never has a value.
+    pub(super) fn opaque_struct_kind(
+        &self,
+        declaration: crate::DeclarationId,
+    ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
+        if !self
+            .declaration_home(declaration)
+            .is_some_and(|(package, _)| package == crate::Package::Standard)
+        {
+            return Ok(super::repairs::OpaqueStruct::Program);
+        }
+        let template = self
+            .nominal_templates_by_declaration
+            .get(&declaration)
+            .and_then(|&index| self.nominal_templates.get(index))
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(super::repairs::OpaqueStruct::HostHandle {
+            linear: self.declaration_is_linear(template.node)?,
+        })
+    }
+
     pub(super) fn source_constructor(
         &self,
         node: NodeId,
@@ -1644,6 +1666,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .borrow_mut()
             .retain(|_, id| retained.contains(id));
         self.nominals.truncate(checkpoint);
+        self.nominal_table_changed();
         self.nominal_nodes.truncate(checkpoint);
         self.nominal_states.truncate(checkpoint);
         self.source_nominal_instances.truncate(checkpoint);

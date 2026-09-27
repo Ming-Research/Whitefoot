@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Node = pkg::kinds::Node;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn sum_after_widen(rows: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(kids), writes(rows) contract {
+  requires i < deref(rows).len;
+  requires deref(rows)[i].count <= deref(kids).len;
+} {
+  doc "The declaring module's function writes the readonly field itself under its row, so the call kills the requirement's fact; the counted endpoint reads the new count and the child read owes an unproved c < deref(kids).len.";
+  kinds::widen(rows: rows, i: i);
+  let acc = 0_u64;
+  for (c in 0_u64..deref(rows)[i].count) {
+    let kid = deref(kids)[c];
+    set acc = acc +wrap kid;
+  }
+  return acc;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-5, EFF-2: rejected in sum_after_widen.";
+  return exit_status(code: 0_u8);
+}

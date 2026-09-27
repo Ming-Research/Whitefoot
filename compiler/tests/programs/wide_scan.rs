@@ -54,7 +54,7 @@ const ORACLE: &[u8] = br#"fn opaque_length(n: u64) -> result: u64 pure contract 
   return n;
 }
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
+fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) contract {
   define source_length = deref(source).len;
   requires length <= source_length;
 } {
@@ -66,29 +66,29 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
     } else {
       break @publish;
     }
-    match write_once(factory: factory, output: output, source: source, start: sent, end: length) {
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length) {
       Ok(value: accepted) => {
         set sent = accepted;
       }
       Err(error: problem) => {
-        return Err<unit, IoError>(error: problem);
+        return Err<unit, std::io::IoError>(error: problem);
       }
     }
   }
-  return Ok<unit, IoError>(value: unit);
+  return Ok<unit, std::io::IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
   doc "Runs three equivalence byte walks, publishes their recorded positions, then runs one argument-selected boundary walk with a typed exhaustion status.";
-  let Inputs(args: args, cwd: unused_cwd, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in) = move inputs;
-  close_directory(factory: &factory, directory: move unused_cwd);
+  let std::process::Inputs(args: args, cwd: unused_cwd, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in) = move inputs;
+  std::fs::close_directory(factory: &factory, directory: move unused_cwd);
   let selector = 111_u8;
   let choice = array_filled::<u8, 8>(value: 0_u8);
   let chosen = 0_u64;
-  match arg_get(args: &args, position: 1_u64) {
+  match std::text::arg_get(args: &args, position: 1_u64) {
     Ok(value: text) => {
       let choice_window = &choice[0_u64..8_u64];
-      match host_copy_bytes(value: &text, destination: choice_window, start: 0_u64, end: 8_u64) {
+      match std::text::host_copy_bytes(value: &text, destination: choice_window, start: 0_u64, end: 8_u64) {
         Ok(value: copied) => {
           set chosen = copied;
         }
@@ -130,7 +130,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
             set found[count] = narrow;
             set count = count +wrap 1_u64;
           } else {
-            return exit_status(code: 6_u8);
+            return std::process::exit_status(code: 6_u8);
           }
         }
         Err(error: wide_position) => {
@@ -146,7 +146,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
             set found[count] = narrow_lead;
             set count = count +wrap 1_u64;
           } else {
-            return exit_status(code: 6_u8);
+            return std::process::exit_status(code: 6_u8);
           }
         }
         Err(error: wide_lead) => {
@@ -160,7 +160,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
     set found[count] = 200_u8;
     set count = count +wrap 1_u64;
   } else {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let blank = array_filled::<u8, 40>(value: 97_u8);
   let blank_stop = blank.len;
@@ -173,11 +173,11 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
     let blank_byte = blank[blank_cursor];
     let blank_newline = blank_byte == 10_u8;
     if blank_newline {
-      return exit_status(code: 4_u8);
+      return std::process::exit_status(code: 4_u8);
     }
     let blank_lead = blank_byte == mark;
     if blank_lead {
-      return exit_status(code: 5_u8);
+      return std::process::exit_status(code: 5_u8);
     }
     set blank_cursor = blank_cursor +wrap 1_u64;
   }
@@ -186,7 +186,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
     set found[count] = 201_u8;
     set count = count +wrap 1_u64;
   } else {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let short_stop = 20_u64;
   let short_cursor = 0_u64;
@@ -205,7 +205,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
             set found[count] = short_narrow;
             set count = count +wrap 1_u64;
           } else {
-            return exit_status(code: 6_u8);
+            return std::process::exit_status(code: 6_u8);
           }
         }
         Err(error: short_wide) => {
@@ -221,7 +221,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
             set found[count] = short_narrow_lead;
             set count = count +wrap 1_u64;
           } else {
-            return exit_status(code: 6_u8);
+            return std::process::exit_status(code: 6_u8);
           }
         }
         Err(error: short_wide_lead) => {
@@ -235,7 +235,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
     set found[count] = 202_u8;
     set count = count +wrap 1_u64;
   } else {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let phase_room = found.len;
   let phase_fits = count <= phase_room;
@@ -266,7 +266,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
         if empty_newline {
         }
       } else {
-        return exit_status(code: 2_u8);
+        return std::process::exit_status(code: 2_u8);
       }
       set empty_cursor = empty_cursor +wrap 1_u64;
     }
@@ -310,12 +310,12 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
           }
         }
       } else {
-        return exit_status(code: 3_u8);
+        return std::process::exit_status(code: 3_u8);
       }
       set probe = probe +wrap 1_u64;
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 

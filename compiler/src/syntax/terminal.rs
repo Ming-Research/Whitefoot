@@ -13,19 +13,33 @@ pub const TERMINAL_CONTRACT_SPEC_HASH: SpecHash = ACTIVE_KERNEL_SPEC_HASH;
 ///
 /// The declaration order is the stable dense predicate index and is kept equal
 /// to first grammar-occurrence order, which [`ALL_FIXED_TERMINALS`] carries.
-/// v0.60 puts `heap_decl` third in [GRAM-2], so `program`, `no_heap`, and `;`
-/// take the first three slots and every other index moves; retired source
-/// atoms leave this current-grammar inventory outright. The indices are
+/// v0.70 opens [GRAM-2]'s `item` with the `public` item marker and the file
+/// alias header, so `public`, `alias`, `=`, `pkg`, `::` and `;` take the first
+/// six slots and every other index moves; v0.72's alias header also admits the
+/// standard library qualifier `std` [MOD-10], which takes the slot after `pkg`; retired source atoms leave this
+/// current-grammar inventory outright. The indices are
 /// compiler-local and are never serialized.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum FixedTerminal {
+    /// `public`.
+    Public,
+    /// `alias`.
+    Alias,
+    /// `=`.
+    Equal,
+    /// `pkg`.
+    Pkg,
+    /// `std`.
+    Std,
+    /// `::`.
+    ColonColon,
+    /// `;`.
+    Semicolon,
     /// `program`.
     Program,
     /// `no_heap`.
     NoHeap,
-    /// `;`.
-    Semicolon,
     /// `opaque`.
     Opaque,
     /// `nocopy`.
@@ -58,8 +72,6 @@ pub enum FixedTerminal {
     Contract,
     /// `define`.
     Define,
-    /// `=`.
-    Equal,
     /// `requires`.
     Requires,
     /// `ensures`.
@@ -72,8 +84,6 @@ pub enum FixedTerminal {
     Interface,
     /// `binding`.
     Binding,
-    /// `::`.
-    ColonColon,
     /// `const`.
     Const,
     /// `doc`.
@@ -92,6 +102,8 @@ pub enum FixedTerminal {
     LeftBracket,
     /// `]`.
     RightBracket,
+    /// `entry`.
+    Entry,
     /// `i8`.
     I8,
     /// `i16`.
@@ -130,8 +142,6 @@ pub enum FixedTerminal {
     Set,
     /// `return`.
     Return,
-    /// `musttail`.
-    Musttail,
     /// `loop`.
     Loop,
     /// `for`.
@@ -202,10 +212,10 @@ pub enum FixedTerminal {
     LessEqual,
     /// `>=`.
     GreaterEqual,
+    /// `musttail`.
+    Musttail,
     /// `deref`.
     Deref,
-    /// `entry`.
-    Entry,
     /// `.`.
     Dot,
     /// `pure`.
@@ -217,10 +227,16 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 97] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 101] = [
+    FixedTerminal::Public,
+    FixedTerminal::Alias,
+    FixedTerminal::Equal,
+    FixedTerminal::Pkg,
+    FixedTerminal::Std,
+    FixedTerminal::ColonColon,
+    FixedTerminal::Semicolon,
     FixedTerminal::Program,
     FixedTerminal::NoHeap,
-    FixedTerminal::Semicolon,
     FixedTerminal::Opaque,
     FixedTerminal::Nocopy,
     FixedTerminal::Nodrop,
@@ -237,14 +253,12 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 97] = [
     FixedTerminal::ThinArrow,
     FixedTerminal::Contract,
     FixedTerminal::Define,
-    FixedTerminal::Equal,
     FixedTerminal::Requires,
     FixedTerminal::Ensures,
     FixedTerminal::When,
     FixedTerminal::Is,
     FixedTerminal::Interface,
     FixedTerminal::Binding,
-    FixedTerminal::ColonColon,
     FixedTerminal::Const,
     FixedTerminal::Doc,
     FixedTerminal::LeftAngle,
@@ -254,6 +268,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 97] = [
     FixedTerminal::Ampersand,
     FixedTerminal::LeftBracket,
     FixedTerminal::RightBracket,
+    FixedTerminal::Entry,
     FixedTerminal::I8,
     FixedTerminal::I16,
     FixedTerminal::I32,
@@ -310,7 +325,6 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 97] = [
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
     FixedTerminal::Deref,
-    FixedTerminal::Entry,
     FixedTerminal::Dot,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
@@ -424,6 +438,10 @@ impl FixedTerminal {
             Self::Pure => "pure",
             Self::Reads => "reads",
             Self::Writes => "writes",
+            Self::Public => "public",
+            Self::Alias => "alias",
+            Self::Pkg => "pkg",
+            Self::Std => "std",
         }
     }
 
@@ -804,45 +822,44 @@ mod tests {
                 Some(terminal)
             );
         }
-        // v0.60 puts `heap_decl` third in [GRAM-2], so its two atoms and the
-        // record terminator open the inventory and every later ordinal moves
-        // down by the same shift less the eleven retired atoms. `Replace`,
-        // `Dispose` and `MutSlice` are gone from this list because `replace`,
-        // `dispose` and the view nominals are no longer source atoms.
-        assert_eq!(FixedTerminal::Program as u8, 0);
-        assert_eq!(FixedTerminal::NoHeap as u8, 1);
-        assert_eq!(FixedTerminal::Semicolon as u8, 2);
-        // `struct_decl`'s `"opaque"? ("nocopy" | "nodrop")?` order [GRAM-2, TYPE-2] puts
-        // the opaque modifier ahead of both capability modifiers, so it takes slot three and
-        // every later ordinal moves down by one.
-        assert_eq!(FixedTerminal::Opaque as u8, 3);
-        assert_eq!(FixedTerminal::Nocopy as u8, 4);
-        assert_eq!(FixedTerminal::Nodrop as u8, 5);
-        // x1 [GRAM-2]: `field := "readonly"? IDENT ":" type ";"` reaches the
-        // field modifier before the colon of the same production, so
-        // `readonly` takes slot nine and every later ordinal moves down by
-        // one.
-        assert_eq!(FixedTerminal::Readonly as u8, 9);
-        assert_eq!(FixedTerminal::Colon as u8, 10);
-        assert_eq!(FixedTerminal::Ensures as u8, 21);
-        assert_eq!(FixedTerminal::Is as u8, 23);
-        assert_eq!(FixedTerminal::Copy as u8, 31);
-        assert_eq!(FixedTerminal::Drop as u8, 32);
-        // `param` reaches `&` before the bracket atoms. Retiring the `own`
-        // atom removes one slot after the primitive type terminals.
-        assert_eq!(FixedTerminal::Ampersand as u8, 33);
-        assert_eq!(FixedTerminal::DotDot as u8, 48);
-        // Calls first occur in a return expression, before loop statements.
-        assert_eq!(FixedTerminal::Musttail as u8, 55);
-        assert_eq!(FixedTerminal::For as u8, 57);
-        assert_eq!(FixedTerminal::In as u8, 58);
-        assert_eq!(FixedTerminal::Invariant as u8, 59);
-        assert_eq!(FixedTerminal::Use as u8, 60);
-        assert_eq!(FixedTerminal::Times as u8, 61);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 86);
-        assert_eq!(FixedTerminal::Writes as u8, 96);
-        assert_eq!(TerminalPredicate::Identifier.index(), 97);
-        assert_eq!(TerminalPredicate::Digits.index(), 103);
+        // v0.70's [GRAM-2] `item` opens with its `public` item marker and its
+        // file alias header arm, so `public`, `alias`, `=`, `pkg`, `::` and `;`
+        // take the first six slots and `heap_decl`'s two atoms follow; v0.72's
+        // `std` qualifier [MOD-10] first occurs beside `pkg` in that header. The graph
+        // productions close [GRAM-2], so `entry` now first occurs there, before
+        // the primitive type atoms, and a call's `musttail` first occurs in
+        // [GRAM-5] after the comparison atoms.
+        assert_eq!(FixedTerminal::Alias as u8, 1);
+        assert_eq!(FixedTerminal::Equal as u8, 2);
+        assert_eq!(FixedTerminal::Pkg as u8, 3);
+        assert_eq!(FixedTerminal::Std as u8, 4);
+        assert_eq!(FixedTerminal::ColonColon as u8, 5);
+        assert_eq!(FixedTerminal::Semicolon as u8, 6);
+        assert_eq!(FixedTerminal::Public as u8, 0);
+        assert_eq!(FixedTerminal::Program as u8, 7);
+        assert_eq!(FixedTerminal::NoHeap as u8, 8);
+        assert_eq!(FixedTerminal::Opaque as u8, 9);
+        assert_eq!(FixedTerminal::Nocopy as u8, 10);
+        assert_eq!(FixedTerminal::Nodrop as u8, 11);
+        assert_eq!(FixedTerminal::Readonly as u8, 15);
+        assert_eq!(FixedTerminal::Colon as u8, 16);
+        assert_eq!(FixedTerminal::Ensures as u8, 26);
+        assert_eq!(FixedTerminal::Is as u8, 28);
+        assert_eq!(FixedTerminal::Copy as u8, 35);
+        assert_eq!(FixedTerminal::Drop as u8, 36);
+        assert_eq!(FixedTerminal::Ampersand as u8, 37);
+        assert_eq!(FixedTerminal::Entry as u8, 40);
+        assert_eq!(FixedTerminal::DotDot as u8, 53);
+        assert_eq!(FixedTerminal::For as u8, 61);
+        assert_eq!(FixedTerminal::In as u8, 62);
+        assert_eq!(FixedTerminal::Invariant as u8, 63);
+        assert_eq!(FixedTerminal::Use as u8, 64);
+        assert_eq!(FixedTerminal::Times as u8, 65);
+        assert_eq!(FixedTerminal::Musttail as u8, 95);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 90);
+        assert_eq!(FixedTerminal::Writes as u8, 100);
+        assert_eq!(TerminalPredicate::Identifier.index(), 101);
+        assert_eq!(TerminalPredicate::Digits.index(), 107);
     }
 
     /// The inventory holds every predicate, once.

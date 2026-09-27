@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A bump allocator is one storage used with place_back as its allocation step: the pool's cap fixes the extent it can ever hand out, and each placement publishes the pool's own new length. The case reads both sides of what the records publish: the pool's capacity, and its cursor after four placements.";
   let pool = slots_new::<u64, 16>();

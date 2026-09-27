@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A cell taken at the heap is released by a compiler-derived walk on every edge that leaves its owner scope, in reverse declaration order; both the early return and the final return carry that release, and it is explicit in the checked program.";
   let b = box_new::<i32>(value: 9_i32);

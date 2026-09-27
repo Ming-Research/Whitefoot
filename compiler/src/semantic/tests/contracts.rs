@@ -56,13 +56,13 @@ fn apply<interface Key<K>>(value: K) -> out: u64 pure contract {
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = apply::<ScalarKey>(value: 123_u64);
   let bounded = result + 1_u64;
   if bounded == 18_u64 {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
 
@@ -292,11 +292,11 @@ fn apply<interface Transform>(value: Result<u64, Box<u64>>) -> result: Result<u6
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 7_u64);
   let wrapped = Err<u64, Box<u64>>(error: move owner);
   let retained = apply::<RoutedTransform>(value: move wrapped);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(bound.as_bytes(), |outcome| {
@@ -321,11 +321,11 @@ fn main() -> status: ExitStatus pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 7_u64);
   let wrapped = Err<u64, Box<u64>>(error: move owner);
   set wrapped = routed_update(value: move wrapped);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_behavior_rule(direct, SemanticRule::Own1);
@@ -339,7 +339,7 @@ fn bound_call_rows_keep_formal_and_actual_parameter_namespaces_distinct() {
 }
 
 interface Mixer {
-  fn mix(target: &Pair, alias: &Pair) -> result: unit reads(alias.right), writes(target.left);
+  fn mix(target: &Pair, aliased: &Pair) -> result: unit reads(aliased.right), writes(target.left);
 }
 
 fn mix(destination: &Pair, observer: &Pair) -> result: unit reads(observer.right), writes(destination.left) {
@@ -353,13 +353,13 @@ binding PairMixer : Mixer {
 }
 
 fn apply<interface Mixer>(value: &Pair) -> result: unit reads(value.right), writes(value.left) {
-  return Mixer::mix(target: value, alias: value);
+  return Mixer::mix(target: value, aliased: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let pair = Pair(left: 0_u64, right: 1_u64);
   let result = apply::<PairMixer>(value: &pair);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
@@ -373,7 +373,7 @@ fn main() -> status: ExitStatus pure {
     // overlap its field write. The actual uses different binder names, so
     // this also guards declaration-identity rebasing at the retained edge.
     assert_behavior_rule(
-        &source.replace("reads(alias.right)", "reads(alias)"),
+        &source.replace("reads(aliased.right)", "reads(aliased)"),
         SemanticRule::Eff5,
     );
 }
@@ -401,11 +401,11 @@ fn apply<interface Inspect>(data: &Pair) -> result: u64 writes(data) {
   return Inspect::inspect(value: data);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let pair = Pair(left: 7_u64, right: 9_u64);
   let named = apply::<ReadLeft>(data: &pair);
   let raw = apply::<fn visit_left>(data: &pair);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let field_formal = source
@@ -516,12 +516,12 @@ fn frame_cycle_right(stop: Bool) -> result: unit pure {
   return frame_cycle_left(stop: stop);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let made = produce::<Allocate>(value: 7_u64);
   let wrapped = produce::<WrappedAllocate>(value: 8_u64);
   let frame = frame_constructions();
   let transitive = heap_transitive(value: 11_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -612,9 +612,9 @@ fn main() -> status: ExitStatus pure {
     assert_behavior_rule(
         r#"program no_heap;
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let made = box_new::<u64>(value: 7_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Stor8,
@@ -645,9 +645,9 @@ fn apply<interface Limited>(value: u64) -> result: u64 pure contract {
   return Limited::accept(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = apply::<PermissiveLimited>(value: 10_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -733,9 +733,9 @@ fn apply<interface LimitedResult>() -> result: u64 pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = apply::<Nine>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -841,9 +841,9 @@ fn apply<interface RoutedIdentity>(value: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   apply::<RoutedChoice>(value: 7_i32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
@@ -904,9 +904,9 @@ fn cycle(value: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let ignored = apply::<Selected>(value: 1_i32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_behavior_rule(source, SemanticRule::Fn6);
@@ -922,10 +922,10 @@ fn apply<fn get() -> result: u64 pure>() -> result: u64 pure {
   return get();
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = apply::<fn zero>();
   let other = apply::<fn zero>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -966,8 +966,8 @@ fn inspect(value: &Holder<fn bad>) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_behavior_site(source, SemanticRule::Fn4, "fn bad");
@@ -989,9 +989,9 @@ fn apply<fn pick(value: u64) -> result: u64 pure>(value: u64) -> result: u64 pur
   return pick(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = apply::<fn bad>(value: 7_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_behavior_site(source, SemanticRule::Fn4, "fn bad");
@@ -1020,9 +1020,9 @@ fn second<fn work() -> result: unit pure>() -> result: unit pure {
   return first::<fn work>();
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   first::<fn second::<fn stop>>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
@@ -1056,8 +1056,8 @@ fn drive<interface Work>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
@@ -1087,8 +1087,8 @@ binding Second : Factory {
   make = First::make;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
@@ -1146,8 +1146,8 @@ fn invoke<interface Work>() -> result: u64 pure {
   return Work::run();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for program in [
@@ -1181,9 +1181,9 @@ fn repeat<T: copy, const n: u64, fn work() -> result: unit pure>(value: T) -> re
   return repeat::<T, n, fn work>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = repeat::<u64, 1, fn task>(value: 0_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(forward, |outcome| {
@@ -1197,8 +1197,8 @@ fn main() -> status: ExitStatus pure {
   return nested::<fn nested::<fn work>>();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_behavior_rule(wrapped, SemanticRule::Fn6);
@@ -1206,8 +1206,8 @@ fn main() -> status: ExitStatus pure {
   next: Box<Grow<Box<T>>>;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let selector = r#"fn relation(value: u64) -> result: u64 pure contract {
@@ -1269,8 +1269,8 @@ binding Zero : Zeroed {
   zero = make_zero;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1328,8 +1328,8 @@ fn empty_formal_and_actual_groups_are_valid() {
 binding Empty : Marker {
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1361,8 +1361,8 @@ interface Marker<T: drop> {
 binding Wrapped : Marker<Wrapper<i32>> {
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1395,8 +1395,8 @@ interface Factory {
   fn make() -> result: Wrapper<i32> pure;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1437,8 +1437,8 @@ fn unused<T, fn read(value: &Envelope<T>) -> (wrapped: T, optional: u64) reads(v
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for mode in [OverlapLowering::Off, OverlapLowering::On] {
@@ -1532,15 +1532,15 @@ fn invoke<interface Reader<T>>(value: &Envelope<T>) -> result: u64 reads(value) 
   return answer;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = Envelope<u64>(tag: 7_u64, payload: 8_u64);
   if value.tag <= 99_u64 {
     let tag = invoke::<ReadU64>(value: &value);
     if tag == 7_u64 {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
     for mode in [OverlapLowering::Off, OverlapLowering::On] {
@@ -1572,8 +1572,8 @@ fn retired_owned_law_identity_syntax_is_not_admitted() {
   law identity(combine, zero);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // D7 removes law syntax, including the formerly invalid owned identity.
@@ -1613,8 +1613,8 @@ fn retired_closed_law_table_has_no_remaining_acceptance_path() {
   law associative(combine);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#.as_slice(),
         br#"contract BadLaw {
@@ -1622,8 +1622,8 @@ fn main() -> status: ExitStatus pure {
   law distributive(combine, combine);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#.as_slice(),
         br#"contract BadMonoid {
@@ -1640,8 +1640,8 @@ conform i64: BadMonoid {
   combine = satadd_signed;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#.as_slice(),
         br#"contract OpaqueMonoid {
@@ -1659,8 +1659,8 @@ conform u64: OpaqueMonoid {
   combine = twostep;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#.as_slice(),
         br#"contract SatMonoid {
@@ -1679,8 +1679,8 @@ conform u64: SatMonoid {
   combine = satadd;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#.as_slice(),
     ] {
@@ -1695,8 +1695,8 @@ fn retired_law_identity_with_wrong_literal_type_is_a_grammar_error() {
   law identity(combine, unit);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_parse_rule(source, crate::SyntaxRule::Gram2);
@@ -1719,8 +1719,8 @@ conform u64: AddIdentity {
   combine = saturating_add;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_parse_rule(source, crate::SyntaxRule::Gram2);
@@ -1733,8 +1733,8 @@ fn repeated_member_points_at_the_later_signature() {
   fn value() -> result: i32 pure;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_issue_slice(
@@ -1753,8 +1753,8 @@ fn retired_numeric_conformance_spelling_is_a_grammar_error() {
     let source = br#"conform i32: Int {
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // Int is a built-in numeric bound; D7 has no conformance declaration.
@@ -1770,8 +1770,8 @@ fn actual_header_arguments_match_the_formal_header_arity() {
 binding Invalid : Plain<i32> {
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_issue_slice(
@@ -1805,8 +1805,8 @@ binding Reversed : Pair {
   first = make_first;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_issue_slice(
@@ -1835,8 +1835,8 @@ binding Incomplete : Pair {
   first = make_first;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_issue_slice(
@@ -1859,8 +1859,8 @@ fn generic<T: Marker>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // D7 removes this type-attached contract mechanism. A formal group in
@@ -1888,8 +1888,8 @@ binding Sum : LengthSum {
   sum = add_lengths;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1929,8 +1929,8 @@ binding Bytes : ByteReader {
   first = read_first;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

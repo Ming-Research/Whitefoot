@@ -1,3 +1,6 @@
+alias DirectorySource = std::fs::DirectorySource;
+alias directory_next = std::fs::directory_next;
+
 fn partial(source: &DirectorySource, destination: &[u8]) -> result: unit writes(source), writes(destination) {
   doc "Omits the error arm of the ordinary enumeration status result [ERR-2].";
   let (outcome, endpoint, entries) = directory_next(source: source, destination: destination, start: 0_u64, end: 0_u64);

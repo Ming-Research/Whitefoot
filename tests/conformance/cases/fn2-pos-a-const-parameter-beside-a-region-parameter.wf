@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn publish<T, const n: u64>(source: &Slots<T, n>) -> made: Box<Slots<T>> reads(source.cap) {
   doc "One declaration carrying both a const generic parameter [MSR-6] and a type parameter: the instance is keyed on both written arguments, the two axes are independent, and neither is a capability limit [FN-2]. Allocation is total and carries no effect entry; the row records only the capacity read [EFF-2, STOR-8].";
   let capacity = deref(source).cap;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn hold() -> result: unit pure {
   doc "An owned cell's content is a legal scalar set target, reached as the field inner of a live cell binding and distinct from a target reached through a reference parameter.";
   let b = box_new::<i32>(value: 4_i32);

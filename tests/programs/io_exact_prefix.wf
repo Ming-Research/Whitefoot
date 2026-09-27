@@ -1,3 +1,16 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+
 const expected: Array<u8, 8> =[7_u8, 7_u8, 97_u8, 98_u8, 99_u8, 7_u8, 7_u8, 7_u8];
 
 fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) {

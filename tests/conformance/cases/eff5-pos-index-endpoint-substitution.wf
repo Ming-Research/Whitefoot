@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn write_slot(window: &Slots<u64, 4>, index: u64, value: u64) -> result: unit writes(window[index]) contract {
   requires index < deref(window).len;
 } {

@@ -1,0 +1,47 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface Pick {
+  fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
+    requires i < deref(rows).len;
+    requires k < deref(rows)[i].len;
+  };
+}
+
+fn pick_one(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
+  requires i < deref(rows).len;
+  requires k < deref(rows)[i].len;
+} {
+  doc "Reads the element both requirements bound.";
+  let byte = deref(rows)[i][k];
+  let value = cvt::<u8, u64>(byte);
+  return value;
+}
+
+binding First : Pick {
+  pick = pick_one;
+}
+
+fn outer<interface Pick>(rows: &Slots<Slots<u8, 8>, 4>) -> value: u64 reads(rows) {
+  doc "Calls the formal member where both of its requirements hold.";
+  if 0_u64 < deref(rows).len {
+    if 1_u64 < deref(rows)[0_u64].len {
+      return Pick::pick(rows: rows, i: 0_u64, k: 1_u64);
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "FN-8, ENT-2, FN-4: the formal's second requirement forms its place after the bound, the actual's requirements follow from the formal's, and the program observes the element.";
+  let inner = slots_new::<u8, 8>();
+  place_back(window: &inner, value: 7_u8);
+  place_back(window: &inner, value: 9_u8);
+  let outer_rows = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: &outer_rows, value: move inner);
+  let seen = outer::<First>(rows: &outer_rows);
+  if seen == 9_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 2_u8);
+}

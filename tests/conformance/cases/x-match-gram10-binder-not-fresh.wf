@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "GRAM-10 freshness: a match binder that reuses a live outer name (w) is not fresh and is a hard error citing GRAM-10 [TYPE-6].";
   let w = 7_i32;

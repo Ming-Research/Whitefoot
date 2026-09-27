@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn first(b: Array<u8, 4>, i: u64) -> function_result: u8 pure {
   doc "TYPE-5: a subscript states no element type; the selected own u8 type derives from the array base. The deterministic remainder rule discharges the exact bound [OP-4], and a by-value parameter carries no effect entry, so the declared row is pure [EFF-1, EFF-2].";
   let bounded = i % 4_u64;

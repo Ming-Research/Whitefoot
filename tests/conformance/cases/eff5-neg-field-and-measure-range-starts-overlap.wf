@@ -1,0 +1,25 @@
+struct Bounds {
+  lo: u64;
+}
+
+fn stamp_two_ranges(first: &[u8], second: &[u8]) -> result: u64 writes(first), writes(second) {
+  if 0_u64 < deref(first).len {
+    set deref(first)[0_u64] = 7_u8;
+  }
+  if 0_u64 < deref(second).len {
+    set deref(second)[0_u64] = 8_u8;
+  }
+  return 2_u64;
+}
+
+fn collide(v: &[u8], w: &[u8], b: Bounds) -> result: u64 reads(w), writes(v) contract {
+  requires b.lo <= deref(v).len;
+  requires deref(w).len <= deref(v).len;
+} {
+  doc "EFF-5, OWN-7: one range starts at a field read and the other at a measure, and both end at deref(v).len, so they overlap whenever either is nonempty. Each formation captures its own endpoints, and the empty range formed after them separates neither, so the call writing both lacks separation.";
+  let left = &deref(v)[b.lo..deref(v).len];
+  let right = &deref(v)[deref(w).len..deref(v).len];
+  let empty = &deref(v)[deref(v).len..deref(v).len];
+  let stamped = stamp_two_ranges(first: left, second: right);
+  return stamped;
+}

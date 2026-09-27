@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f (x: i32) -> function_result: i32 writes {
   doc "writes effect with no region list [EFF-1].";
   return x;

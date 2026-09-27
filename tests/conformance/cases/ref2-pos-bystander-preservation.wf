@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct BystanderRecord {
   value: u8;
 }
@@ -10,6 +13,16 @@ fn overwrite_bystander(values: &Array<BystanderRecord, 4>, index: u64) -> result
 }
 
 fn main() -> status: ExitStatus pure {
+  doc "Each inspecting row reads the whole array and writes one element of it; one argument supplies both entries, whose overlap holds for every index, so every call below is admitted [EFF-5].";
+  let initial = BystanderRecord(value: 1_u8);
+  let records = array_filled::<BystanderRecord, 4>(value: initial);
+  let required = inspect_requirement(values: &records, i: 0_u64, j: 1_u64);
+  let guarded = inspect_guard(values: &records, i: 0_u64, j: 1_u64);
+  let captured = inspect_capture(values: &records, i: 0_u64, j: 1_u64);
+  let choose = True();
+  let joined = inspect_join(values: &records, i: 0_u64, j: 2_u64, k: 1_u64, choose: choose);
+  inspect_loop(values: &records, i: 0_u64, j: 1_u64);
+  let direct = inspect_direct_write(values: &records, i: 0_u64, j: 1_u64);
   return exit_status(code: 0_u8);
 }
 
@@ -73,9 +86,9 @@ fn inspect_loop(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> result: u
   requires i < j;
 } {
   let selected = &deref(values)[i].value;
-  let alias = selected;
+  let aliased = selected;
   for (round in 0_u64..2_u64) {
-    let observed = deref(alias);
+    let observed = deref(aliased);
     overwrite_bystander(values: values, index: j);
   }
   return unit;

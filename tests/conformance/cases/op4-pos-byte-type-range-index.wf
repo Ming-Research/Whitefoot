@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn selected(data: &[u8], table: Array<u8, 256>) -> result: u8 reads(data) {
   let peak = 0_u8;
   let length = deref(data).len;

@@ -1,0 +1,9 @@
+fn top_byte(word: u32) -> result: u8 pure {
+  let top = ishr.wrap(word, 24_u32);
+  let byte = cvt::<u32, u8>(top);
+  return byte;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

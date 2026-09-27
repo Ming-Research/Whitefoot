@@ -1,0 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias packets = pkg::packets;
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2: outside its declaring module a path that ends at a readonly field is never a set target, in a source struct exactly as in a prelude one.";
+  let p = packets::make(id: 7_u64, size: 1_u64);
+  set p.id = 8_u64;
+  return exit_status(code: 0_u8);
+}

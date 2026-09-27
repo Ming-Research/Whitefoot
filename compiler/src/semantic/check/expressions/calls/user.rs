@@ -10,11 +10,12 @@ use super::super::super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::super::super::model::{
-    CheckedCallContract, CheckedCallSeparation, CheckedEffectStep, CheckedEffects,
+    BindingId, CheckedCallContract, CheckedCallSeparation, CheckedEffectStep, CheckedEffects,
     CheckedExpression, CheckedMode, CheckedNominalKind, CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
-    CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations, places_overlap,
+    CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
+    SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
 use super::super::super::generics::HEAP_ALLOCATING_PRELUDE_FUNCTIONS;
 use super::super::super::references::InvalidationEvent;
@@ -48,8 +49,66 @@ struct SubstitutedEntry {
     /// pairwise conflict with each other. Distinct effects still compare when
     /// they came through the same actual argument [EFF-5].
     origin: usize,
-    /// The rendered path the [EFF-5] diagnostic carries.
-    spelling: String,
+    /// How many leading steps of `place` the caller formed: the actual
+    /// argument's own path. Every later step is the declared row's suffix,
+    /// whose index positions take the values other arguments supply and are
+    /// bounded by no obligation at the call [EFF-5, WIN-2].
+    formed: usize,
+}
+
+/// [EFF-5, WIN-2] the separation oracle of one pair of substituted entries.
+///
+/// A window part is named only by a row, so the index beside it is the other
+/// entry's. An index of an actual's own path was formed at the call and
+/// discharged [OP-4] there, or is named by a reference that stays valid only
+/// while that bound holds [OP-10], so it is live in the call's entry state.
+/// An index a row supplies is the value of another argument, which no
+/// obligation at the call bounds by the window's length, so this oracle holds
+/// it not live and the pair overlaps; the pairwise comparison then hands the
+/// pair to the entailment fragment, which separates it where the call's entry
+/// state proves the bound (`CheckedCallSeparationPositions::Live`). Every
+/// other question is answered as [`UnprovedSeparations`] answers it, and the
+/// index and range pairs its families discharge are handed over the same way.
+struct EntryPairSeparations<'entry> {
+    entries: [&'entry SubstitutedEntry; 2],
+}
+
+impl SeparationOracle for EntryPairSeparations<'_> {
+    fn indices_distinct(&self, left: CapturedValue, right: CapturedValue) -> bool {
+        UnprovedSeparations.indices_distinct(left, right)
+    }
+
+    fn ranges_disjoint(&self, left: CapturedRange, right: CapturedRange) -> bool {
+        UnprovedSeparations.ranges_disjoint(left, right)
+    }
+
+    fn index_is_live(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
+        let depth = window.path.len();
+        self.entries.iter().all(|entry| {
+            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Index(index))
+        })
+    }
+
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        UnprovedSeparations.index_outside_range(index, range)
+    }
+
+    /// A range of an actual's own path was formed at the call, discharging
+    /// its [REF-4] bound there, or is named by a reference valid only while
+    /// that bound holds [OP-10], so it lies within the length of the call's
+    /// entry state, as an index of that path is live; a range a row supplies
+    /// takes its endpoints from other arguments and is bounded by nothing
+    /// until the entailment fragment proves it [EFF-5, WIN-2].
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
+        let depth = window.path.len();
+        self.entries.iter().all(|entry| {
+            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Range(range))
+        })
+    }
+
+    fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {
+        UnprovedSeparations.window_length_is_shared(window)
+    }
 }
 
 /// A bound call's row and contract come from the same instantiated formal.
@@ -59,7 +118,7 @@ struct FormalCallBoundary {
     contract: CheckedCallContract,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_user_call(
         &self,
         node: NodeId,
@@ -297,8 +356,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             argument_nodes.push(self.tree.path(atom)?.clone());
             actual_paths.push(paths);
             actual_captures.push(
-                Self::captured_of(atom, &argument.expression)
-                    .unwrap_or_else(CapturedValue::unknown),
+                self.note_capture(
+                    Self::captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown),
+                    bindings,
+                ),
             );
             actual_modes.push(parameter.mode);
             effects = effects.union(argument.effects);
@@ -340,10 +402,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // about the callee's row reaching the updated place, and the target
         // argument's own by-value contribution is exactly the overlap
         // [EFF-5] would otherwise report against that row.
-        let atomic_target = self.check_atomic_update_row(node, &actual_paths, &substituted)?;
-        self.check_call_pairwise_disjointness(node, signature, &substituted)?;
+        let atomic_target =
+            self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
+        self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
         self.invalidate_call_references(node, &substituted, atomic_target.as_ref(), bindings)?;
-        Self::invalidate_window_operation_references(signature, &substituted, bindings);
+        self.invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
         let result = signature.result;
         let result_mode = signature.result_mode;
@@ -471,34 +534,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
-    /// One resolved place in the spelling an [EFF-5] diagnostic renders.
-    pub(in crate::semantic::check) fn render_resolved_place(
-        &self,
-        place: &ResolvedPlace,
-    ) -> Result<String, CheckStop> {
-        let mut rendered = match place.root {
-            PlaceRoot::Binding(binding) => format!("<binding:{}>", binding.0),
-            PlaceRoot::Constant(constant) => self.constant(constant)?.name.clone(),
-        };
-        for step in &place.path {
-            match step {
-                PlaceStep::Descendant(_) => rendered.push_str(".**"),
-                PlaceStep::Field(field) => rendered.push_str(&format!(".{field}")),
-                PlaceStep::Deref => rendered = format!("deref({rendered})"),
-                PlaceStep::Payload { variant, field } => {
-                    rendered.push_str(&format!(".{variant}.{field}"));
-                }
-                PlaceStep::Index(_) => rendered.push_str("[.]"),
-                PlaceStep::Range(_) => rendered.push_str("[...]"),
-                PlaceStep::Part(part) => rendered.push_str(&format!(".{}", part.spelling())),
-                PlaceStep::Measure(measure) => {
-                    rendered.push_str(&format!(".{}", measure.spelling()));
-                }
-            }
-        }
-        Ok(rendered)
-    }
-
     /// [EFF-5] the substituted row of one call.
     ///
     /// Each `effect_path` rooted at reference parameter i takes actual
@@ -540,7 +575,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     let mut place = base.clone();
                     place.path.extend_from_slice(&steps);
                     entries.push(SubstitutedEntry {
-                        spelling: self.render_resolved_place(&place)?,
+                        formed: base.path.len(),
                         place,
                         write,
                         consuming: false,
@@ -565,7 +600,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .is_copy_place_type(signature, index)
                     .is_none_or(|copy| !copy);
                 entries.push(SubstitutedEntry {
-                    spelling: self.render_resolved_place(place)?,
+                    formed: place.path.len(),
                     place: place.clone(),
                     // A `move` empties the place, which [EFF-1] classes with
                     // the writes; a copy argument observes it.
@@ -578,6 +613,47 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         let _ = node;
         Ok(entries)
+    }
+
+    /// [EFF-5] the declared row's entries in the callee's own frame, in the
+    /// order [`Self::substitute_call_row`] numbers their origins: every
+    /// `reads` entry, then every `writes` entry.
+    ///
+    /// Each reference parameter is its own root and each index or range
+    /// position holds the value parameter it names, so two positions are one
+    /// value exactly when they name one parameter [EFF-1]. No actual enters:
+    /// whether two entries overlap at every position is a property of the
+    /// row, the same at every call.
+    fn formal_row_places(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<Vec<ResolvedPlace>, CheckStop> {
+        let captures = (0..signature.parameters.len())
+            .map(|ordinal| {
+                let ordinal = u32::try_from(ordinal)
+                    .map_err(|_| CheckStop::from(SemanticCompilerFailure::CounterOverflow))?;
+                Ok(CapturedValue::new(
+                    CaptureId::source(ordinal),
+                    CapturedTerm::Binding(BindingId(ordinal)),
+                ))
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
+        let declared = &signature.declared_effects;
+        let mut places = Vec::with_capacity(declared.reads.len() + declared.writes.len());
+        for formal in declared.reads.iter().chain(&declared.writes) {
+            let ordinal = signature
+                .parameters
+                .iter()
+                .position(|parameter| parameter.declaration == formal.root)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let ordinal =
+                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            places.push(ResolvedPlace {
+                root: PlaceRoot::Binding(BindingId(ordinal)),
+                path: self.substitute_effect_steps(signature, formal, &captures)?,
+            });
+        }
+        Ok(places)
     }
 
     /// One declared `epsuffix*`, with its index and range positions replaced
@@ -646,6 +722,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         actual_paths: &[Vec<ResolvedPlace>],
         entries: &[SubstitutedEntry],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<ResolvedPlace>, CheckStop> {
         let Some(target) = self.atomic_update_target(self.tree.path(node)?) else {
             return Ok(None);
@@ -676,8 +753,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 SemanticRule::Op12,
                 node,
                 SemanticIssueKind::AtomicUpdateReachesTargetPrefix {
-                    target: self.render_resolved_place(&target)?,
-                    effect: entry.spelling.clone(),
+                    target: self.render_resolved_place(&target, bindings)?,
+                    effect: self.render_resolved_place(&entry.place, bindings)?,
                     mechanical_fix: "declare a row that reaches no prefix of the updated place: reading anything and writing storage disjoint from it is admitted, and an update whose callee must reach the place is written as ordinary statements instead",
                 },
             );
@@ -685,8 +762,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(Some(target))
     }
 
-    /// [EFF-5] clause 1: two effects on overlapping paths where at least one
-    /// is a write must be proved disjoint.
+    /// [EFF-5] clause 1: two compared effects on overlapping paths where at
+    /// least one is a write must be proved disjoint.
     ///
     /// The checker holds the actual spellings and the live reference state,
     /// so it owns this comparison; what it cannot do is discharge the index
@@ -694,19 +771,37 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// leaves open is recorded for the entailment fragment and refused there
     /// if it stays undischarged. `swap` is the one operation whose two
     /// arguments may name the same place [OP-11].
+    ///
+    /// Two effects one argument supplies are compared only when their
+    /// declared paths may be separated by the values of their positions: a
+    /// pair that overlaps at every position is reached through that one
+    /// parameter, which the callee's own body is checked against, so the
+    /// call has nothing to prove about it. The caller's kills and reference
+    /// invalidations still take every substituted write [REF-2, ENT-5].
     fn check_call_pairwise_disjointness(
         &self,
         node: NodeId,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
         let exchange = self.is_swap_row(signature);
-        let oracle = UnprovedSeparations;
+        let formal = self.formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
                 if left.origin == right.origin || !(left.write || right.write) {
                     continue;
                 }
+                if left.argument == right.argument
+                    && let (Some(left_formal), Some(right_formal)) =
+                        (formal.get(left.origin), formal.get(right.origin))
+                    && overlaps_at_every_position(left_formal, right_formal)
+                {
+                    continue;
+                }
+                let oracle = EntryPairSeparations {
+                    entries: [left, right],
+                };
                 if !places_overlap(&oracle, &left.place, &right.place) {
                     continue;
                 }
@@ -714,9 +809,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     continue;
                 }
                 // A pair whose only unseparated steps are index or range
-                // positions is the fixed families' question; every other
-                // overlap is refused here and now.
-                if let Some(positions) = Self::separable_by_position(&left.place, &right.place) {
+                // positions, or an index beside a window part, is the fixed
+                // families' question; every other overlap is refused here and
+                // now.
+                if let Some((positions, window)) =
+                    Self::separable_by_position(&left.place, &right.place)
+                {
                     self.call_separations
                         .borrow_mut()
                         .push(CheckedCallSeparation {
@@ -724,8 +822,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             exchange,
                             reference_use: None,
                             positions,
-                            left_spelling: left.spelling.clone(),
-                            right_spelling: right.spelling.clone(),
+                            window,
+                            left_spelling: self.render_resolved_place(&left.place, bindings)?,
+                            right_spelling: self.render_resolved_place(&right.place, bindings)?,
+                            one_argument: left.argument == right.argument,
                         });
                     continue;
                 }
@@ -737,12 +837,32 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     },
                     node,
                     SemanticIssueKind::OverlappingCallEffects {
-                        first: left.spelling.clone(),
-                        second: right.spelling.clone(),
+                        first: self.render_resolved_place(&left.place, bindings)?,
+                        second: self.render_resolved_place(&right.place, bindings)?,
+                        // No position separates this pair, so proving one
+                        // distinct is no repair here [DIAG-1]. One
+                        // argument's pair got here because this call gives
+                        // the declared positions that tell its entries apart
+                        // the same values over one place the argument names,
+                        // or because no family this checker poses at a call
+                        // separates the steps at which the two paths differ,
+                        // as for two places a joined argument may name. Only
+                        // the first is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
+                        } else if left.argument == right.argument
+                            && left.place.root == right.place.root
+                            && left.place.path.get(..left.formed)
+                                == right.place.path.get(..right.formed)
+                            && let (Some(left_formal), Some(right_formal)) =
+                                (formal.get(left.origin), formal.get(right.origin))
+                            && Self::separable_by_position(left_formal, right_formal).is_some()
+                        {
+                            "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                        } else if left.argument == right.argument {
+                            "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else {
-                            "prove the two positions distinct, or pass one of them"
+                            "pass places that do not overlap, or pass the shared place through one argument only"
                         },
                     },
                 );
@@ -752,53 +872,95 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     /// The ordered position disagreements an admitted [OWN-7] family can
-    /// still separate. Index suffixes remain candidates; a range divergence
-    /// is the final candidate because its coordinate frames then differ.
+    /// still separate. Index suffixes remain candidates; a divergence with a
+    /// range step is the final candidate because its coordinate frames then
+    /// differ, whether against another range or against an index, and so is
+    /// a position beside a window's `next` or `free`, which [WIN-2] separates
+    /// by a bound on that window's length, together with the window it reads.
+    /// Beside `last` or `filled` a position overlaps whatever its value.
     pub(in crate::semantic::check) fn separable_by_position(
         left: &ResolvedPlace,
         right: &ResolvedPlace,
-    ) -> Option<Vec<super::super::super::super::model::CheckedCallSeparationPositions>> {
+    ) -> Option<(
+        Vec<super::super::super::super::model::CheckedCallSeparationPositions>,
+        Option<ResolvedPlace>,
+    )> {
         use super::super::super::super::model::CheckedCallSeparationPositions;
         let mut candidates = Vec::new();
-        for (left, right) in left.path.iter().zip(&right.path) {
-            match (left, right) {
-                (PlaceStep::Index(left), PlaceStep::Index(right)) if left.provably_same(*right) => {
-                    continue;
-                }
-                (PlaceStep::Range(left), PlaceStep::Range(right))
-                    if left.start.provably_same(right.start)
-                        && left.end.provably_same(right.end) =>
+        let mut window = None;
+        for (depth, steps) in left.path.iter().zip(&right.path).enumerate() {
+            match steps {
+                (PlaceStep::Index(first), PlaceStep::Index(second))
+                    if first.provably_same(*second) =>
                 {
                     continue;
                 }
-                (PlaceStep::Index(left), PlaceStep::Index(right)) => {
-                    candidates.push(CheckedCallSeparationPositions::Indices(*left, *right));
+                (PlaceStep::Range(first), PlaceStep::Range(second))
+                    if first.start.provably_same(second.start)
+                        && first.end.provably_same(second.end) =>
+                {
+                    continue;
                 }
-                (PlaceStep::Range(left), PlaceStep::Range(right)) => {
-                    candidates.push(CheckedCallSeparationPositions::Ranges(*left, *right));
+                (PlaceStep::Index(first), PlaceStep::Index(second)) => {
+                    candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                }
+                (PlaceStep::Range(first), PlaceStep::Range(second)) => {
+                    candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
                     break;
                 }
-                (left, right) if left == right => continue,
+                (PlaceStep::Index(index), PlaceStep::Range(range))
+                | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
+                    candidates.push(CheckedCallSeparationPositions::IndexOutsideRange(
+                        *index, *range,
+                    ));
+                    break;
+                }
+                (PlaceStep::Index(_) | PlaceStep::Range(_), PlaceStep::Part(part))
+                | (PlaceStep::Part(part), PlaceStep::Index(_) | PlaceStep::Range(_))
+                    if matches!(part, WindowPart::Next | WindowPart::Free) =>
+                {
+                    let position = match steps {
+                        (PlaceStep::Index(index), _) | (_, PlaceStep::Index(index)) => {
+                            CheckedCallSeparationPositions::Live(*index)
+                        }
+                        (PlaceStep::Range(range), _) | (_, PlaceStep::Range(range)) => {
+                            CheckedCallSeparationPositions::RangeWithinLength(*range)
+                        }
+                        _ => break,
+                    };
+                    candidates.push(position);
+                    window = Some(ResolvedPlace {
+                        root: left.root,
+                        path: left.path[..depth].to_vec(),
+                    });
+                    break;
+                }
+                (first, second) if first == second => continue,
                 _ if candidates.is_empty() => return None,
                 _ => break,
             }
         }
-        (!candidates.is_empty()).then_some(candidates)
+        (!candidates.is_empty()).then_some((candidates, window))
     }
 
-    /// [OP-10] the window operations that end the bound a reference into the
-    /// window was formed under.
+    /// [OP-10] the calls that end the bound a reference into a window was
+    /// formed under.
     ///
-    /// `place_back`'s `ensures` carries `i < r.len` across the call and
-    /// `insert_at` only changes a slot's occupant, so neither appears here.
-    /// The rest move a boundary down, move a run between two windows, shift
-    /// every logical index, or remake the block whole, and every reference
-    /// into the operand dies [REF-2, REF-4].
+    /// Of the window operations, `place_back`'s `ensures` carries
+    /// `i < r.len` across the call and `insert_at` only changes a slot's
+    /// occupant, so neither ends it; the rest move a boundary down, move a
+    /// run between two windows, shift every logical index, or remake the
+    /// block whole. Any other callee whose row writes a window's `last` or
+    /// `filled` may take elements back through it as `take_back` and
+    /// `remove_at` do, and no `ensures` is read here to show that it does
+    /// not, so its call ends the bound as well. Every reference into such a
+    /// window dies [REF-2, REF-4].
     fn invalidate_window_operation_references(
+        &self,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
-    ) {
+    ) -> Result<(), CheckStop> {
         const BOUND_ENDING_ROWS: [&str; 7] = [
             "take_back",
             "remove_at",
@@ -808,25 +970,34 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             "take_front",
             "grow",
         ];
-        if !BOUND_ENDING_ROWS.contains(&signature.name.as_str()) {
-            return;
-        }
+        let prelude = self.tree.is_prelude_node(signature.node)?;
+        let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
-            // whose bound the operation ends is the place below that step.
+            // whose bound the call ends is the place below that step.
             let cut = entry
                 .place
                 .path
                 .iter()
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
+            let takes_back = !prelude
+                && entry.write
+                && matches!(
+                    entry.place.path.get(cut),
+                    Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
+                );
+            if !window_operation && !takes_back {
+                continue;
+            }
             let window = ResolvedPlace {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
             Self::invalidate_window_references(bindings, &window);
         }
+        Ok(())
     }
 
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
@@ -988,9 +1159,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
             // was formed over: `&a[2..4]` names two elements whatever `a.len`
-            // is. [ENT-2] clause (b) admits `deref(view)` as a measure place
-            // — a root with `deref` wrappings, field selections and
-            // subscripts — and admits no place formed with a range step, so
+            // is. [MSR-1] admits `deref(view)` as a measure place — a root
+            // with `deref` wrappings, field selections and subscripts — and
+            // admits no place formed with a range step, so
             // the term this instantiation names is the reference the actual
             // names and never that reference's base. Resolving through the
             // reference here would drop the range step and read

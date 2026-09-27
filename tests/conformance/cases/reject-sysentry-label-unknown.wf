@@ -1,3 +1,7 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main(env: Args) -> status: ExitStatus pure {
   doc "FN-7: an ordinary parameter name is not an input-table key.";
   return exit_status(code: 0_u8);

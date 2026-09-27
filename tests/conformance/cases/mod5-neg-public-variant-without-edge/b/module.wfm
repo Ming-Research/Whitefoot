@@ -1,0 +1,1 @@
+public fn shape() -> shape: pkg::a::Shape pure doc "One shape of pkg::a.";

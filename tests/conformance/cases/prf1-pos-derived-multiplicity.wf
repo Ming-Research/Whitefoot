@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inner(stride_src: u64, padding: u64, height: u64, row: u64, width: u64) -> at: u64 pure contract {
   requires stride_src <= 2048_u64;
   requires padding <= 64_u64;

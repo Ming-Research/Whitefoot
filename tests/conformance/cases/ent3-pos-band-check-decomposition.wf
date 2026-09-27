@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn read_pair(table: Slots<u8, 8>, low: u64, high: u64) -> result: u8 pure contract {
   requires 8_u64 <= table.len;
 } {

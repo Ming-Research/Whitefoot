@@ -251,8 +251,8 @@ fn through_box(slots: &Box<Slots<u8, 4>>) -> result: unit writes(slots.inner.nex
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -297,12 +297,12 @@ fn needs_one(value: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let storage = box_slots_new::<u64>(capacity: 0_u64);
   let holder = Holder<u64, 3>(storage: move storage);
   let opened = forward::<u64, 3>(values: &holder);
   needs_one(value: opened);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -321,8 +321,8 @@ fn a_fresh_boxed_slots_result_proves_only_its_zero_length() {
   return move local;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         )
@@ -354,8 +354,7 @@ fn dispositions(proof: &FunctionPostconditionProof) -> Vec<PostconditionDisposit
     proof.exits.iter().map(|exit| exit.disposition).collect()
 }
 
-const ORDINARY_MAIN: &str =
-    "fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n";
+const ORDINARY_MAIN: &str = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
 
 #[test]
 fn ordinary_main_smoke() {
@@ -414,8 +413,8 @@ fn a_computed_constant_offset_is_not_an_fn9_relation_operand() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -435,8 +434,8 @@ fn a_true_computed_constant_offset_is_still_outside_the_fn9_relation_form() {
   return next;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -463,8 +462,8 @@ fn select(index: u64) -> result: u8 pure contract {
   return values[selected];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -497,8 +496,8 @@ fn caller(table: Array<u8, 8>) -> result: u8 pure contract {
   return lookup[value];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -541,8 +540,8 @@ fn caller(value: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -735,8 +734,8 @@ fn a_checked_plain_postcondition_is_proved_at_its_selected_exit() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -756,8 +755,8 @@ fn entry_requirements_prove_postconditions_in_the_originating_context() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -778,8 +777,8 @@ fn entry_image_writes_are_retained_and_prevent_false_discharge() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let proof = postcondition_proof(source, "changed");
@@ -825,8 +824,8 @@ fn plain(out: &i32) -> result: i32 writes(out) {
   return before;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -866,7 +865,7 @@ fn main() -> status: ExitStatus pure {
             .iter()
             .find_map(|statement| {
                 let call = match statement {
-                    CheckedStatement::Evaluate(call)
+                    CheckedStatement::Evaluate { value: call, .. }
                     | CheckedStatement::DropExpression { value: call, .. } => call,
                     _ => return None,
                 };
@@ -917,8 +916,8 @@ fn an_ordinary_loop_uses_the_exact_first_invalidation_event_without_a_snapshot()
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1001,8 +1000,8 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1041,8 +1040,8 @@ fn measure_entry_datums_survive_element_writes_and_root_replacement() {
   return values.len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(element);
@@ -1071,8 +1070,8 @@ fn replaced(values: Slots<u8, 2>) -> result: u64 pure contract {
   return size;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(replacement);
@@ -1097,8 +1096,8 @@ fn main() -> status: ExitStatus pure {
   return count;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let proof = postcondition_proof(fragment, "shifted");
@@ -1126,8 +1125,8 @@ fn selected_exits_aggregate_only_when_every_exit_in_the_view_discharges() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1157,8 +1156,8 @@ fn caller(value: i32) -> result: i32 pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(independent);
@@ -1176,8 +1175,8 @@ fn caller(value: i32) -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(dependent);
@@ -1216,8 +1215,8 @@ fn delivered(value: i32) -> result: i32 pure {
   return selected;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1242,8 +1241,8 @@ fn caller(pair: &Pair) -> result: i32 reads(pair.value) contract {
   return observed;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1274,8 +1273,8 @@ fn caller(pair: Pair) -> result: i32 pure contract {
   return observed;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_fn9_unproved(source);
@@ -1349,8 +1348,8 @@ fn caller() -> result: i32 pure contract {
   return observed;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // `caller`'s own `ensures result == 1_i32` stays unproved for an
@@ -1425,8 +1424,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1496,8 +1495,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(
@@ -1539,8 +1538,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1578,8 +1577,8 @@ fn caller(choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1605,8 +1604,8 @@ fn caller(slot: i32, replacement: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1665,8 +1664,8 @@ fn distinct_receiver(slot: i32, other: i32, replacement: i32) -> result: unit pu
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1725,8 +1724,8 @@ fn caller(outer: i32, replacement: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1822,8 +1821,8 @@ fn computed(outer: i32, replacement: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1863,8 +1862,8 @@ fn a_checked_ok_postcondition_selects_its_direct_payload() {
   return Ok<i32, Overflow>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -1879,8 +1878,8 @@ fn an_ok_selector_rejects_an_empty_selected_exit_set() {
   return Err<i32, Overflow>(error: error);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -1888,6 +1887,7 @@ fn main() -> status: ExitStatus pure {
         SemanticRule::Fn9,
         SemanticIssueKind::NoSelectedNormalExit {
             residual: "no selected normal exit",
+            mechanical_fix: "no `return` of this function delivers a value this clause's route selects: return such a value on some path, or delete the clause",
         },
     );
 }
@@ -1901,8 +1901,8 @@ fn an_ok_selector_verifies_a_moved_whole_result_return() {
   return move outcome;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2051,8 +2051,12 @@ fn checked_integer_results_reuse_admitted_computed_value_images() {
 
 #[test]
 fn checked_integer_results_do_not_add_conditional_affine_transport() {
+    // Each operand's own bound leaves the sum's [ENT-3.S7] interval at
+    // `index <= 6`; only the affine requirement bounds it below the four
+    // slots, so the direct read needs the affine image the checked payload
+    // does not carry.
     let parameters = "first: u64, second: u64";
-    let requirements = "  requires first <= 1_u64;\n  requires second <= 1_u64;";
+    let requirements = "  requires first <= 3_u64;\n  requires second <= 3_u64;\n  requires first + second <= 3_u64;";
     let direct = checked_conversion_read_source(
         parameters,
         requirements,
@@ -2091,8 +2095,8 @@ fn indexed(offset: u64) -> result: Result<u8, NarrowError> pure contract {
   return cvt.checked::<u64, u8>(choices[offset]);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2126,8 +2130,8 @@ fn propagated(index: u64) -> result: Result<u8, NarrowError> pure contract {
   return Ok<u8, NarrowError>(value: values[restored]);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2159,8 +2163,8 @@ fn checked_integer_indirect_operands_supply_type_bounds_without_storage_equality
   return pending;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2183,8 +2187,8 @@ fn checked_float_success_does_not_transport_an_opaque_domain_goal() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op6, |kind| {
@@ -2210,8 +2214,8 @@ fn length() -> result: u64 pure contract {
   return 1_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(source, SemanticRule::Fn9, "result == size");
@@ -2225,8 +2229,8 @@ fn projected_result_is_rejected_at_the_complete_final_relation() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(source, SemanticRule::Fn9, "result.field == value");
@@ -2240,8 +2244,8 @@ fn a_nonbare_result_use_in_an_ensures_expression_is_still_rejected() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(source, SemanticRule::Fn9, "deref(result) == value");
@@ -2276,8 +2280,8 @@ fn field_length(values: Values) -> result: u64 pure contract {
   return values.items.len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2296,7 +2300,7 @@ fn measured_call_return_source(generic: bool, bind_result: bool, expected: u64) 
         format!("return build{build_arguments}(value: move value);")
     };
     format!(
-        "fn build{parameters}(value: {element}) -> result: Slots<{element}, 1> pure contract {{\n  ensures result.len == 1_u64;\n}} {{\n  let vacant = slots_new::<{element}, 1>();\n  place_back(window: &vacant, value: move value);\n  return move vacant;\n}}\n\nfn singleton{parameters}(value: {element}) -> result: Slots<{element}, 1> pure contract {{\n  ensures result.len == {expected}_u64;\n}} {{\n  {returned}\n}}\n\nfn main() -> status: ExitStatus pure {{\n  let value = box_new::<u64>(value: 17_u64);\n  let items = singleton{arguments}(value: move value);\n  return exit_status(code: 0_u8);\n}}\n"
+        "fn build{parameters}(value: {element}) -> result: Slots<{element}, 1> pure contract {{\n  ensures result.len == 1_u64;\n}} {{\n  let vacant = slots_new::<{element}, 1>();\n  place_back(window: &vacant, value: move value);\n  return move vacant;\n}}\n\nfn singleton{parameters}(value: {element}) -> result: Slots<{element}, 1> pure contract {{\n  ensures result.len == {expected}_u64;\n}} {{\n  {returned}\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let value = box_new::<u64>(value: 17_u64);\n  let items = singleton{arguments}(value: move value);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     )
 }
 
@@ -2360,8 +2364,8 @@ fn compose<T>(first: Box<T>, replacement: Box<T>) -> (slots: Slots<Option<Entry<
   return move slots, move returned;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2486,12 +2490,12 @@ fn a_holder_alias_does_not_change_the_selected_return_term_identity() {
 fn from_shared_alias(owner: &Pair) -> result: i32 reads(owner.value) contract {
   ensures result == deref(owner).value;
 } {
-  let alias = owner;
-  return deref(alias).value;
+  let aliased = owner;
+  return deref(aliased).value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let proof = postcondition_proof(source, "from_shared_alias");
@@ -2499,7 +2503,7 @@ fn main() -> status: ExitStatus pure {
         dispositions(&proof),
         vec![PostconditionDisposition::Unproved]
     );
-    assert_rule_at(source, SemanticRule::Fn9, "return deref(alias).value;");
+    assert_rule_at(source, SemanticRule::Fn9, "return deref(aliased).value;");
 }
 
 #[test]
@@ -2510,10 +2514,10 @@ fn a_concrete_const_substitution_is_retained_with_a_selected_length() {
   return values.len;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 1>();
   let one = count::<1>(values: move values);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -2535,8 +2539,8 @@ binding Made : Maker {
   make = make;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // [FN-4] permits stronger actual postconditions. The former equality-only
@@ -2576,8 +2580,8 @@ fn identity(value: i32) -> result: i32 pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2603,8 +2607,8 @@ fn identity(value: i32) -> result: i32 pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // D7 retires the law mechanism. Preserve the old source as a grammar
@@ -2620,8 +2624,8 @@ fn invalid_selector_precedes_an_unresolved_name_in_its_entry() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2645,8 +2649,8 @@ fn second() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2664,8 +2668,8 @@ fn admitted_selector_forwards_the_original_entry_lookup_issue() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2693,8 +2697,8 @@ fn entry_inventory_precedes_a_poisoned_body_constructor() {
   return Missing();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_resolution(source, |outcome| {
@@ -2717,8 +2721,8 @@ fn unused_generic_entry_issue_precedes_its_body_semantics() {
   return slots_new::<u8, 1>();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2731,18 +2735,21 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn a_successfully_resolved_foreign_variant_is_an_fn9_source_issue() {
+    // [TYPE-6] a route label resolves against its result ordinal's enum, so
+    // the resolved variant here belongs to the result's own source enum;
+    // FN-9 then admits only the prelude `Ok` route.
     let source = br#"enum Foreign {
   ForeignCase(value: i32);
 }
 
-fn selected(value: i32) -> result: Result<i32, Overflow> pure contract {
+fn selected(value: i32) -> result: Foreign pure contract {
   ensures when ForeignCase(value: payload): payload == value;
 } {
-  return Ok<i32, Overflow>(value: value);
+  return Foreign::ForeignCase(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2769,11 +2776,11 @@ fn concrete_generic_instances_do_not_reuse_symbolic_selector_class() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let good = identity::<i32>(value: 1_i32);
   let flag = True();
   let bad = identity::<Bool>(value: flag);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2834,8 +2841,8 @@ fn unused_numeric_bounds_preserve_selector_class_information() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2854,9 +2861,9 @@ fn unavailable_generic_type_argument_does_not_invent_a_selector_instance() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let unavailable = generic::<Missing>(value: unit);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_resolution(source, |outcome| {
@@ -2878,9 +2885,9 @@ fn unavailable_const_argument_does_not_invent_a_selector_instance() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let unavailable = generic::<unit, missing>(value: unit);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_resolution(source, |outcome| {
@@ -2903,8 +2910,8 @@ fn invalid() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2918,7 +2925,7 @@ fn main() -> status: ExitStatus pure {
 fn transitive_invalid_constant_does_not_become_a_compiler_failure() {
     let source = br#"const bad: u8 = 1_u16;
 
-const alias: u8 = bad;
+const aliased: u8 = bad;
 
 fn invalid() -> result: unit pure contract {
   ensures result == result;
@@ -2926,8 +2933,8 @@ fn invalid() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -2952,8 +2959,8 @@ fn unavailable<T: drop>(value: CopyOnly<T>) -> result: T pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2990,8 +2997,8 @@ fn invalid() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -3013,8 +3020,8 @@ fn invalid() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -3043,8 +3050,8 @@ fn probe(value: Invalid<i32>) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -3079,8 +3086,8 @@ fn invalid() -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -3117,8 +3124,8 @@ fn bridge(value: i32) -> result: i32 pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3221,8 +3228,8 @@ fn second(value: i32) -> result: i32 pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3272,8 +3279,8 @@ fn an_independently_proved_self_recursive_component_publishes_its_summary() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3321,8 +3328,8 @@ fn right(value: i32) -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3396,8 +3403,8 @@ fn second(value: i32) -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3433,10 +3440,10 @@ fn concrete_generic_instances_receive_distinct_verified_summary_identities() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = identity::<i32>(value: 1_i32);
   let wide = identity::<u64>(value: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3480,8 +3487,8 @@ fn wrapper<U: drop>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -3496,7 +3503,9 @@ fn main() -> status: ExitStatus pure {
             detail.disposition,
             crate::PostconditionProofDisposition::Refuted
         );
-        assert!(detail.concrete_function.contains("bad"));
+        // [FN-2] the instance is named as a call writes it, never by the
+        // internal symbol that keys its lowering.
+        assert_eq!(detail.concrete_function, "bad::<u8>");
     });
 }
 
@@ -3506,9 +3515,9 @@ fn a_unit_without_writer_postconditions_still_publishes_prelude_contracts() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let ignored = helper(value: 1_i32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3610,7 +3619,7 @@ fn a_conditional_unique_call_keeps_the_other_branch_measure_image() {
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let seed = array_filled::<u8, 16>(value: 0_u8);
   let values = slots_from_array::<u8, 16>(values: seed);
   let turn = 0_u64;
@@ -3626,7 +3635,7 @@ fn main() -> status: ExitStatus pure {{
     set values = move fresh;
     set turn = turn +wrap 1_u64;
   }}
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         );
@@ -3649,13 +3658,13 @@ fn a_referent_replacement_still_kills_its_own_branch_measure_image() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 16>();
   place_back(window: &values, value: 7_u8);
   invariant before: values.len >= 1_u64;
   clear(values: &values);
   invariant stale: values.len >= 1_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -3725,12 +3734,12 @@ fn entry_and_exit_measures_are_two_states_at_a_returned_call_and_at_a_statement(
 {body}
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let free = slots_new::<u8, 4>();
   place_back(window: &free, value: 1_u8);
   place_back(window: &free, value: 2_u8);
   let value = take_one(free: &free);
-  return exit_status(code: value);
+  return std::process::exit_status(code: value);
 }}
 "#
         )
@@ -3763,8 +3772,8 @@ fn postcondition_measure_candidates_distinguish_holder_rebinding_from_descendant
   return move end;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(descendant_write);
@@ -3779,8 +3788,8 @@ fn main() -> status: ExitStatus pure {
   return taken;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_fn9_rejects(descriptor_write);
@@ -3800,8 +3809,8 @@ fn replace_after_take(window: &Ring<u64, 4>) -> taken: u64 writes(window) contra
   return taken;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_fn9_rejects(whole_replacement);
@@ -3826,8 +3835,8 @@ fn maybe_replace(first: &Ring<u64, 4>, second: &Ring<u64, 4>, choose: Bool) -> t
   return taken;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_fn9_rejects(joined_write);
@@ -3842,8 +3851,8 @@ fn main() -> status: ExitStatus pure {
   return taken;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_fn9_rejects(holder_rebinding);

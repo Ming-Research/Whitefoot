@@ -34,7 +34,7 @@
 use crate::backend::emitter::{
     BackendFailure, WindowAddressFacts, emit_llvm_with_window_address_facts,
 };
-use crate::backend::target::{
+use crate::target::{
     TargetLayout, TargetLayoutFailure, TargetObject, TargetStorageType, validate_program,
     validate_static_storage,
 };
@@ -72,22 +72,22 @@ const AFFINE_INVARIANT_BOUNDED_ALLOCATION: &[u8] =
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
-const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: ExitStatus pure {
+const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "One eight-byte slot in a runtime-capacity window, whose actual alignment the selected allocator has to promise.";
   let values = box_slots_new::<u64>(capacity: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
-const U64_CELL: &[u8] = br#"fn main() -> status: ExitStatus pure {
+const U64_CELL: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "One eight-byte cell on the same heap, the other half of the same obligation.";
   let cell = box_new::<u64>(value: 7_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -103,7 +103,7 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
                 (format!("{shape}<u64{capacity}>"), "deref(values)")
             };
             let source = format!(
-                "fn read(values: &{ty}, index: u64) -> result: u64 reads(values) contract {{\n  requires index < {window}.len;\n}} {{\n  return {window}[index];\n}}\n\nfn roundtrip(values: &{ty}, value: u64) -> result: u64 writes(values) contract {{\n  requires {window}.len < {window}.cap;\n}} {{\n  place_back(window: &{window}, value: value);\n  let result = take_back(window: &{window});\n  return result;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+                "fn read(values: &{ty}, index: u64) -> result: u64 reads(values) contract {{\n  requires index < {window}.len;\n}} {{\n  return {window}[index];\n}}\n\nfn roundtrip(values: &{ty}, value: u64) -> result: u64 writes(values) contract {{\n  requires {window}.len < {window}.cap;\n}} {{\n  place_back(window: &{window}, value: value);\n  let result = take_back(window: &{window});\n  return result;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             let (llvm, withheld) = with_ir(source.as_bytes(), |program| {
                 let target = TargetLayout::host().expect("supported target");
@@ -172,19 +172,19 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
 
 #[test]
 fn empty_fixed_windows_initialize_descriptors_before_return() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = slots_new::<Array<u64, 32>, 4>();
   let ring = ring_new::<Array<u64, 32>, 4>();
   if slots.len != 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if ring.len != 0_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if ring.head != 0_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = compile(source);
@@ -202,74 +202,74 @@ fn empty_fixed_windows_initialize_descriptors_before_return() {
 /// must preserve mathematical coordinates without overflowing an intermediate.
 #[test]
 fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let value = array_filled::<u64, 0>(value: 0_u64);
   let slots = slots_new::<Array<u64, 0>, 2>();
   place_back(window: &slots, value: value);
   place_back(window: &slots, value: value);
   let last = take_back(window: &slots);
   if slots.len != 1_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let first = take_back(window: &slots);
   if slots.len != 0_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let ring = ring_new::<Array<u64, 0>, 2>();
   place_back(window: &ring, value: value);
   place_back(window: &ring, value: value);
   let front = take_front(window: &ring);
   if ring.head != 1_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   place_back(window: &ring, value: front);
   let back = take_back(window: &ring);
   if ring.len != 1_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if ring.head != 1_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let remainder = take_front(window: &ring);
   if ring.head != 0_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if ring.len != 0_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let large = box_ring_new::<Array<u64, 0>>(capacity: 9223372036854775809_u64);
   place_front(window: &large.inner, value: value);
   if large.inner.head != 9223372036854775808_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   place_front(window: &large.inner, value: value);
   if large.inner.head != 9223372036854775807_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
   if large.inner.len != 2_u64 {
-    return exit_status(code: 10_u8);
+    return std::process::exit_status(code: 10_u8);
   }
   let large_first = take_front(window: &large.inner);
   if large.inner.head != 9223372036854775808_u64 {
-    return exit_status(code: 11_u8);
+    return std::process::exit_status(code: 11_u8);
   }
   let large_last = take_front(window: &large.inner);
   if large.inner.head != 0_u64 {
-    return exit_status(code: 12_u8);
+    return std::process::exit_status(code: 12_u8);
   }
   if large.inner.len != 0_u64 {
-    return exit_status(code: 13_u8);
+    return std::process::exit_status(code: 13_u8);
   }
   let single = ring_new::<Array<u64, 0>, 1>();
   place_front(window: &single, value: value);
   if single.head != 0_u64 {
-    return exit_status(code: 14_u8);
+    return std::process::exit_status(code: 14_u8);
   }
   let only = take_front(window: &single);
   if single.head != 0_u64 {
-    return exit_status(code: 15_u8);
+    return std::process::exit_status(code: 15_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (overlap, facts) in [
@@ -314,45 +314,45 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
 fn zero_capacity_windows_keep_header_layout_inside_nonempty_storage() {
     let source = br#"struct EmptyWindows {
   before: u8;
-  slots: Slots<OutputStream, 0>;
-  ring: Ring<OutputStream, 0>;
+  slots: Slots<std::io::OutputStream, 0>;
+  ring: Ring<std::io::OutputStream, 0>;
   after: u64;
 }
 
-fn empty_length(values: &[OutputStream]) -> result: u64 reads(values) {
+fn empty_length(values: &[std::io::OutputStream]) -> result: u64 reads(values) {
   return deref(values).len;
 }
 
-fn main() -> status: ExitStatus pure {
-  let initial_slots = slots_new::<OutputStream, 0>();
-  let initial_ring = ring_new::<OutputStream, 0>();
+fn main() -> status: std::process::ExitStatus pure {
+  let initial_slots = slots_new::<std::io::OutputStream, 0>();
+  let initial_ring = ring_new::<std::io::OutputStream, 0>();
   let value = EmptyWindows(before: 17_u8, slots: move initial_slots, ring: move initial_ring, after: 29_u64);
   let storage = box_ring_new::<EmptyWindows>(capacity: 1_u64);
   place_back(window: &storage.inner, value: move value);
   let recovered = take_front(window: &storage.inner);
   let EmptyWindows(before: before, slots: slots, ring: ring, after: after) = move recovered;
   if before != 17_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if after != 29_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if ring.head != 0_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if ring.len != 0_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let length = empty_length(values: &slots[0_u64..0_u64]);
   if length != 0_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
-  let array = slots_into_array::<OutputStream, 0>(values: move slots);
-  let restored = slots_from_array::<OutputStream, 0>(values: move array);
+  let array = slots_into_array::<std::io::OutputStream, 0>(values: move slots);
+  let restored = slots_from_array::<std::io::OutputStream, 0>(values: move array);
   if restored.len != 0_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = with_ir(source, |program| {
@@ -434,7 +434,7 @@ void *wf_observe_window_allocate(uint64_t size) {
 fn an_above_u64_zero_count_reaches_target_qualification() {
     for generic in ["", "<T>"] {
         let source = format!(
-            "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir(source.as_bytes(), |program| {
             let host = TargetLayout::host().expect("the test host is supported");
@@ -538,7 +538,7 @@ fn tally(left: u32, right: u32) -> total: u32 pure {
   return left +wrap right;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let weights = slots_new::<u8, 4>();
   for @fill (
     at in 0_u64..4_u64,
@@ -557,7 +557,7 @@ fn main() -> status: ExitStatus pure {
   if around != 28_u32 {
     set code = 2_u8;
   }
-  return exit_status(code: code);
+  return std::process::exit_status(code: code);
 }
 "#;
     let llvm = compile(source);
@@ -628,7 +628,7 @@ fn replacement() -> result: u16 pure {
   return 9_u16;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = make(n: 4_u64);
   let length = values.inner.len;
   let stored = 0_u16;
@@ -647,7 +647,7 @@ fn main() -> status: ExitStatus pure {
       set code = 2_u8;
     }
   }
-  return exit_status(code: code);
+  return std::process::exit_status(code: code);
 }
 "#;
     let llvm = compile(source);
@@ -705,14 +705,14 @@ fn a_window_length_qualifies_same_element_reallocation_without_a_target_guard() 
   return box_array_filled::<u8>(count: length, value: 0_u8);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let initial = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
   let copied = refill(source: move initial);
   let length = copied.inner.len;
   if length != 4_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -742,17 +742,17 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn op9_overflow_is_rejected_before_lowering() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let values = box_array_filled::<u64>(count: 18446744073709551615_u64, value: 0_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
     assert_eq!(failure.rule_id(), Some("OP-9"));
     assert!(
         failure
-            .detail()
-            .contains("UndischargedAllocationFitObligation")
+            .to_string()
+            .contains("]: UndischargedAllocationFitObligation\n")
     );
 }
 
@@ -765,10 +765,10 @@ fn an_out_of_bounds_run_set_is_an_op4_compile_rejection() {
   return 9_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = box_array_filled::<u8>(count: 2_u64, value: 0_u8);
   set values.inner[2_u64] = replacement();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
@@ -791,12 +791,12 @@ fn run_cleanup_is_explicit_on_return_and_break_edges() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let true_value = True();
   let false_value = False();
   cleanup(flag: true_value);
   cleanup(flag: false_value);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -834,13 +834,17 @@ fn range_references_cross_helpers_without_transferring_ownership() {
     // The case has six status exits: the four length checks before the two
     // calls, the checksum branch and the success exit.
     assert!(!main.contains("call void @wf_trap"));
-    assert_eq!(main.matches("call void @wf_exit_status").count(), 6);
+    assert_eq!(
+        main.matches("call void @wf_std.process.exit_status")
+            .count(),
+        6
+    );
     // Every exit leaves the scope that owns exactly the two `Box` fields.
     // Check each return edge independently so one edge cannot leak while
     // another happens to contribute the missing releases [STOR-3, PROV-6].
     let exits = main
         .split("ret void")
-        .filter(|block| block.contains("call void @wf_exit_status"))
+        .filter(|block| block.contains("call void @wf_std.process.exit_status"))
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 6);
     for exit in exits {
@@ -889,7 +893,7 @@ fn observe(pool: &Pool) -> result: u64 reads(pool.left), reads(pool.count) {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let left = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
   let right = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
   let pool = Pool(left: move left, right: move right, count: 0_u64);
@@ -902,7 +906,7 @@ fn main() -> status: ExitStatus pure {
   if observed != 14_u64 {
     set code = 1_u8;
   }
-  return exit_status(code: code);
+  return std::process::exit_status(code: code);
 }
 "#;
     let llvm = compile(source);
@@ -930,45 +934,89 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
     ));
     let build = emitted_function(&llvm, "build");
     let checksum = emitted_function(&llvm, "checksum");
+    let build_body = emitted_body(&llvm, "build");
+    let checksum_body = emitted_body(&llvm, "checksum");
     let main = emitted_function(&llvm, "main");
     // The case lends the pool as two range references and one ordinary
     // reference to a scalar-bearing struct. A range reference crosses this
-    // boundary as its `{ ptr, i64 }` address-and-length pair [REF-4].
-    assert!(build.starts_with("define void @wf_build(ptr %wf.result, "));
-    assert!(checksum.starts_with("define void @wf_checksum(ptr %wf.result, "));
-    for function in [build, checksum] {
+    // boundary as its address-and-length pair [REF-4], passed as the element
+    // pointer, which carries the reference facts, and the count
+    // (compiler/backend-facts). The three-leaf Result returns in registers
+    // from the public entry, so the first range is its first argument. The
+    // internal body still constructs the result through its destination
+    // (compiler/src/backend/abi.rs), and carries the same facts.
+    // `build` also takes its cursor by reference; `checksum` only reads.
+    for (function, body, name, references) in [
+        (build, build_body, "build", 3),
+        (checksum, checksum_body, "checksum", 2),
+    ] {
+        register_result_type(&llvm, function, &["i32", "i64", "i32"]);
         let header = function.lines().next().expect("helper signature");
-        assert_eq!(header.matches("{ ptr, i64 }").count(), 2);
-        // The result pointer still addresses the tag, u64 success payload
-        // and three-variant PoolError, each written on its selected route.
-        assert_scalar_result_fields(&llvm, function, &["i32", "i64", "i32"]);
+        assert!(
+            header.contains(&format!(" @wf_{name}(ptr noalias nonnull ")),
+            "{header}"
+        );
+        assert!(!header.contains("%wf.result"), "{header}");
+        let body_header = body.lines().next().expect("helper body signature");
+        assert!(
+            body_header.starts_with(&format!(
+                "define internal void @wf_{name}.body(ptr %wf.result, ptr noalias nonnull "
+            )),
+            "{body_header}"
+        );
+        for header in [header, body_header] {
+            for ordinal in 0..2 {
+                assert!(
+                    header.contains(&format!(
+                        " %wf.arg.v{ordinal}.data, i64 %wf.arg.v{ordinal}.len, "
+                    )),
+                    "{header}"
+                );
+            }
+            assert_eq!(
+                header.matches("ptr noalias nonnull ").count(),
+                references,
+                "{header}"
+            );
+        }
+        // The body's destination still receives the tag, u64 success
+        // payload and three-variant PoolError, each written on its route.
+        assert_scalar_result_fields(&llvm, body, &["i32", "i64", "i32"]);
     }
-    assert!(
-        build
-            .lines()
-            .next()
-            .expect("build signature")
-            .contains(", i32 ")
-    );
-    assert!(
-        checksum
-            .lines()
-            .next()
-            .expect("checksum signature")
-            .contains(", i64 ")
-    );
-    assert!(!build.contains("call void @free"));
-    assert!(!checksum.contains("call void @free"));
+    for definition in [build, build_body] {
+        assert!(
+            definition
+                .lines()
+                .next()
+                .expect("build signature")
+                .contains(", i32 %v3)")
+        );
+    }
+    for definition in [checksum, checksum_body] {
+        assert!(
+            definition
+                .lines()
+                .next()
+                .expect("checksum signature")
+                .contains(", i64 %v2)")
+        );
+    }
+    assert!(!build_body.contains("call void @free"));
+    assert!(!checksum_body.contains("call void @free"));
     // Bounds and arithmetic failures are typed results rather than written
     // proofs, so build and checksum contain no trap edge. Main owns two
     // `Box<Slots<u64>>` cells and releases both on each of its five exits.
-    assert!(!build.contains("call void @wf_trap"));
-    assert!(!checksum.contains("call void @wf_trap"));
+    assert!(!build_body.contains("call void @wf_trap"));
+    assert!(!checksum_body.contains("call void @wf_trap"));
     assert!(!main.contains("call void @wf_trap"));
-    assert_eq!(main.matches("call void @wf_exit_status").count(), 5);
+    assert_eq!(
+        main.matches("call void @wf_std.process.exit_status")
+            .count(),
+        5
+    );
     let exits = main
         .split("ret void")
-        .filter(|block| block.contains("call void @wf_exit_status"))
+        .filter(|block| block.contains("call void @wf_std.process.exit_status"))
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 5);
     for exit in exits {
@@ -1103,7 +1151,7 @@ fn update(columns: Columns) -> result: Columns pure {
   return move columns;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let left = box_array_filled::<u16>(count: 2_u64, value: 0_u16);
   let right = box_array_filled::<u16>(count: 2_u64, value: 0_u16);
   let columns = Columns(left: move left, right: move right);
@@ -1113,16 +1161,18 @@ fn main() -> status: ExitStatus pure {
   if updated_ok {
     let value = updated.left.inner[1_u64];
     if value != 9_u16 {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
-    let update = emitted_function(&llvm, "update");
+    // `Columns`, two Box pointers, returns in registers, so the projections
+    // are in `update`'s destination-form body (compiler/src/backend/abi.rs).
+    let update = emitted_body(&llvm, "update");
     // The length read projects the field once for the explicit control. The
     // target captures the complete element address once before the RHS, and
     // the store uses that address without rereading its parent [SET-1].
@@ -1130,7 +1180,8 @@ fn main() -> status: ExitStatus pure {
     // STOR-1 places the descriptor in the one heap object. Capture therefore
     // loads the Box pointer from its field slot, then forms an address into
     // that object; it no longer loads a by-value {pointer, length} descriptor.
-    assert_eq!(update.matches("getelementptr inbounds %wf.t0,").count(), 2);
+    let columns = format!("getelementptr inbounds {},", super::nominal_type("Columns"));
+    assert_eq!(update.matches(&columns).count(), 2);
     let guard = update
         .find("icmp ult i64")
         .expect("the explicit control must test the projected window length");
@@ -1183,7 +1234,7 @@ fn main() -> status: ExitStatus pure {
             .ends_with(&format!("ptr {target}"))
     );
     assert!(!update[rhs..store].contains("load ptr, ptr "));
-    assert!(!update[rhs..store].contains("getelementptr inbounds %wf.t0,"));
+    assert!(!update[rhs..store].contains(&columns));
     assert!(!update.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);
@@ -1210,7 +1261,7 @@ fn release(owner: Owner) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = box_slots_new::<u8>(capacity: 1_u64);
   let second = box_slots_new::<u16>(capacity: 1_u64);
   let pair = Pair(first: move first, second: move second);
@@ -1218,7 +1269,7 @@ fn main() -> status: ExitStatus pure {
   let suffix = box_slots_new::<u64>(capacity: 1_u64);
   let owner = Owner(prefix: move prefix, pair: move pair, suffix: move suffix);
   release(owner: move owner);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1256,7 +1307,7 @@ fn take(owner: Owner) -> result: Box<Slots<u8>> pure {
   return move owner.pair.first;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = box_slots_new::<u8>(capacity: 1_u64);
   let second = box_slots_new::<u8>(capacity: 1_u64);
   let pair = Pair(first: move first, second: move second);
@@ -1264,7 +1315,7 @@ fn main() -> status: ExitStatus pure {
   let suffix = box_slots_new::<u8>(capacity: 1_u64);
   let owner = Owner(prefix: move prefix, pair: move pair, suffix: move suffix);
   let retained = take(owner: move owner);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1293,19 +1344,19 @@ fn trivially_droppable_affine_elements_keep_the_single_free() {
   Present(value: u32);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let slots = box_slots_new::<Maybe>(capacity: 4_u64);
   for @fill (
     at in 0_u64..4_u64,
     invariant grown: slots.inner.len >= at,
     invariant spare: slots.inner.cap + at >= slots.inner.len + 4_u64
   ) {
-    let empty = Missing();
+    let empty = Maybe::Missing();
     place_back(window: &slots.inner, value: move empty);
   }
-  let occupied = Present(value: 7_u32);
+  let occupied = Maybe::Present(value: 7_u32);
   set slots.inner[2_u64] = move occupied;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1324,17 +1375,17 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn a_runtime_capacity_window_op9_overflow_is_rejected_before_lowering() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = box_slots_new::<Option<u32>>(capacity: 18446744073709551615_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
     assert_eq!(failure.rule_id(), Some("OP-9"));
     assert!(
         failure
-            .detail()
-            .contains("UndischargedAllocationFitObligation")
+            .to_string()
+            .contains("]: UndischargedAllocationFitObligation\n")
     );
 }
 
@@ -1355,12 +1406,12 @@ fn forward<T>(value: T) -> result: T pure {
   return store::<T>(value: move value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let output = forward::<u64>(value: 37_u64);
   if output != 37_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);

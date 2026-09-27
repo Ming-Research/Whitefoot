@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn touch(a: &Slots<u64, 4>, b: &Slots<u64, 4>, j: u64) -> result: unit writes(a.next), writes(a.len), writes(b[j]) contract {
+  requires deref(a).len < deref(a).cap;
+  requires j < deref(b).len;
+} {
+  doc "Appends through a and overwrites element j through b.";
+  place_back(window: a, value: 1_u64);
+  set deref(b)[j] = 5_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-5, WIN-2: one window reaches both arguments, so writes(b[j]) and writes(a.next) meet on it. The row position j takes the argument 0, which the call's entry state proves below the window's length, so the element is live there and separate from the append slot; the program observes the append and the overwrite.";
+  let window = slots_new::<u64, 4>();
+  place_back(window: &window, value: 0_u64);
+  if window.len < window.cap {
+    touch(a: &window, b: &window, j: 0_u64);
+    if window.len == 2_u64 {
+      if window[0_u64] == 5_u64 {
+        return exit_status(code: 0_u8);
+      }
+    }
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 1_u8);
+}

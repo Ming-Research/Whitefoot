@@ -94,7 +94,7 @@ _check-runtime:
 # second copy of the list is a copy that goes stale, and did — retiring two
 # stages left the workflow naming targets that no longer exist.
 static:
-	@for stage in repository-invariants spec-append-only spec-prose-integrity design-lint; do \
+	@for stage in repository-invariants spec-archives spec-prose-integrity guidance source-size design-lint; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
 	done
 
@@ -142,17 +142,47 @@ repository-invariants:
 		exit 1; \
 	fi
 
-# Released version archives are never edited. Comparing with main makes this a
-# property of the exact merge candidate rather than a hook or human process.
-spec-append-only:
-	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "spec append-only: local main ref is required" >&2; exit 1; }
-	@changes="$$(git diff --name-status --diff-filter=MDRCT main -- 'spec/kernel-spec-v*.md')" || exit 1; \
-	if test -n "$$changes"; then \
-		echo "spec append-only violation: released specifications changed:" >&2; \
-		echo "$$changes" >&2; \
-		exit 1; \
-	fi
-	@echo "spec append-only: no released kernel specification was modified or removed"
+# Released version archives are never edited, and an amendment archives the
+# outgoing bytes under their version and advances the title. The script
+# compares with the merge base of main, which is what a merge would change in
+# main; a branch behind main is not charged with main's newer archives.
+spec-archives:
+	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "spec archives: local main ref is required" >&2; exit 1; }
+	@sh .github/check-spec-archives.sh --self-test
+	@sh .github/check-spec-archives.sh main
+
+# Cited review items, entry-document paths and the two agents' skill links
+# resolve; this reads references only, never the guidance's meaning.
+guidance:
+	@$(PY) .github/check-guidance.py --self-test
+	@$(PY) .github/check-guidance.py
+
+# A compiler source over the limit is named in the Code structure section of
+# docs/todo.md, so its split is recorded work instead of unnoticed growth
+# (AGENTS.md, "Fix or record what you notice"). The item may defer the split;
+# it may not be missing. A mention in another section, about something else,
+# does not count. The limit sits above every source except the entailment
+# module's three, each thousands of lines past it, so it asks for no items the
+# evidence does not already call for; lower it once those are split.
+SOURCE_LINE_LIMIT ?= 4000
+source-size:
+	@status=0; checked=0; \
+	recorded="$$(awk '/^## / { in_section = ($$0 == "## Code structure") } in_section' docs/todo.md)"; \
+	test -n "$$recorded" || { echo "source size: docs/todo.md has no Code structure section" >&2; exit 1; }; \
+	for file in $$(git ls-files -- 'compiler/src/*.rs'); do \
+		checked=$$((checked + 1)); \
+		lines="$$(wc -l < "$$file" | tr -d ' ')"; \
+		if test "$$lines" -gt $(SOURCE_LINE_LIMIT) && ! printf '%s\n' "$$recorded" | grep -q -F -e "$$file"; then \
+			echo "source size: $$file has $$lines lines, over $(SOURCE_LINE_LIMIT); split it along its responsibilities, or name it in the Code structure section of docs/todo.md with the split you would make" >&2; \
+			status=1; \
+		fi; \
+	done; \
+	test "$$checked" -gt 0 || { echo "source size: no compiler sources found" >&2; exit 1; }; \
+	exit $$status
+
+# What a completion review covers: base, depth, groups and excluded paths.
+review-scope:
+	@sh docs/skills/completion-review/scripts/review-scope.sh main
 
 spec-append-only-staged:
 	@changes="$$(git diff --cached --name-status --diff-filter=MDRCT -- 'spec/kernel-spec-v*.md')" || exit 1; \
@@ -220,4 +250,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-append-only spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives guidance source-size review-scope spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks

@@ -2,7 +2,8 @@
 
 use super::system::with_mutated_ir_lowering;
 use super::{
-    build_executable, compile, compile_and_run, compile_rejection, emitted_function, test_directory,
+    build_executable, compile, compile_and_run, compile_rejection, emitted_body, emitted_function,
+    test_directory,
 };
 use crate::{IrNominalKind, IrTerminator, IrType, OverlapLowering, emit_llvm};
 
@@ -56,9 +57,14 @@ fn assert_self_tail_lowering(source: &[u8]) {
             names.push("_par_seq_accumulate");
         }
         for name in names {
-            let body = emitted_function(&module, name);
+            // A register-returned result's transfer lives in the internal
+            // destination-form body behind its public entry
+            // (compiler/src/backend/abi.rs). Either definition names itself
+            // once, in its header, and calls neither symbol.
+            let body = emitted_body(&module, name);
             assert_eq!(
-                body.matches(&format!("@wf_{name}(")).count(),
+                body.matches(&format!("@wf_{name}(")).count()
+                    + body.matches(&format!("@wf_{name}.body(")).count(),
                 1,
                 "self calls must already be jumps: {body}"
             );
@@ -72,6 +78,35 @@ fn assert_self_tail_lowering(source: &[u8]) {
                 "the repeated body must reuse its physical frame: {body}"
             );
         }
+        // The two-word Pair returns in registers (compiler/src/backend/abi.rs):
+        // the public entry returns the value its internal body constructed
+        // through the entry's slot. The transfer, checked above, rebinds the
+        // body's parameters and keeps that one destination.
+        let swap_pairs = emitted_function(&module, "swap_pairs");
+        assert!(
+            swap_pairs.starts_with("define %wf.t"),
+            "the Pair result returns in registers: {swap_pairs}"
+        );
+        let header = swap_pairs.lines().next().expect("definition header");
+        assert!(!header.contains("%wf.result"), "{header}");
+        assert!(
+            swap_pairs.contains("  call void @wf_swap_pairs.body(ptr %wf.result, "),
+            "{swap_pairs}"
+        );
+        assert_eq!(swap_pairs.matches("\n  ret ").count(), 1, "{swap_pairs}");
+        let swap_pairs_body = emitted_body(&module, "swap_pairs");
+        assert!(
+            swap_pairs_body
+                .starts_with("define internal void @wf_swap_pairs.body(ptr %wf.result, "),
+            "{swap_pairs_body}"
+        );
+        assert!(
+            swap_pairs_body
+                .lines()
+                .filter(|line| line.starts_with("  ret "))
+                .all(|line| line == "  ret void"),
+            "{swap_pairs_body}"
+        );
         // The conformance adapter executes the sequential module; this native
         // run additionally protects actualized parallel lowering.
         if overlap == OverlapLowering::On {
@@ -198,13 +233,13 @@ fn one_function_can_mix_tail_transfers_with_calls_retaining_local_storage() {
   return walk(n: next, value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = 10_u64;
   let seen = walk(n: 100002_u64, value: &value);
   if seen != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );

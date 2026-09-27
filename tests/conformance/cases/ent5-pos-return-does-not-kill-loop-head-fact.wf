@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], stop: Bool, done: Bool) -> result: u8 reads(b) {
   doc "An ordinary branch establishes the zero offset's bound before the loop. A return edge inside the loop cannot reach a later iteration head, so its scope-exit kills do not remove that real pre-loop fact [ENT-5], and the head subscript discharges [OP-4].";
   let spare = deref(b).len;

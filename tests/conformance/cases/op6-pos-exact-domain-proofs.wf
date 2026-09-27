@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const exact_even: u32 = 16777218_u32;
 
 const exact_integer: f64 = -128.0_f64;

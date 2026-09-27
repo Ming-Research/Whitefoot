@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn two_bytes(bound: u64) -> (small: u8, large: u8) pure {
   doc "Two results from one call.";
   return 1_u8, 2_u8;

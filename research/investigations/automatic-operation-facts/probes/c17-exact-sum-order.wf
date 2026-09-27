@@ -1,0 +1,12 @@
+fn span_length(start: u64, count: u64) -> result: u64 pure contract {
+  requires start <= 4096_u64;
+  requires count <= 65535_u64;
+} {
+  let end = start + count;
+  let length = end - start;
+  return length;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

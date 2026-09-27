@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-1: a reference variable names a path and is not storage of its own, so &p where p is a reference variable is a hard error.";
   let a = 5_u64;

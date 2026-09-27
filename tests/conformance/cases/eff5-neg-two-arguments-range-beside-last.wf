@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn churn(source: &Slots<u64, 8>, target: &Slots<u64, 8>, lo: u64, hi: u64) -> result: u64 reads(source[lo..hi]), writes(target.last), writes(target.next), writes(target.len) contract {
+  requires lo < hi;
+  requires hi <= deref(source).len;
+  requires 2_u64 <= deref(target).len;
+} {
+  doc "Reads the first element of source[lo..hi], takes two elements back from target, appends one, and reads that element again. One writes(target.last) covers both take_back calls, so target.last stands for both slots they empty.";
+  let run = &deref(source)[lo..hi];
+  let before = deref(run)[0_u64];
+  let a = take_back(window: target);
+  let b = take_back(window: target);
+  place_back(window: target, value: 77_u64);
+  let after = deref(run)[0_u64];
+  return after -wrap before;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-5, WIN-2: one window reaches both arguments, and a range overlaps window.last whatever its endpoints, so reads(source[1_u64..2_u64]) is not separate from writes(target.last) although the run ends below the last slot at the call's entry: the second take_back empties slot 1.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  place_back(window: &window, value: 3_u64);
+  let d = churn(source: &window, target: &window, lo: 1_u64, hi: 2_u64);
+  return exit_status(code: 0_u8);
+}

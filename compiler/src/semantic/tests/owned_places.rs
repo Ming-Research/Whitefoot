@@ -88,7 +88,7 @@ fn a_field_step_on_a_scalar_element_selects_no_declared_field() {
         "  set values[0_u64].missing = 1_u8;\n",
     ] {
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let values = array_filled::<u8, 2>(value: 0_u8);\n{body}  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, 2>(value: 0_u8);\n{body}  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_kind(source.as_bytes(), SemanticRule::Type5, |kind| {
             matches!(kind, SemanticIssueKind::TypeMismatch { .. })
@@ -105,11 +105,11 @@ fn runtime_array_element_suffixes_retain_source_diagnostics() {
   left: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let seed = Row(left: 3_u64);
   let rows = box_array_filled::<Row>(count: 1_u64, value: seed);
   let bad = rows.inner[0_u64].missing;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(invalid_field, SemanticRule::Type5, |kind| {
@@ -124,8 +124,8 @@ fn read(rows: &Box<Array<Row>>, index: u64) -> result: u64 reads(rows) {
   return deref(rows).inner[index].left;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(unproved_bound, SemanticRule::Op4, |kind| {
@@ -174,8 +174,8 @@ fn split(pair: Pair) -> result: Token pure {
   return move pair.kept;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Prov6, |kind| {
@@ -192,7 +192,7 @@ fn a_field_consume_judges_only_its_unselected_residual() {
         "  before: Box<u64>;\n  value: T;\n  after: Box<u64>;\n",
     ] {
         let source = format!(
-            "struct Holder<T> {{\n{fields}}}\n\nfn take<T>(holder: Holder<T>) -> value: T pure {{\n  return move holder.value;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "struct Holder<T> {{\n{fields}}}\n\nfn take<T>(holder: Holder<T>) -> value: T pure {{\n  return move holder.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_accepts(source.as_bytes());
     }
@@ -208,7 +208,7 @@ fn a_field_consume_cannot_hide_a_linear_residual_without_a_drop_action() {
         ("nodrop struct Token {\n}\n\n", "", "Token"),
     ] {
         let source = format!(
-            "{declarations}struct Holder{generic} {{\n  value: Box<u64>;\n  residual: {residual};\n}}\n\nfn take{generic}(holder: Holder{generic}) -> value: Box<u64> pure {{\n  return move holder.value;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declarations}struct Holder{generic} {{\n  value: Box<u64>;\n  residual: {residual};\n}}\n\nfn take{generic}(holder: Holder{generic}) -> value: Box<u64> pure {{\n  return move holder.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_kind(source.as_bytes(), SemanticRule::Prov6, |kind| {
             matches!(kind, SemanticIssueKind::LinearValuePartiallyConsumed { .. })
@@ -226,7 +226,7 @@ fn boxed_field_consumes_judge_linear_residuals_before_empty_releases() {
         ("nodrop struct Token {\n  value: u64;\n}\n\n", "Token"),
     ] {
         let source = format!(
-            "{declaration}struct Holder {{\n  value: Box<u64>;\n  residual: {residual};\n}}\n\nfn take(holder: Box<Holder>) -> value: Box<u64> pure {{\n  return move holder.inner.value;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declaration}struct Holder {{\n  value: Box<u64>;\n  residual: {residual};\n}}\n\nfn take(holder: Box<Holder>) -> value: Box<u64> pure {{\n  return move holder.inner.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_at(source.as_bytes(), SemanticRule::Prov6, "holder.inner.value");
         assert_rule_kind(source.as_bytes(), SemanticRule::Prov6, |kind| {
@@ -253,7 +253,7 @@ fn moving_an_array_or_window_element_still_reports_a_hole() {
         ),
     ] {
         let source = format!(
-            "fn take(values: {ty}) -> value: Box<u64> pure{requires} {{\n  return move values[0_u64];\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn take(values: {ty}) -> value: Box<u64> pure{requires} {{\n  return move values[0_u64];\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_at(source.as_bytes(), SemanticRule::Win3, "values[0_u64]");
         assert_rule_kind(source.as_bytes(), SemanticRule::Win3, |kind| {

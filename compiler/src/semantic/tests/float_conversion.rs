@@ -41,7 +41,7 @@ fn only_whole_type_conversion_domains_need_no_operand_evidence() {
     for ((source_name, _), allowed) in NUMERIC_TYPES.into_iter().zip(destinations) {
         for (destination_name, _) in NUMERIC_TYPES {
             let source = format!(
-                "fn convert(value: {source_name}) -> result: {destination_name} pure {{\n  return cvt::<{source_name}, {destination_name}>(value);\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+                "fn convert(value: {source_name}) -> result: {destination_name} pure {{\n  return cvt::<{source_name}, {destination_name}>(value);\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             with_semantics(source.as_bytes(), |outcome| {
                 if allowed.contains(&destination_name) {
@@ -87,7 +87,7 @@ fn every_float_endpoint_pair_has_uniform_exact_checked_and_defined_interfaces() 
         }
     }
     source
-        .push_str("fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n");
+        .push_str("fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n");
 
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -159,12 +159,12 @@ fn every_float_endpoint_pair_has_uniform_exact_checked_and_defined_interfaces() 
 #[test]
 fn float_conversion_operand_failures_keep_their_rule_owners() {
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = cvt::<f32, Bool>(1.0_f32);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<f32, Bool>(1.0_f32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
         SemanticIssueKind::InvalidOperation,
     );
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let value = cvt::<u32, f64>(1_u16);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<u32, f64>(1_u16);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );
@@ -182,8 +182,8 @@ fn endpoints(value: u32) -> result: f32 pure contract {
   return cvt::<u32, f32>(value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -214,7 +214,7 @@ fn main() -> status: ExitStatus pure {
             format!(" {header}")
         };
         let source = format!(
-            "fn narrow(value: u32) -> result: f32 pure{header} {{\n  return cvt::<u32, f32>({value});\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn narrow(value: u32) -> result: f32 pure{header} {{\n  return cvt::<u32, f32>({value});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue, .. } = outcome else {

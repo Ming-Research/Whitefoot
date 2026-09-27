@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   match cvt.checked::<f32, u8>(1.0_f32) {
     Ok(value: byte) => {

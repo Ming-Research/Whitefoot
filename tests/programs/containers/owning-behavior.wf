@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Seed {
   salt: u64;
 }
@@ -137,19 +140,19 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 fn key_probe<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> action: Probe reads(slot), reads(key), reads(env) {
   match deref(slot) {
     Vacant() => {
-      return Stop();
+      return Probe::Stop();
     }
     Deleted() => {
-      return Skip();
+      return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(saved) == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
-          return Match();
+          return Probe::Match();
         }
       }
-      return Miss();
+      return Probe::Miss();
     }
   }
 }
@@ -168,9 +171,9 @@ fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Bo
     let action = key_probe::<Key<K, E>>(slot: &deref(slots).inner[index], tag: tag, key: &key, env: env);
     match action {
       Match() => {
-        let offered = Occupied<K>(fingerprint: tag, key: move key, payload: move payload);
+        let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
         swap(first: &deref(slots).inner[index], second: &offered);
-        return Installed<K>(previous: move offered);
+        return KeyPut<K>::Installed(previous: move offered);
       }
       Skip() => {
         if first_deleted == count {
@@ -182,20 +185,20 @@ fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Bo
         if first_deleted < count {
           set destination = first_deleted;
         }
-        let offered = Occupied<K>(fingerprint: tag, key: move key, payload: move payload);
+        let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
         swap(first: &deref(slots).inner[destination], second: &offered);
-        return Installed<K>(previous: move offered);
+        return KeyPut<K>::Installed(previous: move offered);
       }
       Miss() => {
       }
     }
   }
   if first_deleted < count {
-    let offered = Occupied<K>(fingerprint: tag, key: move key, payload: move payload);
+    let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
     swap(first: &deref(slots).inner[first_deleted], second: &offered);
-    return Installed<K>(previous: move offered);
+    return KeyPut<K>::Installed(previous: move offered);
   }
-  return Rejected<K>(key: move key, payload: move payload);
+  return KeyPut<K>::Rejected(key: move key, payload: move payload);
 }
 
 fn key_find_index<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E) -> found: Result<u64, unit> reads(slots), reads(key), reads(env) contract {
@@ -236,7 +239,7 @@ fn key_fill<K>(slots: &Box<Slots<Slot<K>>>, count: u64) -> result: unit writes(s
     invariant bounded: deref(slots).inner.len <= index,
     invariant spare: deref(slots).inner.cap - deref(slots).inner.len + index >= count
   ) {
-    let vacant = Vacant<K>();
+    let vacant = Slot<K>::Vacant();
     place_back(window: &deref(slots).inner, value: move vacant);
   }
   invariant complete_min: deref(slots).inner.len >= count;
@@ -286,7 +289,7 @@ fn key_begin<K>(source: Box<Slots<Slot<K>>>, count: u64) -> result: Rehash<K> pu
   requires count <= 2097152_u64;
 } {
   let spare = key_create::<K>(count: count);
-  let held = Vacant<K>();
+  let held = Slot<K>::Vacant();
   let progress = Progress<K>(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let state = Rehash<K>(source: move source, target: move spare, progress: move progress);
   return move state;
@@ -316,7 +319,7 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
         set source_cursor = source_cursor + 1_u64;
         let full = key_occupied::<K>(slot: &deref(source).inner[index]);
         if full {
-          let held_slot = Deleted<K>();
+          let held_slot = Slot<K>::Deleted();
           swap(first: &deref(source).inner[index], second: &held_slot);
           swap(first: &deref(progress).held, second: &held_slot);
           set probe_cursor = 0_u64;
@@ -335,7 +338,7 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
         let full = key_occupied::<K>(slot: &deref(target).inner[index]);
         if full {
         } else {
-          let held_slot = Vacant<K>();
+          let held_slot = Slot<K>::Vacant();
           swap(first: &deref(progress).held, second: &held_slot);
           swap(first: &deref(target).inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
@@ -364,7 +367,7 @@ fn key_rehash_all<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, count: u64, 
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
   let target = key_create::<K>(count: count);
-  let held = Vacant<K>();
+  let held = Slot<K>::Vacant();
   let progress = Progress<K>(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let (work, moved) = key_advance::<Key<K, E>>(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64, env: env);
   let phase = progress.phase;
@@ -377,10 +380,10 @@ fn key_remove<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E
 } {
   match key_find_index::<Key<K, E>>(slots: slots, key: key, env: env) {
     Err(error: absent) => {
-      return Vacant<K>();
+      return Slot<K>::Vacant();
     }
     Ok(value: index) => {
-      let deleted = Deleted<K>();
+      let deleted = Slot<K>::Deleted();
       swap(first: &deref(slots).inner[index], second: &deleted);
       return move deleted;
     }
@@ -390,19 +393,19 @@ fn key_remove<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E
 fn key_inspect<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> (action: Probe, id: u64) reads(slot), reads(key), reads(env) {
   match deref(slot) {
     Vacant() => {
-      return Stop(), 0_u64;
+      return Probe::Stop(), 0_u64;
     }
     Deleted() => {
-      return Skip(), 0_u64;
+      return Probe::Skip(), 0_u64;
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(saved) == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
-          return Match(), deref(owner).inner.id;
+          return Probe::Match(), deref(owner).inner.id;
         }
       }
-      return Miss(), 0_u64;
+      return Probe::Miss(), 0_u64;
     }
   }
 }
@@ -438,18 +441,18 @@ fn put(slots: &Box<Slots<Slot<u64>>>, key: u64, payload: Box<Resource>) -> outco
   let env = Empty();
   match key_put::<WordKey>(slots: slots, key: key, payload: move payload, env: &env) {
     Rejected(key: offered_key, payload: owner) => {
-      return Full(offered: move owner);
+      return PutOutcome::Full(offered: move owner);
     }
     Installed(previous: old) => {
       match move old {
         Vacant() => {
-          return Inserted();
+          return PutOutcome::Inserted();
         }
         Deleted() => {
-          return Inserted();
+          return PutOutcome::Inserted();
         }
         Occupied(fingerprint: tag, key: old_key, payload: owner) => {
-          return Replaced(previous: move owner);
+          return PutOutcome::Replaced(previous: move owner);
         }
       }
     }

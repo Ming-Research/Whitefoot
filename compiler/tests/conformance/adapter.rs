@@ -40,8 +40,10 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
-    CompilationFailureKind, CompilerLimits, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS,
-    SourceInput, check, compile,
+    BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
+    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, SourceInput, check,
+    check_module_entry, check_module_program, check_with_cache, compile, compile_module_program,
+    discover_module_sources, entry_verdict, form_module_graph, module_verdict,
 };
 
 use crate::support::append_runtime_objects;
@@ -60,22 +62,69 @@ struct Reached {
     note: Option<String>,
 }
 
+/// Drives a module-form case through the ordinary module program path
+/// [MOD-1, MOD-2, MOD-9]: its graph is formed, its modules' records are read
+/// from its directory, and a source verdict checks every module and admits
+/// every named entry, while an executed case builds the entry named `main`.
+fn reach_module_program(case: &Case, root: &Path) -> Result<Option<String>, CompilationFailure> {
+    let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
+    let graph = form_module_graph(
+        SourceInput::new("modules.wfg", &graph_bytes),
+        CompilerLimits::default(),
+    )?;
+    let sources = discover_module_sources(root, &graph)
+        .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
+    let inputs: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect();
+    match &case.expect {
+        Expectation::Accept | Expectation::Reject(_) => {
+            check_module_program(&graph, &inputs, CompilerLimits::default())?;
+            for entry in graph.entries() {
+                check_module_entry(
+                    &graph,
+                    &inputs,
+                    ModuleEntry::Named(entry.name()),
+                    CompilerLimits::default(),
+                )?;
+            }
+            Ok(None)
+        }
+        Expectation::Run(_) | Expectation::Unsupported => compile_module_program(
+            &graph,
+            &inputs,
+            ModuleEntry::Named("main"),
+            CompilerLimits::default(),
+            whitefoot::OverlapLowering::Off,
+        )
+        .map(Some),
+    }
+}
+
 /// Drives one case to its corpus verdict through the ordinary compiler path.
 fn reach(case: &Case) -> Reached {
-    let source = case.source();
-    let path = case.logical_path();
-    let inputs = [SourceInput::new(&path, &source)];
     // `accept` and `reject` are source-language verdicts. [STOR-6] begins only
     // after their complete semantic boundary, so target qualification cannot
     // change either one. A runtime or unsupported expectation still needs the
     // complete toolchain: the former executes its module, while the latter may
     // name a capability first encountered during lowering.
-    let module = match &case.expect {
-        Expectation::Accept | Expectation::Reject(_) => {
-            check(&inputs, CompilerLimits::default()).map(|()| None)
-        }
-        Expectation::Run(_) | Expectation::Unsupported => {
-            compile(&inputs, CompilerLimits::default()).map(Some)
+    let module = if let Some(root) = case.module_root() {
+        reach_module_program(case, &root)
+    } else {
+        let source = case.source();
+        let path = case.logical_path();
+        let inputs = [SourceInput::new(&path, &source)];
+        match &case.expect {
+            Expectation::Accept | Expectation::Reject(_) => {
+                check(&inputs, CompilerLimits::default()).map(|()| None)
+            }
+            Expectation::Run(_) | Expectation::Unsupported => {
+                compile(&inputs, CompilerLimits::default()).map(Some)
+            }
         }
     };
     let module = match module {
@@ -308,4 +357,126 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     println!("conformance adapter: {summary}");
     let failed = tally.get(&Outcome::Fail).copied().unwrap_or_default();
     assert_eq!(failed, 0, "conformance adapter: {summary}");
+}
+
+/// One failure's corpus verdict, as `reach` reduces it.
+fn failure_verdict(failure: &CompilationFailure) -> Verdict {
+    match failure.kind() {
+        CompilationFailureKind::Source => Verdict::Reject(failure.rule_id().map(ToOwned::to_owned)),
+        CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
+        _ => Verdict::Stopped(failure.to_string()),
+    }
+}
+
+/// [MOD-8] one case's source verdict reached with proof receipts from
+/// `cache`: a one-record case through the cached check, a module-form case
+/// through each module's verdict in row order and then each named entry's
+/// composition verdict, the order `reach` judges them in.
+fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
+    let limits = CompilerLimits::default();
+    let Some(root) = case.module_root() else {
+        let source = case.source();
+        let path = case.logical_path();
+        return match check_with_cache(&[SourceInput::new(&path, &source)], limits, cache) {
+            Ok(()) => Verdict::Accept,
+            Err(failure) => failure_verdict(&failure),
+        };
+    };
+    let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
+    let graph = match form_module_graph(SourceInput::new("modules.wfg", &graph_bytes), limits) {
+        Ok(graph) => graph,
+        Err(failure) => return failure_verdict(&failure),
+    };
+    let sources = discover_module_sources(&root, &graph)
+        .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
+    let inputs: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect();
+    let mut verdicts = Vec::new();
+    for record in graph.modules() {
+        match module_verdict(
+            &graph,
+            &inputs,
+            &record.qualified_name(),
+            false,
+            limits,
+            Some(cache),
+        ) {
+            Ok(verdict) => verdicts.push(verdict),
+            Err(failure) => return failure_verdict(&failure),
+        }
+    }
+    for entry in graph.entries() {
+        match entry_verdict(
+            &graph,
+            &inputs,
+            ModuleEntry::Named(entry.name()),
+            limits,
+            Some(cache),
+            &verdicts,
+        ) {
+            Ok(verdict) => verdicts.push(verdict),
+            Err(failure) => return failure_verdict(&failure),
+        }
+    }
+    verdicts
+        .iter()
+        .find_map(|verdict| match verdict.outcome() {
+            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone())),
+            CheckOutcome::Accepted { .. } => None,
+        })
+        .unwrap_or(Verdict::Accept)
+}
+
+/// [MOD-8] proof receipts change the work a check does and never its
+/// verdict. The whole corpus is checked through one receipt cache, in
+/// reverse manifest order and then in manifest order, so every case is
+/// checked both after and before the receipts its neighbours record: a key
+/// that missed an input a case's analysis reads would carry a neighbour's
+/// acceptance into it. Every source verdict must be the declared one; a run
+/// case must be accepted, since executing it reads no receipt, and an
+/// unsupported case, whose capability gap may lie past checking, is left to
+/// the ordinary run.
+#[test]
+fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
+    let cases = corpus::load();
+    let directory = std::env::temp_dir().join(format!(
+        "whitefoot-conformance-receipts-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    let cache = BuildCache::open(&directory, [0x5a; 32]).expect("the receipt cache opens");
+    let mut reports = Vec::new();
+    let mut checked = 0_usize;
+    for case in cases.iter().rev().chain(cases.iter()) {
+        let expected = match &case.expect {
+            Expectation::Accept | Expectation::Run(_) => Expectation::Accept,
+            Expectation::Reject(rule) => Expectation::Reject(rule.clone()),
+            Expectation::Unsupported => continue,
+        };
+        checked += 1;
+        let reached = reach_with_receipts(case, &cache);
+        if !expected.matched_by(&reached) {
+            reports.push(format!(
+                "  {} want {expected:?} reached {reached:?}",
+                case.id
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+    let (reused, recorded) = cache.receipt_counts();
+    for report in &reports {
+        println!("{report}");
+    }
+    println!("proof receipts: {checked} checks, {reused} analyses reused, {recorded} recorded");
+    assert!(
+        reports.is_empty(),
+        "{} of {checked} checks through shared proof receipts missed their declared verdict",
+        reports.len()
+    );
+    assert!(reused > 0 && recorded > 0, "the corpus exercised reuse");
 }

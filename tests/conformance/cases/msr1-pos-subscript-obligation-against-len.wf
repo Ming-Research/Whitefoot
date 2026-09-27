@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn filled<T: copy, const n: u64>(value: T) -> result: Slots<T, n> pure contract {
   ensures result.len >= n;
   ensures result.cap <= result.len;

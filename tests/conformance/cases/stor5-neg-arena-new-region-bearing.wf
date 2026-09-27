@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A construction cannot hide, in one window's element position, a shape that has no inline placement: a runtime-capacity window exists only as the content of a cell, and the complete written type is refused before any execution or lowering matters.";
   let nested = slots_new::<Slots<u8>, 2>();

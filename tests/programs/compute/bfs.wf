@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn pull_distance(neighbors: &[u64], previous: &[u64], level: u64) -> result: u64 reads(neighbors), reads(previous) contract {
   requires level < deref(previous).len;
   requires deref(previous).len <= 67108864_u64;

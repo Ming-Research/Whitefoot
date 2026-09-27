@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const bad: Box<i32> = 3_i32;
 
 fn main() -> status: ExitStatus pure {

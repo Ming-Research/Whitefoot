@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Val {
   Small(a: i32);
   Big(b: u64);
@@ -26,11 +29,11 @@ fn classify(v: Val) -> function_result: i32 pure {
 
 fn main() -> status: ExitStatus pure {
   doc "Construct all three variants and dispatch each through a by-value cross-fn match; the pinned sum proves every payload width round-trips.";
-  let small_atom_0001 = Small(a: 40_i32);
+  let small_atom_0001 = Val::Small(a: 40_i32);
   let a = classify(v: small_atom_0001);
-  let big_atom_0002 = Big(b: 5000000000_u64);
+  let big_atom_0002 = Val::Big(b: 5000000000_u64);
   let b = classify(v: big_atom_0002);
-  let bare_atom_0003 = Bare();
+  let bare_atom_0003 = Val::Bare();
   let c = classify(v: bare_atom_0003);
   if a +defined b {
   } else {

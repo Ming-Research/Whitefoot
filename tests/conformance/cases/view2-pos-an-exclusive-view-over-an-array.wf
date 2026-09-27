@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-4 states one range-reference source class for every indexable shape, and this program is the writing half of it over an inline array: the range reference is formed, one element is written through it, and the array itself is read back. The heap sibling view1-pos-an-element-write-through-an-exclusive-view is the same program over cell content.";
   let table = array_filled::<u8, 4>(value: 7_u8);

@@ -1,0 +1,3 @@
+public interface Convert<T: copy> {
+  fn convert(value: T) -> result: u8 pure;
+}

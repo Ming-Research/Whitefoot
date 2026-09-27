@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   let inexact = cvt::<u32, f32>(16777217_u32);
   return exit_status(code: 0_u8);

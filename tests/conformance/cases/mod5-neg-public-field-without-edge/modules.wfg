@@ -1,0 +1,5 @@
+pkg::a: [];
+pkg::b: [pkg::a];
+pkg: [pkg::b, std::process];
+
+entry main = pkg::main;

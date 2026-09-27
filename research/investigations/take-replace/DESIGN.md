@@ -456,32 +456,32 @@ the generic vector once an ACTIVE plan wants it.
 
 Per the mcts-mem-use skill, at v0.31 activation, in the same change:
 
-1. `mcts_mem/whitefoot/ownership.md` Items: rewrite the SET-1 bullet:
+1. [mcts_mem/whitefoot/ownership.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership.md) Items: rewrite the SET-1 bullet:
    "`set` overwrites only a writable copy-typed final place; `replace`
    (SET-2) atomically exchanges a writable region-free affine final place
    with a same-typed replacement, binding the old value under the new `let`
    — no temporary hole, no implicit destruction, and the sole admitted move
    of content reached through a `&uniq` holder."
-2. `mcts_mem/whitefoot/ownership.md` Facts append:
+2. [mcts_mem/whitefoot/ownership.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership.md) Facts append:
    `- 2026-08-17 (<commit>) rationale: v0.31 selects atomic replace for the
    §5 take/replace question because the mandatory old-value binder is forced
    by the no-implicit-destruction constraint and the no-hole constraint is
    met by construction; typed holes and closed-scope holes were rejected as
    per-place flow state (D1a levers), swap-only as binding revival. (sourced)`
-3. New node `mcts_mem/whitefoot/ownership/affine-replacement.md` with `.alt/`
+3. New node [mcts_mem/whitefoot/ownership/affine-replacement.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/affine-replacement.md) with `.alt/`
    members `typed-hole.md`, `swap-only.md`, `closed-scope-hole.md`, each a
    frozen node carrying the §2 failure mode verbatim and paired Moves lines
    (`replaced [[...]]` / `replaced by [[affine-replacement]]`, why verbatim
    both sides). NOTE: these alternatives were weighed in this investigation,
    never live in the code — record them as weighed rivals per the skill's
    "genuinely weighed" admission, citing this DOSSIER as provenance.
-4. `mcts_mem/whitefoot/data-model.md` Items: amend the STOR-1 bullet's
+4. [mcts_mem/whitefoot/data-model.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/data-model.md) Items: amend the STOR-1 bullet's
    "current fully initialized Copy buffer cannot alone express…" sentence to
    record that whole-value replacement and Option-shaped vacancy are now
    selected (buffer_vacant + SET-2), while spare capacity without vacancy
    values, sparse occupancy metadata, and failure-atomic multi-slot growth
    remain unselected.
-5. `mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md` Facts:
+5. [mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md) Facts:
    `- 2026-08-17 (<commit>) statement: the SET-2 commit joins ENT-5 kill (a);
    length-fact support already confined to the non-element root path gives
    whole-place replace the kill and element replace the exemption; the

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-13: the construction functions are the prelude records; a window built by slots_new, ring_new, box_slots_new or box_ring_new starts empty, an Array built by array_filled has every slot holding the supplied value, and allocation is total so no construction returns a Result.";
   let a = array_filled::<u64, 3>(value: 7_u64);

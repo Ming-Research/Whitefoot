@@ -50,9 +50,9 @@ performance are separate workflows, not differences hidden in this inventory.
 
 Historical snapshots have no remaining executable, collection or alternative
 verdict authority. The 484 dispositions below identify what each supplied or
-why it was retired. New cases must meet the ownership/construction obligations
-in `docs/practice.md` and checklist T4–T7; executable packaging alone never
-justifies a case. The map is maintained with these callers while this
+why it was retired. New cases must meet the ownership and construction
+obligations of checklist T4–T7; executable packaging alone never justifies a
+case. The map is maintained with these callers while this
 investigation supplies the redesign's comparative evidence.
 
 ## Execution resumed on 2026-09-16

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "The dissolution attaches obligations to the bare divisor class only [OP-2]. The explicit `/checked` respelling is untouched: it needs no discharge, is pure, and returns `Err(DivideByZero())` for a zero divisor [OP-1].";
   let n = 10_i32;

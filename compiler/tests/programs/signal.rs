@@ -12,8 +12,14 @@ fn fir_filter_executes_with_nested_fixed_array_state() {
     assert!(llvm.contains("getelementptr inbounds { i64, [8 x double] }"));
     // Both enclosing records are addressed directly; element updates no
     // longer require reconstructing the DelayLine and FirFilter values.
-    assert!(llvm.contains("getelementptr inbounds %wf.t0"));
-    assert!(llvm.contains("getelementptr inbounds %wf.t1"));
+    assert!(llvm.contains(&format!(
+        "getelementptr inbounds {}",
+        super::support::nominal_type("DelayLine")
+    )));
+    assert!(llvm.contains(&format!(
+        "getelementptr inbounds {}",
+        super::support::nominal_type("FirFilter")
+    )));
     assert!(!llvm.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum State {
   Ready();
   Done();
@@ -9,7 +12,7 @@ nocopy struct Holder {
 
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1: projected copy reads do not consume their affine struct or window owner.";
-  let state = Ready();
+  let state = State::Ready();
   let holder = Holder(state: state);
   match holder.state {
     Ready() => {

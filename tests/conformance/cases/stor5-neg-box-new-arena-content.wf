@@ -1,5 +1,8 @@
 program no_heap;
 
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn hold(cell: Box<u8>) -> function_result: unit pure {
   doc "Cell content must live in a store the program has. A compilation unit that declares no heap cannot name the cell type at all, and the complete written type is refused exactly where the content type is fixed.";
   return unit;

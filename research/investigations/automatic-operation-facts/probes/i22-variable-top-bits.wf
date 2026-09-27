@@ -1,0 +1,13 @@
+fn bucket_of(hash: u64, bits: u32) -> result: u16 pure contract {
+  requires 1_u32 <= bits;
+  requires bits <= 16_u32;
+} {
+  let shift = 64_u32 - bits;
+  let bucket = ishr(hash, shift);
+  let narrow = cvt::<u64, u16>(bucket);
+  return narrow;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

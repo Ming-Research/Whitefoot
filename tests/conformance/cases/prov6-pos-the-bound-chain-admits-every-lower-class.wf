@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nodrop struct Lease {
   slot: u8;
 }
@@ -20,13 +23,13 @@ fn keep<T: drop>(value: T) -> back: T pure {
 fn main() -> status: ExitStatus pure {
   doc "PROV-6: satisfaction is the chain copy < affine < linear read left to right, so an unbounded parameter accepts copy, affine and linear arguments and a `drop` bound accepts copy and affine ones. The three classes are read off each argument's capabilities and release graph in this scope, never off a name.";
   let held = hold::<u64>(value: 4_u64);
-  let payload = Present(value: 3_u8);
+  let payload = Payload::Present(value: 3_u8);
   let boxed = hold::<Payload>(value: move payload);
   let ticket = Lease(slot: 5_u8);
   let leased = hold::<Lease>(value: move ticket);
   let Lease(slot: back) = move leased;
   let plain = keep::<u8>(value: 7_u8);
-  let other = Present(value: 9_u8);
+  let other = Payload::Present(value: 9_u8);
   let kept = keep::<Payload>(value: move other);
   match boxed {
     Present(value: got) => {

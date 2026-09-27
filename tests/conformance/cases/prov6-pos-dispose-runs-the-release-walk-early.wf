@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn release_now(cell: Box<Slots<u8>>) -> result: unit pure {
   doc "Consuming the value here runs, at this call, the same release walk the caller's scope exit would have run for it.";
   return unit;

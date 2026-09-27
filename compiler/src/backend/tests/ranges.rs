@@ -235,9 +235,9 @@ fn write_work(count: u64, lower: u64, upper: u64) -> result: u64 pure contract {
   return first +wrap second;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = write_work(count: 2_u64, lower: 0_u64, upper: 17_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // The written run is a frame-resident `Array<u64, 2>` [TYPE-9] and the
@@ -414,7 +414,7 @@ fn probe_{name}(count: u64, iterations: u64) -> result: u64 pure contract {{
         ));
     }
     source.push_str(
-        "\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        "\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
     );
     let mut llvm = emit_with_overlap(source.as_bytes())
         .replace("@main(", "@wf_reference_price_main(")
@@ -522,8 +522,8 @@ fn write_{extent}_{position}(upper: u64, repeats: u64) -> result: u64 pure {{
         }
     }
     source.push_str(
-        r#"fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+        r#"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -752,36 +752,36 @@ fn fill(values: &STORAGE) -> result: unit writes(values) contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let initial = array_filled::<u64, 8>(value: 7_u64);
   let values = INITIAL;
   let packet = Packet(before: 53_u64, values: TRANSFER, after: 59_u64);
   let done = fill(values: &packet.values);
   if packet.before != 53_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if packet.after != 59_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if packet.values[0_u64] != 11_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if packet.values[3_u64] != 13_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if packet.values[4_u64] != 17_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if packet.values[7_u64] != 19_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if packet.values[1_u64] != 7_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   if packet.values[6_u64] != 7_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (storage, initial, transfer) in [
@@ -874,10 +874,12 @@ fn stable_scatter_matches_an_independent_oracle_and_hands_out_output_work() {
                 &partition_entry,
                 &partition_entry.replace("@wf_write_chunk(", "@wf_scatter_original_partition("),
             );
+            // Each range reference crosses these calls as its element pointer
+            // and count, the ordinary callable ABI (compiler/backend-facts).
             llvm.push_str(
                 "\ndeclare void @wf_scatter_partition_done(i64)\n\
-define i64 @wf_write_chunk({ ptr, i64 } %input, i32 %bit, { ptr, i64 } %output) {\n\
-  %n = call i64 @wf_scatter_original_partition({ ptr, i64 } %input, i32 %bit, { ptr, i64 } %output)\n\
+define i64 @wf_write_chunk(ptr %input, i64 %input.len, i32 %bit, ptr %output, i64 %output.len) {\n\
+  %n = call i64 @wf_scatter_original_partition(ptr %input, i64 %input.len, i32 %bit, ptr %output, i64 %output.len)\n\
   call void @wf_scatter_partition_done(i64 %n)\n\
   ret i64 %n\n}\n",
             );
@@ -896,9 +898,9 @@ define i64 @wf_write_chunk({ ptr, i64 } %input, i32 %bit, { ptr, i64 } %output) 
             llvm.push_str(
                 "\ndeclare void @wf_scatter_pack_begin()\n\
 declare void @wf_scatter_pack_end()\n\
-define i64 @wf_pack_chunks(ptr %chunks, i64 %first, { ptr, i64 } %low, { ptr, i64 } %high) {\n\
+define i64 @wf_pack_chunks(ptr %chunks, i64 %first, ptr %low, i64 %low.len, ptr %high, i64 %high.len) {\n\
   call void @wf_scatter_pack_begin()\n\
-  %r = call i64 @wf_scatter_original_pack(ptr %chunks, i64 %first, { ptr, i64 } %low, { ptr, i64 } %high)\n\
+  %r = call i64 @wf_scatter_original_pack(ptr %chunks, i64 %first, ptr %low, i64 %low.len, ptr %high, i64 %high.len)\n\
   call void @wf_scatter_pack_end()\n\
   ret i64 %r\n}\n",
             );
@@ -915,8 +917,8 @@ define i64 @wf_pack_chunks(ptr %chunks, i64 %first, { ptr, i64 } %low, { ptr, i6
             // packing caller; a stolen empty task is insufficient evidence.
             llvm.push_str(
                 "\ndeclare void @wf_scatter_copy_done(i64)\n\
-define i64 @wf_copy_run(ptr %values, { ptr, i64 } %output) {\n\
-  %n = call i64 @wf_scatter_original_copy(ptr %values, { ptr, i64 } %output)\n\
+define i64 @wf_copy_run(ptr %values, ptr %output, i64 %output.len) {\n\
+  %n = call i64 @wf_scatter_original_copy(ptr %values, ptr %output, i64 %output.len)\n\
   call void @wf_scatter_copy_done(i64 %n)\n\
   ret i64 %n\n}\n",
             );
@@ -1030,16 +1032,48 @@ fn formal_compute_quadrature_matches_postorder_and_analytic_oracles_on_a_worker(
     );
 }
 
+/// `range_split.wf` binds its two child ranges before passing them. The same
+/// program with the child ranges formed at the two calls names the same
+/// storage [REF-4], so [PAR-1] permits the same adjacent recursive calls and
+/// each spelling hands the recursive call itself out. Its loop splits publish
+/// in either spelling, so the recursive call's own thunk is what separates a
+/// handed-out recursion from a denied one. Both spellings then restore the
+/// parent access with no pool and with four workers.
 #[test]
 fn recursive_child_ranges_restore_parent_access() {
-    let source = include_bytes!("../../../../tests/programs/compute/range_split.wf");
-    let llvm = compile(source);
-    let output = compile_and_run(&llvm);
+    let bound = include_str!("../../../../tests/programs/compute/range_split.wf");
+    let inline = bound.replace(
+        "  let left = &deref(output)[0_u64..middle];\n  \
+         let right = &deref(output)[middle..count];\n  \
+         let a = fill_recursive(output: left, depth: remaining);\n  \
+         let b = fill_recursive(output: right, depth: remaining);\n",
+        "  let a = fill_recursive(output: &deref(output)[0_u64..middle], depth: remaining);\n  \
+         let b = fill_recursive(output: &deref(output)[middle..count], depth: remaining);\n",
+    );
+    assert_ne!(inline, bound, "range_split.wf binds its child ranges first");
+    let output = compile_and_run(&compile(bound.as_bytes()));
     assert!(output.status.success(), "{output:?}");
-    let parallel = emit_with_overlap(source);
-    assert!(parallel.contains("call void @wf__par_publish("));
-    let output = compile_and_run(&parallel);
-    assert!(output.status.success(), "{output:?}");
+    for (spelling, source) in [("bound", bound), ("inline", inline.as_str())] {
+        let parallel = emit_with_overlap(source.as_bytes());
+        let recursion = super::parallel::function_body(&parallel, "@wf__par_budget_fill_recursive");
+        assert!(
+            recursion.contains(", ptr @wf__par_thunk_fill_recursive."),
+            "{spelling}: the recursive call must be handed out:\n{recursion}"
+        );
+        let directory = test_directory();
+        let executable = build_executable(&parallel, &directory);
+        for workers in ["1", "4"] {
+            let output = Command::new(&executable)
+                .env("WF_WORKERS", workers)
+                .output()
+                .expect("run the recursive range split");
+            assert!(
+                output.status.success(),
+                "{spelling} WF_WORKERS={workers}: {output:?}"
+            );
+        }
+        std::fs::remove_dir_all(directory).expect("remove the recursive range split image");
+    }
 }
 
 /// A write through a range reference reaches the original local storage and
@@ -1060,7 +1094,7 @@ fn overwrite(view: &[u64], index: u64, value: u64) -> result: unit writes(view) 
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u64, 4>(value: 7_u64);
   let before0 = values[0_u64];
   let before2 = values[2_u64];
@@ -1068,57 +1102,57 @@ fn main() -> status: ExitStatus pure {
   set deref(view)[0_u64] = 19_u64;
   let done = overwrite(view: view, index: 2_u64, value: 31_u64);
   if values[0_u64] != 19_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if values[1_u64] != 7_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if values[2_u64] != 31_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if values[3_u64] != 7_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if before0 != 7_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if before2 != 7_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let bytes = array_filled::<u64, 4>(value: 13_u64);
   let packet = Packet(before: 53_u64, bytes: bytes, after: 59_u64);
   let field = &packet.bytes[0_u64..4_u64];
   let written = overwrite(view: field, index: 1_u64, value: 41_u64);
   if packet.before != 53_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   if packet.after != 59_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   if packet.bytes[0_u64] != 13_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
   if packet.bytes[1_u64] != 41_u64 {
-    return exit_status(code: 10_u8);
+    return std::process::exit_status(code: 10_u8);
   }
   if packet.bytes[2_u64] != 13_u64 {
-    return exit_status(code: 11_u8);
+    return std::process::exit_status(code: 11_u8);
   }
   if packet.bytes[3_u64] != 13_u64 {
-    return exit_status(code: 12_u8);
+    return std::process::exit_status(code: 12_u8);
   }
   let shared = &packet.bytes[0_u64..4_u64];
   let seen = deref(shared)[1_u64];
   if seen != 41_u64 {
-    return exit_status(code: 13_u8);
+    return std::process::exit_status(code: 13_u8);
   }
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let nothing = &empty[0_u64..0_u64];
   let length = deref(nothing).len;
   if length != 0_u64 {
-    return exit_status(code: 14_u8);
+    return std::process::exit_status(code: 14_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
@@ -1129,6 +1163,112 @@ fn main() -> status: ExitStatus pure {
             assert!(output.stdout.is_empty(), "{output:?}");
             assert!(output.stderr.is_empty(), "{output:?}");
         }
+    }
+}
+
+const RANGE_ALIAS_FACTS: &str = r#"fn add_into(dst: &[u32], src: &[u32]) -> result: unit reads(src), writes(dst) contract {
+  requires deref(dst).len <= deref(src).len;
+} {
+  let n = deref(dst).len;
+  for (i in 0_u64..n) {
+    let a = deref(dst)[i];
+    let b = deref(src)[i];
+    set deref(dst)[i] = a +wrap b;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let x = array_filled::<u32, 16>(value: 1_u32);
+  let y = array_filled::<u32, 16>(value: 2_u32);
+  add_into(dst: &x[0_u64..16_u64], src: &y[0_u64..16_u64]);
+  set x[9_u64] = 5_u32;
+  add_into(dst: &x[0_u64..8_u64], src: &x[8_u64..16_u64]);
+  if x[0_u64] != 6_u32 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if x[1_u64] != 8_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if x[9_u64] != 5_u32 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if y[15_u64] != 2_u32 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let first = box_new::<u64>(value: 1_u64);
+  let second = box_new::<u64>(value: 2_u64);
+  swap(first: &first, second: &second);
+  if first.inner != 2_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// A range-reference parameter carries the reference facts on the element
+/// pointer it crosses the call as (compiler/backend-facts). [EFF-5] rejects
+/// every call whose written range may overlap another argument's path, the
+/// fact LLVM's `noalias` needs, so the host vectorizer needs no runtime
+/// overlap check; two disjoint ranges of one array remain an admitted call,
+/// and `swap` [OP-11] keeps its exception.
+#[test]
+fn range_reference_parameters_state_the_call_site_disjointness_fact() {
+    let overlapping = RANGE_ALIAS_FACTS.replace("src: &x[8_u64..16_u64]", "src: &x[4_u64..12_u64]");
+    assert_eq!(
+        compile_rejection(overlapping.as_bytes()).rule_id(),
+        Some("EFF-5"),
+        "the fact rests on the call-site disjointness check"
+    );
+
+    let llvm = compile(RANGE_ALIAS_FACTS.as_bytes());
+    let add_into = emitted_function(&llvm, "add_into");
+    let header = add_into.lines().next().expect("add_into signature");
+    let no_capture = env!("WHITEFOOT_NO_CAPTURE_ATTRIBUTE");
+    // The written and the read-only range alike: `noalias` constrains only
+    // memory the call modifies. A range's extent is its runtime `len`, which
+    // may be zero, so no `dereferenceable` extent is stated.
+    assert!(
+        header.starts_with(&format!(
+            "define i8 @wf_add_into(ptr noalias nonnull {no_capture} %wf.arg.v0.data, \
+             i64 %wf.arg.v0.len, ptr noalias nonnull {no_capture} %wf.arg.v1.data, \
+             i64 %wf.arg.v1.len)"
+        )),
+        "{header}"
+    );
+    assert!(!header.contains("dereferenceable"), "{header}");
+    assert!(
+        add_into.contains("%v0 = insertvalue { ptr, i64 } %v0.data, i64 %wf.arg.v0.len, 1"),
+        "the body reassembles its ordinary range pair: {add_into}"
+    );
+    let main = emitted_function(&llvm, "main");
+    assert_eq!(main.matches("call i8 @wf_add_into(ptr %").count(), 2);
+    let swap = emitted_prelude_row(&llvm, "swap");
+    let swap_header = swap.lines().next().expect("swap signature");
+    assert!(!swap_header.contains("noalias"), "{swap_header}");
+    assert_eq!(swap_header.matches(" nonnull ").count(), 2, "{swap_header}");
+
+    let optimized = host_optimized_module(&llvm);
+    let start = optimized
+        .lines()
+        .position(|line| line.starts_with("define ") && line.contains(" @wf_add_into("))
+        .expect("optimized add_into definition");
+    let body = optimized
+        .lines()
+        .skip(start)
+        .take_while(|line| *line != "}")
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        body.contains("vector.body") && !body.contains("vector.memcheck"),
+        "the host vectorizer runs without a runtime overlap check: {body}"
+    );
+
+    for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
+        let output = compile_and_run(module);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
 
@@ -1151,7 +1291,7 @@ fn rewrite(records: &[Record]) -> previous: u64 writes(records) contract {
   return old;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let records = slots_new::<Record, 1>();
   let cell = box_new::<u64>(value: 41_u64);
   let record = Record(cell: move cell, marker: 17_u64);
@@ -1159,15 +1299,15 @@ fn main() -> status: ExitStatus pure {
   let part = &records[0_u64..1_u64];
   let previous = rewrite(records: part);
   if previous != 41_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if records[0_u64].cell.inner != 99_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if records[0_u64].marker != 23_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1223,8 +1363,8 @@ fn nested_range_checksum() -> result: u64 pure {
   return checksum4;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source)
@@ -1335,8 +1475,8 @@ fn carried_range(count: u64) -> result: u64 pure contract {
   return 2_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source)
@@ -1421,7 +1561,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
 /// unused measure expression.
 #[test]
 fn a_measured_range_element_has_its_observable_inner_length() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let inner = slots_new::<u64, 2>();
   place_back(window: &inner, value: 41_u64);
   let outer = slots_new::<Slots<u64, 2>, 1>();
@@ -1429,9 +1569,9 @@ fn a_measured_range_element_has_its_observable_inner_length() {
   let items = &outer[0_u64..1_u64];
   let observed = deref(items)[0_u64].len;
   if observed != 1_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1472,18 +1612,18 @@ fn joined_range_element_measures_select_each_runtime_target() {
   return 1_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let selected_left = 0_u64 == 0_u64;
   let left_status = observe(flag: selected_left, expected: 1_u64);
   if left_status != 0_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let selected_right = 0_u64 != 0_u64;
   let right_status = observe(flag: selected_right, expected: 2_u64);
   if right_status != 0_u8 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1512,7 +1652,7 @@ fn sum(values: &[u8]) -> result: u64 reads(values) {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let code = 0_u8;
   let constant = &bytes[0_u64..4_u64];
   let constant_total = sum(values: constant);
@@ -1545,7 +1685,7 @@ fn main() -> status: ExitStatus pure {
   if runtime_total != 8_u64 {
     set code = 3_u8;
   }
-  return exit_status(code: code);
+  return std::process::exit_status(code: code);
 }
 "#;
     let llvm = compile(source);
@@ -1570,13 +1710,13 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
     // A range reference's one measure is `hi - lo` [REF-4], so the constant
     // offset is refutable at compile time and the program rejects with the
     // residual [OP-4, ENT-6] - the same residual the window origin gives.
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let bytes = slots_new::<u8, 2>();
   place_back(window: &bytes, value: 0_u8);
   place_back(window: &bytes, value: 0_u8);
   let window = &bytes[0_u64..2_u64];
   let value = deref(window)[2_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
@@ -1597,10 +1737,10 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
 /// and the process publishes exactly the bytes the fill loop wrote.
 #[test]
 fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
-    let source = br#"fn main(inputs: Inputs) -> status: ExitStatus pure {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
   doc "Publishes a frame-resident window through a range reference held until the linked write returns.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let page = slots_new::<u8, 4>();
   for @fill (
     at in 0_u64..4_u64,
@@ -1610,17 +1750,17 @@ fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
     place_back(window: &page, value: 65_u8);
   }
   let window = &page[0_u64..4_u64];
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64) {
+  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64) {
     Ok(value: written) => {
       if written != 4_u64 {
-        return exit_status(code: 1_u8);
+        return std::process::exit_status(code: 1_u8);
       }
     }
     Err(error: problem) => {
-      return exit_status(code: 2_u8);
+      return std::process::exit_status(code: 2_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1683,12 +1823,12 @@ fn a_returning_loop_with_no_break_has_a_valid_unreachable_continuation() {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = count_down(count: 17_u64);
   if value != 7_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for module in [compile(source), emit_with_overlap(source)] {

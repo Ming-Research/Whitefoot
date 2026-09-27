@@ -7,7 +7,7 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_semantics, with_semantics_dark};
+use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
 
 /// A reference is a local name for a path and its validity is a fact [REF-1,
 /// REF-2]; the value fact a requirement needs is killed exactly when a write
@@ -33,15 +33,15 @@ fn a_write_through_a_reference_kills_the_value_fact_a_requirement_needs() {
             "  let seen = deref(value);\n".to_owned()
         };
         for changed in [false, true] {
-            // [EFF-1] `writes(p)` subsumes `reads(p)`, so the pair is never
-            // written for one path: the writing row declares the write alone.
+            // [EFF-1] `writes(p)` states every access at or below `p`, so the
+            // writing row declares the write alone.
             let (write, forward_effect) = if changed {
                 ("  overwrite(cell: value);\n", "writes(value)")
             } else {
                 ("", "reads(value)")
             };
             let source = format!(
-                "fn overwrite(cell: &u64) -> result: unit writes(cell) {{\n  set deref(cell) = 9_u64;\n  return unit;\n}}\n\nfn indexed(value: {mode}u64) -> result: u64 {effects} contract {{\n  requires {term} < 1_u64;\n}} {{\n  let rows = array_filled::<u64, 1>(value: 7_u64);\n  let index = {read};\n  return rows[index];\n}}\n\nfn forward(value: &u64) -> result: u64 {forward_effect} contract {{\n  requires deref(value) < 1_u64;\n}} {{\n{write}{bind}  return indexed(value: {actual});\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+                "fn overwrite(cell: &u64) -> result: unit writes(cell) {{\n  set deref(cell) = 9_u64;\n  return unit;\n}}\n\nfn indexed(value: {mode}u64) -> result: u64 {effects} contract {{\n  requires {term} < 1_u64;\n}} {{\n  let rows = array_filled::<u64, 1>(value: 7_u64);\n  let index = {read};\n  return rows[index];\n}}\n\nfn forward(value: &u64) -> result: u64 {forward_effect} contract {{\n  requires deref(value) < 1_u64;\n}} {{\n{write}{bind}  return indexed(value: {actual});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             if changed {
                 super::assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
@@ -75,8 +75,8 @@ fn a_non_bool_requires_predicate_cites_op5() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Op5,
@@ -93,10 +93,10 @@ fn plural_requires_keep_every_source_occurrence_at_the_call() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = 1_i32;
   let observed = exact(value: value);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -141,10 +141,10 @@ fn a_later_requires_clause_is_not_dropped_after_an_earlier_success() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = 1_i32;
   let observed = exact(value: value);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -159,7 +159,7 @@ fn main() -> status: ExitStatus pure {
             detail.disposition,
             crate::CallRequirementDisposition::Refuted
         );
-        assert!(!detail.requires_clause.components().is_empty());
+        assert!(!detail.requires_clause.path().components().is_empty());
     });
 }
 
@@ -185,10 +185,10 @@ fn requires_retains_one_static_goal_without_a_second_expression_tree() {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let x = 7_i32;
   let value = bounded(x: x);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -227,8 +227,8 @@ fn requires_is_static_and_keeps_op5_typing() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -259,8 +259,8 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
           define doubled = a *wrap 2_u64;\n  \
           requires doubled <= 16_u64;\n} {\n  \
           return a;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             let SemanticOutcome::Complete(_) = outcome else {
                 panic!("an infix clause let spells an admitted row: {outcome:?}");
@@ -275,8 +275,8 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
           define raised = x + 1_i32;\n  \
           requires raised > x;\n} {\n  \
           return x;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             let SemanticOutcome::Complete(_) = outcome else {
                 panic!("an exact affine row is admitted in a clause: {outcome:?}");
@@ -291,8 +291,8 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
           define half = x / 2_u64;\n  \
           requires half <= x;\n} {\n  \
           return x;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Fn8,
         SemanticIssueKind::InvalidRequires,
     );
@@ -302,8 +302,8 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
           define sum = a +wrap xs[1_u64];\n  \
           requires sum <= 8_u64;\n} {\n  \
           return a;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Fn8,
         SemanticIssueKind::InvalidRequires,
     );
@@ -314,8 +314,8 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
           define candidate = x;\n  \
           requires candidate > 0_i32;\n} {\n  \
           return x;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             let SemanticOutcome::Complete(_) = outcome else {
                 panic!("a non-consuming datum definition is admitted: {outcome:?}");
@@ -340,8 +340,8 @@ fn requires_holds_a_clause_local_to_a_copy_type() {
           define xs = slots_new::<i32, 4>();\n  \
           requires a < 8_u64;\n} {\n  \
           return a;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Fn8,
         SemanticIssueKind::InvalidRequires,
     );
@@ -355,8 +355,8 @@ fn requires_holds_a_clause_local_to_a_copy_type() {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -372,8 +372,8 @@ fn main() -> status: ExitStatus pure {
           define raised = x +checked 1_i32;\n  \
           requires x > 0_i32;\n} {\n  \
           return x;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             assert!(
                 matches!(outcome, SemanticOutcome::Complete(_)),
@@ -388,8 +388,8 @@ fn main() -> status: ExitStatus pure {
           define ok = a < 8_u64;\n  \
           requires ok;\n} {\n  \
           return a;\n}\n\n\
-          fn main() -> status: ExitStatus pure {\n  \
-          return exit_status(code: 0_u8);\n}\n",
+          fn main() -> status: std::process::ExitStatus pure {\n  \
+          return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("a Bool clause local is a copy value: {outcome:?}");
@@ -422,15 +422,15 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn ordinary_prelude_calls_in_requires_are_fn8_source_rejections() {
     assert_rule(
-        br#"fn invalid() -> result: ExitStatus pure contract {
-  define status = exit_status(code: 0_u8);
+        br#"fn invalid() -> result: std::process::ExitStatus pure contract {
+  define status = std::process::exit_status(code: 0_u8);
   requires 0_u8 == 0_u8;
 } {
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn8,
@@ -448,10 +448,10 @@ fn requires_locals_are_distinct_from_same_named_body_locals() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let x = 7_i32;
   let value = increment(x: x);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -490,8 +490,8 @@ fn duplicated(left: u64, right: u64) -> result: u64 pure contract {
   return left;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -544,8 +544,8 @@ fn different_const(value: u64) -> result: u64 pure contract {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -581,8 +581,8 @@ fn goal_cell_deref_projection_retains_the_selected_referent_type() {
   return move owner;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -622,8 +622,8 @@ fn measured(envelope: Envelope) -> result: Envelope pure contract {
   return move envelope;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -694,7 +694,7 @@ fn different<const width: u64>(items: Slots<u8, width>) -> result: Slots<u8, wid
   return move items;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let left_input = slots_new::<u8, 2>();
   let left_output = left::<2>(value: move left_input);
   let right_input = slots_new::<u8, 2>();
@@ -704,7 +704,7 @@ fn main() -> status: ExitStatus pure {
   let left_size = left_output.len;
   let right_size = right_output.len;
   let different_size = different_output.len;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -734,11 +734,11 @@ fn unused_generic_requirement_is_retained_symbolically_without_a_concrete_functi
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("unused generic requirement must survive symbolic checking: {outcome:?}");
         };
@@ -752,8 +752,7 @@ fn main() -> status: ExitStatus pure {
             1
         );
         assert_eq!(checked.data.functions[0].name, "main");
-        let positive = checked
-            ._resolved
+        let positive = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -804,16 +803,15 @@ fn need<T: Int>(pairs: Slots<Pair<T>, 1>) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("symbolic nominal requirements must remain valid metadata: {outcome:?}");
         };
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -908,11 +906,11 @@ fn a_derived_const_in_generic_requirement_has_checked_program_owned_structure() 
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("the symbolic const requirement must be retained: {outcome:?}");
         };
@@ -920,8 +918,7 @@ fn main() -> status: ExitStatus pure {
         let derived = checked.data.derived_consts[0];
         assert!(matches!(derived.left, CheckedConst::Parameter(_)));
         assert_eq!(derived.right, CheckedConst::Value(1));
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -958,12 +955,12 @@ fn called_generic_keeps_concrete_instances_and_one_symbolic_requirement() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let narrow = 1_i32;
   let narrow_result = positive::<i32>(value: narrow);
   let wide = 1_i64;
   let wide_result = positive::<i64>(value: wide);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1012,11 +1009,11 @@ fn outer<T: Int>(value: T) -> result: T pure contract {
   return inner::<T>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("transitive symbolic validation must retain canonical entries: {outcome:?}");
         };
@@ -1029,8 +1026,7 @@ fn main() -> status: ExitStatus pure {
                 .count(),
             1
         );
-        let inner = checked
-            ._resolved
+        let inner = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -1038,8 +1034,7 @@ fn main() -> status: ExitStatus pure {
             })
             .expect("inner source declaration")
             .id();
-        let outer = checked
-            ._resolved
+        let outer = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -1093,9 +1088,9 @@ fn outer<const ceiling: u64>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let completed = outer::<7>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1151,8 +1146,8 @@ fn invalid<const actual: u64, const expected: u64>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     super::assert_rule_kind(source, SemanticRule::Fn8, |kind| {
@@ -1219,8 +1214,8 @@ fn prove_growth(length: u64, capacity: u64) -> result: unit pure{length_contract
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
     )
@@ -1291,8 +1286,8 @@ fn caller(length: u64, capacity: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1309,13 +1304,13 @@ fn forward_calls_retain_paths_and_exact_literal_place_and_named_const_images() {
 
 const equal_value_other_const: u64 = 8_u64;
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let local = 3_u64;
   let from_place = below(value: local);
   let from_literal = below(value: 4_u64);
   let from_named = below(value: equal_value_other_const);
   let from_same_named = below(value: requirement_limit);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 
 fn below(value: u64) -> result: u64 pure contract {
@@ -1469,9 +1464,9 @@ fn positive(value: u8) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   positive(value: values[0_u64]);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1484,8 +1479,10 @@ fn main() -> status: ExitStatus pure {
             .iter()
             .find(|function| function.name == "main")
             .expect("main function");
-        let CheckedStatement::Evaluate(call @ CheckedExpression::UserCall { .. }) =
-            &main.body.as_deref().expect("WF body")[0]
+        let CheckedStatement::Evaluate {
+            value: call @ CheckedExpression::UserCall { .. },
+            ..
+        } = &main.body.as_deref().expect("WF body")[0]
         else {
             panic!("main must retain the call expression");
         };
@@ -1562,11 +1559,11 @@ fn positive(value: u8) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   if values[0_u64] < 10_u8 {
     positive(value: values[0_u64]);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1613,10 +1610,10 @@ fn proxy(value: &u64) -> result: unit reads(value) {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let local = 1_u64;
   observe(value: &local);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1629,8 +1626,10 @@ fn main() -> status: ExitStatus pure {
             .iter()
             .find(|function| function.name == "proxy")
             .expect("proxy function");
-        let CheckedStatement::Evaluate(CheckedExpression::UserCall { requirements, .. }) =
-            &proxy.body.as_deref().expect("WF body")[0]
+        let CheckedStatement::Evaluate {
+            value: CheckedExpression::UserCall { requirements, .. },
+            ..
+        } = &proxy.body.as_deref().expect("WF body")[0]
         else {
             panic!("proxy must retain its call requirement");
         };
@@ -1663,8 +1662,10 @@ fn main() -> status: ExitStatus pure {
         else {
             panic!("main local binding");
         };
-        let CheckedStatement::Evaluate(CheckedExpression::UserCall { requirements, .. }) =
-            &main.body.as_deref().expect("WF body")[1]
+        let CheckedStatement::Evaluate {
+            value: CheckedExpression::UserCall { requirements, .. },
+            ..
+        } = &main.body.as_deref().expect("WF body")[1]
         else {
             panic!("main direct call requirement");
         };
@@ -1708,10 +1709,10 @@ fn call_goal_substitutes_type_and_const_arguments() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 3>();
   let result = guarded::<i32, 3>(value: 4_i32, values: move values);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1830,10 +1831,10 @@ fn inspect(holder: Holder) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  let holder = Value();
+fn main() -> status: std::process::ExitStatus pure {
+  let holder = Holder::Value();
   let held = inspect(holder: move holder);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Own1,
@@ -1864,7 +1865,7 @@ fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
     for (requirement, accepted) in cases {
         // Contract definitions precede every requirement in canonical source.
         let source = format!(
-            "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n{requirement}\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n}} {{\n  let total = a + b;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n{requirement}\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n}} {{\n  let total = a + b;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             if accepted {
@@ -1909,7 +1910,7 @@ fn affine_requirement_images_keep_copies_but_do_not_retarget_replaced_scalars() 
         ("  set a = 32_u64;\n  let total = a + b;", false),
     ] {
         let source = format!(
-            "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n  requires a + b <= limit;\n}} {{\n{body}\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n  requires a + b <= limit;\n}} {{\n{body}\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             if accepted {
@@ -1943,7 +1944,7 @@ fn affine_requirement_measure_observations_survive_as_values_without_retargeting
             // `pure`. The subject is unchanged: the scalar copied before the
             // write keeps the bound the requirement gave it, and the measure
             // read after the write does not inherit it.
-            "fn room(values: Slots<u64, 16>, extra: u64, limit: u64) -> result: u64 pure contract {{\n  requires values.len <= 16_u64;\n  requires extra <= 16_u64;\n  requires values.len + extra <= limit;\n}} {{\n  let old = values.len;\n  let seed = array_filled::<u64, 16>(value: 0_u64);\n  let fresh = slots_from_array::<u64, 16>(values: seed);\n  set values = move fresh;\n  let current = values.len;\n  let total = {observed} + extra;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn room(values: Slots<u64, 16>, extra: u64, limit: u64) -> result: u64 pure contract {{\n  requires values.len <= 16_u64;\n  requires extra <= 16_u64;\n  requires values.len + extra <= limit;\n}} {{\n  let old = values.len;\n  let seed = array_filled::<u64, 16>(value: 0_u64);\n  let fresh = slots_from_array::<u64, 16>(values: seed);\n  set values = move fresh;\n  let current = values.len;\n  let total = {observed} + extra;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             if accepted {
@@ -2004,8 +2005,8 @@ fn read_first(rows: &Array<Slots<u8, 4>, 2>) -> result: u8 reads(rows) contract 
   return cell_at(rows: rows, i: {index}, k: 1_u64);
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         )

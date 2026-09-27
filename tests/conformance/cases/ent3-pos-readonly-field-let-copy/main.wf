@@ -1,0 +1,25 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn main() -> status: ExitStatus pure {
+  doc "S5: a let of a readonly field below a subscript is the ordinary copy equality with that clause (b) term, so the guard on the element's field bounds the copy and the copy discharges every cell read as an endpoint.";
+  let narrow = kinds::make_entry(width: 3_u64, weight: 1_u64);
+  let entries = array_filled::<Entry, 4>(value: narrow);
+  let cells = array_filled::<u8, 3>(value: 7_u8);
+  let i = 1_u64;
+  let total = 0_u64;
+  if entries[i].width <= cells.len {
+    let w = entries[i].width;
+    for (c in 0_u64..w) {
+      let cell = cells[c];
+      let widened = cvt::<u8, u64>(cell);
+      set total = total +wrap widened;
+    }
+  }
+  if total == 21_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

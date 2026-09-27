@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Seed {
   salt: u64;
 }
@@ -126,19 +129,19 @@ fn key_probe<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> 
   doc "Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path.";
   match deref(slot) {
     Vacant() => {
-      return Stop();
+      return Probe::Stop();
     }
     Deleted() => {
-      return Skip();
+      return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(saved) == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
-          return Match();
+          return Probe::Match();
         }
       }
-      return Miss();
+      return Probe::Miss();
     }
   }
 }
@@ -185,11 +188,11 @@ fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Bo
   }
   if destination < count {
   } else {
-    return Rejected<K>(key: move key, payload: move payload);
+    return KeyPut<K>::Rejected(key: move key, payload: move payload);
   }
-  let offered = Occupied<K>(fingerprint: tag, key: move key, payload: move payload);
+  let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
   swap(first: &deref(slots).inner[destination], second: &offered);
-  return Installed<K>(previous: move offered);
+  return KeyPut<K>::Installed(previous: move offered);
 }
 
 fn key_fill<K>(slots: &Box<Slots<Slot<K>>>, count: u64) -> result: unit writes(slots) contract {
@@ -204,7 +207,7 @@ fn key_fill<K>(slots: &Box<Slots<Slot<K>>>, count: u64) -> result: unit writes(s
     invariant bounded: deref(slots).inner.len <= index,
     invariant spare: deref(slots).inner.cap - deref(slots).inner.len + index >= count
   ) {
-    let vacant = Vacant<K>();
+    let vacant = Slot<K>::Vacant();
     place_back(window: &deref(slots).inner, value: move vacant);
   }
   invariant complete_min: deref(slots).inner.len >= count;
@@ -226,20 +229,20 @@ fn key_inspect<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -
   doc "The same probe, reporting the occupant's identifier beside its verdict.";
   match deref(slot) {
     Vacant() => {
-      return Stop(), 0_u64;
+      return Probe::Stop(), 0_u64;
     }
     Deleted() => {
-      return Skip(), 0_u64;
+      return Probe::Skip(), 0_u64;
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(saved) == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
           let found = deref(owner).inner.id;
-          return Match(), found;
+          return Probe::Match(), found;
         }
       }
-      return Miss(), 0_u64;
+      return Probe::Miss(), 0_u64;
     }
   }
 }

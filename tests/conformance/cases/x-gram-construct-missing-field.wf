@@ -1,9 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Pair {
   P(a: i32, b: i32);
 }
 
 fn main() -> status: ExitStatus pure {
   doc "GRAM-8: constructing P with only field a (b missing) is rejected - every declared field must be written exactly once.";
-  let x = P(a: 1_i32);
+  let x = Pair::P(a: 1_i32);
   return exit_status(code: 0_u8);
 }

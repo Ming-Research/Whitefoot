@@ -194,11 +194,16 @@ class Lint:
             for field in LOG_REQUIRED + (OWNER_APPROVED,):
                 if line.startswith(field):
                     current["fields"][field] = line[len(field):].strip()
+        first_line = {}
         for entry in entries:
             loc = f"log.md:{entry['line']}"
             for field in LOG_REQUIRED:
                 if field not in entry["fields"] or not entry["fields"][field]:
                     self.err(loc, f"entry lacks {field}")
+            # A union merge keeps both sides of an entry edited on two branches.
+            if entry["heading"] in first_line:
+                self.err(loc, f"entry heading repeats log.md:{first_line[entry['heading']]}")
+            first_line.setdefault(entry["heading"], entry["line"])
         return entries
 
     def base_exists(self, base):

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-10: place_back fills the append slot r.next and moves the boundary r.len up by one; take_back empties the last filled slot r.last and moves that boundary down by one.";
   let r = slots_new::<u64, 4>();

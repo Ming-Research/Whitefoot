@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn mix(word: u32) -> return_value: u32 pure {
   doc "OP-8: a checksum-style scalar mix uses the general bitwise, rotate, and wrapping paths.";
   let rotated = irotl(word, 5_u32);

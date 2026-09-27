@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill_pair(first: &[u8], second: &[u8]) -> result: unit writes(first), writes(second) contract {
   requires 2_u64 <= deref(first).len;
   requires 2_u64 <= deref(second).len;

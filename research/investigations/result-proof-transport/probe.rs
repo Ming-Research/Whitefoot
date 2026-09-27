@@ -241,17 +241,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         let source = scratch.join(format!("{}.wf", case.name));
         fs::write(&source, case.source)?;
         let output = Command::new(&args[1])
+            .arg("--diagnostic-format")
+            .arg("json")
             .arg("--emit-llvm")
             .arg("-o")
             .arg(scratch.join(format!("{}.ll", case.name)))
             .arg(&source)
             .output()?;
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // One JSON object per stop: the cited rule and the semantic stage.
         let matched = match case.expected_rule {
             None => output.status.success(),
             Some(rule) => {
                 output.status.code() == Some(1)
-                    && stderr.starts_with(&format!("whitefootc: Semantics/Source [{rule}]:"))
+                    && stderr.contains(&format!("\"rule\":\"{rule}\""))
+                    && stderr.contains("\"stage\":\"Semantics\"")
             }
         };
         fs::write(

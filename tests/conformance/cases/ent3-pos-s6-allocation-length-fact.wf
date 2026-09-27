@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A construction function's length and capacity facts are the ensures of its PRE-1 record and reach the caller through [ENT-3.S12] like any other declared relation. The S5 copy equality carries the literal into the capacity argument, so each placement discharges its len < cap requirement [OP-10] and a constant offset below the window they built discharges [OP-4]. Allocation is total and its only static obligation is the size one [OP-9].";
   let size = 4_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-13: let-initializer value-match; the taken arm's own result is moved exactly once.";
   let v = match 40_i32 +checked 2_i32 {

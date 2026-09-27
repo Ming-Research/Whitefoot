@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-2: writing the storage at a reference's own path, or below it, is a content write and does not invalidate the reference.";
   let a = array_filled::<u64, 4>(value: 0_u64);

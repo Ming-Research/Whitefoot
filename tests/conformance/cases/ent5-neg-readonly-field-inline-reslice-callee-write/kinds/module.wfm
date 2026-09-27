@@ -1,0 +1,6 @@
+public struct Entry {
+  public readonly width: u64;
+  public weight: u64;
+}
+
+public fn make_entry(width: u64, weight: u64) -> made: Entry pure doc "Builds one Entry; a client cannot construct it, because it has a readonly field.";

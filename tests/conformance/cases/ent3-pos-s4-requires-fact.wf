@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) contract {
   define spare = deref(b).len;
   define inside = i < spare;

@@ -1,0 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-5, TYPE-2: the rejected function is the kinds module's own.";
+  return exit_status(code: 0_u8);
+}

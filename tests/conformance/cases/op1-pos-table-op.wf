@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "Every computation is a call naming one operation from the table [OP-1]: a wrapping add and an integer compare, nothing overloaded.";
   let x = 20_i32 +wrap 22_i32;

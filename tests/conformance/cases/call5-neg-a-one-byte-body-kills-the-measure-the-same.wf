@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn nibble(run: &Slots<u8, 64>) -> result: unit writes(run) contract {
   requires deref(run).len < deref(run).cap;
 } {

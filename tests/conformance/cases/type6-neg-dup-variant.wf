@@ -1,7 +1,4 @@
 enum A {
   Dup();
-}
-
-enum B {
   Dup();
 }

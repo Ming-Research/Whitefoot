@@ -1,0 +1,9 @@
+pkg::data: [];
+pkg::report: [pkg::data, std::process];
+pkg: [pkg::data, pkg::report, std::process];
+
+entry main = pkg::main;
+
+entry quiet = pkg::report::quiet {
+  no_heap;
+}

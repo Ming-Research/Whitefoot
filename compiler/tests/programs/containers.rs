@@ -202,27 +202,17 @@ fn execute_container_program(
 
 #[test]
 fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
-    // Filesystem locations and source-envelope logical names are independent.
-    let sources: [(&str, &[u8]); 2] = [
-        (
-            "lib/containers/grow-vector.wf",
-            include_bytes!("../../../lib/containers/grow-vector.wf"),
-        ),
-        (
-            "containers/grow-vector-program.wf",
-            include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
-        ),
-    ];
+    // The caller names std::collections::vector, which the compiler carries.
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/grow-vector-program.wf",
+        include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
+    )];
     execute_container_program("grow-vector", &sources, 25, true);
 }
 
 #[test]
 fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 3] = [
-        (
-            "lib/containers/slab.wf",
-            include_bytes!("../../../lib/containers/slab.wf"),
-        ),
+    let sources: [(&str, &[u8]); 2] = [
         (
             "containers/slab-membership-program.wf",
             include_bytes!("../../../tests/programs/containers/slab-membership-program.wf"),
@@ -239,16 +229,10 @@ fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() 
 
 #[test]
 fn deque_wrap_rebase_and_consumption_release_every_owner_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 2] = [
-        (
-            "lib/containers/deque.wf",
-            include_bytes!("../../../lib/containers/deque.wf"),
-        ),
-        (
-            "containers/deque-program.wf",
-            include_bytes!("../../../tests/programs/containers/deque-program.wf"),
-        ),
-    ];
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/deque-program.wf",
+        include_bytes!("../../../tests/programs/containers/deque-program.wf"),
+    )];
     // Six scalar, two affine, three nodrop and two zero-sized backings;
     // three affine and five nodrop payloads. Every rebase creates a new backing.
     execute_container_program("deque", &sources, 21, false);
@@ -256,16 +240,10 @@ fn deque_wrap_rebase_and_consumption_release_every_owner_in_both_lowering_modes(
 
 #[test]
 fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 2] = [
-        (
-            "lib/containers/hash-map.wf",
-            include_bytes!("../../../lib/containers/hash-map.wf"),
-        ),
-        (
-            "containers/hash-map-program.wf",
-            include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
-        ),
-    ];
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/hash-map-program.wf",
+        include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
+    )];
     // Seventeen map backings, ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
     execute_container_program("hash-map", &sources, 28, false);
@@ -273,16 +251,10 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
 
 #[test]
 fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 2] = [
-        (
-            "lib/containers/priority-queue.wf",
-            include_bytes!("../../../lib/containers/priority-queue.wf"),
-        ),
-        (
-            "containers/priority-queue-program.wf",
-            include_bytes!("../../../tests/programs/containers/priority-queue-program.wf"),
-        ),
-    ];
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/priority-queue-program.wf",
+        include_bytes!("../../../tests/programs/containers/priority-queue-program.wf"),
+    )];
     // Twenty-three backings and forty payload Boxes. The independent source
     // oracle sorts a separate array and checks each owner identity. The native
     // ledger additionally observes actual releases, including growth, refused
@@ -292,19 +264,7 @@ fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
 
 #[test]
 fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 5] = [
-        (
-            "lib/containers/slab.wf",
-            include_bytes!("../../../lib/containers/slab.wf"),
-        ),
-        (
-            "lib/containers/hash-map.wf",
-            include_bytes!("../../../lib/containers/hash-map.wf"),
-        ),
-        (
-            "lib/containers/priority-queue.wf",
-            include_bytes!("../../../lib/containers/priority-queue.wf"),
-        ),
+    let sources: [(&str, &[u8]); 2] = [
         (
             "containers/indexed-store.wf",
             include_bytes!("../../../tests/programs/containers/indexed-store.wf"),
@@ -325,16 +285,10 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
 
 #[test]
 fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lowering_modes() {
-    let sources: [(&str, &[u8]); 2] = [
-        (
-            "lib/containers/ordered-map.wf",
-            include_bytes!("../../../lib/containers/ordered-map.wf"),
-        ),
-        (
-            "containers/ordered-map-program.wf",
-            include_bytes!("../../../tests/programs/containers/ordered-map-program.wf"),
-        ),
-    ];
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/ordered-map-program.wf",
+        include_bytes!("../../../tests/programs/containers/ordered-map-program.wf"),
+    )];
     // Twenty-two scalar nodes, six owning nodes, and seventy-five payload
     // Boxes. The additional owning map checks leaf and internal replacement
     // below its ceiling: three nodes and thirty-six payloads add 39 to the

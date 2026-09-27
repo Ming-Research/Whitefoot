@@ -1,0 +1,28 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn fill(rows: &Slots<Entry, 4>, cells: &Array<u8, 3>, i: u64) -> total: u64 reads(cells), writes(rows) contract {
+  requires i == deref(rows).len;
+  requires i < 4_u64;
+  requires deref(rows)[i].width <= deref(cells).len;
+} {
+  doc "ENT-2, FN-8, OP-4: the third requirement forms deref(rows)[i] at body entry, where the first makes i the window's length, so its subscript owes i < deref(rows).len and the state refutes it. Admitted, the requirement would bound the element place_back then creates wide, and the loop would read cells past its length.";
+  let wide = kinds::make_entry(width: 8_u64, weight: 1_u64);
+  place_back(window: rows, value: wide);
+  let total = 0_u64;
+  if i < deref(rows).len {
+    for (c in 0_u64..deref(rows)[i].width) {
+      let cell = deref(cells)[c];
+      let widened = cvt::<u8, u64>(cell);
+      set total = total +wrap widened;
+    }
+  }
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Declaration only.";
+  return exit_status(code: 0_u8);
+}

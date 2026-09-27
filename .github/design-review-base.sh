@@ -12,7 +12,7 @@ event=$1
 ref=$2
 before=$3
 case "$event" in
-  push|workflow_dispatch) ;;
+  push|workflow_dispatch|pull_request) ;;
   *) echo "unsupported design review event: $event" >&2; exit 1 ;;
 esac
 
@@ -24,7 +24,8 @@ if [ "$ref" = refs/heads/main ]; then
     candidate=HEAD^
   fi
 else
-  # New main-side commits are not changes made by this work branch.
+  # New main-side commits are not changes made by this work branch; for a
+  # pull request HEAD is its merge commit, whose base is main's tip.
   candidate=$(git merge-base origin/main HEAD)
 fi
 

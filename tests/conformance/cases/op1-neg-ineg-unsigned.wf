@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "OP-1: ineg is defined only for a signed integer type argument.";
   let value = ineg.wrap(1_u8);

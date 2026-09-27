@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  id: u8;
+}
+
+enum Held {
+  Full(code: u8, token: Token);
+  Empty();
+}
+
+fn spend(token: Token) -> result: u8 pure {
+  let Token(id: id) = move token;
+  return id;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A final `..` would cover the linear `token`, which has no release, so the arm is refused; binding it and consuming it is the route.";
+  let token = Token(id: 3_u8);
+  let held = Held::Full(code: 7_u8, token: move token);
+  match move held {
+    Full(code: found, ..) => {
+      return exit_status(code: found);
+    }
+    Empty() => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

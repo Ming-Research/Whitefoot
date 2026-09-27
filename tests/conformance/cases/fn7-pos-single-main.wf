@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An ordinary parameterless main returns ExitStatus. C2 removes the command marker and all entry-only signature or contract restrictions; this selected launcher signature runs to exit 0.";
   if 2_i32 == 2_i32 {

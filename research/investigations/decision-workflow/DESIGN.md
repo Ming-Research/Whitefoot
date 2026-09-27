@@ -5,7 +5,7 @@ revised after the 2026-09-08 owner interview. The question is how Whitefoot's ow
 can make grounded choices, revise them when conditions change, and keep the
 compiler moving without accumulating an unused process. This study does
 not define standing workflow rules or language semantics. The selected trial
-method lives in [decision practice](../../../docs/practice.md#decision-work);
+method lives in [decision practice](https://github.com/mbbill/Whitefoot/blob/efe40194a05b339c46b931e87bd05a40036f23cf/docs/practice.md#decision-work);
 [agent instructions](../../../AGENTS.md) own branch work and merging. The
 constitutional reassessment and initial index migration below implement the
 first application. They do not establish the method's long-term efficacy.
@@ -43,7 +43,7 @@ Whitefoot already has work-branch autonomy, an exact-revision merge boundary,
 a canonical complete test entry point, document owners, bounded completion
 review, and skill-managed decision history. These are useful foundations.
 
-The [workflow memory](../../../mcts_mem/whitefoot/development-workflow.md)
+The [workflow memory](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/development-workflow.md)
 records two relevant failure mechanisms: a rolling plan became a changelog
 because the working process did not consume it, and current guidance stayed
 stale while new Facts accumulated below it. Those records are historical
@@ -177,7 +177,7 @@ substantive safety claim is established.
 | Build an automatic global dependency and consistency system first | Could eventually help detect stale dependent guidance | Meaning and dependency classification remain difficult; a large schema could become another artifact to maintain before improving compiler work. Reconsider tooling after observing retrieval or propagation failures. |
 
 The third alternative is selected for a trial, with the constitutional-chain
-aspect replaced by the index described below. The [decision-ground memory](../../../mcts_mem/whitefoot/development-workflow/decision-grounds.md)
+aspect replaced by the index described below. The [decision-ground memory](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/development-workflow/decision-grounds.md)
 records that replacement; this comparison is its design source.
 
 ## Constitutional reassessment
@@ -240,7 +240,7 @@ when the rule or relevant evidence is materially changed.
 ### Surface and definition conventions
 
 FORM-1, FORM-2, and FORM-4 remain provisional selections. The retained
-[surface-form record](../../../mcts_mem/whitefoot/surface-form.md) identifies
+[surface-form record](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form.md) identifies
 the byte-format and no-comment choices as minimality selections awaiting
 comparison. Their present selection rests on the hypothesis that reducing
 surface variation makes agent edit instructions and tool output more predictable.

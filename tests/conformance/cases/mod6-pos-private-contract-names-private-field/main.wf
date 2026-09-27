@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let counter = data::start();
+  data::step(counter: &counter);
+  if counter.count == 1_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

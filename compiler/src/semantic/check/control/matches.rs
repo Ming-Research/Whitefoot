@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationId, DeclarationRole, DeferredUseRole, LexicalUseRole, Production, ResolvedTarget,
+    DeclarationId, DeclarationRole, DeferredUseRole, FixedTerminal, Production,
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
 use super::super::super::model::{
-    CheckedConstructor, CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm,
-    CheckedMatchBinder, CheckedMode, CheckedNominalKind, CheckedStatement, CheckedType,
+    CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm, CheckedMatchBinder,
+    CheckedMode, CheckedNominalKind, CheckedProjectedDrop, CheckedStatement, CheckedType,
 };
 use super::super::super::places::PlaceStep;
 use super::super::super::tree::ConditionalAlternative;
@@ -23,7 +23,6 @@ struct VariantDescriptor {
     name: String,
     tag: u32,
     fields: Vec<CheckedField>,
-    constructor: CheckedConstructor,
 }
 
 struct MatchDescriptor {
@@ -62,7 +61,7 @@ enum ScrutineeSpelling {
     Other,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     fn scrutinee_spelling(&self, expression: NodeId) -> Result<ScrutineeSpelling, CheckStop> {
         // [GRAM-5] `expr := atom infix_tail? | call`, and [OWN-13] asks its
         // question of a *place* scrutinee: an `infix_tail` makes the
@@ -179,6 +178,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let mut resolved_variants = Vec::with_capacity(arm_nodes.len());
         for arm_node in &arm_nodes {
             let variant = self.match_variant(&descriptor, *arm_node)?.clone();
+            if let CheckedEnumType::Nominal(owner) = descriptor.enum_type {
+                self.reject_inaccessible_variant(owner, &variant.name, *arm_node)?;
+            }
             if !seen.insert(variant.tag) {
                 duplicate_arm.get_or_insert(*arm_node);
             }
@@ -218,8 +220,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 give_context: local_give_context.as_ref().or(scope.give_context),
             };
             let mut arm_bindings = base_bindings.clone();
-            let binders = self.check_match_binders(
+            let variant_ordinal = descriptor
+                .variants
+                .iter()
+                .position(|candidate| candidate.name == variant.name);
+            let (binders, covered) = self.check_match_binders(
                 variant,
+                (descriptor.enum_type, variant_ordinal),
                 arm_node,
                 &mut arm_bindings,
                 counters,
@@ -263,6 +270,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             arms.push(CheckedMatchArm {
                 tag: variant.tag,
                 binders,
+                covered,
                 body: checked.statements,
                 fallthrough_drops,
             });
@@ -485,6 +493,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             arms.push(CheckedMatchArm {
                 tag: variant.tag,
                 binders: Vec::new(),
+                covered: Vec::new(),
                 body: checked.statements,
                 fallthrough_drops,
             });
@@ -581,13 +590,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     name: "True".to_owned(),
                     tag: 1,
                     fields: Vec::new(),
-                    constructor: CheckedConstructor::Prelude(crate::BuiltinPreludeId::TRUE),
                 },
                 VariantDescriptor {
                     name: "False".to_owned(),
                     tag: 0,
                     fields: Vec::new(),
-                    constructor: CheckedConstructor::Prelude(crate::BuiltinPreludeId::FALSE),
                 },
             ],
         }
@@ -629,7 +636,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         name: variant.name.clone(),
                         tag: variant.tag,
                         fields: variant.fields.clone(),
-                        constructor: variant.constructor,
                     })
                     .collect();
                 Ok(MatchDescriptor {
@@ -648,25 +654,19 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
     }
 
+    /// [TYPE-6] an arm label resolves against the scrutinee's already known
+    /// enum type: it names one of that enum's variants, whatever other enum
+    /// declares a variant of the same spelling.
     fn match_variant<'descriptor>(
         &self,
         descriptor: &'descriptor MatchDescriptor,
         arm: NodeId,
     ) -> Result<&'descriptor VariantDescriptor, CheckStop> {
-        let usage = self.use_at(arm, LexicalUseRole::ArmVariant)?;
+        let label = self.deferred_use_at(arm, DeferredUseRole::ArmVariant)?;
         descriptor
             .variants
             .iter()
-            .find(|variant| match usage.target() {
-                ResolvedTarget::Source { declaration, .. } => {
-                    variant.constructor == CheckedConstructor::Source(declaration)
-                }
-                ResolvedTarget::Prelude(id) => {
-                    variant.constructor == CheckedConstructor::Prelude(id)
-                }
-
-                _ => false,
-            })
+            .find(|variant| variant.name == label.spelling())
             .ok_or_else(|| {
                 self.issue_value(
                     SemanticRule::Type6,
@@ -676,15 +676,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             })
     }
 
+    /// [GRAM-10] binds the payload fields an arm writes, in declared order,
+    /// and returns with its binders the releases of the fields a final `..`
+    /// covers in an own-place match [WIN-3, STOR-3].
+    #[allow(clippy::too_many_arguments)]
     fn check_match_binders(
         &self,
         variant: &VariantDescriptor,
+        (enum_type, variant_ordinal): (CheckedEnumType, Option<usize>),
         arm: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         loop_depth: usize,
         scrutinee: &super::super::TypedExpression,
-    ) -> Result<Vec<CheckedMatchBinder>, CheckStop> {
+    ) -> Result<(Vec<CheckedMatchBinder>, Vec<CheckedProjectedDrop>), CheckStop> {
         let mode = scrutinee.mode;
         let written =
             if let Some(list) = self.tree.first_child_with(arm, Production::FieldbindList)? {
@@ -692,17 +697,39 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             } else {
                 Vec::new()
             };
-        if written.len() != variant.fields.len() {
-            return self.invalid_match_fields(variant, arm);
-        }
+        // [GRAM-10] the rest marker is the arm's own `..` token; a range in
+        // the arm body spells its `..` inside a statement, not on the arm.
+        let rest = self.has_fixed(arm, FixedTerminal::DotDot)?;
         let mut binders = Vec::with_capacity(written.len());
-        for (index, (written, field)) in written.into_iter().zip(&variant.fields).enumerate() {
-            if self
+        let mut covered = Vec::new();
+        let mut cursor = 0_usize;
+        for written in written {
+            let spelling = self
                 .deferred_use_at(written, DeferredUseRole::MatchField)?
                 .spelling()
-                != field.name
-            {
+                .to_owned();
+            // Every written field name appears once, in declared order, so
+            // the next one is found at or after the field the previous binder
+            // took; only a final `..` lets the arm skip fields.
+            let Some(offset) = variant.fields[cursor..]
+                .iter()
+                .position(|field| field.name == spelling)
+            else {
                 return self.invalid_match_fields(variant, written);
+            };
+            if offset > 0 && !rest {
+                return self.invalid_match_fields(variant, written);
+            }
+            covered.extend(cursor..cursor.saturating_add(offset));
+            let index = cursor + offset;
+            cursor = index + 1;
+            let field = &variant.fields[index];
+            // [MOD-5] outside the enum's declaring module an arm binds only
+            // published payload fields; `..` covers the rest.
+            if let CheckedEnumType::Nominal(owner) = enum_type
+                && let Some(ordinal) = variant_ordinal
+            {
+                self.reject_inaccessible_field(owner, Some(ordinal), index, &field.name, written)?;
             }
             let declaration = self.declaration_at(written, DeclarationRole::MatchBinder)?;
             let binding = Self::allocate_binding(counters.next_binding)?;
@@ -766,6 +793,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         compiler_updated: false,
                         reference,
                         refinement_witnesses,
+                        call_value: false,
                     },
                 )
                 .is_some()
@@ -780,7 +808,40 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 ty: field.ty,
             });
         }
-        Ok(binders)
+        if cursor < variant.fields.len() {
+            if !rest {
+                return self.invalid_match_fields(variant, arm);
+            }
+            covered.extend(cursor..variant.fields.len());
+        }
+        // [WIN-3, STOR-3] an own-place match consumes the scrutinee, so each
+        // covered payload takes its release on entry to the arm and a covered
+        // linear payload cannot be released at all; a reference match leaves
+        // the scrutinee live and covers without releasing.
+        let mut releases = Vec::new();
+        if !mode.is_reference() {
+            for index in covered {
+                let field = &variant.fields[index];
+                if self.linear_release_obligation(field.ty)?.is_some() {
+                    return self.issue_node(
+                        SemanticRule::Win3,
+                        arm,
+                        SemanticIssueKind::InvalidElementMove {
+                            mechanical_fix: "bind the linear payload in the arm and consume it: V(f: a, ..) => { ... }",
+                        },
+                    );
+                }
+                let ordinal =
+                    u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+                if !self.drop_paths(field.ty, vec![ordinal])?.is_empty() {
+                    releases.push(CheckedProjectedDrop {
+                        fields: vec![ordinal],
+                        ty: field.ty,
+                    });
+                }
+            }
+        }
+        Ok((binders, releases))
     }
 
     /// Applies [REF-2]'s two arm/branch-exit events to every state that can

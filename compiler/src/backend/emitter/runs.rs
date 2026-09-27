@@ -53,7 +53,7 @@ impl RunShape {
         self.element
     }
 
-    fn element_type(self, program: &IrProgram<'_, '_, '_>) -> Result<IrType, BackendFailure> {
+    fn element_type(self, program: &IrProgram) -> Result<IrType, BackendFailure> {
         program
             .element(self.element())
             .ok_or(BackendFailure::InvalidIr)

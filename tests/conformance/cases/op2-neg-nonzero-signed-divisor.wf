@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn risky_div(n: i32, d: i32) -> result: i32 pure contract {
   define nonzero = d != 0_i32;
   requires nonzero;

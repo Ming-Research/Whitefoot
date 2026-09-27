@@ -1,3 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HostString = std::text::HostString;
+alias exit_status = std::process::exit_status;
+
 const values: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 struct Pair {

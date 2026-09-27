@@ -1,0 +1,10 @@
+fn ring_slot(position: u64) -> result: u64 pure {
+  let slots = array_filled::<u64, 1024>(value: 0_u64);
+  let slot = iand(position, 1023_u64);
+  let value = slots[slot];
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,14 @@
+const limit: u64 = zero;
+
+const zero: u64 = 0_u64;
+
+struct Point {
+  x: u64;
+}
+
+fn narrow(value: u64) -> result: u8 pure {
+  if value == 0_u64 {
+    return 0_u8;
+  }
+  return 1_u8;
+}

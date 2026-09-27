@@ -13,7 +13,7 @@ enum Owner {
 }
 
 fn make_empty() -> result: Owner pure {
-  return Empty();
+  return Owner::Empty();
 }
 
 fn relay(owner: Owner) -> result: Owner pure {
@@ -47,13 +47,13 @@ fn consume(owner: Owner) -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let abandoned_left = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &abandoned_left.inner, value: 7_u8);
   let abandoned_right = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &abandoned_right.inner, value: 9_u8);
   let abandoned_pair = PairBuffers(left: move abandoned_left, right: move abandoned_right);
-  let abandoned = Full(value: move abandoned_pair);
+  let abandoned = Owner::Full(value: move abandoned_pair);
   let empty = make_empty();
   swap(first: &abandoned, second: &empty);
   swap(first: &empty, second: &empty);
@@ -64,14 +64,14 @@ fn main() -> status: ExitStatus pure {
   let consumed_right = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &consumed_right.inner, value: 13_u8);
   let consumed_pair = PairBuffers(left: move consumed_left, right: move consumed_right);
-  let consumed = Full(value: move consumed_pair);
+  let consumed = Owner::Full(value: move consumed_pair);
   set empty = move consumed;
   let carried = relay(owner: move empty);
   let consumed_byte = consume(owner: move carried);
   if consumed_byte != 11_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // After the ordinary owned match, payload bindings are local; reading them
@@ -87,7 +87,8 @@ fn main() -> status: ExitStatus pure {
     );
     let failure = compile_rejection(excessive.as_bytes());
     assert_eq!(failure.rule_id(), Some("EFF-1"));
-    assert!(failure.detail().contains("reads(owner)"));
+    // The rejected row is on the quoted source line.
+    assert!(failure.to_string().contains("reads(owner)"));
     let llvm = compile(source);
     let abandon = emitted_function(&llvm, "abandon");
     let cleanup_calls: Vec<_> = abandon
@@ -113,37 +114,38 @@ fn main() -> status: ExitStatus pure {
     assert!(!consume.contains(&format!("call void @{cleanup}")));
     assert_eq!(consume.matches("call void @free").count(), 2);
 
-    // A linked wrapper supplies a valid, deliberately dirty result destination
-    // to the same WF constructor. A second linked implementation writes only
-    // the active tag through that ordinary signature. The inactive Box
-    // representations must never enter cleanup in either implementation.
-    let wrapped = llvm.replacen(
-        "define void @wf_make_empty(",
-        "define void @wf_test_empty_body(",
+    // A linked implementation of the same ordinary signature sets only the
+    // active tag and returns deliberately dirty bits for the inactive Box
+    // representations, which must never enter cleanup. `Owner` has three
+    // scalar leaves, a tag and two pointers, so it returns in registers
+    // (compiler/src/backend/abi.rs), and that implementation is written in
+    // LLVM because C returns a small struct differently on each target.
+    //
+    // The previous C wrapper passed a deliberately dirty destination to the
+    // WF constructor. That observation retired with the destination for
+    // this result: a register-returned constructor never sees its caller's
+    // storage, and the caller stores every field of the returned value.
+    let make_empty = emitted_function(&llvm, "make_empty");
+    let (result, _) = make_empty
+        .strip_prefix("define ")
+        .and_then(|header| header.split_once(" @wf_make_empty()"))
+        .expect("make_empty takes no argument");
+    assert!(result.starts_with("%wf.t"), "Owner returns in registers");
+    let renamed = llvm.replacen(
+        &format!("define {result} @wf_make_empty("),
+        &format!("define {result} @wf_test_empty_body("),
         1,
     );
-    assert_ne!(wrapped, llvm);
-    let wrapped = format!("{wrapped}\ndeclare void @wf_make_empty(ptr)\n");
-    let wrapper = r#"
-typedef struct { void *left; void *right; } wf_test_pair;
-typedef struct { uint32_t tag; wf_test_pair value; } wf_test_owner;
-extern void wf_test_empty_body(wf_test_owner *result);
-void wf_make_empty(wf_test_owner *result) {
-    memset(result, 0xa5, sizeof(*result));
-    wf_test_empty_body(result);
-}
-"#;
-    let linked_constructor = wrapper.replace("wf_test_empty_body(result);", "result->tag = 0;");
-    assert_ne!(linked_constructor, wrapper);
-    for (module, linked) in [
-        (&llvm, ""),
-        (&wrapped, wrapper),
-        (&wrapped, linked_constructor.as_str()),
-    ] {
+    assert_ne!(renamed, llvm);
+    let dirty = "ptr inttoptr (i64 -6510615555426900571 to ptr)";
+    let linked_constructor = format!(
+        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i32 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
+    );
+    for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)
             .replace("@malloc(", "@wf_test_allocate(")
             .replace("@free(", "@wf_test_release(");
-        let host = format!("{}{linked}", super::owned_places::allocation_observer(4, 0));
+        let host = super::owned_places::allocation_observer(4, 0);
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         // The first Full travels by swap, then a reference write replaces it
@@ -241,7 +243,7 @@ fn consume(value: Option<Box<Slots<u8>>>) -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let abandoned_bytes = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &abandoned_bytes.inner, value: 5_u8);
   let abandoned_some = Some<Box<Slots<u8>>>(value: move abandoned_bytes);
@@ -253,9 +255,9 @@ fn main() -> status: ExitStatus pure {
   let consumed_some = Some<Box<Slots<u8>>>(value: move consumed_bytes);
   let consumed_byte = consume(value: move consumed_some);
   if consumed_byte != 17_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);

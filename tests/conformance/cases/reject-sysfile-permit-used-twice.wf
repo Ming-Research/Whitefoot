@@ -1,3 +1,11 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias ReadFile = std::fs::ReadFile;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+
 fn close_twice(factory: &HandleFactory, file: ReadFile) -> result: unit writes(factory) {
   doc "OWN-1: an acquired linear owner is consumed exactly once, and after a consuming use the whole binding is dead. The second consumption is the rejection; the factory state is referenced, not consumed or duplicated.";
   close_read(factory: factory, file: move file);

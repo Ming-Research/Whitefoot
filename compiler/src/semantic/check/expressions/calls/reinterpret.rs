@@ -8,7 +8,7 @@ use super::super::super::{
     CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
 };
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_reinterpret(
         &self,
         node: NodeId,

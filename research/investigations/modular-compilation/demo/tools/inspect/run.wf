@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Job = pkg::data::Job;
+alias Report = pkg::data::Report;
+alias exit_status = std::process::exit_status;
+alias fifo = pkg::runtime::queue;
+alias runtime = pkg::runtime;
+alias store = pkg::data::boxed_copy;
+
+fn run() -> status: ExitStatus pure {
+  doc "Runs the same batch and keeps a copy of its report in one heap cell. The cell receives its ordinary derived release on every return edge.";
+  let pending = fifo::new();
+  let first = Job(tag: 7_u8, payload: 250_u8);
+  fifo::push(queue: &pending, job: first);
+  let second = Job(tag: 9_u8, payload: 10_u8);
+  fifo::push(queue: &pending, job: second);
+  let report = runtime::run_two::<fn fifo::pop>(queue: &pending);
+  let stored = store::<Report>(value: report);
+  if stored.inner.first_tag != 7_u8 {
+    return exit_status(code: 1_u8);
+  }
+  if stored.inner.second_tag != 9_u8 {
+    return exit_status(code: 2_u8);
+  }
+  if stored.inner.digest != 4_u8 {
+    return exit_status(code: 3_u8);
+  }
+  if stored.inner.remaining != 0_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

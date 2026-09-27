@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn push(values: &Slots<u64, 4>, value: u64) -> result: unit writes(values) contract {
   requires deref(values).len < deref(values).cap;
   ensures deref(values).len == deref(entry(values)).len + 1_u64;

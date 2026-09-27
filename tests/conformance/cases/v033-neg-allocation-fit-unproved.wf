@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn make(length: u64) -> values: Box<Slots<i64>> pure {
   doc "A runtime capacity with no established relation leaves OP-9's allocation-size obligation unproved. The construction is rejected at its source node before lowering and creates no runtime size check.";
   let block = box_slots_new::<i64>(capacity: length);

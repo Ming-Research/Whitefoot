@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A value if delivers an owned cell from either branch, and the field inner returns the selected payload. Allocation is total, so neither branch carries a failure arm.";
   let flag = True();

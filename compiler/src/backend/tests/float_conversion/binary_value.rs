@@ -302,7 +302,7 @@ pub(super) fn extend_program(original: &str) -> String {
             for (input, expected) in observations {
                 writeln!(
                     checks,
-                    "  if {name}(input: {input}_{input_type}, expected: {expected}_{expected_type}, wanted: {wanted}) {{\n  }} else {{\n    return exit_status(code: 20_u8);\n  }}",
+                    "  if {name}(input: {input}_{input_type}, expected: {expected}_{expected_type}, wanted: {wanted}) {{\n  }} else {{\n    return std::process::exit_status(code: 20_u8);\n  }}",
                     wanted = if expected.is_some() { "expected_true" } else { "expected_false" },
                     expected = expected.unwrap_or(0),
                 )
@@ -311,7 +311,7 @@ pub(super) fn extend_program(original: &str) -> String {
         }
     }
     let main = original
-        .strip_suffix("  return exit_status(code: 0_u8);\n}\n")
+        .strip_suffix("  return std::process::exit_status(code: 0_u8);\n}\n")
         .expect("the existing boundary program ends with its success status");
-    format!("{helpers}{main}{checks}  return exit_status(code: 0_u8);\n}}\n")
+    format!("{helpers}{main}{checks}  return std::process::exit_status(code: 0_u8);\n}}\n")
 }

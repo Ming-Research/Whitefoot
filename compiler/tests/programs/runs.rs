@@ -197,10 +197,11 @@ fn a_run_of_store_backed_runs_is_a_block_pool() {
     // compiler/storage-representation: "The constant-capacity form carries the
     // same header ahead of its elements so that the two placements share one
     // layout."
-    assert!(llvm.contains("[8 x %wf.t0]"));
+    let block = super::support::nominal_type("Block");
+    assert!(llvm.contains(&format!("[8 x {block}]")));
     let element = llvm
         .lines()
-        .find(|line| line.starts_with("%wf.t0 = type "))
+        .find(|line| line.starts_with(&format!("{block} = type ")))
         .expect("the aliased element type must be declared");
     let (header, _) = element
         .split_once("[256 x i8]")

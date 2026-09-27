@@ -1,6 +1,8 @@
 //! Acceptance canaries for the originating source-proof boundary. Every protected
 //! operation below lacks an ordinary fact or a source proof for its domain,
-//! so the checker must reject at the live rule that owns the operation.
+//! so the checker must reject at the live rule that owns the operation. The
+//! clamps sit one past the bound each operation needs, so the [ENT-3.S7]
+//! interval they publish is exactly one too wide.
 
 use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 
@@ -24,12 +26,12 @@ fn an_unproved_array_bound_rejects_under_op4() {
     let source = br#"const values: Array<i32, 4> =[0_i32, 0_i32, 0_i32, 0_i32];
 
 fn read(input: u64) -> result: i32 pure {
-  let bounded = imin(input, 3_u64);
+  let bounded = imin(input, 4_u64);
   return values[bounded];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Op4, |kind| {
@@ -40,12 +42,12 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn an_unproved_exact_addition_domain_rejects_under_op2() {
     let source = br#"fn bump(input: u64) -> result: u64 pure {
-  let bounded = imin(input, 100_u64);
+  let bounded = imax(input, 100_u64);
   return bounded + 1_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Op2, |kind| {
@@ -65,13 +67,13 @@ fn an_unproved_call_requirement_rejects_under_fn8() {
 }
 
 fn caller(input: u64) -> result: unit pure {
-  let bounded = imin(input, 3_u64);
+  let bounded = imin(input, 4_u64);
   need(index: bounded);
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Fn8, |kind| {
@@ -97,8 +99,8 @@ fn an_unproved_postcondition_rejects_under_fn9() {
   return reviewed;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Fn9, |kind| {
@@ -111,7 +113,7 @@ fn an_unproved_loop_header_fact_rejects_under_inv1() {
     let source = br#"const values: Array<i32, 4> =[0_i32, 0_i32, 0_i32, 0_i32];
 
 fn read(input: u64) -> result: unit pure {
-  let bounded = imin(input, 3_u64);
+  let bounded = imin(input, 4_u64);
   for (
     i in 0_u64..1_u64,
     invariant limit: bounded <= 3_u64
@@ -121,8 +123,8 @@ fn read(input: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Inv1, |kind| {
@@ -142,8 +144,8 @@ fn an_unproved_allocation_ceiling_rejects_under_op9() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Op9, |kind| {
@@ -156,8 +158,8 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn unproved_prelude_endpoints_reject_under_fn8() {
-    let source = br#"fn publish(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) {
-  match write_once(factory: factory, output: output, source: source, start: start, end: end) {
+    let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) {
+  match std::io::write_once(factory: factory, output: output, source: source, start: start, end: end) {
     Ok(value: next) => {
     }
     Err(error: problem) => {
@@ -166,8 +168,8 @@ fn unproved_prelude_endpoints_reject_under_fn8() {
   return unit;
 }
 
-fn main(output: OutputStream) -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main(output: std::io::OutputStream) -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Fn8, |kind| {
@@ -179,10 +181,10 @@ fn main(output: OutputStream) -> status: ExitStatus pure {
 fn an_external_index_needs_a_real_control_flow_fact() {
     let direct = br#"const bytes: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(args: Args) -> status: ExitStatus pure {
-  let index = args_count(args: &args);
+fn main(args: std::text::Args) -> status: std::process::ExitStatus pure {
+  let index = std::text::args_count(args: &args);
   let value = bytes[index];
-  return exit_status(code: value);
+  return std::process::exit_status(code: value);
 }
 "#;
     rejects_as(direct, SemanticRule::Op4, |kind| {
@@ -191,14 +193,14 @@ fn main(args: Args) -> status: ExitStatus pure {
 
     let guarded = br#"const bytes: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(args: Args) -> status: ExitStatus pure {
-  let index = args_count(args: &args);
+fn main(args: std::text::Args) -> status: std::process::ExitStatus pure {
+  let index = std::text::args_count(args: &args);
   let spare = bytes.len;
   if index < spare {
     let value = bytes[index];
-    return exit_status(code: value);
+    return std::process::exit_status(code: value);
   } else {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
 }
 "#;
@@ -219,14 +221,14 @@ fn an_external_call_actual_needs_a_real_control_flow_fact() {
 
 "#;
     let direct = format!(
-        "{function}fn main(args: Args) -> status: ExitStatus pure {{\n  let index = args_count(args: &args);\n  let bytes = array_filled::<u8, 4>(value: 0_u8);\n  let value = read_at_index(bytes: bytes, index: index);\n  return exit_status(code: value);\n}}\n"
+        "{function}fn main(args: std::text::Args) -> status: std::process::ExitStatus pure {{\n  let index = std::text::args_count(args: &args);\n  let bytes = array_filled::<u8, 4>(value: 0_u8);\n  let value = read_at_index(bytes: bytes, index: index);\n  return std::process::exit_status(code: value);\n}}\n"
     );
     rejects_as(direct.as_bytes(), SemanticRule::Fn8, |kind| {
         matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
     });
 
     let guarded = format!(
-        "{function}fn main(args: Args) -> status: ExitStatus pure {{\n  let index = args_count(args: &args);\n  let bytes = array_filled::<u8, 4>(value: 0_u8);\n  let spare = bytes.len;\n  if index < spare {{\n    let value = read_at_index(bytes: bytes, index: index);\n    return exit_status(code: value);\n  }} else {{\n    return exit_status(code: 0_u8);\n  }}\n}}\n"
+        "{function}fn main(args: std::text::Args) -> status: std::process::ExitStatus pure {{\n  let index = std::text::args_count(args: &args);\n  let bytes = array_filled::<u8, 4>(value: 0_u8);\n  let spare = bytes.len;\n  if index < spare {{\n    let value = read_at_index(bytes: bytes, index: index);\n    return std::process::exit_status(code: value);\n  }} else {{\n    return std::process::exit_status(code: 0_u8);\n  }}\n}}\n"
     );
     accepts(guarded.as_bytes());
 }
@@ -247,8 +249,8 @@ fn second(value: i32) -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     rejects_as(source, SemanticRule::Fn9, |kind| {
@@ -276,14 +278,14 @@ fn originating_proof_context_retains_acceptance_results_and_derivations() {
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant limit: i <= 1_u64
   ) {
   }
   let value = increment(x: 1_u8, middle: 2_u8, left: 1_u64, left_limit: 2_u64, center: 3_u64, center_limit: 4_u64, right: 5_u64, right_limit: 6_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     super::with_semantics(source, |outcome| {

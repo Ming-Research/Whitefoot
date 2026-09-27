@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn widths(a: i8, b: i64, c: u32, d: f64) -> function_result: unit pure {
   doc "The remaining primitive types are nameable and type-check [TYPE-1].";
   return unit;

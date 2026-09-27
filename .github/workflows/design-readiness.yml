@@ -1,0 +1,53 @@
+# No pending design amendment reaches main.
+#
+# `make design-ready` fails while `design/amendments/` exists, which is the
+# normal state of a draft whose proposals await the owner's ruling under the
+# design-tree skill. On every push it painted most draft gate runs red with
+# nothing to fix, so a red run stopped meaning a defect. It runs here where its
+# answer decides something: a pull request that is ready for review, and main.
+# A draft shows the job as skipped; marking it ready runs the check.
+name: design-readiness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: design-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  design-readiness:
+    name: Design readiness
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
+            echo "checkout is on main"
+          else
+            git branch -f main origin/main
+          fi
+
+      # A pull request checks out its merge commit, so the review base is
+      # main's tip; a main push compares with its previous tip.
+      - name: Select the design review base
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh .github/design-review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      - name: Require settled design amendments
+        run: make design-ready

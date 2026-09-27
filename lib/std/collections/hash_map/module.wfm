@@ -1,0 +1,75 @@
+public struct HashMapPair<K, V> {
+  public key: K;
+  public value: V;
+}
+
+public enum HashMapSlot<K, V> {
+  HashMapVacant();
+  HashMapDeleted();
+  HashMapFilled(public key: K, public value: V);
+}
+
+public enum HashMapReturnReason {
+  HashMapReplaced();
+  HashMapFull();
+}
+
+public enum HashMapPut<K, V> {
+  HashMapInserted();
+  HashMapReturned(public reason: HashMapReturnReason, public pair: HashMapPair<K, V>);
+}
+
+public enum HashMapAction {
+  HashMapStop();
+  HashMapSkip();
+  HashMapMiss();
+  HashMapMatch();
+}
+
+public struct HashMap<K, V, const ceiling: u64> {
+  public readonly cells: Box<Slots<HashMapSlot<K, V>>>;
+  public readonly length: u64;
+}
+
+public interface HashMapKey<K, E> {
+  fn hash(env: &E, key: &K) -> hash: u64 reads(env), reads(key);
+  fn equal(env: &E, left: &K, right: &K) -> equal: Bool reads(env), reads(left), reads(right);
+}
+
+public interface HashMapConsume<K, V, E> {
+  fn consume(env: &E, key: K, value: V) -> result: unit writes(env);
+}
+
+public fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V, ceiling> pure contract {
+  requires capacity <= ceiling;
+} doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Rebuild can change bucket positions; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
+
+public fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) doc "Reports the number of pairs the map holds.";
+
+public fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> capacity: u64 reads(map) doc "Capacity counts the materialized buckets available to probing.";
+
+public fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) doc "Lends the value stored under key, with that key, to observe and returns its owned result in Ok; Err reports an absent key. Hash and equality come from the key binding.";
+
+public fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {
+  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
+  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+} doc "Lets update write the value stored under key while reading the key, and returns its owned result in Ok; Err reports an absent key. Capacity and backing length stay.";
+
+public fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {
+  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
+  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+} doc "Inserts an owned pair within the current capacity, never growing it: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
+
+public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map to hold at least capacity pairs within its ceiling; a no-op at or below the current capacity, and Err for a request above the ceiling.";
+
+public fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map at its current capacity, keeping every pair.";
+
+public fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) doc "Inserts an owned pair, growing from zero to one and then doubling or saturating at the ceiling only after a full probe finds no reusable slot: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
+
+public fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) doc "Removes the pair stored under key and returns it owned; None reports an absent key.";
+
+public fn hash_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) doc "Lends every stored pair to visit, in no promised order.";
+
+public fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K, V>, env: &E) -> result: unit writes(env) doc "Consumes one pair through the consume binding, key and value alike.";
+
+public fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: HashMap<K, V, ceiling>, env: &E) -> result: unit writes(env) doc "Consumes every remaining key and value through the consume binding, nodrop owners included, and releases the backing.";

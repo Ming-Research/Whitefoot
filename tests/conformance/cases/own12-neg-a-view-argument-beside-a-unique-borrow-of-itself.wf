@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn take(window: &[u8], other: &[u8]) -> size: u64 reads(other), writes(window) contract {
   requires deref(window).len > 0_u64;
 } {

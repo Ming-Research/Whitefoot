@@ -1,0 +1,36 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  doc "Writes the length of the range src into the first element of the range dst.";
+  let n = deref(src).len;
+  if 0_u64 < deref(dst).len {
+    set deref(dst)[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_across(rows: &Array<Array<u64, 4>, 4>, i: u64, j: u64) -> result: unit writes(rows) contract {
+  requires i < 4_u64;
+  requires j < 4_u64;
+} {
+  doc "Passes rows[i][0..2] and rows[j][2..4] for rows i and j that nothing proves equal or distinct.";
+  copy_len(src: &deref(rows)[i][0_u64..2_u64], dst: &deref(rows)[j][2_u64..4_u64]);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OWN-7: the two ranges' containing paths rows[i] and rows[j] differ only in an index step. An index is an absolute coordinate, so they select one row, where 0..2 ends where 2..4 starts, or two different rows, and the call separates the ranges without relating i and j. The program runs the call on one row and on two rows.";
+  let row = array_filled::<u64, 4>(value: 1_u64);
+  let rows = array_filled::<Array<u64, 4>, 4>(value: row);
+  copy_across(rows: &rows, i: 1_u64, j: 1_u64);
+  copy_across(rows: &rows, i: 0_u64, j: 3_u64);
+  if rows[1_u64][2_u64] == 2_u64 {
+    if rows[3_u64][2_u64] == 2_u64 {
+      if rows[0_u64][2_u64] == 1_u64 {
+        return exit_status(code: 0_u8);
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}

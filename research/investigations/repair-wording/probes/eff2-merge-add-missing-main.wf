@@ -1,0 +1,16 @@
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn record(stats: &Stats) -> result: unit reads(stats), writes(stats.count) {
+  let whole = deref(stats);
+  set deref(stats).count = whole.total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let stats = Stats(count: 0_u64, total: 0_u64);
+  record(stats: &stats);
+  return exit_status(code: 0_u8);
+}

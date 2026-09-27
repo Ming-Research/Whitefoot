@@ -1,0 +1,5 @@
+pkg::data: [];
+pkg::report: [pkg::data];
+pkg: [pkg::report, std::process];
+
+entry main = pkg::main;

@@ -1,0 +1,44 @@
+public opaque nocopy struct Args {
+}
+
+public opaque nocopy struct HostString {
+}
+
+public enum ArgError {
+  InvalidIndex();
+}
+
+public enum CopyError {
+  CopyTooSmall(public required: u64);
+}
+
+public enum Utf8Error {
+  Utf8Invalid();
+}
+
+public enum Utf8CopyError {
+  Utf8CopyTooSmall(public required: u64);
+  Utf8CopyInvalid();
+}
+
+public fn args_count(args: &Args) -> result: u64 reads(args) doc "Returns the number of invocation arguments.";
+
+public fn arg_get(args: &Args, position: u64) -> result: Result<HostString, ArgError> reads(args) doc "Returns the invocation argument at position, or InvalidIndex when position is not below the argument count.";
+
+public fn host_bytes_len(value: &HostString) -> result: u64 reads(value) doc "Returns the length of value in bytes.";
+
+public fn host_copy_bytes(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, CopyError> reads(value), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies every byte of value into destination from start; Ok carries the index after the last byte copied, and CopyTooSmall carries the length the window needs when it is shorter.";
+
+public fn host_utf8_len(value: &HostString) -> result: Result<u64, Utf8Error> reads(value) doc "Returns the length in bytes of the UTF-8 text value denotes, or Utf8Invalid when it denotes none.";
+
+public fn host_copy_utf8(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, Utf8CopyError> reads(value), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the UTF-8 text value denotes into destination from start; Ok carries the index after the last byte copied, Utf8CopyTooSmall carries the length the window needs when it is shorter, and Utf8CopyInvalid reports a value that denotes no UTF-8 text.";

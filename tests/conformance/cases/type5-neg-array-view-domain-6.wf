@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Range references over an array preserve element bounds and exact element typing. This variant violates TYPE-5: the right-hand side of the element store is checked exactly and a u32 value does not satisfy the u8 element type.";
   let values = array_filled::<u8, 2>(value: 0_u8);

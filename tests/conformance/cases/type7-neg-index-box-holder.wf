@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn read(holder: Box<Slots<u8, 4>>) -> function_result: u8 pure {
   doc "OP-4: a subscript base must be an indexable type, and a Box holder is not one; the Box content is its field inner, so the run is written holder.inner[offset] [TYPE-9].";
   return holder[0_u64];

@@ -1,0 +1,5 @@
+fn make(version: u64) -> frame: Frame pure {
+  doc "Constructs the frame inside the declaring module.";
+  let h = Header(version: version);
+  return Frame(header: h, size: 0_u64);
+}

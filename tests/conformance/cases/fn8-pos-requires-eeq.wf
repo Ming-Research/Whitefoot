@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum ClauseEq {
   ClauseFirst();
   ClauseSecond();
@@ -12,8 +15,8 @@ fn guarded(left: ClauseEq, right: ClauseEq) -> result: unit pure contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  let left = ClauseSecond();
-  let right = ClauseSecond();
+  let left = ClauseEq::ClauseSecond();
+  let right = ClauseEq::ClauseSecond();
   let same = eeq(left, right);
   if same {
     guarded(left: left, right: right);

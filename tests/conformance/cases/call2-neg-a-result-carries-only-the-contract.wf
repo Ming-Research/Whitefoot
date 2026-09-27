@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn shrink<const n: u64>(source: Slots<u8, n>) -> smaller: Slots<u8, 4> pure {
   doc "Consumes the run and returns a fresh empty one, declaring no relation.";
   let fresh = slots_new::<u8, 4>();

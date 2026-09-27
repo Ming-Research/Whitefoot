@@ -1,0 +1,33 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+interface Update {
+  fn update(target: &Pair) -> result: unit reads(target), writes(target.left);
+}
+
+fn copy_right(pair: &Pair) -> result: unit reads(pair), writes(pair.left) {
+  let whole = deref(pair);
+  set deref(pair).left = whole.right;
+  return unit;
+}
+
+binding CopyRight : Update {
+  update = copy_right;
+}
+
+fn apply<interface Update>(value: &Pair) -> result: unit reads(value), writes(value.left) {
+  return Update::update(target: value);
+}
+
+fn main() -> status: ExitStatus pure {
+  let pair = Pair(left: 0_u64, right: 9_u64);
+  let done = apply::<CopyRight>(value: &pair);
+  let seen = pair.left;
+  if seen == 9_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

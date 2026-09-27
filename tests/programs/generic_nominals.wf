@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Pair<T: Int> {
   left: T;
   right: T;
@@ -25,7 +28,7 @@ fn duplicate<T: Int>(value: T) -> result: Pair<T> pure {
 }
 
 fn present<T: Int>(value: T) -> result: Choice<T> pure {
-  return Present<T>(value: value);
+  return Choice<T>::Present(value: value);
 }
 
 fn checked_sum<T: Int>(left: T, right: T) -> result: Result<T, Overflow> pure {

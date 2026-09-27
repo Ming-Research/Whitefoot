@@ -102,8 +102,8 @@ typedef struct {
 
 static void paused_half_close(void *argument) {
     half_close_call *call = argument;
-    if (call->send) wf_close_send(&call->result, &call->factory, &call->owner);
-    else wf_close_receive(&call->result, &call->factory, &call->owner);
+    if (call->send) wf__body_close_send(&call->result, &call->factory, &call->owner);
+    else wf__body_close_receive(&call->result, &call->factory, &call->owner);
     wf_prim_wait_lock(&half_close.wait);
     half_close.finished = 1;
     wf_prim_wait_signal(&half_close.wait);
@@ -128,8 +128,8 @@ static void text_probe(void) {
     wf_utf8_result measured;
     unsigned char bytes[16], expected[16];
     wf_view view = {bytes, sizeof(bytes)};
-    assert(wf_args_count(&args) == 4);
-    wf_arg_get(&value, &args, 0);
+    assert(wf__body_args_count(&args) == 4);
+    wf__body_arg_get(&value, &args, 0);
     assert(value.tag == 0);
     memset(bytes, 7, sizeof(bytes));
     wf__body_host_copy_utf8(&copied, &value.value, &view, 2, 3);
@@ -140,21 +140,21 @@ static void text_probe(void) {
     memcpy(expected + 2, "abc", 3);
     assert(copied.tag == 0 && copied.value == 5);
     assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
-    wf_arg_get(&value, &args, 1);
-    wf_host_utf8_len(&measured, &value.value);
+    wf__body_arg_get(&value, &args, 1);
+    wf__body_host_utf8_len(&measured, &value.value);
     assert(measured.tag == 0 && measured.value == 4);
     wf__body_host_copy_utf8(&copied, &value.value, &view, 5, 9);
     memcpy(expected + 5, "\xf0\x9f\x98\x80", 4);
     assert(copied.tag == 0 && copied.value == 9);
     assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
-    wf_arg_get(&value, &args, 2);
+    wf__body_arg_get(&value, &args, 2);
     wf__body_host_copy_utf8(&copied, &value.value, &view, 0, 16);
     assert(copied.tag == 1 && copied.error.tag == 1);
     assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
-    wf_arg_get(&value, &args, 3);
-    wf_relative_path(&value, &value.value);
+    wf__body_arg_get(&value, &args, 3);
+    wf__body_relative_path(&value, &value.value);
     assert(value.tag == 0 && value.value.words[1] == 0);
-    wf_arg_get(&value, &args, 4);
+    wf__body_arg_get(&value, &args, 4);
     assert(value.tag == 1 && value.error == 0);
 }
 
@@ -215,7 +215,7 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     assert(limited_factory.words[0] == 1);
     open_file(&opened, &limited_factory, &inputs->cwd, &name, 0, name.length);
     assert(opened.tag == 0 && limited_factory.words[0] == 0);
-    wf_close_read(&closed, &limited_factory, &opened.value);
+    wf__body_close_read(&closed, &limited_factory, &opened.value);
     check_close(&closed);
     assert(limited_factory.words[0] == 1);
     inputs->handles.words[0] = 0;
@@ -238,7 +238,7 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     read_at(&read, &inputs->handles, &opened.value, &window, 0, 9, 9);
     assert(read.tag == 0 && read.value == 9);
     assert(memcmp(bytes, unchanged, sizeof(bytes)) == 0);
-    wf_close_read(&closed, &receiving_factory, &opened.value);
+    wf__body_close_read(&closed, &receiving_factory, &opened.value);
     check_close(&closed);
     assert(inputs->handles.words[0] == saved - 1 && receiving_factory.words[0] == 1);
     assert(remove(filename) == 0);
@@ -256,9 +256,9 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     assert(inputs->handles.words[0] == saved - 1);
     /* Transfer the received credit back by actually opening and closing an
      * owner, without comparing the close's factory to its creator. */
-    wf_open_directory_source(&listing, &receiving_factory, &inputs->cwd);
+    wf__body_open_directory_source(&listing, &receiving_factory, &inputs->cwd);
     assert(listing.tag == 0 && receiving_factory.words[0] == 0);
-    wf_close_directory_source(&closed, &inputs->handles, &listing.value);
+    wf__body_close_directory_source(&closed, &inputs->handles, &listing.value);
     check_close(&closed);
     assert(inputs->handles.words[0] == saved);
 }
@@ -349,17 +349,17 @@ static void directory_probe(wf_inputs *inputs) {
     fixture = fopen("ordinary-directory.data", "wb");
 #endif
     assert(fixture && fclose(fixture) == 0);
-    wf_open_directory_source(&first, &inputs->handles, &inputs->cwd);
+    wf__body_open_directory_source(&first, &inputs->handles, &inputs->cwd);
     assert(first.tag == 0 && inputs->handles.words[0] == before - 1);
-    wf_open_directory_source(&second, &inputs->handles, &inputs->cwd);
+    wf__body_open_directory_source(&second, &inputs->handles, &inputs->cwd);
     assert(second.tag == 0 && inputs->handles.words[0] == before - 2);
     unsigned first_entries = directory_contents(&first.value, 1, ordinary_entries, 3);
     unsigned second_entries = directory_contents(&second.value, 0, ordinary_entries, 3);
     assert(first_entries == second_entries);
-    wf_close_directory_source(&closed, &inputs->handles, &second.value);
+    wf__body_close_directory_source(&closed, &inputs->handles, &second.value);
     check_close(&closed);
     assert(inputs->handles.words[0] == before - 1);
-    wf_close_directory_source(&closed, &inputs->handles, &first.value);
+    wf__body_close_directory_source(&closed, &inputs->handles, &first.value);
     check_close(&closed);
     assert(inputs->handles.words[0] == before);
     assert(remove("ordinary-directory.data") == 0);
@@ -403,16 +403,16 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     assert(opened.tag == 0 && inputs->handles.words[0] == credits - 1);
     wf__body_read_at(&read, &inputs->handles, &opened.value, &destination, 0, 0, 1);
     assert(read.tag == 0 && read.value == 1 && byte == 'N');
-    wf_close_read(&closed, &inputs->handles, &opened.value); check_close(&closed);
+    wf__body_close_read(&closed, &inputs->handles, &opened.value); check_close(&closed);
 
     name.data = (void *)directory_name; name.length = sizeof(directory_name) - sizeof(wchar_t);
     wf__body_open_directory(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
     assert(opened.tag == 0);
-    wf_close_directory(&closed, &inputs->handles, &opened.value); check_close(&closed);
-    wf_open_directory_source(&opened, &inputs->handles, &inputs->cwd);
+    wf__body_close_directory(&closed, &inputs->handles, &opened.value); check_close(&closed);
+    wf__body_open_directory_source(&opened, &inputs->handles, &inputs->cwd);
     assert(opened.tag == 0);
     (void)directory_contents(&opened.value, 1, expected, 6);
-    wf_close_directory_source(&closed, &inputs->handles, &opened.value); check_close(&closed);
+    wf__body_close_directory_source(&closed, &inputs->handles, &opened.value); check_close(&closed);
     assert(inputs->handles.words[0] == credits);
 
     name.data = (void *)missing_name; name.length = sizeof(missing_name) - sizeof(wchar_t);
@@ -434,13 +434,13 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     assert(handles_after == handles_before);
     wf_value text = {{ (uint64_t)(uintptr_t)link_name, 4, 0, 0 }};
     wf_value_result path;
-    wf_relative_path(&path, &text); assert(path.tag == 0);
-    wf_open_read(&opened, &inputs->handles, &inputs->cwd, &path.value);
+    wf__body_relative_path(&path, &text); assert(path.tag == 0);
+    wf__body_open_read(&opened, &inputs->handles, &inputs->cwd, &path.value);
     assert(opened.tag == 0 && inputs->handles.words[0] == credits - 1);
     byte = 0;
     wf__body_read_at(&read, &inputs->handles, &opened.value, &destination, 0, 0, 1);
     assert(read.tag == 0 && read.value == 1 && byte == 'N');
-    wf_close_read(&closed, &inputs->handles, &opened.value); check_close(&closed);
+    wf__body_close_read(&closed, &inputs->handles, &opened.value); check_close(&closed);
     assert(inputs->handles.words[0] == credits);
     assert(SetCurrentDirectoryW(L".."));
     assert(DeleteFileW(link_name) && DeleteFileW(file_name));
@@ -467,29 +467,29 @@ static void tcp_probe(wf_inputs *inputs) {
     unsigned char byte = 'x', target = 0;
     wf_view source = {&byte, 1}, destination = {&target, 1};
     uint64_t before = inputs->handles.words[0];
-    wf_socket_address_v4(&address, 127, 0, 0, 1, 0);
-    wf_tcp_listen(&listener, &inputs->handles, &address);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, 0);
+    wf__body_tcp_listen(&listener, &inputs->handles, &address);
     if (listener.tag != 0) fprintf(stderr, "listen failed: class=%u code=%u origin=%u\n",
         listener.error.tag, listener.error.detail[listener.error.tag].code,
         listener.error.detail[listener.error.tag].origin);
     assert(listener.tag == 0 && inputs->handles.words[0] == before - 1);
-    wf_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.value));
-    wf_tcp_connect(&first_client, &inputs->handles, &address);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.value));
+    wf__body_tcp_connect(&first_client, &inputs->handles, &address);
     assert(first_client.tag == 0 && inputs->handles.words[0] == before - 2);
-    wf_tcp_accept(&first_server, &inputs->handles, &listener.value);
+    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.value);
     assert(first_server.tag == 0 && inputs->handles.words[0] == before - 3);
-    wf_tcp_connect(&second_client, &inputs->handles, &address);
+    wf__body_tcp_connect(&second_client, &inputs->handles, &address);
     assert(second_client.tag == 0 && inputs->handles.words[0] == before - 4);
-    wf_tcp_accept(&second_server, &inputs->handles, &listener.value);
+    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.value);
     assert(second_server.tag == 0);
     assert(inputs->handles.words[0] == before - 5);
     crossed_a.receive = first_server.value.connection.receive;
     crossed_a.send = second_server.value.connection.send;
     crossed_b.receive = second_server.value.connection.receive;
     crossed_b.send = first_server.value.connection.send;
-    wf_close_receive(&closed, &inputs->handles, &crossed_a.receive); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &crossed_a.receive); check_close(&closed);
     assert(inputs->handles.words[0] == before - 5 && other_factory.words[0] == 0);
-    wf_close_send(&closed, &inputs->handles, &crossed_a.send); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &crossed_a.send); check_close(&closed);
     assert(inputs->handles.words[0] == before - 5 && other_factory.words[0] == 0);
     wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1);
     assert(sent.tag == 0 && sent.value == 1);
@@ -500,19 +500,19 @@ static void tcp_probe(wf_inputs *inputs) {
     assert(sent.tag == 0 && sent.value == 1);
     wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1);
     assert(received.tag == 0 && received.value == 1 && target == byte);
-    wf_close_send(&closed, &other_factory, &crossed_b.send); check_close(&closed);
+    wf__body_close_send(&closed, &other_factory, &crossed_b.send); check_close(&closed);
     assert(other_factory.words[0] == 1 && inputs->handles.words[0] == before - 5);
-    wf_close_receive(&closed, &inputs->handles, &crossed_b.receive); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &crossed_b.receive); check_close(&closed);
     assert(inputs->handles.words[0] == before - 4 && other_factory.words[0] == 1);
-    wf_close_receive(&closed, &inputs->handles, &first_client.value.receive); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &first_client.value.receive); check_close(&closed);
     assert(inputs->handles.words[0] == before - 4 && other_factory.words[0] == 1);
-    wf_close_send(&closed, &inputs->handles, &first_client.value.send); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &first_client.value.send); check_close(&closed);
     assert(inputs->handles.words[0] == before - 3 && other_factory.words[0] == 1);
-    wf_close_send(&closed, &inputs->handles, &second_client.value.send); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &second_client.value.send); check_close(&closed);
     assert(inputs->handles.words[0] == before - 3 && other_factory.words[0] == 1);
-    wf_close_receive(&closed, &inputs->handles, &second_client.value.receive); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &second_client.value.receive); check_close(&closed);
     assert(inputs->handles.words[0] == before - 2 && other_factory.words[0] == 1);
-    wf_close_listener(&closed, &inputs->handles, &listener.value); check_close(&closed);
+    wf__body_close_listener(&closed, &inputs->handles, &listener.value); check_close(&closed);
     assert(inputs->handles.words[0] == before - 1 && other_factory.words[0] == 1);
     assert(inputs->handles.words[0] + other_factory.words[0] == before);
 }
@@ -532,13 +532,13 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     unsigned char byte = 'q', target = 0;
     wf_view source = {&byte, 1}, destination = {&target, 1};
 
-    wf_socket_address_v4(&address, 127, 0, 0, 1, 0);
-    wf_tcp_listen(&listener, &inputs->handles, &address);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, 0);
+    wf__body_tcp_listen(&listener, &inputs->handles, &address);
     assert(listener.tag == 0);
-    wf_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.value));
-    wf_tcp_connect(&client, &inputs->handles, &address);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.value));
+    wf__body_tcp_connect(&client, &inputs->handles, &address);
     assert(client.tag == 0);
-    wf_tcp_accept(&server, &inputs->handles, &listener.value);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.value);
     assert(server.tag == 0 && inputs->handles.words[0] == before - 3);
     descriptor = server.value.connection.send.words[0];
     memset(&call, 0, sizeof(call));
@@ -557,8 +557,8 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     while (!half_close.paused) wf_prim_wait_sleep(&half_close.wait);
     wf_prim_wait_unlock(&half_close.wait);
 
-    if (send_first) wf_close_receive(&closed, &inputs->handles, &server.value.connection.receive);
-    else wf_close_send(&closed, &inputs->handles, &server.value.connection.send);
+    if (send_first) wf__body_close_receive(&closed, &inputs->handles, &server.value.connection.receive);
+    else wf__body_close_send(&closed, &inputs->handles, &server.value.connection.send);
     check_close(&closed);
     after_second = inputs->handles.words[0];
     assert(wf_test_socket_open((int)descriptor));
@@ -578,10 +578,10 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
      * The just-released lowest slot must therefore be reused, on both the
      * POSIX table and Windows CRT registry, without an open-until-reused loop.
      * Fresh bidirectional IO checks that its half-close state was reset. */
-    wf_tcp_connect(&replacement, &call.factory, &address);
+    wf__body_tcp_connect(&replacement, &call.factory, &address);
     assert(replacement.tag == 0 && call.factory.words[0] == 0);
     assert(replacement.value.receive.words[0] == descriptor);
-    wf_tcp_accept(&replacement_server, &inputs->handles, &listener.value);
+    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.value);
     assert(replacement_server.tag == 0);
     wf__body_send_once(&sent, &replacement.value.send, &source, 0, 1);
     assert(sent.tag == 0 && sent.value == 1);
@@ -592,13 +592,13 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     assert(sent.tag == 0 && sent.value == 1);
     wf__body_receive_next(&received, &replacement.value.receive, &destination, 0, 1);
     assert(received.tag == 0 && received.value == 1 && target == byte);
-    wf_close_send(&closed, &inputs->handles, &replacement.value.send); check_close(&closed);
-    wf_close_receive(&closed, &inputs->handles, &replacement.value.receive); check_close(&closed);
-    wf_close_receive(&closed, &inputs->handles, &replacement_server.value.connection.receive); check_close(&closed);
-    wf_close_send(&closed, &inputs->handles, &replacement_server.value.connection.send); check_close(&closed);
-    wf_close_receive(&closed, &inputs->handles, &client.value.receive); check_close(&closed);
-    wf_close_send(&closed, &inputs->handles, &client.value.send); check_close(&closed);
-    wf_close_listener(&closed, &inputs->handles, &listener.value); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &replacement.value.send); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &replacement.value.receive); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &replacement_server.value.connection.receive); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &replacement_server.value.connection.send); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &client.value.receive); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &client.value.send); check_close(&closed);
+    wf__body_close_listener(&closed, &inputs->handles, &listener.value); check_close(&closed);
     assert(inputs->handles.words[0] == before && call.factory.words[0] == 0);
 }
 
@@ -642,7 +642,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         wf_prim_wait_destroy(&half_close.wait);
         puts("ordinary TCP crossed halves/concurrent close/credits: PASS");
     }
-    wf_close_directory(&closed, &inputs.handles, &inputs.cwd);
+    wf__body_close_directory(&closed, &inputs.handles, &inputs.cwd);
     check_close(&closed);
     assert(wf_chdir("..") == 0 && wf_rmdir(fixture) == 0);
     assert(wf_chdir(previous) == 0);

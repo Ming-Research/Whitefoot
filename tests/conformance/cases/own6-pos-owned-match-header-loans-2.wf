@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inspect(value: &u64) -> result: u64 reads(value) {
   doc "A reference parameter denotes the reference; the storage it names is read through deref.";
   return deref(value);

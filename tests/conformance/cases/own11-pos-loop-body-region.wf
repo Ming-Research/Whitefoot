@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "A loop body is an ordinary block whose own bindings begin and end with one iteration, so a reference formed directly in it is per-iteration and needs no enclosing construct.";
   let a = 0_i32;

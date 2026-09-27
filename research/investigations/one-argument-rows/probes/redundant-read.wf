@@ -1,0 +1,14 @@
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn reset(stats: &Stats) -> result: u64 reads(stats.count), writes(stats) {
+  let old = deref(stats).count;
+  set deref(stats) = Stats(count: 0_u64, total: 0_u64);
+  return old;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

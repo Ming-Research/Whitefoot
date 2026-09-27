@@ -4,7 +4,7 @@ mod finalize;
 mod outcome;
 mod tree;
 
-pub use engine::parse;
+pub use engine::{parse, parse_graph};
 pub use finalize::{
     BundleSourceExtent, CanonicalCompilerFailure, CanonicalIssue, CanonicalLimit, CanonicalLimits,
     CanonicalLocation, CanonicalOutcome, CanonicalResourceFailure, CanonicalStorage,

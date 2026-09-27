@@ -1,3 +1,7 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn helper(args: Args) -> function_result: unit pure {
   doc "FN-1: an ordinary prelude nominal is admitted in any ordinary function parameter.";
   return unit;

@@ -1,0 +1,3 @@
+pkg: [std::process];
+
+entry main = std::process::exit_status;

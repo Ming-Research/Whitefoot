@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f(x: &i32) -> function_result: i32 reads(x), reads(x) {
   doc "Two entries naming one path duplicate that entry rather than being the one canonical reads(x); each entry is the one spelling of one path [EFF-1, FORM-1].";
   return deref(x);

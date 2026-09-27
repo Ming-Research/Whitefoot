@@ -15,8 +15,7 @@ conformance list.
 
 ## Basis
 
-Recorded measurement, `mcts_mem/whitefoot/checks-and-proofs/
-obligation-discharge.md` Facts, 2026-08-08 (`5188548f`):
+Recorded measurement, [mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md) Facts, 2026-08-08 (`5188548f`):
 
 > the entailment fragment admits exactly four term forms — a tracked place,
 > a length term, a constant, and the distinguished zero term — and no

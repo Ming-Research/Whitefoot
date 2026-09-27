@@ -244,17 +244,21 @@ fn decoder_wire_boundaries_run_as_one_batch_through_the_actual_wf_decoder() {
         llvm = llvm.replacen(&definition, &format!("define i32 @fixture_{name}("), 1);
     }
     llvm.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
-    // Load WF's exact range-reference aggregates in LLVM; C passes pointers to
+    // Load WF's exact range-reference pairs in LLVM; C passes pointers to
     // the pointer-plus-count pair and makes no assumption about the platform's
     // aggregate coercions. A `&[u8]` parameter is that pair: the address of the
     // first element of the range and the element count, which is its one
-    // measure [REF-4, MSR-1].
+    // measure [REF-4, MSR-1]. It crosses the call as those two arguments.
     llvm.push_str(
         r#"
 define i64 @wf_test_decode(ptr %source, ptr %destination) {
   %input = load { ptr, i64 }, ptr %source
+  %input.data = extractvalue { ptr, i64 } %input, 0
+  %input.len = extractvalue { ptr, i64 } %input, 1
   %output = load { ptr, i64 }, ptr %destination
-  %result = call i64 @wf_decode_case({ ptr, i64 } %input, { ptr, i64 } %output)
+  %output.data = extractvalue { ptr, i64 } %output, 0
+  %output.len = extractvalue { ptr, i64 } %output, 1
+  %result = call i64 @wf_decode_case(ptr %input.data, i64 %input.len, ptr %output.data, i64 %output.len)
   ret i64 %result
 }
 "#,

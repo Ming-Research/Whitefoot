@@ -1,0 +1,9 @@
+fn next(state: u64) -> result: u64 pure {
+  let left = ishl.wrap(state, 13_u32);
+  let first = ixor(state, left);
+  let right = ishr(first, 7_u32);
+  let second = ixor(first, right);
+  let again = ishl.wrap(second, 17_u32);
+  let result = ixor(second, again);
+  return result;
+}

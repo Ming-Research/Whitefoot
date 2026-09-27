@@ -1,3 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias OrderedKey = std::collections::ordered_map::OrderedKey;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias OrderedPair = std::collections::ordered_map::OrderedPair;
+alias OrderedPut = std::collections::ordered_map::OrderedPut;
+alias exit_status = std::process::exit_status;
+alias ordered_map_each = std::collections::ordered_map::ordered_map_each;
+alias ordered_map_edit = std::collections::ordered_map::ordered_map_edit;
+alias ordered_map_free = std::collections::ordered_map::ordered_map_free;
+alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
+alias ordered_map_lookup = std::collections::ordered_map::ordered_map_lookup;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_range = std::collections::ordered_map::ordered_map_range;
+alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+
 struct OrderedTestPair {
   key: u64;
   value: u64;

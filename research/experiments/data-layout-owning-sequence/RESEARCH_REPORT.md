@@ -675,9 +675,9 @@ this historical list.
 - Separation of external sources and inferences: [`RESEARCH.md`](RESEARCH.md)
 - Current pattern doctrine: [`../../../docs/patterns.md`](../../../docs/patterns.md)
 - Copy-classification design record:
-  [`../../../mcts_mem/whitefoot/ownership/copy-classification.md`](../../../mcts_mem/whitefoot/ownership/copy-classification.md)
+  [`mcts_mem/whitefoot/ownership/copy-classification.md`](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/copy-classification.md)
 - Current data-model direction:
-  [`../../../mcts_mem/whitefoot/data-model.md`](../../../mcts_mem/whitefoot/data-model.md)
+  [`mcts_mem/whitefoot/data-model.md`](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/data-model.md)
 - LLVM `getelementptr`: <https://llvm.org/docs/LangRef.html#getelementptr-instruction>
 - LLVM aggregate code-shape guidance:
   <https://llvm.org/docs/Frontend/PerformanceTips.html#avoid-creating-values-of-aggregate-type>

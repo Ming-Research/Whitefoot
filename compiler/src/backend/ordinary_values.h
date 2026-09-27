@@ -2,8 +2,12 @@
 #define WHITEFOOT_ORDINARY_VALUES_H
 
 /* Ordinary linked definitions. These declarations describe the library's C
- * representation, not additional compiler metadata. All aggregates follow the
- * compiler's ordinary destination/result and content-address parameter ABI. */
+ * representation, not additional compiler metadata. Every C body writes its
+ * aggregate result through a destination pointer and takes aggregate
+ * parameters by content address. Where the compiler's ABI differs, a
+ * `wf__body_` C body sits behind the LLVM definition in ordinary_values.ll.
+ * The ABI differs for a split range argument, and for a result small enough
+ * for the return registers. */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdalign.h>
@@ -46,35 +50,39 @@ _Static_assert(offsetof(wf_accept_result, value) == 16 &&
                sizeof(wf_accept_result) == 352, "ordinary accept Result layout");
 _Static_assert(sizeof(wf_inputs) == 192, "ordinary Inputs layout");
 
-uint64_t wf_args_count(const wf_value *args);
-void wf_arg_get(wf_value_result *result, const wf_value *args, uint64_t position);
-uint64_t wf_host_bytes_len(const wf_value *value);
+/* A host function's link name is its standard library identity [MOD-10],
+ * `wf_std.<module>.<name>`, which no program function can take and no C
+ * identifier can spell: ordinary_values.ll defines each one over the C body
+ * below, `wf__body_<name>`. */
+uint64_t wf__body_args_count(const wf_value *args);
+void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t position);
+uint64_t wf__body_host_bytes_len(const wf_value *value);
 void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
-void wf_host_utf8_len(wf_utf8_result *result, const wf_value *value);
+void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value);
 void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
-void wf_relative_path(wf_value_result *result, const wf_value *value);
-void wf_open_read(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_value *path);
+void wf__body_relative_path(wf_value_result *result, const wf_value *value);
+void wf__body_open_read(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_value *path);
 void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file, wf_view *destination, uint64_t file_offset, uint64_t start, uint64_t end);
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end);
-void wf_exit_status(wf_value *result, uint8_t code);
+void wf__body_exit_status(wf_value *result, uint8_t code);
 void wf__body_open_directory(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
-void wf_open_directory_source(wf_open_result *result, wf_value *factory, const wf_value *directory);
+void wf__body_open_directory_source(wf_open_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_directory_next(wf_list_result *result, wf_value *source, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
-void wf_close_read(wf_close_result *result, wf_value *factory, const wf_value *file);
-void wf_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory);
-void wf_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source);
+void wf__body_close_read(wf_close_result *result, wf_value *factory, const wf_value *file);
+void wf__body_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory);
+void wf__body_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source);
 void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input, wf_view *destination, uint64_t start, uint64_t end);
-void wf_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
-void wf_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint16_t e, uint16_t f, uint16_t g, uint16_t h, uint16_t port);
-void wf_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address);
-void wf_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener);
-void wf_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address);
+void wf__body_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
+void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint16_t e, uint16_t f, uint16_t g, uint16_t h, uint16_t port);
+void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address);
+void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener);
+void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address);
 void wf__body_receive_next(wf_read_result *result, wf_value *receive, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_send_once(wf_write_result *result, wf_value *send, const wf_view *source, uint64_t start, uint64_t end);
-void wf_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener);
-void wf_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive);
-void wf_close_send(wf_close_result *result, wf_value *factory, const wf_value *send);
+void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener);
+void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive);
+void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send);
 
 /* Build launcher support: constructs ordinary argument representations. The
  * supplied argument backing remains valid until the selected call returns.

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const prefix_input: Array<u8, 5> =[43_u8, 50_u8, 43_u8, 51_u8, 52_u8];
 
 const prefix_incomplete: Array<u8, 2> =[43_u8, 50_u8];
@@ -23,7 +26,7 @@ fn parse_expression(input: &[u8], offset: u64) -> result: Result<ParseOutput, Pa
   let available = offset < size;
   if available {
   } else {
-    let truncated_error = Truncated();
+    let truncated_error = ParseError::Truncated();
     return Err<ParseOutput, ParseError>(error: truncated_error);
   }
   let token = deref(input)[offset];
@@ -44,7 +47,7 @@ fn parse_expression(input: &[u8], offset: u64) -> result: Result<ParseOutput, Pa
             let final_offset = right_output.next;
             let left_node = move left_output.node;
             let right_node = move right_output.node;
-            let expression = Add(left: move left_node, right: move right_node);
+            let expression = Expression::Add(left: move left_node, right: move right_node);
             let node = box_new::<Expression>(value: move expression);
             let output = ParseOutput(node: move node, next: final_offset);
             return Ok<ParseOutput, ParseError>(value: move output);
@@ -55,17 +58,17 @@ fn parse_expression(input: &[u8], offset: u64) -> result: Result<ParseOutput, Pa
   } else {
     let below_digit = token < 48_u8;
     if below_digit {
-      let low_error = InvalidToken();
+      let low_error = ParseError::InvalidToken();
       return Err<ParseOutput, ParseError>(error: low_error);
     }
     let above_digit = token > 57_u8;
     if above_digit {
-      let high_error = InvalidToken();
+      let high_error = ParseError::InvalidToken();
       return Err<ParseOutput, ParseError>(error: high_error);
     }
     let digit_byte = token -wrap 48_u8;
     let digit = cvt::<u8, u64>(digit_byte);
-    let expression = Literal(value: digit);
+    let expression = Expression::Literal(value: digit);
     let node = box_new::<Expression>(value: move expression);
     let output = ParseOutput(node: move node, next: next);
     return Ok<ParseOutput, ParseError>(value: move output);

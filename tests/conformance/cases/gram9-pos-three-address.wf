@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "GRAM-9: flat three-address - each computed value is bound by a let and forwarded by name; no nesting.";
   let a = 3_i32;

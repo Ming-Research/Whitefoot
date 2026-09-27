@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn identity<T: drop>(value: T) -> result: T pure {
   return move value;
 }

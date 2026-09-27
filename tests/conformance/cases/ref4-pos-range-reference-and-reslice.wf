@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn slice_len(part: &[u64]) -> result: u64 reads(part.len) {
   doc "REF-4: a range reference's one measure is len, equal to hi - lo.";
   let n = deref(part).len;

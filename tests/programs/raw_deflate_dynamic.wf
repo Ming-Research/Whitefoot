@@ -12,14 +12,14 @@ fn decode_length(state: &InflateState, input: &[u8], symbol: u64) -> result: Res
   let after_lengths = symbol >= 286_u64;
   let invalid_symbol = bor(before_lengths, after_lengths);
   if invalid_symbol {
-    let error = InvalidHuffmanCode();
+    let error = InflateError::InvalidHuffmanCode();
     return Err<u64, InflateError>(error: error);
   }
   let length_index = symbol -wrap 257_u64;
   let length_in_tables = length_index < 29_u64;
   if length_in_tables {
   } else {
-    let error = InvalidHuffmanCode();
+    let error = InflateError::InvalidHuffmanCode();
     return Err<u64, InflateError>(error: error);
   }
   let length_base_word = length_bases[length_index];
@@ -44,7 +44,7 @@ fn decode_length(state: &InflateState, input: &[u8], symbol: u64) -> result: Res
 fn copy_distance(state: &InflateState, input: &[u8], out: &[u8], copy_length: u64, distance_symbol: u64) -> result: Result<unit, InflateError> reads(input), writes(state.input_offset), writes(state.output_offset), writes(state.hold), writes(state.bits), writes(out) {
   let invalid_distance_symbol = distance_symbol >= 30_u64;
   if invalid_distance_symbol {
-    let error = InvalidDistance();
+    let error = InflateError::InvalidDistance();
     return Err<unit, InflateError>(error: error);
   }
   let distance_base_word = distance_bases[distance_symbol];
@@ -65,7 +65,7 @@ fn copy_distance(state: &InflateState, input: &[u8], out: &[u8], copy_length: u6
   let distance = distance_base +wrap distance_extra;
   let before_history = deref(state).output_offset < distance;
   if before_history {
-    let error = InvalidDistance();
+    let error = InflateError::InvalidDistance();
     return Err<unit, InflateError>(error: error);
   }
   let copied = 0_u64;
@@ -79,7 +79,7 @@ fn copy_distance(state: &InflateState, input: &[u8], out: &[u8], copy_length: u6
       let source_in_history = source_index < history_room;
       if source_in_history {
       } else {
-        let error = InvalidDistance();
+        let error = InflateError::InvalidDistance();
         return Err<unit, InflateError>(error: error);
       }
       let byte = deref(out)[source_index];
@@ -108,7 +108,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
   let count_slots_fit = count_slots <= 16_u64;
   if count_slots_fit {
   } else {
-    let error = InvalidHuffmanTree();
+    let error = InflateError::InvalidHuffmanTree();
     return Err<HuffmanTable, InflateError>(error: error);
   }
   let counts = slots_new::<u64, 16>();
@@ -138,7 +138,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
     let length = cvt::<u8, u32>(length_byte);
     let too_long = length > max_bits;
     if too_long {
-      let error = InvalidHuffmanTree();
+      let error = InflateError::InvalidHuffmanTree();
       return Err<HuffmanTable, InflateError>(error: error);
     }
     let present = length > 0_u32;
@@ -162,7 +162,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
       let count = counts[count_index];
       let oversubscribed = count > left;
       if oversubscribed {
-        let error = InvalidHuffmanTree();
+        let error = InflateError::InvalidHuffmanTree();
         return Err<HuffmanTable, InflateError>(error: error);
       }
       set left = left -wrap count;
@@ -180,7 +180,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
     let permitted_incomplete = bor(permitted_one_bit, permitted_empty);
     if permitted_incomplete {
     } else {
-      let error = InvalidHuffmanTree();
+      let error = InflateError::InvalidHuffmanTree();
       return Err<HuffmanTable, InflateError>(error: error);
     }
   }
@@ -218,7 +218,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
       let order_slot_ok = count_index < order_offsets_room;
       if order_slot_ok {
       } else {
-        let error = InvalidHuffmanTree();
+        let error = InflateError::InvalidHuffmanTree();
         return Err<HuffmanTable, InflateError>(error: error);
       }
       let destination = offsets[count_index];
@@ -226,7 +226,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
       let destination_ok = destination < order_symbols_room;
       if destination_ok {
       } else {
-        let error = InvalidHuffmanTree();
+        let error = InflateError::InvalidHuffmanTree();
         return Err<HuffmanTable, InflateError>(error: error);
       }
       set symbols[destination] = symbol;
@@ -240,7 +240,7 @@ fn build_huffman_table(lengths: &[u8], symbol_count: u64, max_bits: u32, allow_s
 fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable) -> result: Result<u64, InflateError> reads(input), reads(table.counts), reads(table.symbols), reads(table.max_bits), reads(table.used_symbols), writes(state.input_offset), writes(state.hold), writes(state.bits) {
   let empty = deref(table).used_symbols == 0_u64;
   if empty {
-    let error = InvalidHuffmanCode();
+    let error = InflateError::InvalidHuffmanCode();
     return Err<u64, InflateError>(error: error);
   }
   let code = 0_u64;
@@ -264,7 +264,7 @@ fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable)
     let table_count_ok = count_index < table_counts_room;
     if table_count_ok {
     } else {
-      let error = InvalidHuffmanTree();
+      let error = InflateError::InvalidHuffmanTree();
       return Err<u64, InflateError>(error: error);
     }
     let count = deref(table).counts[count_index];
@@ -279,7 +279,7 @@ fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable)
       let ordered_ok = ordered < table_symbols_room;
       if ordered_ok {
       } else {
-        let error = InvalidHuffmanTree();
+        let error = InflateError::InvalidHuffmanTree();
         return Err<u64, InflateError>(error: error);
       }
       set decoded = deref(table).symbols[ordered];
@@ -290,7 +290,7 @@ fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable)
     set code = ishl.wrap(code, 1_u32);
     let last_length = bit_length == deref(table).max_bits;
     if last_length {
-      let error = InvalidHuffmanCode();
+      let error = InflateError::InvalidHuffmanCode();
       return Err<u64, InflateError>(error: error);
     }
     set bit_length = bit_length +wrap 1_u32;

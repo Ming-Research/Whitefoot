@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -11,8 +14,8 @@ nocopy enum Wrap {
 
 fn main() -> status: ExitStatus pure {
   doc "OWN-1/OWN-13: matching an own composite moves the whole binding (partial move kills it); a second match of the moved binding is a use of a dead binding.";
-  let pos_atom_0001 = Pos();
-  let w = W(inner: pos_atom_0001);
+  let pos_atom_0001 = Sign::Pos();
+  let w = Wrap::W(inner: pos_atom_0001);
   match w {
     W(inner: s) => {
     }

@@ -26,8 +26,8 @@ fn absent() -> result: Option<Pair> pure {
   return None<Pair>();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -62,7 +62,7 @@ fn main() -> status: ExitStatus pure {
 /// variant-dependent, and one drop on the return edge.
 #[test]
 fn option_of_a_resource_bearing_payload_uses_variant_dependent_cleanup() {
-    let source = b"fn abandon(value: Option<Box<u64>>) -> result: unit pure {\n  return unit;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n";
+    let source = b"fn abandon(value: Option<Box<u64>>) -> result: unit pure {\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("Option<Box<u64>> must check: {outcome:?}");

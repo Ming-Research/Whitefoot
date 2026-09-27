@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn integer_identity<T: Int>(value: T) -> result: T pure {
   return cvt::<T, T>(value);
 }

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn opaque_value(n: i32) -> function_result: i32 pure {
   return n;
 }

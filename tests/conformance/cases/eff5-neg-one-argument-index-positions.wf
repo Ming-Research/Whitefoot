@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
+  requires i < 4_u64;
+  requires j < 4_u64;
+} {
+  doc "EFF-5: one argument supplies both entries, but whether values[i] and values[j] overlap depends on the index values, so the call compares them.";
+  let observed = deref(values)[i];
+  set deref(values)[j] = observed;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call passes one index for both positions, so the two substituted paths are the same element.";
+  let values = array_filled::<u8, 4>(value: 1_u8);
+  copy_within(values: &values, i: 1_u64, j: 1_u64);
+  return exit_status(code: 0_u8);
+}

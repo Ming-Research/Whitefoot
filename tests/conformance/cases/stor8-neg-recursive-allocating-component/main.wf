@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn ping(n: u8) -> result: u8 pure {
+  doc "The allocation sits inside a recursive component: `ping` and `pong` each reach the other, and the component itself introduces the requirement at the member that allocates.";
+  let cell = box_new::<u8>(value: n);
+  let done = n == 0_u8;
+  if done {
+    return 0_u8;
+  }
+  let next = n - 1_u8;
+  let back = pong(n: next);
+  return back;
+}
+
+fn pong(n: u8) -> result: u8 pure {
+  let back = ping(n: n);
+  return back;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = ping(n: 3_u8);
+  return exit_status(code: code);
+}

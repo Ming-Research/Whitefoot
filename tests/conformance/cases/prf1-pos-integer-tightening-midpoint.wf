@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn probe(table: &Slots<u8, 4>, lo: u64, hi: u64) -> found: u8 reads(table) contract {
   define spare = deref(table).len;
   requires lo < hi;

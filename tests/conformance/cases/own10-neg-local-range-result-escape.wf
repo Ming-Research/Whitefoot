@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn escape() -> result: u64 pure {
   doc "A range reference over local storage is a reference like any other and dies with the binding that formed it, so returning it is refused.";
   let values = slots_new::<u64, 4>();

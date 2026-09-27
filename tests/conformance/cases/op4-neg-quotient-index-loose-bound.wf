@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bucket_of<const n_values: u64>(values: Slots<u8, n_values>, n: u64) -> found: u8 pure contract {
   define spare = values.len;
   requires spare == 10_u64;

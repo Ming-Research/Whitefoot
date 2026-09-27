@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The other arm of the same branch. On the arm on which no window operation ran, the run the writer holds is exactly the run it held before the branch: nothing was published there and the measures already established stand, so the placement that follows discharges its own free-slots requirement from them.";
   let run = slots_new::<u8, 4>();

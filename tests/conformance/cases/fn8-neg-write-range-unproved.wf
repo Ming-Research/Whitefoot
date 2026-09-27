@@ -1,3 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+alias write_once = std::io::write_once;
+
 fn publish(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) {
   doc "The ordinary write_once signature requires ordered endpoints within the source length. This wrapper declares neither relation, so FN-8 rejects at the inner call before lowering; no host transfer is needed to see it.";
   match write_once(factory: factory, output: output, source: source, start: start, end: end) {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -6,7 +9,7 @@ enum Sign {
 
 fn main() -> status: ExitStatus pure {
   doc "OWN-13 owned temporary: a non-place scrutinee construction is moved into the match. The two unexpected arms return distinct nonzero statuses, while the Pos arm reaches the final zero status.";
-  match Pos() {
+  match Sign::Pos() {
     Neg() => {
       return exit_status(code: 1_u8);
     }

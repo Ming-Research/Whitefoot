@@ -1,0 +1,11 @@
+fn magnitude(delta: i32) -> result: u32 pure contract {
+  requires delta != -2147483648_i32;
+} {
+  let size = iabs(delta);
+  let wide = cvt::<i32, u32>(size);
+  return wide;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

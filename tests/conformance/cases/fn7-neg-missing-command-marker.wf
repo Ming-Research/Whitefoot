@@ -1,3 +1,5 @@
+alias ExitStatus = std::process::ExitStatus;
+
 fn main() -> status: unit pure {
   doc "FN-7: program start uses an ordinary function; neither a marker nor ExitStatus is a source-acceptance requirement.";
   return unit;

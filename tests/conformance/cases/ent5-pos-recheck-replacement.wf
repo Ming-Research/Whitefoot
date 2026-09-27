@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn guarded_local(x: u8, w: u8) -> result: u8 pure contract {
   requires x <= 5_u8;
 } {

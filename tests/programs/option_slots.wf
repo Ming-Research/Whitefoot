@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum Cell<T> {
   EmptyCell();
   Filled(value: T);
@@ -18,7 +21,7 @@ fn vacant<T: drop, const n: u64>() -> result: Slots<Cell<T>, n> pure contract {
     at in 0_u64..n,
     invariant grown: built.len == at
   ) {
-    let empty = EmptyCell<T>();
+    let empty = Cell<T>::EmptyCell();
     place_back(window: &built, value: move empty);
   }
   return move built;
@@ -38,7 +41,7 @@ fn optvec_push(v: OptVec, x: u32) -> result: OptVec pure {
   } else {
     return move v;
   }
-  let filled = Filled<u32>(value: x);
+  let filled = Cell<u32>::Filled(value: x);
   swap(first: &v.buf[count], second: &filled);
   match filled {
     EmptyCell() => {
@@ -67,7 +70,7 @@ fn optvec_pop(v: OptVec) -> (rest: OptVec, taken: u32) pure {
   } else {
     return move v, 0_u32;
   }
-  let hole = EmptyCell<u32>();
+  let hole = Cell<u32>::EmptyCell();
   swap(first: &v.buf[last], second: &hole);
   set v.fill = last;
   match hole {
@@ -103,10 +106,10 @@ fn view_box_entry(stored_entry: &Option<Entry>, same: &Option<Entry>) -> result:
   doc "Two reference arguments may name one place when both only read it: the call site admits read/read overlap [EFF-5].";
   match deref(stored_entry) {
     Some(value: present) => {
-      return Occupied(key: deref(present).key, value: deref(present).payload.inner);
+      return BoxSlotView::Occupied(key: deref(present).key, value: deref(present).payload.inner);
     }
     None() => {
-      return Empty();
+      return BoxSlotView::Empty();
     }
   }
 }

@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "Outside the enum's module the arm binds the published `raw` and covers the private `checksum` with a final `..`.";
+  let reading = pkg::data::read();
+  match reading {
+    Value(raw: value, ..) => {
+      return exit_status(code: value);
+    }
+    Missing() => {
+    }
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,6 @@
+public struct Node {
+  public readonly count: u64;
+  public weight: u64;
+}
+
+public fn make_node(count: u64, weight: u64) -> made: Node pure doc "Builds one Node; a client cannot construct it, because it has a readonly field.";

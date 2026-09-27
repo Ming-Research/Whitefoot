@@ -15,7 +15,35 @@ use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedIntegerOperation, IntegerType};
 use super::with_semantics;
 
-const OVERFLOW_FIX: &str = "when the relation must hold, establish the fixed `.defined` normalization with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise use an available total non-exact row or restructure the arithmetic";
+/// [OP-2] one rejection's residual and disposition, and the fragment of its
+/// repair that shows which routes the goal's disposition and terms selected
+/// [DIAG-1]. The complete sentences are pinned with repaired programs in
+/// `driver::pinned_repairs`.
+fn assert_integer_domain(
+    kind: &SemanticIssueKind,
+    expected_residual: &str,
+    expected_disposition: StaticObligationDisposition,
+    route: &str,
+) {
+    let SemanticIssueKind::UndischargedIntegerDomainObligation {
+        residual,
+        disposition,
+        mechanical_fix,
+    } = kind
+    else {
+        panic!("expected an OP-2 domain rejection, got {kind:?}");
+    };
+    assert_eq!(
+        (residual.as_str(), *disposition),
+        (expected_residual, expected_disposition)
+    );
+    assert!(mechanical_fix.contains(route), "{mechanical_fix}");
+}
+
+/// The repair fragment for a goal over an element read, which a condition
+/// naming the same admitted expression establishes [ENT-3] although the
+/// read is no term [ENT-2].
+const ELEMENT_ROUTES: &str = "is not proved here: when facts that reach the operation imply it";
 
 fn named<'functions>(
     functions: &'functions [CheckedFunction],
@@ -38,8 +66,8 @@ fn a_verified_requirement_discharges_the_literal_site() {
   return y;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -95,8 +123,8 @@ fn a_guarded_two_value_subtraction_uses_the_l0_affine_bridge() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -122,8 +150,8 @@ fn main() -> status: ExitStatus pure {
   return difference;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(unguarded, |outcome| {
@@ -147,12 +175,12 @@ fn main() -> status: ExitStatus pure {
 /// index obligation uses.
 #[test]
 fn the_counted_binder_increment_discharges_by_transitive_closure() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let n = 10_u64;
   for @steps (i in 0_u64..n) {
     let next = i + 1_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -182,8 +210,8 @@ fn an_unbounded_literal_site_rejects_citing_op2_with_the_folded_residual() {
   return y;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -191,13 +219,11 @@ fn main() -> status: ExitStatus pure {
             panic!("an unbounded literal site must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "x +defined 1_u64".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "x +defined 1_u64",
+            StaticObligationDisposition::Unproved,
+            "add `requires x +defined 1_u64;` to the `contract` of `bump`",
         );
         let SemanticLocation::SourceNode(_, coordinate) = issue.location();
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");
@@ -223,8 +249,8 @@ fn a_dominating_branch_discharges_the_site() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -247,10 +273,10 @@ fn main() -> status: ExitStatus pure {
 /// pure, and the checked program keeps its wrap identity.
 #[test]
 fn a_wrap_site_attaches_no_obligation() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 6_u64;
   let y = x +wrap 1_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -273,11 +299,11 @@ fn a_wrap_site_attaches_no_obligation() {
 /// upper interval and still require proof at the exact site.
 #[test]
 fn exact_local_values_discharge_a_two_variable_sum_but_parameters_remain_bounded() {
-    let exact_locals = br#"fn main() -> status: ExitStatus pure {
+    let exact_locals = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   let c = a + b;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(exact_locals, |outcome| {
@@ -299,8 +325,8 @@ fn exact_local_values_discharge_a_two_variable_sum_but_parameters_remain_bounded
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(unbounded_parameters, |outcome| {
@@ -315,9 +341,9 @@ fn main() -> status: ExitStatus pure {
 /// discharges, while an inevitable overflow is a compile-time rejection.
 #[test]
 fn a_ground_obligation_discharges_in_range_and_rejects_on_inevitable_overflow() {
-    let in_range = br#"fn main() -> status: ExitStatus pure {
+    let in_range = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 254_u8 + 1_u8;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(in_range, |outcome| {
@@ -334,9 +360,9 @@ fn a_ground_obligation_discharges_in_range_and_rejects_on_inevitable_overflow() 
         assert_eq!(overflow.len(), 1, "one exact site, one obligation");
         assert!(overflow[0].discharged, "the ground obligation is true");
     });
-    let overflowing = br#"fn main() -> status: ExitStatus pure {
+    let overflowing = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 255_u8 + 1_u8;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(overflowing, |outcome| {
@@ -344,13 +370,11 @@ fn a_ground_obligation_discharges_in_range_and_rejects_on_inevitable_overflow() 
             panic!("an inevitable constant overflow must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "255_u8 +defined 1_u8".to_owned(),
-                disposition: StaticObligationDisposition::Refuted,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "255_u8 +defined 1_u8",
+            StaticObligationDisposition::Refuted,
+            "make `255_u8 +defined 1_u8` false",
         );
     });
 }
@@ -363,9 +387,9 @@ fn a_ground_obligation_discharges_in_range_and_rejects_on_inevitable_overflow() 
 fn a_subscripted_class_operand_is_underivable_and_rejects() {
     let source = br#"const a: Array<u8, 2> =[7_u8, 7_u8];
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let y = a[0_u64] + 1_u8;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -373,13 +397,11 @@ fn main() -> status: ExitStatus pure {
             panic!("a non-term class operand must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "a[0_u64] +defined 1_u8".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "a[0_u64] +defined 1_u8",
+            StaticObligationDisposition::Unproved,
+            ELEMENT_ROUTES,
         );
     });
 }
@@ -388,11 +410,11 @@ fn main() -> status: ExitStatus pure {
 /// that ordinary field step. The indexed operand remains no term.
 #[test]
 fn an_owning_box_index_renders_its_content_step_as_a_dereference() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u8, 2>(value: 7_u8);
   let boxed = box_new::<Array<u8, 2>>(value: values);
   let result = boxed.inner[0_u64] + 1_u8;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -400,13 +422,11 @@ fn an_owning_box_index_renders_its_content_step_as_a_dereference() {
             panic!("the indexed operand remains no term: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "boxed.inner[0_u64] +defined 1_u8".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "boxed.inner[0_u64] +defined 1_u8",
+            StaticObligationDisposition::Unproved,
+            ELEMENT_ROUTES,
         );
     });
 }
@@ -427,8 +447,8 @@ fn a_reference_parameter_index_renders_under_its_deref_step() {
   return deref(values)[0_u64] + 1_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -436,13 +456,11 @@ fn main() -> status: ExitStatus pure {
             panic!("the indexed operand remains no term: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "deref(values)[0_u64] +defined 1_u8".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "deref(values)[0_u64] +defined 1_u8",
+            StaticObligationDisposition::Unproved,
+            ELEMENT_ROUTES,
         );
     });
 }
@@ -462,8 +480,8 @@ fn effect_mismatch_precedes_static_integer_domain_rejection() {
   return y;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(extra_effect_row, |outcome| {
@@ -482,8 +500,8 @@ fn main() -> status: ExitStatus pure {
   return y;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(pure_row, |outcome| {
@@ -491,18 +509,16 @@ fn main() -> status: ExitStatus pure {
             panic!("the unbounded class site must reject on OP-2: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "x +defined 1_u64".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "x +defined 1_u64",
+            StaticObligationDisposition::Unproved,
+            "add `requires x +defined 1_u64;` to the `contract` of `bump`",
         );
     });
-    let ground = br#"fn main() -> status: ExitStatus pure {
+    let ground = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 255_u8 + 1_u8;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(ground, |outcome| {
@@ -532,8 +548,8 @@ fn a_defined_guard_reuses_the_complete_identity_of_an_exact_let_operand() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -708,9 +724,9 @@ fn a_body_domain_failure_precedes_the_backedge_it_breaks() {
   return sum;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = accumulate(step: 1_u32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -722,13 +738,11 @@ fn main() -> status: ExitStatus pure {
             SemanticRule::Op2,
             "the body obligation that demoted the value is the reported rejection",
         );
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "step +defined step".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: OVERFLOW_FIX,
-            },
+            "step +defined step",
+            StaticObligationDisposition::Unproved,
+            "add `requires step +defined step;` to the `contract` of `accumulate`",
         );
         let SemanticLocation::SourceNode(_, coordinate) = issue.location();
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");

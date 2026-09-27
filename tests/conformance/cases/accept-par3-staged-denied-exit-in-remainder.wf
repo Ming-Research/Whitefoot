@@ -1,3 +1,13 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias open_file = std::fs::open_file;
+
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   match deref(error) {
     NotFound(code: native_code, origin: native_origin) => {
@@ -126,7 +136,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure {
-  doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
+  doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, files: &files);
   close_directory(factory: &files, directory: move cwd);

@@ -173,7 +173,7 @@ fn every_complete_source_is_reconstructible_byte_for_byte() {
             assert!(span.end() > span.start());
             assert!(span.end().value() <= file.byte_len());
             cursor = span.end().value();
-            rebuilt.extend_from_slice(span.bytes());
+            rebuilt.extend_from_slice(source.span_bytes(span).expect("a lexeme of this bundle"));
         }
         assert_eq!(cursor, file.byte_len());
         assert_eq!(rebuilt, file.bytes());
@@ -183,7 +183,7 @@ fn every_complete_source_is_reconstructible_byte_for_byte() {
 #[test]
 fn repeated_scans_are_deterministic() {
     let source = bundle(&[("repeat.wf", b"@label p.field iadd.checked -1_i64\n")]);
-    let render = |lexed: &crate::LexedBundle<'_>| {
+    let render = |lexed: &crate::LexedBundle| {
         lexed
             .lexemes()
             .iter()
@@ -239,7 +239,13 @@ fn every_single_top_level_byte_has_a_controlled_lossless_outcome() {
                 let rebuilt: Vec<_> = lexed
                     .lexemes()
                     .iter()
-                    .flat_map(|lexeme| lexeme.span().bytes().iter().copied())
+                    .flat_map(|lexeme| {
+                        source
+                            .span_bytes(lexeme.span())
+                            .expect("a lexeme of this bundle")
+                            .iter()
+                            .copied()
+                    })
                     .collect();
                 assert_eq!(rebuilt, bytes, "byte=0x{byte:02x}");
             }
@@ -262,7 +268,13 @@ fn every_single_string_interior_byte_has_a_controlled_outcome() {
                 let rebuilt: Vec<_> = lexed
                     .lexemes()
                     .iter()
-                    .flat_map(|lexeme| lexeme.span().bytes().iter().copied())
+                    .flat_map(|lexeme| {
+                        source
+                            .span_bytes(lexeme.span())
+                            .expect("a lexeme of this bundle")
+                            .iter()
+                            .copied()
+                    })
                     .collect();
                 assert_eq!(rebuilt, bytes, "byte=0x{byte:02x}");
             }
@@ -287,7 +299,12 @@ fn each_closed_string_escape_is_a_complete_exact_partition() {
             lexed.lexemes(),
             [Lexeme::Token(token)] if token.kind() == TokenKind::StringForm
         ));
-        assert_eq!(lexed.lexemes()[0].span().bytes(), bytes);
+        assert_eq!(
+            source
+                .span_bytes(lexed.lexemes()[0].span())
+                .expect("a lexeme of this bundle"),
+            bytes
+        );
     }
 }
 
@@ -317,7 +334,12 @@ fn numeric_candidates_are_never_converted_or_canonicalized() {
             lexed.lexemes(),
             [Lexeme::Token(token)] if token.kind() == TokenKind::NumberForm
         ));
-        assert_eq!(lexed.lexemes()[0].span().bytes(), bytes);
+        assert_eq!(
+            source
+                .span_bytes(lexed.lexemes()[0].span())
+                .expect("a lexeme of this bundle"),
+            bytes
+        );
     }
 }
 

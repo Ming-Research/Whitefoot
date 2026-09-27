@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A PRE-1 record's published relations may narrow what its caller derives and may never make everything derivable. The construction below publishes the new run's own measures and nothing about the table beside it, so the table read is judged against the table's own length and is refused.";
   let table = slots_new::<u8, 4>();

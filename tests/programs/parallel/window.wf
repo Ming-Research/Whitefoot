@@ -1,15 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias write_once = std::io::write_once;
+
 enum Node {
   Leaf(w: u64);
   Branch(left: Box<Node>, right: Box<Node>, w: u64);
 }
 
 fn leaf(w: u64) -> result: Box<Node> pure {
-  let node = Leaf(w: w);
+  let node = Node::Leaf(w: w);
   return box_new::<Node>(value: move node);
 }
 
 fn branch(left: Box<Node>, right: Box<Node>) -> result: Box<Node> pure {
-  let node = Branch(left: move left, right: move right, w: 0_u64);
+  let node = Node::Branch(left: move left, right: move right, w: 0_u64);
   return box_new::<Node>(value: move node);
 }
 
@@ -58,14 +64,8 @@ fn fold(node: &Box<Node>) -> result: u64 writes(node) {
 
 fn low_byte(v: u64) -> result: u8 pure {
   let low = iand(v, 255_u64);
-  match cvt.checked::<u64, u8>(low) {
-    Ok(value: byte) => {
-      return byte;
-    }
-    Err(error: problem) => {
-      return 0_u8;
-    }
-  }
+  let byte = cvt::<u64, u8>(low);
+  return byte;
 }
 
 fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destination) {

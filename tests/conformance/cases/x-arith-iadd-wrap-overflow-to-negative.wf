@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "+wrap wraps two's-complement on overflow [OP-1]; ordinary control confirms that i32::MAX + 1 produces a negative value and maps a mismatch to a nonzero status.";
   let hi = 2147483647_i32;

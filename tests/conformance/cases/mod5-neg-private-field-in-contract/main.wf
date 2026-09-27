@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Pair = pkg::data::Pair;
+alias exit_status = std::process::exit_status;
+
+fn check(pair: Pair) -> result: u8 pure contract {
+  requires pair.right > 0_u8;
+} {
+  return pair.left;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

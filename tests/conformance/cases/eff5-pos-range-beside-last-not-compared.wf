@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_then_take(window: &Slots<u64, 8>, lo: u64, hi: u64) -> result: u64 reads(window[lo..hi]), writes(window.last), writes(window.len) contract {
+  requires lo <= hi;
+  requires hi <= deref(window).len;
+  requires 0_u64 < deref(window).len;
+} {
+  doc "Returns the length of the run window[lo..hi] plus the last element, which it takes out of the window. EFF-5, WIN-2: a range position overlaps window.last whatever its endpoints, as an index does, so a call does not compare the two entries and this body is checked against both.";
+  let run = &deref(window)[lo..hi];
+  let count = deref(run).len;
+  let last = take_back(window: window);
+  let total = count +wrap last;
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call passes the run 0..2, which holds the last slot, and one argument supplies both entries, so the call compares nothing. The program observes the run length plus the taken element.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  let total = count_then_take(window: &window, lo: 0_u64, hi: 2_u64);
+  if total == 4_u64 {
+    if window.len == 1_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

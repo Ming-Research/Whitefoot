@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn narrow(x: i32) -> return_value: i32 pure {
   doc "cvt.checked returns Result<Dst, NarrowError> for every numeric pair [OP-6]: i32->i8 yields Err(NarrowError()) when not exactly representable.";
   match cvt.checked::<i32, i8>(x) {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "GRAM-6: v0.25 has fixed infix operators, Bool if, and one counted for form, but no general precedence, while form, or iterator protocol.";
   let n = 4_i32;

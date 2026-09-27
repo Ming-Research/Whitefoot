@@ -1,0 +1,5 @@
+fn make() -> wrapper: Wrapper pure {
+  doc "The private support type is declared in the interface, which the implementation reuses.";
+  let hidden = Hidden(inner: 1_u8);
+  return Wrapper(value: 7_u8, secret: hidden);
+}

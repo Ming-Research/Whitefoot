@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inner(destination: &[u8], value: u8) -> written: u64 writes(destination) contract {
   requires 2_u64 <= deref(destination).len;
   ensures written == 2_u64;

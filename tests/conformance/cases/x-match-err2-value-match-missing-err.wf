@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "ERR-2 over a value-match: a `let`-initializer match on a prelude Result [PRE-1] that omits the Err arm is non-exhaustive; rejected citing ERR-2 before any give-completeness check.";
   let v = match 40_i32 +checked 2_i32 {

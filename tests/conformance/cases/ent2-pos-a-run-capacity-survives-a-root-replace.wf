@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn filled_four(value: u32) -> result: Slots<u32, 4> pure contract {
   ensures result.len >= 4_u64;
   ensures result.cap <= result.len;

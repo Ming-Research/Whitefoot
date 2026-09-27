@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn iseven(n: i32) -> function_result: i32 pure {
   doc "Mutually recursive with isodd; returns 1 when n is even [FN-1, FN-6]. The guard is `<=` so the else arm establishes n > 0, discharging the OP-2 overflow obligation on `n - 1_i32`; the operation needs no runtime fallback, so the row is `pure`.";
   if n <= 0_i32 {

@@ -84,7 +84,7 @@ fn forbidden_forms(source: &[u8]) -> Option<Forbidden> {
     else {
         return None;
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, limits.parser) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, limits.parser) else {
         return None;
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
@@ -118,7 +118,7 @@ fn forbidden_forms(source: &[u8]) -> Option<Forbidden> {
 ///
 /// `arm := TYPEID "(" fieldbind_list? ")" "=>" "{" stmt* "}"`, so the arm's
 /// first terminal is the constructor name.
-fn bool_arms(finalized: &FinalizedBundle<'_, '_, '_>, node: NodeId) -> usize {
+fn bool_arms(finalized: &FinalizedBundle, node: NodeId) -> usize {
     let Some(children) = finalized.topology.node_children(node) else {
         return 0;
     };
@@ -141,17 +141,14 @@ fn bool_arms(finalized: &FinalizedBundle<'_, '_, '_>, node: NodeId) -> usize {
 }
 
 /// The source bytes of one terminal, addressed by its ordinal.
-fn terminal_bytes<'source>(
-    finalized: &FinalizedBundle<'_, '_, 'source>,
-    ordinal: u64,
-) -> Option<&'source [u8]> {
+fn terminal_bytes(finalized: &FinalizedBundle, ordinal: u64) -> Option<&[u8]> {
     let index = usize::try_from(ordinal).ok()?;
     let record = finalized.topology.terminals.get(index)?;
     let element = finalized.parsed.tree.elements.get(record.element_index)?;
     let DerivationElement::Terminal { token, .. } = *element else {
         return None;
     };
-    Some(token.span().bytes())
+    finalized.classified_bundle().token_bytes(token)
 }
 
 /// Whether this `if_stmt` or `value_if` owns a braced `else` whose whole
@@ -231,7 +228,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     assert_eq!(
         forbidden_forms(
             // This control *is* the form under detection.
-            b"fn main() -> status: ExitStatus pure {\n  let b = True();\n  match b {\n    True() => {\n    }\n    False() => {\n    }\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let b = True();\n  match b {\n    True() => {\n    }\n    False() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden {
             bool_match_arms: 2,
@@ -240,7 +237,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     );
     assert_eq!(
         forbidden_forms(
-            b"enum Colour {\n  Red();\n  Blue();\n}\n\nfn main() -> status: ExitStatus pure {\n  let c = Red();\n  match c {\n    Red() => {\n    }\n    Blue() => {\n    }\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"enum Colour {\n  Red();\n  Blue();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let c = Colour::Red();\n  match c {\n    Red() => {\n    }\n    Blue() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden::default())
     );
@@ -248,7 +245,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     // The unflattened `else`, and the `else if` chain that replaces it.
     assert_eq!(
         forbidden_forms(
-            b"fn main() -> status: ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else {\n    if b {\n    }\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else {\n    if b {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden {
             bool_match_arms: 0,
@@ -257,7 +254,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     );
     assert_eq!(
         forbidden_forms(
-            b"fn main() -> status: ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else if b {\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else if b {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden::default())
     );
@@ -266,7 +263,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     // another statement cannot be spelled `else if` and is not this defect.
     assert_eq!(
         forbidden_forms(
-            b"fn main() -> status: ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else {\n    if b {\n    }\n    return exit_status(code: 0_u8);\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let a = True();\n  let b = True();\n  if a {\n  } else {\n    if b {\n    }\n    return std::process::exit_status(code: 0_u8);\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden::default())
     );
@@ -274,7 +271,7 @@ fn the_detector_sees_both_forbidden_forms_and_neither_legal_neighbour() {
     // An empty `else` is a different [GRAM-6] clause and not this one.
     assert_eq!(
         forbidden_forms(
-            b"fn main() -> status: ExitStatus pure {\n  let a = True();\n  if a {\n  } else {\n  }\n  return exit_status(code: 0_u8);\n}\n"
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let a = True();\n  if a {\n  } else {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n"
         ),
         Some(Forbidden::default())
     );

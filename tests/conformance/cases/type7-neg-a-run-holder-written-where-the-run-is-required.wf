@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn width_of(table: Slots<u32, 4>) -> value: u64 pure {
   doc "Takes the run itself, by value.";
   let seen = table.len;

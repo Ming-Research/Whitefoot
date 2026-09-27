@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn copy_bytes(out: &[u8], source: &[u8]) -> function_result: u64 reads(source), writes(out) contract {
   define out_length = deref(out).len;
   define source_length = deref(source).len;

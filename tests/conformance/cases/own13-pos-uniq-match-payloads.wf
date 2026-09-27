@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Counter {
   value: i32;
 }
@@ -9,7 +12,7 @@ enum Packet {
 fn main() -> return_value: ExitStatus pure {
   doc "A payload binder derived from matching through a reference names the scrutinee path extended by its payload step, so it writes that storage while the enum stays live and a second match reads the result back.";
   let counter = Counter(value: 4_i32);
-  let packet = Data(item: counter);
+  let packet = Packet::Data(item: counter);
   let holder = &packet;
   match deref(holder) {
     Data(item: payload) => {

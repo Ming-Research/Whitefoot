@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Slot {
   Vacant();
   Deleted();
@@ -26,16 +29,16 @@ enum SearchStep {
 fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
   match deref(slot) {
     Vacant() => {
-      return Stop();
+      return Probe::Stop();
     }
     Deleted() => {
-      return Skip();
+      return Probe::Skip();
     }
     Occupied(key: present_key, payload: present_payload) => {
       if deref(present_key) == key {
-        return Match();
+        return Probe::Match();
       }
-      return Miss();
+      return Probe::Miss();
     }
   }
 }
@@ -43,16 +46,16 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
 fn search_step(slot: &Slot, key: u64) -> result: SearchStep reads(slot) {
   match deref(slot) {
     Vacant() => {
-      return SearchStop();
+      return SearchStep::SearchStop();
     }
     Deleted() => {
-      return SearchContinue();
+      return SearchStep::SearchContinue();
     }
     Occupied(key: present_key, payload: present_payload) => {
       if deref(present_key) == key {
-        return Found(value: deref(present_payload).inner);
+        return SearchStep::Found(value: deref(present_payload).inner);
       }
-      return SearchContinue();
+      return SearchStep::SearchContinue();
     }
   }
 }
@@ -60,21 +63,21 @@ fn search_step(slot: &Slot, key: u64) -> result: SearchStep reads(slot) {
 fn empty_slots() -> result: Array<Slot, 8> pure {
   doc "Eight vacant slots enter a constant-capacity window, which is then consumed into the full array the map owns.";
   let slots = slots_new::<Slot, 8>();
-  let empty0 = Vacant();
+  let empty0 = Slot::Vacant();
   place_back(window: &slots, value: move empty0);
-  let empty1 = Vacant();
+  let empty1 = Slot::Vacant();
   place_back(window: &slots, value: move empty1);
-  let empty2 = Vacant();
+  let empty2 = Slot::Vacant();
   place_back(window: &slots, value: move empty2);
-  let empty3 = Vacant();
+  let empty3 = Slot::Vacant();
   place_back(window: &slots, value: move empty3);
-  let empty4 = Vacant();
+  let empty4 = Slot::Vacant();
   place_back(window: &slots, value: move empty4);
-  let empty5 = Vacant();
+  let empty5 = Slot::Vacant();
   place_back(window: &slots, value: move empty5);
-  let empty6 = Vacant();
+  let empty6 = Slot::Vacant();
   place_back(window: &slots, value: move empty6);
-  let empty7 = Vacant();
+  let empty7 = Slot::Vacant();
   place_back(window: &slots, value: move empty7);
   let complete = slots_into_array::<Slot, 8>(values: move slots);
   return move complete;
@@ -90,17 +93,17 @@ fn put(slots: Array<Slot, 8>, key: u64, payload: Box<u64>) -> (updated: Array<Sl
     let action = probe(slot: &slots[index], key: key);
     match action {
       Match() => {
-        let offered = Occupied(key: key, payload: move payload);
+        let offered = Slot::Occupied(key: key, payload: move payload);
         swap(first: &slots[index], second: &offered);
         match move offered {
           Occupied(key: old_key, payload: old_payload) => {
-            return move slots, Replaced(previous: move old_payload);
+            return move slots, PutOutcome::Replaced(previous: move old_payload);
           }
           Vacant() => {
-            return move slots, Inserted();
+            return move slots, PutOutcome::Inserted();
           }
           Deleted() => {
-            return move slots, Inserted();
+            return move slots, PutOutcome::Inserted();
           }
         }
       }
@@ -114,17 +117,17 @@ fn put(slots: Array<Slot, 8>, key: u64, payload: Box<u64>) -> (updated: Array<Sl
         if first_deleted < 8_u64 {
           set destination = first_deleted;
         }
-        let offered = Occupied(key: key, payload: move payload);
+        let offered = Slot::Occupied(key: key, payload: move payload);
         swap(first: &slots[destination], second: &offered);
         match move offered {
           Vacant() => {
-            return move slots, Inserted();
+            return move slots, PutOutcome::Inserted();
           }
           Deleted() => {
-            return move slots, Inserted();
+            return move slots, PutOutcome::Inserted();
           }
           Occupied(key: old_key, payload: old_payload) => {
-            return move slots, Replaced(previous: move old_payload);
+            return move slots, PutOutcome::Replaced(previous: move old_payload);
           }
         }
       }
@@ -133,21 +136,21 @@ fn put(slots: Array<Slot, 8>, key: u64, payload: Box<u64>) -> (updated: Array<Sl
     }
   }
   if first_deleted < 8_u64 {
-    let offered = Occupied(key: key, payload: move payload);
+    let offered = Slot::Occupied(key: key, payload: move payload);
     swap(first: &slots[first_deleted], second: &offered);
     match move offered {
       Vacant() => {
-        return move slots, Inserted();
+        return move slots, PutOutcome::Inserted();
       }
       Deleted() => {
-        return move slots, Inserted();
+        return move slots, PutOutcome::Inserted();
       }
       Occupied(key: old_key, payload: old_payload) => {
-        return move slots, Replaced(previous: move old_payload);
+        return move slots, PutOutcome::Replaced(previous: move old_payload);
       }
     }
   }
-  return move slots, Full(offered: move payload);
+  return move slots, PutOutcome::Full(offered: move payload);
 }
 
 fn find(slots: &Array<Slot, 8>, key: u64) -> result: Option<u64> reads(slots) {
@@ -185,7 +188,7 @@ fn remove(slots: Array<Slot, 8>, key: u64) -> (updated: Array<Slot, 8>, removed:
       Miss() => {
       }
       Match() => {
-        let deleted = Deleted();
+        let deleted = Slot::Deleted();
         swap(first: &slots[index], second: &deleted);
         match move deleted {
           Vacant() => {

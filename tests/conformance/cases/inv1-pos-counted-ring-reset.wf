@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A counted loop carries a strict cursor header, writes through it, and either increments under the stronger guard or resets to zero. The two reaching images both preserve the header, and an element write kills no measure of the window it is inside.";
   let values = array_filled::<u32, 4>(value: 0_u32);

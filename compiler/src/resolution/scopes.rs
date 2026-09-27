@@ -8,6 +8,12 @@ pub(crate) struct ScopeBuild {
     node_scopes: Vec<Option<ScopeId>>,
     declaration_scopes: Vec<Option<ScopeId>>,
     paths: Vec<Option<NodePath>>,
+    /// One declaration-inventory scope per registered module [MOD-3].
+    module_scopes: Vec<ScopeId>,
+    /// Each writer source's file scope, holding its alias header [MOD-4];
+    /// `None` for a PRE-1 record.
+    file_scopes: Vec<Option<ScopeId>>,
+    prelude_present: bool,
 }
 
 impl ScopeBuild {
@@ -20,23 +26,38 @@ impl ScopeBuild {
             node_scopes: vec![None; topology.nodes.len()],
             declaration_scopes: vec![None; topology.nodes.len()],
             paths: vec![None; topology.nodes.len()],
+            module_scopes: Vec::new(),
+            file_scopes: Vec::new(),
+            prelude_present: sources.includes_prelude(),
         };
         let root_path = NodePath {
             components: Vec::new(),
         };
-        let supplied = build.push_scope(None, ScopeKind::CompilationUnit, root_path.clone())?;
         // PRE-1 is the fixed outer environment that writer declarations
         // extend. Its signature-local names cannot see later writer names.
-        let unit = if sources.includes_prelude() {
-            build.push_scope(
-                Some(supplied),
-                ScopeKind::CompilationUnit,
-                root_path.clone(),
-            )?
-        } else {
-            supplied
-        };
-        let mut tasks = vec![(topology.root, unit, root_path)];
+        let supplied = build.push_scope(None, ScopeKind::CompilationUnit, root_path.clone())?;
+        // [MOD-3] each registered module owns one declaration inventory over
+        // the PRE-1 environment; a source bundle has its one synthetic root
+        // module [MOD-9]. [MOD-4] each writer source opens a file scope over
+        // its module for its alias header, so an alias is visible in that
+        // source alone while module declarations are visible in all of them.
+        for _ in sources.modules() {
+            let module = build.push_scope(Some(supplied), ScopeKind::Module, root_path.clone())?;
+            build.module_scopes.push(module);
+        }
+        for (_, file) in sources.iter() {
+            if file.prelude().is_some() {
+                build.file_scopes.push(None);
+                continue;
+            }
+            let module = *build
+                .module_scopes
+                .get(file.module().index())
+                .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?;
+            let scope = build.push_scope(Some(module), ScopeKind::File, root_path.clone())?;
+            build.file_scopes.push(Some(scope));
+        }
+        let mut tasks = vec![(topology.root, supplied, root_path)];
         while let Some((node_id, current_scope, path)) = tasks.pop() {
             if build
                 .node_scopes
@@ -62,13 +83,15 @@ impl ScopeBuild {
                         let record = topology
                             .node(*child)
                             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
-                        if let crate::FinalizedExtent::Source { source, .. } = record.extent
-                            && sources
-                                .file(source)
-                                .is_some_and(|file| file.prelude().is_some())
+                        let crate::FinalizedExtent::Source { source, .. } = record.extent else {
+                            return Err(ResolutionCompilerFailure::InvalidCanonicalTree);
+                        };
+                        child_scopes[index] = match build.file_scopes.get(source.ordinal() as usize)
                         {
-                            child_scopes[index] = supplied;
-                        }
+                            Some(Some(file)) => *file,
+                            Some(None) => supplied,
+                            None => return Err(ResolutionCompilerFailure::InvalidScopeTree),
+                        };
                     }
                 }
                 Production::StructDecl
@@ -286,22 +309,29 @@ impl ScopeBuild {
             .ok_or(ResolutionCompilerFailure::InvalidScopeTree)
     }
 
+    /// Whether a scope holds top-level declarations: the PRE-1 environment,
+    /// a module inventory, or a file's alias header.
     pub(crate) fn is_unit_scope(&self, scope: ScopeId) -> bool {
-        self.records
-            .get(scope.index())
-            .is_some_and(|record| record.kind == ScopeKind::CompilationUnit)
+        self.records.get(scope.index()).is_some_and(|record| {
+            matches!(
+                record.kind,
+                ScopeKind::CompilationUnit | ScopeKind::Module | ScopeKind::File
+            )
+        })
     }
 
-    /// The ordinary outer environment supplied by PRE-1. Without supplied
-    /// declarations the writer unit is the root and has no unit child.
+    /// The ordinary outer environment supplied by PRE-1, when the bundle
+    /// carries the prelude records.
     pub(crate) fn is_prelude_scope(&self, scope: ScopeId) -> bool {
-        self.records.get(scope.index()).is_some_and(|record| {
-            record.kind == ScopeKind::CompilationUnit
-                && record.parent().is_none()
-                && self.records.iter().any(|child| {
-                    child.kind == ScopeKind::CompilationUnit && child.parent() == Some(scope)
-                })
-        })
+        self.prelude_present
+            && self.records.get(scope.index()).is_some_and(|record| {
+                record.kind == ScopeKind::CompilationUnit && record.parent().is_none()
+            })
+    }
+
+    /// The declaration-inventory scope of one module [MOD-3].
+    pub(crate) fn module_scope(&self, module: crate::ModuleId) -> Option<ScopeId> {
+        self.module_scopes.get(module.index()).copied()
     }
 
     pub(crate) fn declaration_scope(
@@ -312,6 +342,15 @@ impl ScopeBuild {
             .get(node.index())
             .and_then(|scope| *scope)
             .ok_or(ResolutionCompilerFailure::InvalidScopeTree)
+    }
+
+    /// Each node's index by its path, the inverse of [`Self::path`].
+    pub(crate) fn nodes_by_path(&self) -> std::collections::HashMap<&NodePath, usize> {
+        self.paths
+            .iter()
+            .enumerate()
+            .filter_map(|(node, path)| path.as_ref().map(|path| (path, node)))
+            .collect()
     }
 
     pub(crate) fn path(&self, node: NodeId) -> Result<&NodePath, ResolutionCompilerFailure> {

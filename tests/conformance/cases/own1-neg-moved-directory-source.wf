@@ -1,3 +1,10 @@
+alias DirectorySource = std::fs::DirectorySource;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias close_directory_source = std::fs::close_directory_source;
+alias directory_next = std::fs::directory_next;
+alias exit_status = std::process::exit_status;
+
 fn moved(factory: &HandleFactory, list: DirectorySource, destination: &[u8]) -> result: unit writes(factory), writes(destination) {
   doc "Moves an ordinary linear enumeration value and then forms a reference to its dead place.";
   let taken = move list;

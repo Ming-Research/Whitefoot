@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An affine element leaves its slot through take_back, remove_at, or swap, and through nothing else. A bare move out of a window slot is none of those: it would mint a second owner of the stored value and leave the slot holding one it no longer owns.";
   let empty = slots_new::<Box<Slots<u8>>, 2>();

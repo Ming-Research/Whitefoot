@@ -66,7 +66,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         element: IrType,
         index: &'index str,
     ) -> Result<&'index str, BackendFailure> {
-        if crate::backend::target::element_has_zero_stride(self.target, self.program, element)
+        if crate::target::element_has_zero_stride(self.target, self.program, element)
             .map_err(BackendFailure::TargetLayout)?
         {
             Ok("0")
@@ -508,7 +508,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if let Some(destination) = self.storage.destination(slot) {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
-            Ok("%wf.result".to_owned())
+            Ok(RESULT_POINTER.to_owned())
         } else {
             self.entry_slot(FunctionSlot::OwnedValue(slot))
         }

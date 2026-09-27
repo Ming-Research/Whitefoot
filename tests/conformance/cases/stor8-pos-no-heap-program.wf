@@ -1,5 +1,8 @@
 program no_heap;
 
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "STOR-8: a compilation unit carrying the no-heap declaration names no Box and no runtime-capacity shape and calls no allocating prelude row; a constant-capacity shape is frame-resident and needs none.";
   let r = slots_new::<u64, 4>();

@@ -127,6 +127,31 @@ class ManifestValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "orphan case sources"):
                 runner.validate_manifest([self.case()], [], directory, cases)
 
+    def test_module_form_case_directory_is_a_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample").mkdir()
+            (cases / "sample" / "modules.wfg").write_text("pkg: [];\n")
+            (cases / "sample" / "module.wfm").write_text("")
+
+            runner.validate_manifest([self.case()], [], directory, cases)
+            self.assertEqual(
+                sorted(runner.case_sources("sample", cases)),
+                ["module.wfm", "modules.wfg"],
+            )
+
+    def test_orphan_module_form_directory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_text("")
+            (cases / "orphan").mkdir()
+            (cases / "orphan" / "modules.wfg").write_text("pkg: [];\n")
+
+            with self.assertRaisesRegex(ValueError, "orphan case sources"):
+                runner.validate_manifest([self.case()], [], directory, cases)
+
     def test_reject_rule_must_be_declared_by_case(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

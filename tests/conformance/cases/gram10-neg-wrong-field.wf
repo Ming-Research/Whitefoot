@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "GRAM-10: a misspelled binder field name is a hard error citing GRAM-10.";
   let a = 40_i32;

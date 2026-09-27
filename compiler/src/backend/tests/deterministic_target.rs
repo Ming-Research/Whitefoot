@@ -20,7 +20,7 @@
 //! - `buffer_new(n, v)` and `slice_of(&b)` retire with [VIEW-1] and the
 //!   v0.59 storage classes. The successors are [OP-13] `array_filled` and
 //!   `box_array_filled` and [REF-4]'s range reference `&x[lo..hi]`, which the
-//!   PRE-1 host rows now take directly as the parameter kind `&[u8]`.
+//!   PRE-2 host functions now take directly as the parameter kind `&[u8]`.
 //! - `let previous = replace outcome = e;` retires with [SET-2]. The
 //!   successor is [SET-1] `set outcome = e;`, whose [WIN-3] disposition
 //!   releases the old affine value.
@@ -43,7 +43,7 @@
 
 use std::fmt::Write as _;
 
-use crate::backend::target::{TargetLayout, TargetLayoutFailure};
+use crate::target::{TargetLayout, TargetLayoutFailure};
 
 // The same programs run against real descriptors and scripted linked bodies.
 // Both are still v0.59 sources owned by `tests/programs/`, not by this module;
@@ -54,14 +54,14 @@ const CHUNKED_READ: &[u8] = include_bytes!("../../../../tests/programs/io_chunke
 const WRITE_PREFIX: &[u8] = include_bytes!("../../../../tests/programs/io_write_prefix.wf");
 
 fn io_error_classes() -> Vec<&'static str> {
-    let declaration = crate::prelude::DECLARATIONS
+    let declaration = crate::library::RECORDS
         .iter()
-        .find_map(|(_, _, source)| {
+        .find_map(|(_, source)| {
             source
                 .split_once("enum IoError {\n")
                 .and_then(|(_, rest)| rest.split_once("\n}").map(|(body, _)| body))
         })
-        .expect("the ordinary library declares IoError");
+        .expect("the standard library declares IoError");
     declaration
         .lines()
         .filter_map(|line| line.trim().split_once('(').map(|(name, _)| name))
@@ -759,27 +759,27 @@ pub(super) fn run_emitted_on_deterministic_host(
 }
 
 /// An ordinary entry that explicitly closes its initial working directory.
-const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
-  let closed = close_directory(factory: &factory, directory: move cwd);
-  return exit_status(code: 0_u8);
+const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
 /// A command that reads its own invocation vector and reaches no host object
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
-    br#"fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
-  let total = args_count(args: &args);
+    br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let total = std::text::args_count(args: &args);
   let narrowed = cvt.checked::<u64, u8>(total);
   match narrowed {
     Ok(value: code) => {
-      return exit_status(code: code);
+      return std::process::exit_status(code: code);
     }
     Err(error: overflowed) => {
-      return exit_status(code: 200_u8);
+      return std::process::exit_status(code: 200_u8);
     }
   }
 }
@@ -789,34 +789,34 @@ const READS_ITS_ARGUMENTS: &[u8] =
 /// while also binding the initial working directory so exactly one resource
 /// in the program releases with a close.
 const WRITES_THEN_RELEASES_BOTH: &[u8] =
-    br#"fn exercise(cwd: &DirectoryRead, out: &OutputStream, entry_factory: &HandleFactory) -> status: ExitStatus writes(out), writes(entry_factory) {
+    br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) {
   let bytes = array_filled::<u8, 3>(value: 65_u8);
   set bytes[1_u64] = 66_u8;
   set bytes[2_u64] = 67_u8;
   let payload = &bytes[0_u64..3_u64];
-  match write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64) {
+  match std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64) {
     Ok(value: written) => {
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {
         Ok(value: code) => {
-          return exit_status(code: code);
+          return std::process::exit_status(code: code);
         }
         Err(error: overflowed) => {
-          return exit_status(code: 200_u8);
+          return std::process::exit_status(code: 200_u8);
         }
       }
     }
     Err(error: problem) => {
-      return exit_status(code: 211_u8);
+      return std::process::exit_status(code: 211_u8);
     }
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
-  close_directory(factory: &entry_factory, directory: move cwd);
+  std::fs::close_directory(factory: &entry_factory, directory: move cwd);
   return move outcome;
 }
 "#;
@@ -828,13 +828,13 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
 fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
     let arms = class_arms(8, named, default);
     format!(
-        r#"fn exercise(factory: &HandleFactory, cwd: &DirectoryRead) -> status: ExitStatus reads(cwd), writes(factory) {{
+        r#"fn exercise(factory: &std::io::HandleFactory, cwd: &std::fs::DirectoryRead) -> status: std::process::ExitStatus reads(cwd), writes(factory) {{
   let name = array_filled::<u8, 1>(value: 65_u8);
   let component = &name[0_u64..1_u64];
-  match open_file(factory: factory, root: cwd, name: component, start: 0_u64, end: 1_u64) {{
+  match std::fs::open_file(factory: factory, root: cwd, name: component, start: 0_u64, end: 1_u64) {{
     Ok(value: file) => {{
-      close_read(factory: factory, file: move file);
-      return exit_status(code: 24_u8);
+      std::fs::close_read(factory: factory, file: move file);
+      return std::process::exit_status(code: 24_u8);
     }}
     Err(error: problem) => {{
       match problem {{
@@ -843,11 +843,11 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
   }}
 }}
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {{
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
-  let outcome = exit_status(code: 0_u8);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let outcome = std::process::exit_status(code: 0_u8);
   set outcome = exercise(factory: &factory, cwd: &cwd);
-  close_directory(factory: &factory, directory: move cwd);
+  std::fs::close_directory(factory: &factory, directory: move cwd);
   return move outcome;
 }}
 "#
@@ -996,9 +996,9 @@ fn an_inspection_error_survives_a_failed_provisional_close() {
     let source = opens_one_file(
         &[(
             "DeviceFailure",
-            "if o == 4_u8 {\n  let narrowed = cvt.checked::<u32, u8>(c);\n  match narrowed {\n    Ok(value: code) => {\n      return exit_status(code: code);\n    }\n    Err(error: overflowed) => {\n      return exit_status(code: 250_u8);\n    }\n  }\n} else {\n  return exit_status(code: 251_u8);\n}",
+            "if o == 4_u8 {\n  let narrowed = cvt.checked::<u32, u8>(c);\n  match narrowed {\n    Ok(value: code) => {\n      return std::process::exit_status(code: code);\n    }\n    Err(error: overflowed) => {\n      return std::process::exit_status(code: 250_u8);\n    }\n  }\n} else {\n  return std::process::exit_status(code: 251_u8);\n}",
         )],
-        "return exit_status(code: 199_u8);",
+        "return std::process::exit_status(code: 199_u8);",
     );
     let run = run_on_deterministic_host(
         source.as_bytes(),
@@ -1041,9 +1041,9 @@ fn a_nonregular_result_survives_a_failed_provisional_close() {
     let source = opens_one_file(
         &[(
             "IsDirectory",
-            "if c == 0_u32 {\n  if o == 0_u8 {\n    return exit_status(code: 23_u8);\n  } else {\n    return exit_status(code: 24_u8);\n  }\n} else {\n  return exit_status(code: 25_u8);\n}",
+            "if c == 0_u32 {\n  if o == 0_u8 {\n    return std::process::exit_status(code: 23_u8);\n  } else {\n    return std::process::exit_status(code: 24_u8);\n  }\n} else {\n  return std::process::exit_status(code: 25_u8);\n}",
         )],
-        "return exit_status(code: 199_u8);",
+        "return std::process::exit_status(code: 199_u8);",
     );
     let run = run_on_deterministic_host(
         source.as_bytes(),
@@ -1082,7 +1082,7 @@ fn substituting_linked_closes_keeps_one_ordinary_call_in_optimized_ir() {
     let optimized = host_optimized_module(&emit_for_deterministic_target(RELEASES_ONE_DIRECTORY));
     // The optimized WF body calls its ordinary declaration; linked internals
     // are neither copied into this module nor selected by the compiler.
-    assert!(optimized.contains("@wf_close_directory("));
+    assert!(optimized.contains("@wf_std.fs.close_directory("));
     assert!(!optimized.contains("@wf_test_close_submit"));
     assert!(!optimized.contains("@malloc"));
 }
@@ -1097,20 +1097,20 @@ fn a_mid_stream_read_failure_stops_the_drain_after_the_bytes_it_delivered() {
     let source = std::str::from_utf8(CHUNKED_READ)
         .expect("source is UTF-8")
         .replace(
-            "return exit_status(code: 202_u8);",
+            "return std::process::exit_status(code: 202_u8);",
             "let first = bytes[0_u64];
                 let second = bytes[1_u64];
                 let third = bytes[2_u64];
                 if first != 97_u8 {
-                  return exit_status(code: 206_u8);
+                  return std::process::exit_status(code: 206_u8);
                 }
                 if second != 98_u8 {
-                  return exit_status(code: 207_u8);
+                  return std::process::exit_status(code: 207_u8);
                 }
                 if third != 99_u8 {
-                  return exit_status(code: 208_u8);
+                  return std::process::exit_status(code: 208_u8);
                 }
-                return exit_status(code: 202_u8);",
+                return std::process::exit_status(code: 202_u8);",
         );
     let run = run_on_deterministic_host(
         source.as_bytes(),
@@ -1244,7 +1244,7 @@ fn a_forced_short_write_reports_the_absolute_endpoint_after_the_host_prefix() {
 
 #[test]
 fn an_affine_output_drop_does_not_call_a_close() {
-    // PRE-1 opaque drop is empty. OutputStream is affine, so dropping it
+    // A host handle's drop is empty [PRE-2]. OutputStream is affine, so dropping it
     // performs no native close or flush. DirectoryRead is explicitly closed.
     let run = run_on_deterministic_host(
         WRITES_THEN_RELEASES_BOTH,
@@ -1288,29 +1288,29 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // The heap is the one [STOR-8] heap and a `Box` is what puts this module
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
-    let source = br#"fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
   let ordinary_source = &bytes.inner[0_u64..1_u64];
-  match write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64) {
+  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64) {
     Ok(value: accepted) => {
     }
     Err(error: problem) => {
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = emit_for_deterministic_target(source);
     // The record loop reaches native write through its EINTR retry helper.
     // Both edges must remain independent of the substituted library call.
-    assert!(module.contains("declare void @wf_write_once(ptr %wf.result,"));
+    assert!(module.contains("declare void @wf_std.io.write_once(ptr %wf.result,"));
     assert!(module.contains("declare i64 @write(i32, ptr, i64)"));
     assert!(module.contains("%written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)"));
     assert!(module.contains("%written = call i64 @write(i32 2, ptr %bytes, i64 %length)"));
     assert!(module.contains("call void @wf_resource_record_abort("));
-    assert!(module.contains("call void @wf_write_once("));
+    assert!(module.contains("call void @wf_std.io.write_once("));
     assert!(!module.contains("@wf_test_write_submit"));
 
     // And the native target still declares exactly one `@write` for both.
@@ -1334,25 +1334,25 @@ pub(super) fn assert_zero_write_outcome() {
         8,
         &[(
             "WriteZero",
-            "if c == 0_u32 {\n  if o == 0_u8 {\n    return exit_status(code: 120_u8);\n  } else {\n    return exit_status(code: 121_u8);\n  }\n} else {\n  return exit_status(code: 122_u8);\n}",
+            "if c == 0_u32 {\n  if o == 0_u8 {\n    return std::process::exit_status(code: 120_u8);\n  } else {\n    return std::process::exit_status(code: 121_u8);\n  }\n} else {\n  return std::process::exit_status(code: 122_u8);\n}",
         )],
-        "return exit_status(code: 199_u8);",
+        "return std::process::exit_status(code: 199_u8);",
     );
     let source = format!(
-        r#"fn main(inputs: Inputs) -> status: ExitStatus pure {{
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
-  close_directory(factory: &factory, directory: move cwd);
+        r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = array_filled::<u8, 2>(value: 119_u8);
   let window = &bytes[0_u64..2_u64];
-  match write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64) {{
+  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64) {{
     Ok(value: written) => {{
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {{
         Ok(value: code) => {{
-          return exit_status(code: code);
+          return std::process::exit_status(code: code);
         }}
         Err(error: overflowed) => {{
-          return exit_status(code: 200_u8);
+          return std::process::exit_status(code: 200_u8);
         }}
       }}
     }}

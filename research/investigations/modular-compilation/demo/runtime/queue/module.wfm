@@ -1,0 +1,22 @@
+alias Job = pkg::data::Job;
+
+public const capacity: u64 = 4_u64;
+
+public nocopy struct Queue {
+  doc "A first-in first-out queue of at most capacity jobs, held by value in one ring. Every holder may read the ring; only this module's operations change it.";
+  public readonly storage: Ring<Job, capacity>;
+}
+
+public fn new() -> made: Queue pure contract {
+  ensures made.storage.len == 0_u64;
+} doc "Creates an empty queue.";
+
+public fn push(queue: &Queue, job: Job) -> result: unit writes(queue.storage) contract {
+  requires deref(queue).storage.len < capacity;
+  ensures deref(queue).storage.len == deref(entry(queue)).storage.len + 1_u64;
+} doc "Appends one job at the back.";
+
+public fn pop(queue: &Queue) -> job: Job writes(queue.storage) contract {
+  requires deref(queue).storage.len > 0_u64;
+  ensures deref(queue).storage.len + 1_u64 == deref(entry(queue)).storage.len;
+} doc "Removes and returns the job at the front, which is the earliest job pushed among those still queued.";

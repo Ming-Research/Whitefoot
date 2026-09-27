@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A running product overflows i32 mid-loop. Checked multiplication produces a typed Err that ordinary control handles; give delivers the seed from a checked operation [OP-1, GIVE-1, SCOPE-3].";
   let prod = match 1_i32 +checked 0_i32 {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-2: len is a readonly field of the prelude's Slots declaration, and a path that ends at a readonly field is never a set target; the restructuring is to use the operation that changes it, or replace the whole value.";
   let r = slots_new::<u64, 4>();

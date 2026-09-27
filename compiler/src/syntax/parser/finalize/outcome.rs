@@ -154,16 +154,16 @@ impl BundleSourceExtent {
 /// This value has checked internal topology but has not passed FORM-2 and is
 /// not canonical syntax, semantic acceptance, or portable identity.
 #[derive(Debug)]
-pub struct FinalizedBundle<'classified, 'lexed, 'source> {
-    pub(crate) parsed: ParsedBundle<'classified, 'lexed, 'source>,
+pub struct FinalizedBundle {
+    pub(crate) parsed: ParsedBundle,
     pub(crate) topology: FinalizedTopology,
 }
 
-impl<'classified, 'lexed, 'source> FinalizedBundle<'classified, 'lexed, 'source> {
+impl FinalizedBundle {
     /// Returns the exact classified input retained by the finalized tree.
     #[must_use]
-    pub const fn classified_bundle(&self) -> &'classified ClassifiedBundle<'lexed, 'source> {
-        self.parsed.classified
+    pub const fn classified_bundle(&self) -> &ClassifiedBundle {
+        &self.parsed.classified
     }
 
     /// Returns the finalized production-node count.
@@ -187,9 +187,9 @@ impl<'classified, 'lexed, 'source> FinalizedBundle<'classified, 'lexed, 'source>
 
 /// Failure-atomic result of internal derivation-tree finalization.
 #[derive(Debug)]
-pub enum FinalizeOutcome<'classified, 'lexed, 'source> {
+pub enum FinalizeOutcome {
     /// The private derivation passed the complete linear topology audit.
-    Complete(FinalizedBundle<'classified, 'lexed, 'source>),
+    Complete(Box<FinalizedBundle>),
     /// Explicit ceilings or host storage prevented completion.
     ResourceFailure(FinalizeResourceFailure),
     /// A trusted parser, tree, or grammar-data invariant failed.
@@ -347,15 +347,15 @@ pub enum CanonicalCompilerFailure {
 /// FORM-2 rendering. It is not a semantic verdict, artifact, optimizer fact,
 /// backend input, compiler executable, or release claim.
 #[derive(Debug)]
-pub struct CanonicalSyntaxUnit<'classified, 'lexed, 'source> {
-    pub(crate) finalized: FinalizedBundle<'classified, 'lexed, 'source>,
+pub struct CanonicalSyntaxUnit {
+    pub(crate) finalized: FinalizedBundle,
 }
 
-impl<'classified, 'lexed, 'source> CanonicalSyntaxUnit<'classified, 'lexed, 'source> {
+impl CanonicalSyntaxUnit {
     /// Returns the exact classified source input retained by this capability.
     #[must_use]
-    pub const fn classified_bundle(&self) -> &'classified ClassifiedBundle<'lexed, 'source> {
-        self.finalized.parsed.classified
+    pub const fn classified_bundle(&self) -> &ClassifiedBundle {
+        &self.finalized.parsed.classified
     }
 
     /// Returns the complete finalized production-node count.
@@ -404,9 +404,9 @@ pub enum RenderOutcome {
 
 /// Failure-atomic result of the tree-driven FORM-2 audit.
 #[derive(Debug)]
-pub enum CanonicalOutcome<'classified, 'lexed, 'source> {
+pub enum CanonicalOutcome {
     /// Finalized syntax renders to every exact source byte.
-    Complete(CanonicalSyntaxUnit<'classified, 'lexed, 'source>),
+    Complete(CanonicalSyntaxUnit),
     /// The first source/gap mismatch under DIAG-1 stage order.
     SourceIssue(CanonicalIssue),
     /// Explicit ceilings or host storage prevented the complete audit.

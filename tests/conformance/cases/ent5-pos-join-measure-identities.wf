@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
   doc "Independent branch-local length reads denote the same measure term after scope exit [MSR-1], so the common bound survives the ordinary join and the subscript discharges [ENT-5, OP-4].";
   if pick {

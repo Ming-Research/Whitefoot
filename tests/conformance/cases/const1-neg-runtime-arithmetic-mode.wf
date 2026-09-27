@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn doubled<const n: u64>(count: u64) -> result: Slots<u64, n *wrap 2> pure {
   doc "Forms a run whose capacity is written with a mode-suffixed operator.";
   return slots_new::<u64, n *wrap 2>();

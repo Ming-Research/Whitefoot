@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn second_of(run: Slots<u8, 4>) -> got: u8 pure contract {
   requires run.len >= 2_u64;
 } {

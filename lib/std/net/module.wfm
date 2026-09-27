@@ -1,0 +1,55 @@
+alias HandleFactory = pkg::io::HandleFactory;
+alias IoError = pkg::io::IoError;
+alias ReadStop = pkg::io::ReadStop;
+
+public opaque nocopy struct SocketAddress {
+}
+
+public opaque nodrop struct TcpListener {
+}
+
+public opaque nodrop struct TcpReceive {
+}
+
+public opaque nodrop struct TcpSend {
+}
+
+public struct TcpConnection {
+  public receive: TcpReceive;
+  public send: TcpSend;
+}
+
+public struct AcceptedConnection {
+  public connection: TcpConnection;
+  public peer: SocketAddress;
+}
+
+public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: SocketAddress pure doc "Returns the IPv4 socket address a.b.c.d with port.";
+
+public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
+
+public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) doc "Opens a TCP listener bound to address.";
+
+public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) doc "Accepts the next connection on listener and returns it with the address of its peer.";
+
+public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) doc "Opens a TCP connection to address.";
+
+public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(receive), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, and ReadEnd reports that the peer finished sending.";
+
+public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(send) contract {
+  requires start <= end;
+  requires end <= deref(source).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent.";
+
+public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) doc "Closes listener.";
+
+public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) doc "Closes the receiving half of a connection.";
+
+public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) doc "Closes the sending half of a connection.";

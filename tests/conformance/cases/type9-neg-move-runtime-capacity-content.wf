@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-9: a move of a runtime-capacity content is a hard error citing TYPE-9 at the complete place, with the restructuring let the Box release it at scope exit, or empty it and call free_empty(move b) [OP-14]. The unboxing spelling let n = move b.inner is admitted only where the content is not a runtime-capacity Slots, Array or Ring.";
   let b = box_slots_new::<u64>(capacity: 4_u64);

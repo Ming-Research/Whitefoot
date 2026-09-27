@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Pair {
   left: Box<Slots<u8>>;
   right: Box<Slots<u8>>;

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 use crate::{ByteOffset, CanonicalSyntaxUnit, Production, SourceId};
 
@@ -11,18 +12,25 @@ use super::{
     LexicalUseRecord, LexicalUseRole, PostconditionCandidateRecord, PostconditionFieldRecord,
     PostconditionResolutionRecord, PostconditionSelectorClass, PostconditionSelectorUseRecord,
     PreludeDeclarationRecord, ResolutionCompilerFailure, ResolutionIssue, ResolutionIssueKind,
-    ResolutionOutcome, ResolvedSyntaxUnit, ScopeId, SourceOrigin,
+    ResolutionOutcome, ResolvedSyntaxUnit, ResolvedTarget, ScopeId, SourceOrigin,
 };
+use super::{DeclarationKey, ItemHome, ItemKey};
 
 mod admission;
+mod correspondence;
 mod inventory;
 mod lookup;
 mod prelude;
+mod render;
 mod roles;
 
-use admission::{check_clause_blocks, check_heap_declaration};
-use inventory::check_declaration_inventory;
-use lookup::resolve_uses_deferred;
+pub(super) use render::render_interface;
+
+use admission::{
+    check_clause_blocks, check_heap_declaration, check_module_forms, check_public_closure,
+};
+use inventory::{check_declaration_inventory, pair_interface_functions};
+use lookup::{ModuleView, resolve_alias_targets, resolve_uses_deferred};
 use roles::classify_roles;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -77,11 +85,42 @@ enum SelectorRole {
     /// The optional ordinal binder of a route, `when b is V(f: r):`
     /// [GRAM-2, CALL-4]. It names a declared result and declares nothing.
     ResultOrdinal,
+    /// The alias root or a module segment of a qualified path, or a segment
+    /// of an alias target [MOD-4, MOD-5]. The use or alias that carries the
+    /// path resolves it as a whole.
+    PathSegment,
+}
+
+/// One written name of a qualified path [MOD-4, MOD-5].
+#[derive(Clone, Debug)]
+struct PathSegment {
+    spelling: String,
+    coordinate: crate::SyntaxCoordinate,
+}
+
+/// The module prefix of a qualified use, or the complete target path of an
+/// alias [MOD-4, MOD-5].
+#[derive(Clone, Debug)]
+struct Qualifier {
+    /// `None` when the path begins with `pkg` or `std`; otherwise the
+    /// file-local module alias that roots it.
+    alias_root: Option<PathSegment>,
+    /// Whether the path begins with `std`, the standard library's qualifier
+    /// [MOD-10], rather than `pkg`.
+    standard: bool,
+    /// The names written after the root, before the use's own final name.
+    /// For an alias they are the complete target after `pkg`.
+    segments: Vec<PathSegment>,
 }
 
 struct RawRole {
     kind: RawRoleKind,
     spelling: String,
+    /// The module prefix of a qualified use, or an alias's target path.
+    qualifier: Option<Qualifier>,
+    /// For the member TYPEID of a type-owned variant construction, the
+    /// coordinate of its owner's TYPEID [TYPE-6].
+    member_owner: Option<crate::SyntaxCoordinate>,
     owner: NodeId,
     source: SourceId,
     carrier_start: ByteOffset,
@@ -94,6 +133,8 @@ struct RawRole {
 struct ClassifiedRole {
     kind: RawRoleKind,
     spelling: String,
+    qualifier: Option<Qualifier>,
+    member_owner: Option<crate::SyntaxCoordinate>,
     owner: NodeId,
     origin: SourceOrigin,
     scope: ScopeId,
@@ -121,6 +162,44 @@ struct DeclarationMeta {
     /// carries the element storage, the omitted-capacity form and the measure
     /// rows no struct body can state.
     container: Option<crate::ContainerNominalId>,
+    /// The module whose inventory holds it; `None` for a PRE-1 record.
+    module: Option<crate::ModuleId>,
+    /// Whether an interface publishes it [MOD-6]. A definition paired with
+    /// its interface declaration takes the declaration's publication.
+    public: bool,
+    /// A user enum variant, which belongs to its enum and enters no
+    /// unqualified constructor inventory [TYPE-6].
+    type_owned: bool,
+    /// What an alias declaration binds, once its target is resolved [MOD-4].
+    alias: Option<AliasTarget>,
+    /// Which part of an interface/implementation pairing a function
+    /// declaration is [MOD-7].
+    function_form: FunctionForm,
+    /// Declared by an implementation record of a module program and standing
+    /// for no interface declaration, so visible only in implementation
+    /// records [MOD-3].
+    implementation_only: bool,
+}
+
+/// What one alias binds [MOD-4].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AliasTarget {
+    Module(crate::ModuleId),
+    /// A declaration, by record index.
+    Declaration(usize),
+}
+
+/// How a top-level function declaration takes part in module correspondence
+/// [MOD-7].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FunctionForm {
+    /// Not a module-level function.
+    None,
+    /// A body-less interface declaration, with its definition's record index
+    /// once paired.
+    Declaration { definition: Option<usize> },
+    /// A definition with a body.
+    Definition,
 }
 
 struct DeclarationIndex {
@@ -148,6 +227,13 @@ impl DeclarationIndex {
 struct UseMeta {
     role: LexicalUseRole,
     spelling: String,
+    qualifier: Option<Qualifier>,
+    member_owner: Option<crate::SyntaxCoordinate>,
+    /// The module of the source that writes the use.
+    module: crate::ModuleId,
+    /// Written in a module's interface record, which sees only its module's
+    /// interface declarations [MOD-3].
+    interface: bool,
     owner: NodeId,
     origin: SourceOrigin,
     scope: ScopeId,
@@ -163,6 +249,9 @@ struct Tables {
     lexical_uses: Vec<LexicalUseRecord>,
     deferred_uses: Vec<DeferredUseRecord>,
     postconditions: Vec<PostconditionResolutionRecord>,
+    interface_functions: Vec<super::InterfaceFunction>,
+    by_node: super::NodeRecords,
+    items: Vec<Option<ItemKey>>,
 }
 
 enum BuildStop {
@@ -178,9 +267,7 @@ impl From<ResolutionCompilerFailure> for BuildStop {
 
 /// Resolves every active-specification declaration and lexical use in canonical syntax.
 #[must_use]
-pub fn resolve<'classified, 'lexed, 'source>(
-    syntax: CanonicalSyntaxUnit<'classified, 'lexed, 'source>,
-) -> ResolutionOutcome<'classified, 'lexed, 'source> {
+pub fn resolve(syntax: CanonicalSyntaxUnit) -> ResolutionOutcome {
     match build_tables(&syntax) {
         Ok(tables) => ResolutionOutcome::Complete(ResolvedSyntaxUnit {
             syntax,
@@ -191,6 +278,9 @@ pub fn resolve<'classified, 'lexed, 'source>(
             lexical_uses: tables.lexical_uses,
             deferred_uses: tables.deferred_uses,
             postconditions: tables.postconditions,
+            interface_functions: tables.interface_functions,
+            by_node: tables.by_node,
+            items: tables.items,
         }),
         Err(BuildStop::Issue(issue)) => ResolutionOutcome::SourceIssue {
             syntax,
@@ -200,7 +290,7 @@ pub fn resolve<'classified, 'lexed, 'source>(
     }
 }
 
-fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, BuildStop> {
+fn build_tables(syntax: &CanonicalSyntaxUnit) -> Result<Tables, BuildStop> {
     let topology = &syntax.finalized.topology;
     let scopes = ScopeBuild::build(topology, syntax.finalized.parsed.classified.source_bundle())?;
     // [DIAG-1] fixes this order: complete unit-wide FN-8 admission precedes
@@ -212,7 +302,17 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
     // [GRAM-2]'s whole-unit heap-declaration position rule. The parser is
     // table-driven and has no unit-level position judgment, so this is the
     // first stage that can make it.
-    if let Some(issue) = check_heap_declaration(topology, &scopes)? {
+    if let Some(issue) = check_heap_declaration(
+        topology,
+        &scopes,
+        syntax
+            .classified_bundle()
+            .source_bundle()
+            .is_module_program(),
+    )? {
+        return Err(BuildStop::Issue(Box::new(issue)));
+    }
+    if let Some(issue) = check_module_forms(topology, &scopes, syntax.classified_bundle())? {
         return Err(BuildStop::Issue(Box::new(issue)));
     }
     let roles = classify_roles(syntax, &scopes)?;
@@ -224,6 +324,9 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
     // predicate survives only to re-attribute the ordinary unresolved-name
     // rejection to the rule and location SET-1 states.
     let bare_set_targets = bare_set_target_roles(topology, &roles)?;
+    let classified = syntax.classified_bundle();
+    let bundle = classified.source_bundle();
+    let items = item_keys(topology, &roles, bundle)?;
     {
         let mut declarations = Vec::new();
         let mut dependent_declarations = Vec::new();
@@ -231,6 +334,7 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
         let mut declaration_metas = Vec::new();
         let mut declaration_by_role = vec![None; roles.len()];
         let mut uses = Vec::new();
+        let mut route_uses = Vec::new();
         let mut postcondition_entry_uses = Vec::new();
 
         for (role_index, role) in roles.iter().enumerate() {
@@ -278,21 +382,73 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                     } else {
                         None
                     };
+                    let file = bundle.file(role.origin.coordinate.source());
+                    let prelude_source = file.is_some_and(|file| file.prelude().is_some());
+                    let module = file
+                        .filter(|file| file.prelude().is_none())
+                        .map(crate::SourceFile::module);
+                    // [MOD-3] a module-level declaration of a writer source
+                    // joins its module's one inventory and is visible
+                    // throughout the module, independently of file and item
+                    // order; PRE-1 records stay in the supplied environment.
+                    let top_level = is_top_level_role(declaration_role);
+                    let scope = match (top_level, prelude_source, module) {
+                        (true, false, Some(module)) => scopes
+                            .module_scope(module)
+                            .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?,
+                        _ => declaration_scope(role, declaration_role, &scopes)?,
+                    };
+                    let visibility = if (top_level || declaration_role == DeclarationRole::Alias)
+                        && (prelude_source || module.is_some())
+                    {
+                        Visibility::Always
+                    } else {
+                        declaration_visibility(topology, role, declaration_role)?
+                    };
+                    // A variant is published with its enum; every other
+                    // top-level declaration by its own item's marker.
+                    let publishing_node = if declaration_role == DeclarationRole::Variant {
+                        role.owner_chain.first().copied()
+                    } else {
+                        Some(role.owner)
+                    };
+                    let public = top_level
+                        && !prelude_source
+                        && publishing_node
+                            .is_some_and(|node| declares_public(topology, classified, node));
+                    let function_form =
+                        if declaration_role == DeclarationRole::Function && !prelude_source {
+                            let node = role
+                                .owner_chain
+                                .first()
+                                .copied()
+                                .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+                            if has_body(topology, classified, node) {
+                                FunctionForm::Definition
+                            } else {
+                                FunctionForm::Declaration { definition: None }
+                            }
+                        } else {
+                            FunctionForm::None
+                        };
                     let record_index = declarations.len();
                     declarations.push(DeclarationRecord {
                         id,
                         role: declaration_role,
                         spelling: role.spelling.clone(),
                         origin: role.origin.clone(),
-                        scope: declaration_scope(role, declaration_role, &scopes)?,
+                        scope,
                         classes: entries.clone(),
                         diagnostic_origins: prelude.roles[role_index].clone(),
+                        module,
+                        public,
+                        key: declaration_key(&role.origin, role_index, &items)?,
                     });
                     declaration_by_role[role_index] = Some(record_index);
                     declaration_metas.push(DeclarationMeta {
                         role_index,
                         record_index,
-                        scope: declarations[record_index].scope,
+                        scope,
                         owner: if declaration_role == DeclarationRole::FunctionParameter {
                             // The callable binder belongs to the receiving
                             // generic declaration; its own parameters and
@@ -306,26 +462,19 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                         } else {
                             role.owner_chain.first().copied()
                         },
-                        visibility: if matches!(
-                            declaration_role,
-                            DeclarationRole::Function
-                                | DeclarationRole::Struct
-                                | DeclarationRole::Enum
-                                | DeclarationRole::Variant
-                        ) && syntax
-                            .finalized
-                            .parsed
-                            .classified
-                            .source_bundle()
-                            .file(role.origin.coordinate.source())
-                            .is_some_and(|file| file.prelude().is_some())
-                        {
-                            Visibility::Always
-                        } else {
-                            declaration_visibility(topology, role, declaration_role)?
-                        },
+                        visibility,
                         entries,
                         container,
+                        module,
+                        public,
+                        type_owned: declaration_role == DeclarationRole::Variant && !prelude_source,
+                        alias: None,
+                        function_form,
+                        implementation_only: bundle.is_module_program()
+                            && !prelude_source
+                            && file.is_some_and(|file| {
+                                file.role() == crate::SourceRole::Implementation
+                            }),
                     });
                 }
                 RawRoleKind::DependentDeclaration(dependent_role) => {
@@ -339,15 +488,31 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                     let use_meta = UseMeta {
                         role: use_role,
                         spelling: role.spelling.clone(),
+                        qualifier: role.qualifier.clone(),
+                        member_owner: role.member_owner,
+                        module: bundle
+                            .file(role.origin.coordinate.source())
+                            .map_or(crate::ModuleId::BUNDLE_ROOT, crate::SourceFile::module),
+                        interface: bundle.file(role.origin.coordinate.source()).is_some_and(
+                            |file| {
+                                file.prelude().is_none()
+                                    && file.role() == crate::SourceRole::Interface
+                            },
+                        ),
                         owner: role.owner,
                         origin: role.origin.clone(),
                         scope: role.scope,
                         owner_chain: role.owner_chain.clone(),
                         function_owner: function_owner(topology, role.owner),
                     };
-                    if use_role != LexicalUseRole::EnsuresVariant
-                        && ancestor_with_production(topology, role.owner, Production::EnsuresClause)
-                            .is_some()
+                    if use_role == LexicalUseRole::EnsuresVariant {
+                        route_uses.push(use_meta);
+                    } else if ancestor_with_production(
+                        topology,
+                        role.owner,
+                        Production::EnsuresClause,
+                    )
+                    .is_some()
                     {
                         postcondition_entry_uses.push(use_meta);
                     } else {
@@ -364,6 +529,27 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
         }
 
         let declaration_index = DeclarationIndex::build(&declarations);
+        let modules = ModuleView {
+            modules: bundle.modules(),
+        };
+        // [MOD-7] an interface declaration and its definition are one
+        // function; [MOD-4] every alias target resolves before inventory, so
+        // an alias takes its target's collision domains.
+        pair_interface_functions(
+            &mut declarations,
+            &mut declaration_metas,
+            &declaration_index,
+        );
+        let qualifiers: Vec<_> = roles.iter().map(|role| role.qualifier.clone()).collect();
+        let alias_issues = resolve_alias_targets(
+            topology,
+            &scopes,
+            &mut declarations,
+            &mut declaration_metas,
+            &declaration_index,
+            &modules,
+            &qualifiers,
+        )?;
 
         if let Some(issue) = check_declaration_inventory(
             topology,
@@ -374,14 +560,17 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
             &declaration_index,
             &declaration_by_role,
             &prelude.builtins,
+            &alias_issues,
+            bundle.modules(),
         )? {
             return Err(BuildStop::Issue(Box::new(issue)));
         }
-        let (lexical_uses, unresolved) = resolve_uses_deferred(
+        let (mut lexical_uses, unresolved) = resolve_uses_deferred(
             &scopes,
             &declarations,
             &declaration_metas,
             &declaration_index,
+            &modules,
             &uses,
         )?;
         if let Some(issue) = unresolved {
@@ -393,6 +582,19 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                 issue,
             )?)));
         }
+        if let Some(issue) = resolve_route_variants(
+            topology,
+            &roles,
+            &scopes,
+            &declarations,
+            &declaration_metas,
+            &declaration_index,
+            &modules,
+            &route_uses,
+            &mut lexical_uses,
+        )? {
+            return Err(BuildStop::Issue(Box::new(issue)));
+        }
         let postconditions = build_postcondition_records(
             topology,
             &scopes,
@@ -400,9 +602,78 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
             &declarations,
             &declaration_metas,
             &declaration_index,
+            &modules,
             &postcondition_entry_uses,
             &lexical_uses,
         )?;
+        // [MOD-6] public signatures close over accessible vocabulary.
+        if let Some(issue) = check_public_closure(
+            topology,
+            &scopes,
+            classified,
+            &declarations,
+            lexical_uses.iter().chain(
+                postconditions
+                    .iter()
+                    .flat_map(|record| record.provisional_uses.iter()),
+            ),
+        )? {
+            return Err(BuildStop::Issue(Box::new(issue)));
+        }
+        // [MOD-7] every paired definition repeats its interface declaration.
+        let pairs: Vec<(usize, usize)> = declaration_metas
+            .iter()
+            .filter_map(|meta| match meta.function_form {
+                FunctionForm::Declaration {
+                    definition: Some(definition),
+                } => Some((meta.record_index, definition)),
+                _ => None,
+            })
+            .collect();
+        let function_nodes = declaration_metas
+            .iter()
+            .filter(|meta| meta.function_form != FunctionForm::None)
+            .filter_map(|meta| Some((declarations[meta.record_index].id, meta.owner?)))
+            .collect();
+        if let Some(issue) = correspondence::check_correspondence(
+            topology,
+            classified,
+            &declarations,
+            lexical_uses.iter().chain(
+                postconditions
+                    .iter()
+                    .flat_map(|record| record.provisional_uses.iter()),
+            ),
+            &pairs,
+            &function_nodes,
+        )? {
+            return Err(BuildStop::Issue(Box::new(issue)));
+        }
+        let interface_functions = declaration_metas
+            .iter()
+            .filter_map(|meta| match meta.function_form {
+                FunctionForm::Declaration { definition } => Some(super::InterfaceFunction {
+                    declaration: declarations[meta.record_index].id,
+                    definition: definition.map(|definition| declarations[definition].id),
+                }),
+                _ => None,
+            })
+            .collect();
+        // Inventory has rejected every duplicate declaration of one scope, so
+        // each key now names exactly one declaration.
+        let mut keys = std::collections::HashSet::with_capacity(declarations.len());
+        if !declarations.iter().all(|record| keys.insert(&record.key)) {
+            return Err(ResolutionCompilerFailure::DuplicateDeclarationKey.into());
+        }
+        let nodes_by_path = scopes.nodes_by_path();
+        let by_node = super::NodeRecords::build(
+            topology.nodes.len(),
+            |path| nodes_by_path.get(path).copied(),
+            &declarations,
+            &dependent_declarations,
+            &lexical_uses,
+            &deferred_uses,
+        );
         Ok(Tables {
             scopes: scopes.records,
             prelude: prelude.records,
@@ -411,8 +682,136 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
             lexical_uses,
             deferred_uses,
             postconditions,
+            interface_functions,
+            by_node,
+            items: items
+                .into_iter()
+                .map(|item| item.map(|(key, _)| key))
+                .collect(),
         })
     }
+}
+
+/// Resolves each result route's leading variant label against its route's
+/// result type [TYPE-6, CALL-4]: the label names a prelude variant written
+/// unqualified, or a variant of the source enum a declared result ordinal
+/// has. A route with an ordinal binder looks only at that ordinal's type.
+#[allow(clippy::too_many_arguments)]
+fn resolve_route_variants(
+    topology: &FinalizedTopology,
+    roles: &[ClassifiedRole],
+    scopes: &ScopeBuild,
+    declarations: &[DeclarationRecord],
+    metas: &[DeclarationMeta],
+    index: &DeclarationIndex,
+    modules: &ModuleView<'_>,
+    routes: &[UseMeta],
+    lexical_uses: &mut Vec<LexicalUseRecord>,
+) -> Result<Option<ResolutionIssue>, ResolutionCompilerFailure> {
+    for route in routes {
+        let (mut resolved, issue) = resolve_uses_deferred(
+            scopes,
+            declarations,
+            metas,
+            index,
+            modules,
+            std::slice::from_ref(route),
+        )?;
+        if issue.is_none() {
+            lexical_uses.append(&mut resolved);
+            continue;
+        }
+        let function = function_owner(topology, route.owner)
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+        let ordinal = selector_spelling(roles, route.owner, |selector| {
+            matches!(selector, SelectorRole::ResultOrdinal)
+        });
+        let mut found = None;
+        for binding in topology
+            .node_children(function)
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+            .iter()
+            .copied()
+            .filter(|child| {
+                topology
+                    .node(*child)
+                    .is_some_and(|record| record.production == Production::ResultBinding)
+            })
+        {
+            if let Some(ordinal) = &ordinal
+                && selector_spelling(roles, binding, |selector| {
+                    matches!(selector, SelectorRole::PlainCandidate)
+                })
+                .as_deref()
+                    != Some(ordinal.as_str())
+            {
+                continue;
+            }
+            // `result_binding := IDENT ":" rtype` and `rtype := type`.
+            let child_with = |node: NodeId, production: Production| {
+                topology.node_children(node).and_then(|children| {
+                    children.iter().copied().find(|child| {
+                        topology
+                            .node(*child)
+                            .is_some_and(|record| record.production == production)
+                    })
+                })
+            };
+            let Some(ty) = child_with(binding, Production::Rtype)
+                .and_then(|rtype| child_with(rtype, Production::Type))
+            else {
+                continue;
+            };
+            let path = scopes.path(ty)?;
+            let Some(ResolvedTarget::Source { declaration, .. }) = lexical_uses
+                .iter()
+                .find(|usage| usage.role() == LexicalUseRole::Type && usage.origin().node() == path)
+                .map(LexicalUseRecord::target)
+            else {
+                continue;
+            };
+            let Some(enum_meta) = metas.get(declaration.index()) else {
+                continue;
+            };
+            if let Some(variant) = metas.iter().find(|meta| {
+                meta.type_owned
+                    && meta.owner == enum_meta.owner
+                    && declarations[meta.record_index].spelling == route.spelling
+            }) {
+                found = Some(declarations[variant.record_index].id);
+                break;
+            }
+        }
+        match found {
+            Some(declaration) => lexical_uses.push(LexicalUseRecord {
+                role: route.role,
+                spelling: route.spelling.clone(),
+                origin: route.origin.clone(),
+                target: ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::EnumVariant,
+                },
+            }),
+            None => return Ok(issue),
+        }
+    }
+    Ok(None)
+}
+
+/// The spelling of the one selector role of `kind` a node carries: a
+/// route's written ordinal binder, `when b is V(...)`, or a result binding's
+/// binder.
+fn selector_spelling(
+    roles: &[ClassifiedRole],
+    node: NodeId,
+    kind: fn(SelectorRole) -> bool,
+) -> Option<String> {
+    roles.iter().find_map(|role| match role.kind {
+        RawRoleKind::Selector(selector) if role.owner == node && kind(selector) => {
+            Some(role.spelling.clone())
+        }
+        _ => None,
+    })
 }
 
 /// [SET-1, GRAM-4, GRAM-5] every `pbase` role that is a bare `set` target: the
@@ -497,9 +896,10 @@ fn set_target_attribution(
     bare_set_targets: &HashMap<usize, NodeId>,
     issue: ResolutionIssue,
 ) -> Result<ResolutionIssue, ResolutionCompilerFailure> {
-    if !matches!(issue.kind, ResolutionIssueKind::UnresolvedUse { .. }) {
-        return Ok(issue);
-    }
+    let spelling = match &issue.kind {
+        ResolutionIssueKind::UnresolvedUse { spelling, .. } => spelling.clone(),
+        _ => return Ok(issue),
+    };
     let Some(place) = bare_set_targets.iter().find_map(|(index, place)| {
         roles
             .get(*index)
@@ -519,10 +919,16 @@ fn set_target_attribution(
         origin: SourceOrigin {
             node: scopes.path(place)?.clone(),
             coordinate: crate::SyntaxCoordinate::new(source, start, end),
+            extent: crate::SyntaxCoordinate::new(source, start, end),
             role_ordinal: 0,
             subtoken_ordinal: 0,
         },
-        kind: issue.kind,
+        kind: ResolutionIssueKind::UndeclaredSetTarget {
+            mechanical_fix: format!(
+                "no binding `{spelling}` is in scope, so this `set` declares nothing: write it as `let {spelling} = ...;`, keeping its right-hand side, to declare the binding here, or name a binding that is in scope"
+            ),
+            spelling,
+        },
     })
 }
 
@@ -534,6 +940,7 @@ fn build_postcondition_records(
     declarations: &[DeclarationRecord],
     declaration_metas: &[DeclarationMeta],
     declaration_index: &DeclarationIndex,
+    modules: &ModuleView<'_>,
     entry_uses: &[UseMeta],
     lexical_uses: &[LexicalUseRecord],
 ) -> Result<Vec<PostconditionResolutionRecord>, BuildStop> {
@@ -741,6 +1148,7 @@ fn build_postcondition_records(
                 declarations,
                 declaration_metas,
                 declaration_index,
+                modules,
                 &ordinary_entry_uses,
             )?;
             if issue.is_some() {
@@ -876,8 +1284,158 @@ fn function_owner(topology: &FinalizedTopology, mut node: NodeId) -> Option<Node
     }
 }
 
+/// Whether a declaration role is one module-level item declaration, or a
+/// variant of one [MOD-3].
+const fn is_top_level_role(role: DeclarationRole) -> bool {
+    matches!(
+        role,
+        DeclarationRole::Function
+            | DeclarationRole::Struct
+            | DeclarationRole::Enum
+            | DeclarationRole::Variant
+            | DeclarationRole::Interface
+            | DeclarationRole::Binding
+            | DeclarationRole::NamedConst
+    )
+}
+
+/// The key of every item of the unit, by its ordinal among the root's
+/// children, with the index of the role that heads it: the item's function,
+/// struct, enum, interface, binding or constant declaration by home, role and
+/// spelling, or the alias it binds. `program no_heap` heads none.
+fn item_keys(
+    topology: &FinalizedTopology,
+    roles: &[ClassifiedRole],
+    bundle: &crate::SourceBundle,
+) -> Result<Vec<Option<(ItemKey, usize)>>, ResolutionCompilerFailure> {
+    let count = topology
+        .node_children(topology.root)
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?
+        .len();
+    let mut items = vec![None; count];
+    for (index, role) in roles.iter().enumerate() {
+        let RawRoleKind::Declaration(declaration_role) = role.kind else {
+            continue;
+        };
+        let heads = matches!(
+            declaration_role,
+            DeclarationRole::Function
+                | DeclarationRole::Struct
+                | DeclarationRole::Enum
+                | DeclarationRole::Interface
+                | DeclarationRole::Binding
+                | DeclarationRole::NamedConst
+                | DeclarationRole::Alias
+        );
+        let Some(&ordinal) = role.origin.node.components().first() else {
+            continue;
+        };
+        let slot = items
+            .get_mut(ordinal as usize)
+            .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+        if !heads || slot.is_some() {
+            continue;
+        }
+        let file = bundle
+            .file(role.origin.coordinate.source())
+            .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+        let key = if declaration_role == DeclarationRole::Alias {
+            ItemKey::Alias {
+                source: file.logical_path().as_str().to_owned(),
+                spelling: role.spelling.clone(),
+            }
+        } else {
+            ItemKey::Declared {
+                home: ItemHome::of(file, bundle)
+                    .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?,
+                role: declaration_role,
+                spelling: role.spelling.clone(),
+            }
+        };
+        *slot = Some((key, index));
+    }
+    Ok(items)
+}
+
+/// The key of the declaration role `index` forms: its item's key when it
+/// heads the item, and otherwise its place within the item.
+fn declaration_key(
+    origin: &SourceOrigin,
+    index: usize,
+    items: &[Option<(ItemKey, usize)>],
+) -> Result<DeclarationKey, ResolutionCompilerFailure> {
+    let (first, rest) = origin
+        .node
+        .components()
+        .split_first()
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+    let (item, head) = items
+        .get(*first as usize)
+        .and_then(Option::as_ref)
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+    Ok(if *head == index {
+        DeclarationKey::Item(item.clone())
+    } else {
+        DeclarationKey::Local {
+            item: item.clone(),
+            path: rest.to_vec(),
+            ordinal: (origin.role_ordinal, origin.subtoken_ordinal),
+        }
+    })
+}
+
+/// Whether the item that owns this declaration node writes `public` [MOD-6].
+fn declares_public(
+    topology: &FinalizedTopology,
+    classified: &crate::ClassifiedBundle,
+    declaration: NodeId,
+) -> bool {
+    topology
+        .node(declaration)
+        .and_then(|record| record.parent)
+        .filter(|item| {
+            topology
+                .node(*item)
+                .is_some_and(|record| record.production == Production::Item)
+        })
+        .is_some_and(|item| writes_fixed(topology, classified, item, FixedTerminal::Public))
+}
+
+/// Whether a `fn_decl` writes a body rather than ending in `;` or its `doc`
+/// entry [GRAM-2, MOD-7].
+fn has_body(
+    topology: &FinalizedTopology,
+    classified: &crate::ClassifiedBundle,
+    declaration: NodeId,
+) -> bool {
+    writes_fixed(topology, classified, declaration, FixedTerminal::LeftBrace)
+}
+
+/// Whether one node writes this fixed terminal directly.
+fn writes_fixed(
+    topology: &FinalizedTopology,
+    classified: &crate::ClassifiedBundle,
+    node: NodeId,
+    terminal: FixedTerminal,
+) -> bool {
+    topology
+        .terminals
+        .iter()
+        .enumerate()
+        .any(|(index, record)| {
+            record.owner == Some(node)
+                && classified.tokens().get(index).is_some_and(|token| {
+                    token
+                        .terminals()
+                        .contains(TerminalPredicate::Fixed(terminal))
+                })
+        })
+}
+
 fn declaration_classes(role: DeclarationRole) -> Vec<DeclarationClass> {
     match role {
+        // An alias takes its target's classes once the target resolves.
+        DeclarationRole::Alias => Vec::new(),
         DeclarationRole::Function => vec![DeclarationClass::Function],
         DeclarationRole::FunctionParameter => vec![DeclarationClass::FunctionParameter],
         DeclarationRole::Struct => vec![
@@ -1018,6 +1576,9 @@ fn declaration_domain(class: DeclarationClass) -> Option<DeclarationDomain> {
             Some(DeclarationDomain::Constructor)
         }
         DeclarationClass::NumericBound => Some(DeclarationDomain::NumericBound),
+        // [MOD-4] a module alias occupies its lowercase spelling beside the
+        // module's functions and constants.
+        DeclarationClass::Module => Some(DeclarationDomain::LexicalIdentifier),
         DeclarationClass::Label => Some(DeclarationDomain::Label),
         DeclarationClass::Invariant => Some(DeclarationDomain::Invariant),
         DeclarationClass::OperationFamily => None,

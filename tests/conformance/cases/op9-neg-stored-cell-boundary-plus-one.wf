@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn stored_cell_overflow(count: u64) -> made: Box<Slots<Box<Slots<u8>>>> pure contract {
   requires count <= 2305843009213693952_u64;
 } {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn hidden_local(x: i32) -> result: Bool pure contract {
   define permitted = x >= 0_i32;
   requires permitted;

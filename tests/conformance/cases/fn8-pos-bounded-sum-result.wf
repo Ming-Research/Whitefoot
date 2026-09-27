@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bounded_total(first: u8, first_limit: u8, second: u8, second_limit: u8, third: u8, third_limit: u8) -> total: u8 pure contract {
   requires first <= first_limit;
   requires second <= second_limit;

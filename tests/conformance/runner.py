@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """whitefoot conformance test system — spec-anchored, rule-keyed, toolchain-agnostic.
 
-Each case is a canonical `.wf` source (tests/conformance/cases/<id>.wf) plus a
+Each case is a canonical `.wf` source (tests/conformance/cases/<id>.wf), or a
+module-form case directory (tests/conformance/cases/<id>/) holding a
+`modules.wfg` graph and one directory per module [MOD-1, MOD-2], plus a
 manifest entry (tests/conformance/manifest.jsonl) declaring the rule id(s) it
 exercises and the expected verdict. Cases are driven through a named toolchain
 adapter. The active adapter is native, not Python: `compiler/tests/corpus.rs`
@@ -114,7 +116,7 @@ def run_cases(cases):
         )
     results = []
     for c in cases:
-        src = (CASES / f"{c['id']}.wf").read_text()
+        src = case_sources(c["id"])
         v = ADAPTER(src, c["expect"]["kind"] == "run")
         m = matches(v, c["expect"])
         if v[0] == "unsupported" and c["expect"]["kind"] != "unsupported":
@@ -245,6 +247,31 @@ def arrange_errors(label, arrange):
     return errors
 
 
+def case_sources(case_id, cases_dir=CASES):
+    """The case's source text: one `.wf` record, or a module-form case's
+    graph and records keyed by their path below the case directory."""
+    directory = cases_dir / case_id
+    if (directory / "modules.wfg").is_file():
+        return {
+            str(path.relative_to(directory)): path.read_text()
+            for path in sorted(directory.rglob("*"))
+            if path.is_file()
+        }
+    return (cases_dir / f"{case_id}.wf").read_text()
+
+
+def case_source_names(cases_dir=CASES):
+    """Every case source in the directory: `<id>.wf` files and module-form
+    case directories, named `<id>.wf` and `<id>/` respectively."""
+    names = {path.name for path in cases_dir.glob("*.wf")}
+    names |= {
+        f"{path.name}/"
+        for path in cases_dir.iterdir()
+        if path.is_dir() and (path / "modules.wfg").is_file()
+    }
+    return names
+
+
 def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
     """Reject malformed or stale corpus structure before reporting coverage."""
     rules, _ = spec_rule_ids(root)
@@ -255,8 +282,12 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
     if duplicate_ids:
         errors.append("duplicate case ids: " + " ".join(duplicate_ids))
 
-    expected_sources = {f"{case_id}.wf" for case_id in ids if isinstance(case_id, str)}
-    actual_sources = {path.name for path in cases_dir.glob("*.wf")}
+    actual_sources = case_source_names(cases_dir)
+    expected_sources = {
+        f"{case_id}/" if f"{case_id}/" in actual_sources else f"{case_id}.wf"
+        for case_id in ids
+        if isinstance(case_id, str)
+    }
     missing_sources = sorted(expected_sources - actual_sources)
     orphan_sources = sorted(actual_sources - expected_sources)
     if missing_sources:

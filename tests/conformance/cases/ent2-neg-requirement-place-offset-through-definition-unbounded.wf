@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn width(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
+  define row = i;
+  requires k < deref(rows)[row].len;
+} {
+  doc "The place expands to deref(rows)[i], and no requirement before its clause bounds i, so the subscript owes an unproved i < deref(rows).len at body entry.";
+  return deref(rows).len;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-2, FN-8, OP-4: rejected at the requirement.";
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,14 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> count: u64 reads(rows) contract {
+  requires k < deref(rows)[i].len;
+} {
+  doc "ENT-2, FN-8, OP-4, MSR-1: a measure below a subscript is a clause (b) place like a readonly field. The requirement forms deref(rows)[i] at body entry with i unbounded, so its subscript owes an unproved i < deref(rows).len at the clause.";
+  return deref(rows).len;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Declaration only.";
+  return exit_status(code: 0_u8);
+}

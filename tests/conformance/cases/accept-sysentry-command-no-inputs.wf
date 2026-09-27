@@ -1,4 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
-  doc "An ordinary parameterless main calls the ordinary PRE-1 exit_status declaration. Prelude declarations are present independently of which arguments a build adapter supplies.";
+  doc "An ordinary parameterless main calls the standard library's exit_status [PRE-2]. A program names a standard library declaration the same way whichever arguments a build adapter supplies.";
   return exit_status(code: 0_u8);
 }

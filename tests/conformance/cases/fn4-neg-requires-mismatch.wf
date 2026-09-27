@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 interface CheckedMember {
   fn apply(x: i32) -> result: i32 pure;
 }

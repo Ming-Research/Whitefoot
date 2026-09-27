@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Light {
+  Off();
+  On();
+}
+
+enum Switch {
+  Off();
+  On();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Two enums declare the same variant names; each construction names its enum and each arm label resolves against its scrutinee.";
+  let light = Light::On();
+  let switch = Switch::Off();
+  match light {
+    Off() => {
+      return exit_status(code: 1_u8);
+    }
+    On() => {
+    }
+  }
+  match switch {
+    Off() => {
+    }
+    On() => {
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

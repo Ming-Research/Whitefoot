@@ -24,16 +24,16 @@ fn leave(value: u64) -> result: u64 pure {
   return remaining;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let returned = descend(value: 9_u64);
   let continued = leave(value: 7_u64);
   if returned != 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if continued != 0_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -97,12 +97,12 @@ fn counted_ranges_execute_exact_half_open_edges_without_a_hidden_trap() {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = exercise();
   if result != 8_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);

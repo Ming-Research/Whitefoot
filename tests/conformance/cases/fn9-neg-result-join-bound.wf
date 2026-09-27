@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn smaller() -> result: Result<i32, Overflow> pure contract {
   ensures when Ok(value: payload): payload < 8_i32;
 } {

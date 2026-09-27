@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn consume_room(run: &Slots<u8, 64>) -> result: unit writes(run) contract {
   requires 1_u64 < deref(run).cap - deref(run).len;
 } {

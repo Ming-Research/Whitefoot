@@ -87,8 +87,8 @@ fn nested(items: &[Box<Slots<u64, 2>>]) -> length: u64 reads(items) contract {
   return deref(items)[0_u64].inner.len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -111,8 +111,8 @@ fn nested_range_element_subscripts_are_complete_places() {
   return deref(selected);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -129,8 +129,8 @@ fn an_out_of_bounds_outer_nested_range_index_is_an_op4_rejection() {
   return deref(rows)[1_u64][0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |kind| {
@@ -148,8 +148,8 @@ fn an_out_of_bounds_inner_nested_range_index_is_an_op4_rejection() {
   return deref(rows)[0_u64][2_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |kind| {
@@ -175,8 +175,8 @@ fn a_nested_range_element_path_preserves_joined_origins() {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -201,8 +201,8 @@ fn incoming_range_bounds_do_not_invent_a_joined_holder_length_fact() {
   return deref(rows)[0_u64][1_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |kind| {
@@ -224,8 +224,8 @@ fn replacing_a_range_element_invalidates_a_nested_element_reference() {
   return deref(selected);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Ref2, |_| true);
@@ -242,8 +242,8 @@ fn an_out_of_bounds_range_element_measure_is_an_op4_rejection() {
   return deref(items)[1_u64].len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |kind| {
@@ -282,8 +282,8 @@ fn examine(flag: Bool) -> result: unit pure {{
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#,
         )
@@ -319,18 +319,18 @@ fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let row = slots_new::<u64, 2>();
   place_back(window: &row, value: 17_u64);
   let outer = slots_new::<Slots<u64, 2>, 1>();
   place_back(window: &outer, value: move row);
   let items = &outer[0_u64..1_u64];
   if deref(items)[0_u64].len == 1_u64 {
-    let alias = &deref(items)[0_u64];
-    let cleared = clear(window: alias);
+    let aliased = &deref(items)[0_u64];
+    let cleared = clear(window: aliased);
     let invalid = needs_one(value: deref(items)[0_u64].len);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Fn8, |kind| {
@@ -343,16 +343,16 @@ fn main() -> status: ExitStatus pure {
 /// carries the residual and the rule's own restructuring.
 #[test]
 fn an_endpoint_above_the_length_leaves_the_formation_undischarged() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = array_filled::<u64, 4>(value: 0_u64);
   let hi = 9_u64;
   let part = &a[0_u64..hi];
   let seen = deref(part).len;
   if seen == 9_u64 {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Ref4, |kind| {
@@ -371,6 +371,90 @@ fn a_write_through_a_range_reference_keeps_both_lengths() {
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/call3-pos-a-fill-through-an-exclusive-view-keeps-both-lengths.wf"
     ));
+}
+
+/// Asserts the [OP-4] rejection of the `cells[c]` read whose bound a killed
+/// element-measure fact would otherwise have supplied.
+///
+/// The conformance verdict names only the rule. These fixtures also subscript
+/// the origin in their guard and loop endpoint, so an [OP-4] rejection there,
+/// from a write that wrongly killed the origin's own length, would satisfy
+/// the rule alone; the residual pins the rejection to the stale element fact.
+fn assert_cells_read_unproved(source: &[u8]) {
+    assert_rule_kind(source, SemanticRule::Op4, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+                if residual == "c < cells.len"
+        )
+    });
+}
+
+/// [CALL-3, EFF-5] a range formed at the call, `&rows[1..3]` or the re-slice
+/// `&deref(view)[1..3]`, names its source's path extended by the formation's
+/// own range step, the path a bound range reference names. Its projected write
+/// therefore kills the guarded measure of an element the range may contain,
+/// and the rejection lands on the read that measure bounded.
+#[test]
+fn a_write_through_an_inline_range_kills_the_element_measure_it_may_reach() {
+    assert_cells_read_unproved(include_bytes!(
+        "../../../../tests/conformance/cases/call3-neg-inline-range-write-kills-element-measure.wf"
+    ));
+    assert_cells_read_unproved(include_bytes!(
+        "../../../../tests/conformance/cases/call3-neg-inline-reslice-write-kills-element-measure.wf"
+    ));
+}
+
+/// [OWN-7] separates an index step from a range step once the index is
+/// proved outside the range, here by written literals: element 1 lies before
+/// the range `2..3`. A write through that range therefore keeps the guarded
+/// measure of `rows[1]`, and the bound and inline spellings of the range reach
+/// the same verdict; a range that contains the element still kills it.
+#[test]
+fn an_index_outside_a_written_range_is_separated_from_it() {
+    let body = |call: &str| {
+        format!(
+            "fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {{
+  requires at < deref(part).len;
+}} {{
+  let fresh = slots_new::<u64, 8>();
+  set deref(part)[at] = move fresh;
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let rows = slots_new::<Slots<u64, 8>, 4>();
+  let first = slots_new::<u64, 8>();
+  let second = slots_new::<u64, 8>();
+  let third = slots_new::<u64, 8>();
+  place_back(window: &rows, value: move first);
+  place_back(window: &rows, value: move second);
+  place_back(window: &rows, value: move third);
+  let cells = array_filled::<u64, 3>(value: 7_u64);
+  let total = 0_u64;
+  if rows.len == 3_u64 {{
+    if rows[1_u64].len <= cells.len {{
+{call}      for (c in 0_u64..rows[1_u64].len) {{
+        let cell = cells[c];
+        set total = total +wrap cell;
+      }}
+    }}
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_accepts(body("      refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
+    assert_accepts(
+        body("      let tail = &rows[2_u64..3_u64];\n      refill(part: tail, at: 0_u64);\n")
+            .as_bytes(),
+    );
+    assert_cells_read_unproved(
+        body("      refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
+    );
+    // Control: with no write the guard discharges the read.
+    assert_accepts(body("").as_bytes());
 }
 
 /// [REF-4, MSR-2] overlapping views still carry distinct immutable range
@@ -406,8 +490,8 @@ fn exercise(values: &Slots<u8, 4>) -> result: unit writes(values) contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -449,8 +533,8 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: unit w
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
     );
@@ -482,8 +566,8 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   return 0_u64;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
     );
@@ -515,8 +599,8 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   return 0_u64;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
     );
@@ -549,8 +633,8 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64, count: u64) -> re
   return 0_u64;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
     );
@@ -562,13 +646,13 @@ fn main() -> status: ExitStatus pure {{
 /// changes the range's formed length or the bound for an element inside it.
 #[test]
 fn growing_the_backing_window_preserves_a_formed_range_length() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 4>();
   place_back(window: &values, value: 11_u8);
   let part = &values[0_u64..1_u64];
   place_back(window: &values, value: 22_u8);
   let first = deref(part)[0_u64];
-  return exit_status(code: first);
+  return std::process::exit_status(code: first);
 }
 "#;
     assert_accepts(source);
@@ -615,11 +699,11 @@ fn a_requirement_over_a_bound_range_is_that_ranges_length() {
     let body = |offset: &str| {
         format!(
             "{RANGE_OFFSET_CALLEE}
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 1_u8);
   let view = &a[2_u64..4_u64];
   let x = at(part: view, offset: {offset});
-  return exit_status(code: x);
+  return std::process::exit_status(code: x);
 }}
 "
         )
@@ -645,10 +729,10 @@ fn a_requirement_over_a_range_formed_at_the_call_is_that_ranges_length() {
     let body = |offset: &str| {
         format!(
             "{RANGE_OFFSET_CALLEE}
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 1_u8);
   let x = at(part: &a[2_u64..4_u64], offset: {offset});
-  return exit_status(code: x);
+  return std::process::exit_status(code: x);
 }}
 "
         )
@@ -669,12 +753,12 @@ fn a_requirement_over_a_reslice_is_the_inner_ranges_length() {
     let body = |offset: &str| {
         format!(
             "{RANGE_OFFSET_CALLEE}
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 1_u8);
   let view = &a[0_u64..4_u64];
   let sub = &deref(view)[2_u64..4_u64];
   let x = at(part: sub, offset: {offset});
-  return exit_status(code: x);
+  return std::process::exit_status(code: x);
 }}
 "
         )
@@ -703,11 +787,11 @@ fn forward(part: &[u8]) -> result: u8 reads(part) contract {{
   return at(part: part, offset: {offset});
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 1_u8);
   let view = &a[2_u64..4_u64];
   let x = forward(part: view);
-  return exit_status(code: x);
+  return std::process::exit_status(code: x);
 }}
 "
         )
@@ -736,11 +820,11 @@ fn a_range_formation_establishes_its_length_equality() {
   return deref(part).len;
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let table = array_filled::<u8, 32>(value: 0_u8);
   let view = &table[4_u64..24_u64];
   let n = expects(part: view);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         )
@@ -763,14 +847,14 @@ fn dynamic_inline_range_length_discharge_uses_its_endpoint_ordering() {
   return deref(part).len;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = array_filled::<u8, 4>(value: 0_u8);
   let lo = 1_u64;
   let hi = 3_u64;
   if lo < hi {
     let n = nonempty(part: &a[lo..hi]);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -782,12 +866,12 @@ fn main() -> status: ExitStatus pure {
 fn rebinding_a_range_reference_replaces_its_captured_length() {
     let source = format!(
         "{RANGE_OFFSET_CALLEE}
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 4>(value: 0_u8);
   let part = &a[2_u64..3_u64];
   set part = &a[0_u64..4_u64];
   let x = at(part: part, offset: 3_u64);
-  return exit_status(code: x);
+  return std::process::exit_status(code: x);
 }}
 "
     );
@@ -799,12 +883,12 @@ fn main() -> status: ExitStatus pure {{
 /// one-element length across this whole-holder write.
 #[test]
 fn rebinding_a_range_reference_does_not_retain_the_old_length() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = array_filled::<u8, 2>(value: 0_u8);
   let part = &a[0_u64..1_u64];
   set part = &a[0_u64..0_u64];
   let first = deref(part)[0_u64];
-  return exit_status(code: first);
+  return std::process::exit_status(code: first);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |_| true);
@@ -822,7 +906,7 @@ fn a_bound_range_keeps_the_endpoint_images_captured_at_formation() {
   return deref(part).len;
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let a = array_filled::<u8, 6>(value: 0_u8);
   let lo = 1_u64;
   let hi = 3_u64;
@@ -830,7 +914,7 @@ fn main() -> status: ExitStatus pure {{
   set lo = 0_u64;
   set hi = 6_u64;
   let n = expects(part: part);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         )
@@ -859,7 +943,7 @@ fn above_three(part: &[u8]) -> result: u64 reads(part.len) contract {
   return deref(part).len;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = array_filled::<u8, 6>(value: 0_u8);
   let lo = 1_u64;
   let hi = 3_u64;
@@ -867,8 +951,54 @@ fn main() -> status: ExitStatus pure {
   set lo = 0_u64;
   set hi = 4_u64;
   let second = above_three(part: &a[lo..hi]);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
+}
+
+/// [OWN-7, REF-2] a reference into an element outside a range a callee
+/// writes survives the call once the call's entry state proves the index at
+/// or after the range's end; a reference the entry state may put inside the
+/// range dies with the element the callee may replace.
+#[test]
+fn a_reference_outside_a_written_range_survives_the_write() {
+    let program = |bound: &str| {
+        format!(
+            "struct Pair {{
+  x: u64;
+  y: u64;
+}}
+
+fn zero(part: &[Pair], at: u64) -> result: unit writes(part) contract {{
+  requires at < deref(part).len;
+}} {{
+  let fresh = Pair(x: 0_u64, y: 0_u64);
+  set deref(part)[at] = fresh;
+  return unit;
+}}
+
+fn run(values: &Array<Pair, 8>, lo: u64, hi: u64, k: u64) -> result: u64 writes(values) contract {{
+  requires lo < hi;
+  requires {bound};
+  requires k < 8_u64;
+}} {{
+  let held = &deref(values)[k].x;
+  zero(part: &deref(values)[lo..hi], at: 0_u64);
+  let seen = deref(held);
+  return seen;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_accepts(program("hi <= k").as_bytes());
+    assert_rule_kind(
+        program("hi <= 8_u64").as_bytes(),
+        SemanticRule::Ref2,
+        |kind| matches!(kind, SemanticIssueKind::InvalidReferenceUse { .. }),
+    );
 }

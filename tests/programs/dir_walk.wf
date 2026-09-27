@@ -1,3 +1,19 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectorySource = std::fs::DirectorySource;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias OutputStream = std::io::OutputStream;
+alias close_directory = std::fs::close_directory;
+alias close_directory_source = std::fs::close_directory_source;
+alias directory_next = std::fs::directory_next;
+alias exit_status = std::process::exit_status;
+alias open_directory = std::fs::open_directory;
+alias open_directory_source = std::fs::open_directory_source;
+alias write_once = std::io::write_once;
+
 const empty_prefix: Array<u8, 1> =[0_u8];
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
@@ -217,11 +233,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let ordered = name_at <= name_end;
-          if ordered {
-          } else {
-            break @stored_entry;
-          }
           let addressable = name_end <= entries_room;
           if addressable {
           } else {
@@ -318,20 +329,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
               }
               let room_left = total < 64_u64;
               if room_left {
-                let stored = if cursor <= 126_u64 {
-                  give cursor;
-                } else {
-                  give 126_u64;
-                }
-                let narrowed = cvt.checked::<u64, u8>(stored);
-                let byte_length = match narrowed {
-                  Ok(value: exact) => {
-                    give exact;
-                  }
-                  Err(error: failure) => {
-                    give 0_u8;
-                  }
-                }
+                let stored = imin(cursor, 126_u64);
+                let byte_length = cvt::<u64, u8>(stored);
                 let start = deref(records).len;
                 let record_fits = start <= 8064_u64;
                 if record_fits {

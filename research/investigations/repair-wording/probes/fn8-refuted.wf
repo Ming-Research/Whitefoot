@@ -1,0 +1,10 @@
+fn small(x: u64) -> result: u64 pure contract {
+  requires x < 10_u64;
+} {
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  let r = small(x: 20_u64);
+  return exit_status(code: 0_u8);
+}

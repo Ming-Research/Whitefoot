@@ -1,0 +1,5 @@
+fn main() -> status: ExitStatus pure {
+  let x = 255_u8;
+  let y = x + 1_u8;
+  return exit_status(code: y);
+}

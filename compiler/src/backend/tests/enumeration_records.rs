@@ -262,13 +262,13 @@ fn scripted_facility_defines() -> Vec<String> {
 ///
 /// The program is ordinary source: it names no target record and reads only
 /// the portable form under the ordinary directory library contract fixes.
-const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) {
+const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, files: &std::io::HandleFactory) -> status: std::process::ExitStatus reads(cwd), writes(out), writes(files) {
   let entries = array_filled::<u8, 4096>(value: 0_u8);
   let available = 0_u64;
-  match open_directory_source(factory: files, directory: cwd) {
+  match std::fs::open_directory_source(factory: files, directory: cwd) {
     Ok(value: list) => {
       let window = &entries[0_u64..4096_u64];
-      let (copied, endpoint, reported) = directory_next(source: &list, destination: window, start: 0_u64, end: 4096_u64);
+      let (copied, endpoint, reported) = std::fs::directory_next(source: &list, destination: window, start: 0_u64, end: 4096_u64);
       match copied {
         Ok(value: done) => {
           set available = endpoint;
@@ -276,37 +276,37 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &DirectoryRead, out: &Outp
         Err(error: stop) => {
           match stop {
             ListEnd() => {
-              close_directory_source(factory: files, source: move list);
-              return exit_status(code: 3_u8);
+              std::fs::close_directory_source(factory: files, source: move list);
+              return std::process::exit_status(code: 3_u8);
             }
             ListFailed(error: problem) => {
-              close_directory_source(factory: files, source: move list);
-              return exit_status(code: 4_u8);
+              std::fs::close_directory_source(factory: files, source: move list);
+              return std::process::exit_status(code: 4_u8);
             }
           }
         }
       }
-      match write_once(factory: files, output: out, source: window, start: 0_u64, end: available) {
+      match std::io::write_once(factory: files, output: out, source: window, start: 0_u64, end: available) {
         Ok(value: written) => {
         }
         Err(error: problem) => {
-          close_directory_source(factory: files, source: move list);
-          return exit_status(code: 2_u8);
+          std::fs::close_directory_source(factory: files, source: move list);
+          return std::process::exit_status(code: 2_u8);
         }
       }
-      close_directory_source(factory: files, source: move list);
+      std::fs::close_directory_source(factory: files, source: move list);
     }
     Err(error: problem) => {
-      return exit_status(code: 5_u8);
+      return std::process::exit_status(code: 5_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, out: &out, files: &files);
-  close_directory(factory: &files, directory: move cwd);
+  std::fs::close_directory(factory: &files, directory: move cwd);
   return move outcome;
 }
 "#;

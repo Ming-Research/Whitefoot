@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-1, OP-15: a measure read is a place form and not a call, and the table gives each measured type exactly the cells it has. A Slots has len and cap, a Ring adds head, and a range reference has len alone; free slots is the ordinary expression cap - len. The program reads every measure the table gives, computes free slots, and observes those values over constant-capacity and boxed runtime-capacity windows, a ring and a range reference.";
   let values = array_filled::<u8, 4>(value: 0_u8);

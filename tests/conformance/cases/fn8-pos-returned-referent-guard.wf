@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const alternative: u64 = 9_u64;
 
 fn select(value: &u64) -> chosen: u64 reads(value) {

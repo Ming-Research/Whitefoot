@@ -1,0 +1,8 @@
+alias Work = pkg::data::Job;
+alias Report = pkg::data::Report;
+
+fn summarize(first: Work, second: Work, remaining: u64) -> report: Report pure {
+  doc "A private helper shared with batch.wf. The digest is deliberately an eight-bit modular sum, so 250 plus 10 produces 4.";
+  let digest = first.payload +wrap second.payload;
+  return Report(first_tag: first.tag, second_tag: second.tag, digest: digest, remaining: remaining);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn divide(n: u64, d: u64) -> result: u64 pure {
   doc "The exact division domain is discharged statically [EFF-2, OP-2, ENT-6], so the operation has no runtime fallback and `pure` is the exact row.";
   if d > 0_u64 {

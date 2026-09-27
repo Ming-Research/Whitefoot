@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias hidden = pkg::data::secret;
+
+fn main() -> status: ExitStatus pure {
+  let code = pkg::data::seven();
+  return exit_status(code: code);
+}

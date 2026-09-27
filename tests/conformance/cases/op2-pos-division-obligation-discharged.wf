@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn divide(n: u64, d: u64) -> return_value: u64 pure {
   doc "An unsigned bare `/` is in the divisor class [OP-2], so it carries the two-conjunct division obligation [ENT-6] instead of a runtime test. A dominating branch establishes the nonzero divisor, both conjuncts discharge, and the call keeps no runtime zero-divisor check, so the row is `pure`.";
   if d > 0_u64 {

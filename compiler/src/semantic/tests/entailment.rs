@@ -7,7 +7,7 @@
 
 use crate::{
     BindingId, CallRequirementDisposition, NodePath, SemanticIssueKind, SemanticOutcome,
-    SemanticRule, SourceInput,
+    SemanticRule, SourceInput, StaticObligationDisposition,
 };
 
 use super::super::entailment::affine::{AffineCheckState, AffineInequality};
@@ -17,9 +17,8 @@ use super::super::entailment::{
     DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind, FunctionEntailment,
     GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound, ObligationFamily,
     ObligationOutcome, PlaceRoot, PostconditionCallDetail, PostconditionDeliveryJoinDetail,
-    PostconditionDisposition, RangeSeparationOrdering, Relation, RemainderEndpoint, S7Derivation,
-    S7DerivationKind, S7Subject, ShiftOneIdentity, SourceAffineFactRef, TermId, TermKind, ZERO,
-    type_range,
+    PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
+    TermKind, ZERO, type_range,
 };
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{
@@ -30,7 +29,7 @@ use super::super::model::{
 // `PlaceStep`, and a term's place carries the whole resolved path rather than
 // a separate deref flag and field list.
 use super::super::places::{CapturedRange, PlaceStep};
-use super::{assert_rule, with_semantics, with_semantics_dark};
+use super::{assert_rule_kind, with_semantics, with_semantics_dark};
 
 fn obligations(source: &[u8], function: &str) -> Vec<ObligationOutcome> {
     with_semantics_dark(source, |outcome| {
@@ -141,7 +140,9 @@ fn collect_direct_calls<'checked>(
             | CheckedStatement::Give { value, .. }
             | CheckedStatement::DropExpression { value, .. } => record(value, callee, calls),
             CheckedStatement::PropagateLet { scrutinee, .. } => record(scrutinee, callee, calls),
-            CheckedStatement::Evaluate(expression) => record(expression, callee, calls),
+            CheckedStatement::Evaluate {
+                value: expression, ..
+            } => record(expression, callee, calls),
             CheckedStatement::Match {
                 scrutinee, arms, ..
             }
@@ -216,34 +217,6 @@ fn retained_term(summary: &FunctionEntailment, id: TermId) -> &TermKind {
         .unwrap_or_else(|| panic!("retained term ID {id:?} must resolve"))
 }
 
-/// One retained S7 image names exactly the value its subject identifies: the
-/// `let` binder's own place term, or the commit value of the `set`
-/// occurrence whose right-hand side produced it [ENT-2, ENT-3.S7].
-fn s7_result_names_subject(
-    summary: &FunctionEntailment,
-    result: TermId,
-    source: &S7Derivation,
-) -> bool {
-    match &source.subject {
-        S7Subject::Binding(binding) => matches!(
-            retained_term(summary, result),
-            TermKind::Place(place, row)
-                if place.root == PlaceRoot::Binding(*binding)
-                    && place.path.is_empty()
-                    && *row == source.row
-        ),
-        S7Subject::Commit(commit) => matches!(
-            retained_term(summary, result),
-            TermKind::CommitValue { commit_path, ty }
-                if commit_path.as_slice() == commit.components() && *ty == source.row
-        ),
-        S7Subject::ResultPayload(payload) => {
-            result == *payload
-                && matches!(retained_term(summary, result), TermKind::ResultPayload(_))
-        }
-    }
-}
-
 fn assert_relation_terms_resolve(summary: &FunctionEntailment, relation: &Relation) {
     for term in relation.terms() {
         retained_term(summary, term);
@@ -315,6 +288,7 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. }
+        | DerivationNode::OperationFact { event, .. }
         | DerivationNode::JoinBound { event, .. }
         | DerivationNode::JoinDistinct { event, .. }
         | DerivationNode::JoinGoal { event, .. }
@@ -424,7 +398,6 @@ fn assert_source_event(summary: &FunctionEntailment, id: FlowEventId, used: &mut
             | FlowEventKind::S9
             | FlowEventKind::S11
             | FlowEventKind::S13
-            | FlowEventKind::S14
     ));
 }
 
@@ -901,6 +874,32 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     sign: *sign,
                 }
             }
+            // [ENT-3.S7, DIAG-2] one table fact stands on the closed operand
+            // bounds its row read, each a bound of one term against Z, or on
+            // the discharged domain whose interval-product measurement it
+            // states.
+            DerivationNode::OperationFact {
+                relation,
+                event,
+                parents,
+            } => {
+                assert_relation_terms_resolve(summary, relation);
+                assert!(matches!(relation, Relation::Bound { .. }));
+                assert_eq!(retained_event(summary, *event).kind, FlowEventKind::S7);
+                assert_source_event(summary, *event, &mut used_events);
+                for parent in parents {
+                    match retained_conclusion(&conclusions, *parent) {
+                        DerivationConclusion::Relation(bound) => assert!(
+                            bound.terms().contains(&ZERO),
+                            "an operand bound relates its term to Z"
+                        ),
+                        DerivationConclusion::IntegerDomain(_)
+                        | DerivationConclusion::Contradiction => {}
+                        other => panic!("an operation fact cannot stand on {other:?}"),
+                    }
+                }
+                DerivationConclusion::Relation(relation.clone())
+            }
             DerivationNode::BooleanLiteral { goal, sign } => {
                 assert!(summary.inventory.goals.get(goal.0 as usize).is_some());
                 DerivationConclusion::Goal {
@@ -1190,10 +1189,15 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 domain,
             } => {
                 assert!(!product.components().is_empty());
-                assert!(summary.s7_derivations.iter().any(|source| {
-                    source.parent == *division
-                        && matches!(source.kind, S7DerivationKind::UnsignedDivisionBound { .. })
-                }));
+                // [DIAG-2] the division parent is the S7 fact bounding the
+                // quotient by its dividend.
+                assert!(matches!(
+                    summary.derivations.nodes[division.0 as usize],
+                    DerivationNode::OperationFact {
+                        relation: Relation::Bound { .. },
+                        ..
+                    }
+                ));
                 assert!(matches!(
                     retained_conclusion(&conclusions, *domain),
                     DerivationConclusion::IntegerDomain(_)
@@ -1330,7 +1334,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                             CapturedTerm::Const(declaration) => {
                                 matches!(term, TermKind::ConstParameter(candidate, _) if *candidate == declaration)
                             }
-                            CapturedTerm::Binding(_) => matches!(
+                            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) => matches!(
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),
@@ -1978,7 +1982,6 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
     let mut seen_calls = vec![false; summary.call_goals.len()];
     let mut seen_contracts = vec![false; summary.contract_goals.len()];
     let mut seen_counted = vec![[false; 8]; summary.counted_derivations.len()];
-    let mut seen_s7 = vec![false; summary.s7_derivations.len()];
     let mut seen_postcondition_exits = summary
         .postconditions
         .iter()
@@ -2022,8 +2025,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     ObligationFamily::AllocationFit => assert_eq!(outcome.conjunct, 0),
                     // Separation for a call, exchange or reference preservation
                     // is one occurrence, without a conjunct of its own.
-                    ObligationFamily::CallSeparation
-                    | ObligationFamily::ExchangeSeparation
+                    ObligationFamily::CallSeparation(_)
+                    | ObligationFamily::ExchangeSeparation(_)
                     | ObligationFamily::ReferencePreservation(_) => {
                         assert_eq!(outcome.conjunct, 0)
                     }
@@ -2047,7 +2050,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 // contradiction), rather than being accepted by shape alone.
                 if matches!(
                     outcome.family,
-                    ObligationFamily::CallSeparation | ObligationFamily::ReferencePreservation(_)
+                    ObligationFamily::CallSeparation(_)
+                        | ObligationFamily::ReferencePreservation(_)
                 ) {
                     assert!(outcome.components.is_empty());
                     assert!(outcome.canonical_goal.is_none());
@@ -2364,102 +2368,6 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 assert_eq!(Some(*domain), obligation.derivation);
                 assert_eq!(conclusion, &DerivationConclusion::UnsignedDivisionProduct);
             }
-            DerivationRootKind::BitAndBound(occurrence)
-            | DerivationRootKind::ShiftOneNonzero(occurrence)
-            | DerivationRootKind::UnsignedDivisionBound(occurrence)
-            | DerivationRootKind::UnsignedRemainderBound(occurrence)
-            | DerivationRootKind::SignedRemainderBound(occurrence) => {
-                let source = summary
-                    .s7_derivations
-                    .get(occurrence as usize)
-                    .expect("S7-root occurrence must resolve");
-                assert!(!seen_s7[occurrence as usize], "one root per S7 relation");
-                seen_s7[occurrence as usize] = true;
-                assert_eq!(source.parent, root.node);
-                assert_eq!(
-                    summary.derivations.node_event(root.node),
-                    Some(source.event)
-                );
-                assert_eq!(
-                    conclusion,
-                    &DerivationConclusion::Relation(source.relation.clone())
-                );
-                assert_eq!(
-                    matches!(source.kind, S7DerivationKind::BitAndBound { .. }),
-                    matches!(root.kind, DerivationRootKind::BitAndBound(_))
-                );
-                assert_eq!(
-                    matches!(source.kind, S7DerivationKind::UnsignedDivisionBound { .. }),
-                    matches!(root.kind, DerivationRootKind::UnsignedDivisionBound(_))
-                );
-                assert_eq!(
-                    matches!(source.kind, S7DerivationKind::UnsignedRemainderBound { .. }),
-                    matches!(root.kind, DerivationRootKind::UnsignedRemainderBound(_))
-                );
-                assert_eq!(
-                    matches!(source.kind, S7DerivationKind::SignedRemainderBound { .. }),
-                    matches!(root.kind, DerivationRootKind::SignedRemainderBound(_))
-                );
-                match (&source.kind, &source.relation) {
-                    (
-                        S7DerivationKind::BitAndBound { admitted, .. },
-                        Relation::Bound { left, right, bound },
-                    ) => {
-                        assert_eq!(right, admitted);
-                        assert_eq!(*bound, 0);
-                        assert!(s7_result_names_subject(summary, *left, source));
-                    }
-                    (
-                        S7DerivationKind::ShiftOneNonzero { count_atom, one },
-                        Relation::Distinct { left, right, .. },
-                    ) => {
-                        assert!(!count_atom.components().is_empty());
-                        if let ShiftOneIdentity::TypedLiteral { source } = one {
-                            assert!(!source.components().is_empty());
-                        }
-                        let result = if *left == ZERO { *right } else { *left };
-                        assert!(*left == ZERO || *right == ZERO);
-                        assert!(s7_result_names_subject(summary, result, source));
-                    }
-                    (
-                        S7DerivationKind::UnsignedDivisionBound { dividend, divisor },
-                        Relation::Bound { left, right, bound },
-                    ) => {
-                        assert_eq!(right, dividend);
-                        assert_eq!(*bound, 0);
-                        retained_term(summary, *divisor);
-                        assert!(!source.row.signed());
-                        assert!(s7_result_names_subject(summary, *left, source));
-                    }
-                    (
-                        S7DerivationKind::UnsignedRemainderBound { divisor },
-                        Relation::Bound { left, right, bound },
-                    ) => {
-                        assert_eq!(right, divisor);
-                        assert_eq!(*bound, -1);
-                        assert!(s7_result_names_subject(summary, *left, source));
-                    }
-                    (
-                        S7DerivationKind::SignedRemainderBound { divisor, endpoint },
-                        Relation::Bound { left, right, bound },
-                    ) => {
-                        let limit = divisor.abs() - 1;
-                        assert_eq!(*bound, limit);
-                        let result = match endpoint {
-                            RemainderEndpoint::Minimum => {
-                                assert_eq!(*left, ZERO);
-                                *right
-                            }
-                            RemainderEndpoint::Maximum => {
-                                assert_eq!(*right, ZERO);
-                                *left
-                            }
-                        };
-                        assert!(s7_result_names_subject(summary, result, source));
-                    }
-                    _ => panic!("S7 root kind, metadata, and relation must agree"),
-                }
-            }
             DerivationRootKind::PostconditionExit {
                 relation_ordinal,
                 occurrence,
@@ -2679,7 +2587,6 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
             .all(|occurrence| occurrence.iter().all(|seen| *seen)),
         "every counted statement must retain all eight atomic roots"
     );
-    assert!(seen_s7.into_iter().all(|seen| seen));
     for ((proof, seen), seen_aggregates) in summary
         .postconditions
         .iter()
@@ -2818,8 +2725,8 @@ fn read(p: Pair, i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -2874,8 +2781,8 @@ fn read(i: u64, left: Bool) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let first = entailment(source, "read");
@@ -2917,8 +2824,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -2951,8 +2858,8 @@ fn caller(flags: Flags) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -3012,8 +2919,8 @@ fn caller(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -3048,8 +2955,8 @@ fn read() -> result: u8 pure {
   return inside;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3119,8 +3026,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(discharge_flags(source, "read"), vec![true]);
@@ -3142,8 +3049,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -3181,8 +3088,8 @@ fn read(p: Pair, i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -3210,8 +3117,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -3247,8 +3154,8 @@ fn reflexive(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let directed = accepted_entailment(source, "directed");
@@ -3309,8 +3216,8 @@ fn above_maximum(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (function, kind) in [
@@ -3368,8 +3275,8 @@ fn read(p: Pair, i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3406,8 +3313,8 @@ fn assigning_a_middle_vertex_projects_a_bound_needed_after_the_write() {
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "increment");
@@ -3441,8 +3348,8 @@ fn projection_does_not_preserve_a_bound_when_the_final_endpoint_is_written() {
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -3472,8 +3379,8 @@ fn increment(x: u8, middle: u8) -> result: u8 pure contract {
   return result;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -3506,8 +3413,8 @@ fn read(p: Pair) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3545,8 +3452,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3582,8 +3489,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3625,8 +3532,8 @@ fn read(i: u64) -> result: i32 pure {
   return in_wide;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -3684,8 +3591,8 @@ fn caller(left: u64, right: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -3749,8 +3656,8 @@ fn caller(left: u64, right: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -3824,8 +3731,8 @@ fn killed(left: u64, right: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let kept_summary = entailment(source, "kept");
@@ -3905,8 +3812,8 @@ fn mixed(left: u64, right: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["same_strict", "both_explicit", "mixed"] {
@@ -3977,8 +3884,8 @@ fn caller(left: u64, right: u64, first: Bool, second: Bool, third: Bool) -> resu
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -4054,8 +3961,8 @@ fn killed_input(left: u64, right: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["equality_input", "missing_input", "killed_input"] {
@@ -4140,8 +4047,8 @@ fn need_distinct(left: u64, right: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in [
@@ -4204,8 +4111,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -4238,8 +4145,8 @@ fn read(pick: Bool) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -4276,8 +4183,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -4315,8 +4222,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -4344,8 +4251,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -4371,8 +4278,8 @@ fn read(i: u64) -> result: i32 pure {
   return picked;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "read");
@@ -4411,8 +4318,8 @@ fn choose(value: i32, narrow: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "choose");
@@ -4575,8 +4482,8 @@ fn choose(value: i32, narrow: Bool) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "choose");
@@ -4665,8 +4572,8 @@ fn matched(value: i32, choice: Choice) -> result: i32 pure {
   return picked;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     {
@@ -4738,8 +4645,8 @@ fn scoped(value: i32, narrow: Bool) -> result: i32 pure {
   return picked;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["computed", "scoped"] {
@@ -4782,8 +4689,8 @@ fn a_contradictory_first_delivery_edge_cannot_launder_the_fresh_receiver() {
   return picked;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "choose");
@@ -4856,8 +4763,8 @@ fn choose(value: i32, side: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "choose");
@@ -4916,8 +4823,8 @@ fn read(position: u64) -> result: u8 pure contract {
   return values[position];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -4946,7 +4853,7 @@ fn source(flag: Bool) -> result: Result<u64, Fail> pure {
   if flag {
     return Ok<u64, Fail>(value: 1_u64);
   } else {
-    let bad = Bad();
+    let bad = Fail::Bad();
     return Err<u64, Fail>(error: bad);
   }
 }
@@ -4961,8 +4868,8 @@ fn read(i: u64, flag: Bool) -> result: Result<i32, Fail> pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -4999,8 +4906,8 @@ fn read(i: u64) -> result: i32 pure {
   return before;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -5036,8 +4943,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5083,8 +4990,8 @@ fn return_after(i: u64, stop: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5118,8 +5025,8 @@ fn read(i: u64) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5156,8 +5063,8 @@ fn read(i: u64, leave_outer: Bool, leave_inner: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5179,7 +5086,7 @@ enum Fail {
 
 fn source(fail: Bool) -> result: Result<u64, Fail> pure {
   if fail {
-    let bad = Bad();
+    let bad = Fail::Bad();
     return Err<u64, Fail>(error: bad);
   }
   return Ok<u64, Fail>(value: 1_u64);
@@ -5200,8 +5107,8 @@ fn read(i: u64, fail: Bool, leave: Bool) -> result: Result<i32, Fail> pure {
   return Ok<i32, Fail>(value: 0_i32);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5234,8 +5141,8 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5271,8 +5178,8 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5315,8 +5222,8 @@ fn read(i: u64, j: u64, stop: Bool, leave: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5350,8 +5257,8 @@ fn read(i: u64, leave_outer: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5383,8 +5290,8 @@ fn read() -> result: i32 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5414,8 +5321,8 @@ fn read(j: u64) -> result: i32 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5440,8 +5347,8 @@ fn read(upper: u64) -> result: i32 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -5478,8 +5385,8 @@ fn ordinary(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -5562,8 +5469,8 @@ fn read(index: u64, middle: u64) -> result: i32 pure contract {
   return values[index];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "read");
@@ -5596,8 +5503,8 @@ fn a_write_preserves_a_survivor_bound_derived_through_an_implicit_type_edge() {
   return value + 1_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "increment");
@@ -5629,7 +5536,7 @@ fn counted_roots_cover_mixed_control_edges_and_unused_s11_facts() {
 
 fn maybe(fail: Bool) -> result: Result<unit, Stop> pure {
   if fail {
-    let stopped = Failed();
+    let stopped = Stop::Failed();
     return Err<unit, Stop>(error: stopped);
   }
   return Ok<unit, Stop>(value: unit);
@@ -5681,8 +5588,8 @@ fn mixed_edges(lower: u64, upper: u64, leave: Bool, fail: Bool) -> result: Resul
   return Ok<unit, Stop>(value: unit);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "mixed_edges");
@@ -5760,8 +5667,8 @@ fn joined(x: u64) -> result: i32 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let contradictory = entailment(source, "contradictory");
@@ -5836,8 +5743,8 @@ fn inconsistent_counted_root_metadata_fails_the_test_checker() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -5919,7 +5826,7 @@ fn generic_counted_roots_are_deterministic_across_twenty_analyses() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = slots_new::<u8, 2>();
   place_back(window: &small, value: 0_u8);
   place_back(window: &small, value: 0_u8);
@@ -5931,7 +5838,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &large, value: 0_u8);
   place_back(window: &large, value: 0_u8);
   ranges::<5>(values: move large);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let normalized_instances = || {
@@ -6002,8 +5909,8 @@ fn read() -> result: i32 pure {
   return values[9_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6030,8 +5937,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6065,8 +5972,8 @@ fn read(i: u64, leave: Bool) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6092,8 +5999,8 @@ fn read(h: Holder, i: u64) -> result: u8 pure {
   return h.data[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "read");
@@ -6118,8 +6025,8 @@ fn read(j: u64) -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "read");
@@ -6147,8 +6054,8 @@ fn read(j: u64) -> result: u8 pure {
   return lens[order[j]];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "read");
@@ -6167,8 +6074,8 @@ fn a_failed_boolean_index_publishes_no_admitted_goal_origin() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "remember");
@@ -6217,8 +6124,8 @@ fn from_range(order: &[u64]) -> result: u8 reads(order) {
   return values[deref(order)[0_u64]];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let window = obligations(source, "from_window")
@@ -6277,8 +6184,8 @@ fn return_after_failed_set(value: u8) -> result: u8 pure contract {
   return current;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -6377,8 +6284,8 @@ fn unknown(b: Slots<u8, 4>) -> result: u8 pure {
   return b[3_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let sized = entailment(source, "sized");
@@ -6430,8 +6337,8 @@ fn a_measure_binding_carries_the_length_into_a_branch() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(discharge_flags(source, "read"), vec![true]);
@@ -6451,8 +6358,8 @@ fn read() -> result: u8 pure {
   return deref(window)[3_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6494,8 +6401,8 @@ fn killed(b: Slots<u8, 4>, n: u64) -> result: u8 pure contract {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let kept = entailment(source, "kept");
@@ -6580,8 +6487,8 @@ fn killed() -> result: u8 pure {
   return sample;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let kept = entailment(source, "kept");
@@ -6647,8 +6554,8 @@ fn write(values: Slots<u16, count>, i: u64) -> result: u16 pure contract {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "write");
@@ -6708,8 +6615,8 @@ fn through_origin(input: u64) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(accepted_discharge_flags(source, "direct"), vec![true]);
@@ -6763,8 +6670,8 @@ fn read(left_raw: u64, right_raw: u64) -> result: i32 pure {
   return 0_i32;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(accepted_discharge_flags(source, "read"), vec![true, true]);
@@ -6790,8 +6697,8 @@ fn read() -> result: i32 pure {
   return first +wrap second;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -6832,11 +6739,11 @@ fn a_set_commit_from_a_term_publishes_its_post_commit_value() {
   return out;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let input = array_filled::<u8, 4096>(value: 7_u8);
   let window = &input[0_u64..4096_u64];
   let byte = tail_byte(data: window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "tail_byte");
@@ -6872,8 +6779,8 @@ fn read(i: u64) -> result: i32 pure {
   return values[out];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "read");
@@ -6907,8 +6814,8 @@ fn read(replacement: u64) -> result: i32 pure {
   return values[offset];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6945,8 +6852,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let through_let = br#"const count: u64 = 4_u64;
@@ -6964,8 +6871,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -6999,8 +6906,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let through_let = br#"const count: u64 = 4_u64;
@@ -7018,8 +6925,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -7056,8 +6963,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let through_let = br#"const count: u64 = 4_u64;
@@ -7075,8 +6982,8 @@ fn read(replacement: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -7115,8 +7022,8 @@ fn read(n: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -7142,8 +7049,8 @@ fn other_operand(value: f64, other: f64) -> result: i32 pure {
 
 fn alias_write(value: f64) -> result: i32 pure {
   let allowed = cvt.defined::<f64, i32>(value);
-  let alias = &value;
-  set deref(alias) = 1.5_f64;
+  let aliased = &value;
+  set deref(aliased) = 1.5_f64;
   if allowed {
     return cvt::<f64, i32>(value);
   }
@@ -7177,8 +7084,8 @@ fn fresh(value: f64, stop: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (name, discharged) in [
@@ -7215,8 +7122,8 @@ fn a_conversion_of_an_affine_value_retains_both_ordered_domain_parents() {
   return cvt::<u32, u8>(total);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "sum");
@@ -7233,8 +7140,10 @@ fn main() -> status: ExitStatus pure {
     );
 }
 
+/// [ENT-3.S7] the `%` row's strict divisor relation proves the postcondition,
+/// and the retained fact is the divisor relation itself.
 #[test]
-fn unsigned_remainder_publishes_its_strict_divisor_bound() {
+fn unsigned_remainder_publishes_its_strict_divisor_relation() {
     let source = br#"fn reduce(dividend: u64, divisor: u64) -> result: u64 pure contract {
   requires divisor != 0_u64;
   ensures result < divisor;
@@ -7243,25 +7152,37 @@ fn unsigned_remainder_publishes_its_strict_divisor_bound() {
   return remainder;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "reduce");
     validate_derivations(&summary);
-    assert_eq!(summary.s7_derivations.len(), 1);
-    assert!(
-        summary
-            .s7_derivations
-            .iter()
-            .all(|source| matches!(source.kind, S7DerivationKind::UnsignedRemainderBound { .. }))
-    );
     let [postcondition] = summary.postconditions.as_slice() else {
         panic!("reduce must retain one postcondition proof");
     };
     assert!(postcondition.aggregate.discharged);
+    assert_root_contains(
+        &summary,
+        postcondition
+            .aggregate
+            .derivation
+            .expect("discharged aggregate root"),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OperationFact {
+                    relation: Relation::Bound { bound: -1, .. },
+                    ..
+                }
+            )
+        },
+        "the remainder's strict divisor relation",
+    );
 }
 
+/// [ENT-3.S7] signed remainders by constant divisors publish their intervals,
+/// and the exact sum's domain stands on them.
 #[test]
 fn signed_constant_remainders_publish_intervals_for_exact_arithmetic() {
     let source = br#"fn combine(left_seed: i32, right_seed: i32) -> result: i32 pure {
@@ -7270,270 +7191,196 @@ fn signed_constant_remainders_publish_intervals_for_exact_arithmetic() {
   return left + right;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "combine");
     validate_derivations(&summary);
-    assert_eq!(summary.s7_derivations.len(), 4);
-    assert!(
-        summary
-            .s7_derivations
-            .iter()
-            .all(|source| matches!(source.kind, S7DerivationKind::SignedRemainderBound { .. }))
-    );
-    assert_eq!(
-        summary
-            .s7_derivations
-            .iter()
-            .filter(|source| matches!(
-                source.kind,
-                S7DerivationKind::SignedRemainderBound {
-                    endpoint: RemainderEndpoint::Minimum,
-                    ..
-                }
-            ))
-            .count(),
-        2
-    );
     assert_eq!(summary.obligations.len(), 3);
     assert!(summary.obligations.iter().all(|outcome| outcome.discharged));
+    assert_root_contains(
+        &summary,
+        obligation_root(&summary, 2),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OperationFact {
+                    relation: Relation::Bound { right, bound: 40, .. },
+                    ..
+                } if *right == ZERO
+            )
+        },
+        "the left remainder's upper bound 40",
+    );
 }
 
+/// [ENT-3.S7, DIAG-2] a fact no required root reaches is not retained, and
+/// a consumed fact stands on the closed bound its operand read.
 #[test]
-fn unsigned_bit_and_and_shift_one_retain_exact_s7_sources() {
-    let source = br#"const earlier_one: u32 = 1_u32;
-
-fn sources(left: u32, right: u32, count: u32) -> result: u32 pure {
-  let masked = iand(left, right);
-  let shifted_literal = ishl.wrap(1_u32, count);
-  let shifted_named = ishl.wrap(earlier_one, count);
-  return masked;
-}
-
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
-}
-"#;
-    let summary = entailment(source, "sources");
-    validate_derivations(&summary);
-    assert_eq!(summary.s7_derivations.len(), 4);
-
-    let bit_and = &summary.s7_derivations[..2];
-    assert!(bit_and.iter().all(|source| source.row == IntegerType::U32));
-    assert!(
-        bit_and
-            .iter()
-            .all(|source| source.subject == bit_and[0].subject)
-    );
-    assert!(
-        bit_and
-            .iter()
-            .all(|source| source.event == bit_and[0].event)
-    );
-    assert!(
-        bit_and
-            .iter()
-            .all(|source| source.source == bit_and[0].source)
-    );
-    assert_eq!(
-        bit_and
-            .iter()
-            .map(|source| match source.kind {
-                S7DerivationKind::BitAndBound { operand, .. } => operand,
-                S7DerivationKind::ShiftOneNonzero { .. } => {
-                    panic!("the first S7 group must be the bit-and bounds")
-                }
-                S7DerivationKind::UnsignedDivisionBound { .. } => {
-                    panic!("the first S7 group must be the bit-and bounds")
-                }
-                S7DerivationKind::UnsignedRemainderBound { .. } => {
-                    panic!("the first S7 group must be the bit-and bounds")
-                }
-                S7DerivationKind::SignedRemainderBound { .. } => {
-                    panic!("the first S7 group must be the bit-and bounds")
-                }
-            })
-            .collect::<Vec<_>>(),
-        vec![0, 1]
-    );
-
-    let literal_shift = &summary.s7_derivations[2..3];
-    let named_shift = &summary.s7_derivations[3..4];
-    for group in [literal_shift, named_shift] {
-        assert!(group.iter().all(|source| source.row == IntegerType::U32));
-        assert!(
-            group
-                .iter()
-                .all(|source| source.subject == group[0].subject)
-        );
-        assert!(group.iter().all(|source| source.event == group[0].event));
-        assert!(group.iter().all(|source| source.source == group[0].source));
-        assert!(group.iter().all(|source| match &source.kind {
-            S7DerivationKind::ShiftOneNonzero { count_atom, .. } => {
-                count_atom
-                    == match &group[0].kind {
-                        S7DerivationKind::ShiftOneNonzero { count_atom, .. } => count_atom,
-                        S7DerivationKind::BitAndBound { .. } => unreachable!(),
-                        S7DerivationKind::UnsignedDivisionBound { .. } => unreachable!(),
-                        S7DerivationKind::UnsignedRemainderBound { .. } => unreachable!(),
-                        S7DerivationKind::SignedRemainderBound { .. } => unreachable!(),
-                    }
-            }
-            S7DerivationKind::BitAndBound { .. } => false,
-            S7DerivationKind::UnsignedDivisionBound { .. } => false,
-            S7DerivationKind::UnsignedRemainderBound { .. } => false,
-            S7DerivationKind::SignedRemainderBound { .. } => false,
-        }));
-    }
-    assert!(literal_shift.iter().all(|source| matches!(
-        source.kind,
-        S7DerivationKind::ShiftOneNonzero {
-            one: ShiftOneIdentity::TypedLiteral { .. },
-            ..
-        }
-    )));
-    let named_declaration = match named_shift[0].kind {
-        S7DerivationKind::ShiftOneNonzero {
-            one: ShiftOneIdentity::NamedConstant { declaration },
-            ..
-        } => declaration,
-        _ => panic!("the named-one shift must retain its declaration identity"),
-    };
-    assert!(named_shift.iter().all(|source| matches!(
-        source.kind,
-        S7DerivationKind::ShiftOneNonzero {
-            one: ShiftOneIdentity::NamedConstant { declaration },
-            ..
-        } if declaration == named_declaration
-    )));
-}
-
-#[test]
-fn repeated_bit_and_operands_keep_two_ordered_s7_roots() {
-    let source = br#"fn repeated(value: u32) -> result: u32 pure {
-  let masked = iand(value, value);
-  return masked;
-}
-
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
-}
-"#;
-    let summary = entailment(source, "repeated");
-    validate_derivations(&summary);
-    assert_eq!(summary.s7_derivations.len(), 2);
-    let pair = &summary.s7_derivations;
-    let S7DerivationKind::BitAndBound {
-        operand: first,
-        admitted: first_term,
-    } = pair[0].kind
-    else {
-        panic!("the first repeated operand must be a bit-and source");
-    };
-    let S7DerivationKind::BitAndBound {
-        operand: second,
-        admitted: second_term,
-    } = pair[1].kind
-    else {
-        panic!("the second repeated operand must be a bit-and source");
-    };
-    assert_eq!((first, second), (0, 1));
-    assert_eq!(first_term, second_term);
-    assert_eq!(pair[0].parent, pair[1].parent);
-    assert_eq!(summary.derivations.roots.len(), 2);
-    assert_eq!(
-        summary
-            .derivations
-            .roots
-            .iter()
-            .map(|root| root.kind)
-            .collect::<Vec<_>>(),
-        (0..2)
-            .map(DerivationRootKind::BitAndBound)
-            .collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn one_ineligible_bit_and_operand_does_not_hide_the_other_s7_bound() {
-    let source = br#"const count: u64 = 4_u64;
-
-const values: Array<u32, count> =[0_u32, 0_u32, 0_u32, 0_u32];
-
-fn independent(admitted: u32) -> result: u32 pure {
-  let masked = iand(values[0_u64], admitted);
-  return masked;
-}
-
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
-}
-"#;
-    let summary = entailment(source, "independent");
-    validate_derivations(&summary);
-    assert_eq!(summary.s7_derivations.len(), 1);
-    assert!(summary.s7_derivations.iter().all(|source| matches!(
-        source.kind,
-        S7DerivationKind::BitAndBound { operand: 1, .. }
-    )));
-}
-
-#[test]
-fn signed_generic_local_nondirect_and_wrong_operation_shapes_have_no_s7_source() {
-    let source = br#"fn signed(left: i32, right: i32) -> result: i32 pure {
-  let masked = iand(left, right);
-  return masked;
-}
-
-fn generic<T: Int>(count: u32) -> result: T pure {
-  let shifted = ishl.wrap(1_T, count);
-  return shifted;
-}
-
-fn local(count: u32) -> result: u32 pure {
-  let one = 1_u32;
-  let shifted = ishl.wrap(one, count);
-  return shifted;
-}
-
-fn nondirect(count: u32) -> result: u32 pure {
-  return ishl.wrap(1_u32, count);
-}
-
-fn wrong_bit_operation(left: u32, right: u32) -> result: u32 pure {
-  let combined = ior(left, right);
-  return combined;
-}
-
-fn wrong_shift_mode(count: u32) -> result: u32 pure contract {
-  requires ishl.defined(1_u32, count);
+fn operation_facts_are_retained_where_a_root_reaches_them() {
+    let source = br#"fn at_most(value: u32, limit: u32) -> result: unit pure contract {
+  requires value <= limit;
 } {
-  let shifted = ishl(1_u32, count);
-  return shifted;
+  return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  let ignored = generic::<u32>(count: 2_u32);
-  return exit_status(code: 0_u8);
+fn unused(left: u32, right: u32, count: u32) -> result: u32 pure {
+  let masked = iand(left, right);
+  let shifted = ishl.wrap(1_u32, count);
+  let joined = ior(masked, shifted);
+  return joined;
+}
+
+fn consumed(value: u32) -> result: unit pure {
+  if value <= 1000_u32 {
+    let shifted = ishr(value, 3_u32);
+    at_most(value: shifted, limit: 125_u32);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    for function in [
-        "signed",
-        "generic",
-        "local",
-        "nondirect",
-        "wrong_bit_operation",
-        "wrong_shift_mode",
-    ] {
-        let summary = entailment(source, function);
-        validate_derivations(&summary);
-        assert!(
-            summary.s7_derivations.is_empty(),
-            "{function} must not establish an S7 bit/shift source"
-        );
+    let unused = accepted_entailment(source, "unused");
+    validate_derivations(&unused);
+    assert!(
+        !unused
+            .derivations
+            .nodes
+            .iter()
+            .any(|node| matches!(node, DerivationNode::OperationFact { .. })),
+        "an unconsumed S7 fact is pruned like every other source fact"
+    );
+
+    let consumed = accepted_entailment(source, "consumed");
+    validate_derivations(&consumed);
+    assert_root_contains(
+        &consumed,
+        call_root(&consumed, 0),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OperationFact {
+                    relation: Relation::Bound { right, bound: 125, .. },
+                    parents,
+                    ..
+                } if *right == ZERO && !parents.is_empty()
+            )
+        },
+        "the shift's upper bound over its guarded operand",
+    );
+}
+
+/// [ENT-3.S7, ENT-2] a measure operand is read as its term: the remainder by
+/// a length relates the result to that length directly.
+#[test]
+fn a_measure_operand_is_read_as_its_term() {
+    let source = br#"fn pick(source: &[u64], seed: u64) -> result: u64 reads(source) contract {
+  define length = deref(source).len;
+  requires length != 0_u64;
+} {
+  let slot = seed % deref(source).len;
+  let value = deref(source)[slot];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "pick");
+    validate_derivations(&summary);
+    assert!(summary.obligations.iter().all(|outcome| outcome.discharged));
+    let bounds = summary
+        .obligations
+        .iter()
+        .position(|outcome| outcome.family == ObligationFamily::Bounds)
+        .expect("the subscript owns one bounds obligation");
+    assert_root_contains(
+        &summary,
+        obligation_root(&summary, bounds),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OperationFact {
+                    relation: Relation::Bound { right, bound: -1, .. },
+                    ..
+                } if *right != ZERO
+            )
+        },
+        "the remainder's strict relation to the length term",
+    );
+}
+
+/// [ENT-5, ENT-3.S7] a checked row's success payload carries the exact row's
+/// offset relation into its `Ok` arm, through the payload transport.
+#[test]
+fn a_checked_row_payload_carries_the_exact_row_facts() {
+    let source = br#"fn at_least(value: u64, floor: u64) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn advance(start: u64, count: u64) -> result: u64 pure {
+  match start +checked count {
+    Ok(value: end) => {
+      at_least(value: end, floor: start);
+      return end;
     }
+    Err(error: overflow) => {
+      return start;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "advance");
+    validate_derivations(&summary);
+    let root = call_root(&summary, 0);
+    assert_root_contains(
+        &summary,
+        root,
+        |node| matches!(node, DerivationNode::ResultTransport { .. }),
+        "the payload's transport to the Ok binder",
+    );
+    assert_root_contains(
+        &summary,
+        root,
+        |node| matches!(node, DerivationNode::OperationFact { .. }),
+        "the exact row's offset relation on the payload",
+    );
+}
+
+/// [ENT-3.S7] a signed `iand` whose operands may both be negative has no
+/// row fact, so a nonnegativity requirement on its result stays unproved.
+#[test]
+fn a_signed_bit_and_without_a_nonnegative_operand_has_no_bound() {
+    let source = br#"fn nonnegative(value: i32) -> result: unit pure contract {
+  requires 0_i32 <= value;
+} {
+  return unit;
+}
+
+fn signed(left: i32, right: i32) -> result: unit pure {
+  let masked = iand(left, right);
+  nonnegative(value: masked);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_kind(source, SemanticRule::Fn8, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
+    });
 }
 
 #[test]
@@ -7548,8 +7395,8 @@ fn postcondition_exit_and_aggregate_roots_match_retained_metadata() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "identity");
@@ -7577,8 +7424,8 @@ fn caller(value: i32) -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(b_first, "caller");
@@ -7614,8 +7461,8 @@ fn caller() -> result: i32 pure contract {
   return called;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let callee = entailment(u_fallback, "normalized");
@@ -7683,8 +7530,8 @@ fn propagated(value: i32) -> result: Result<i32, Overflow> pure contract {
   return Ok<i32, Overflow>(value: selected);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["direct", "delivered", "propagated"] {
@@ -7784,8 +7631,8 @@ fn valued(outer: i32, replacement: i32) -> result: i32 pure {
   return delivered;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (function, selected_route) in [("same_binding", false), ("matched", true), ("valued", true)]
@@ -7823,8 +7670,8 @@ fn read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -7883,8 +7730,8 @@ fn unguarded(p: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -7900,7 +7747,7 @@ fn main() -> status: ExitStatus pure {
 }
 
 #[test]
-fn a_checked_offset_establishes_in_the_ok_arm_only_and_dies_with_its_base() {
+fn a_checked_offset_payload_keeps_its_interval_and_loses_its_relation_with_its_base() {
     let source = br#"const count: u64 = 4_u64;
 
 const values: Array<i32, count> =[0_i32, 0_i32, 0_i32, 0_i32];
@@ -7936,10 +7783,10 @@ fn through_binding(i: u64) -> result: i32 pure {
   }
 }
 
-fn killed(i: u64) -> result: i32 pure {
+fn interval_survives(i: u64, j: u64) -> result: i32 pure {
   if i < 3_u64 {
     let outcome = i +checked 1_u64;
-    set i = 9_u64;
+    set i = j;
     match outcome {
       Ok(value: next) => {
         return values[next];
@@ -7953,20 +7800,54 @@ fn killed(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn relation_lives(i: u64) -> result: u64 pure {
+  match i +checked 1_u64 {
+    Ok(value: next) => {
+      return next - i;
+    }
+    Err(error: overflowed) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn relation_killed(i: u64, j: u64) -> result: u64 pure {
+  let outcome = i +checked 1_u64;
+  set i = j;
+  match outcome {
+    Ok(value: next) => {
+      return next - i;
+    }
+    Err(error: overflowed) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(discharge_flags(source, "direct"), vec![true]);
     assert_eq!(
         discharge_flags(source, "through_binding"),
         vec![true],
-        "a bare IDENT naming the outcome carries the same fact"
+        "a bare IDENT naming the outcome carries the same conditional facts"
     );
     assert_eq!(
-        discharge_flags(source, "killed"),
+        discharge_flags(source, "interval_survives"),
+        vec![true],
+        "the payload's interval names only the payload, so a base write leaves it"
+    );
+    assert_eq!(
+        discharge_flags(source, "relation_lives"),
+        vec![true],
+        "the offset relation to the base proves the difference's domain"
+    );
+    assert_eq!(
+        discharge_flags(source, "relation_killed"),
         vec![false],
-        "writing the base between the initializer and the match ends the origin"
+        "writing the base between the evaluation and the match kills the offset relation"
     );
 }
 
@@ -8002,8 +7883,8 @@ fn high(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let low = entailment(source, "low");
@@ -8056,8 +7937,8 @@ fn direct_read(i: u64) -> result: i32 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let bound = obligations(source, "bound_read");
@@ -8100,8 +7981,8 @@ fn read(i: u64) -> result: i32 pure contract {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -8132,8 +8013,8 @@ fn read(i: u64) -> result: i32 pure contract {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -8160,8 +8041,8 @@ fn read() -> result: i32 pure contract {
   return values[9_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = obligations(source, "read");
@@ -8188,8 +8069,8 @@ fn read(i: u64) -> result: i32 pure contract {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_eq!(
@@ -8207,7 +8088,7 @@ fn main() -> status: ExitStatus pure {
 
 fn range_contract_source(contract: &str, body: &str) -> String {
     format!(
-        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output){contract} {{\n{body}  return unit;\n}}\n"
+        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output){contract} {{\n{body}  return unit;\n}}\n"
     )
 }
 
@@ -8215,7 +8096,7 @@ fn range_contract_source(contract: &str, body: &str) -> String {
 fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
-        "  let outcome = write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64]);\n",
+        "  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64]);\n",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -8233,7 +8114,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
 fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
-        "  let outcome = write_once(factory: factory, output: output, source: source, start: start, end: end);\n",
+        "  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end);\n",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -8260,7 +8141,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
 fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= deref(source).len;\n}",
-        "  let outcome = write_once(factory: factory, output: output, source: source, start: start, end: end);\n",
+        "  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end);\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -8307,7 +8188,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
 fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
-        "  let capacity = deref(source).len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64]);\n    }\n  }\n",
+        "  let capacity = deref(source).len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64]);\n    }\n  }\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8352,7 +8233,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
 fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
-        "  let outcome = write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64]);\n",
+        "  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64]);\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8375,11 +8256,11 @@ fn a_transfer_endpoint_is_bounded_by_end_and_not_beyond_it() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn under(factory: &HandleFactory, output: &OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
+fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
   let source_length = deref(source).len;
   let enough = 3_u64 <= source_length;
   if enough {
-    match write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64) {
+    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64) {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -8390,11 +8271,11 @@ fn under(factory: &HandleFactory, output: &OutputStream, source: &[u8]) -> resul
   return unit;
 }
 
-fn exact(factory: &HandleFactory, output: &OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
+fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
   let source_length = deref(source).len;
   let enough = 4_u64 <= source_length;
   if enough {
-    match write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64) {
+    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64) {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -8443,10 +8324,10 @@ fn a_transfer_endpoint_bound_enters_the_observing_arm_only() {
     // payload is an unrelated required size and gains nothing [ENT-3.S12].
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(text: &HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
+fn main(text: &std::text::HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
   requires 3_u64 <= deref(destination).len;
 } {
-  match host_copy_bytes(value: text, destination: destination, start: 0_u64, end: 3_u64) {
+  match std::text::host_copy_bytes(value: text, destination: destination, start: 0_u64, end: 3_u64) {
     Ok(value: copied) => {
       let good = table[copied];
     }
@@ -8478,10 +8359,10 @@ fn a_host_copy_utf8_success_endpoint_is_bounded_by_end() {
     // the byte-preserving copy producer: copied <= 3 < table.len.
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(text: &HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
+fn main(text: &std::text::HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
   requires 3_u64 <= deref(destination).len;
 } {
-  match host_copy_utf8(value: text, destination: destination, start: 0_u64, end: 3_u64) {
+  match std::text::host_copy_utf8(value: text, destination: destination, start: 0_u64, end: 3_u64) {
     Ok(value: copied) => {
       let good = table[copied];
     }
@@ -8511,11 +8392,11 @@ fn a_named_boundary_outcome_uses_the_same_numeric_evidence_as_source_calls() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn deferred(factory: &HandleFactory, output: &OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
   define capacity = deref(source).len;
   requires 3_u64 <= capacity;
 } {
-  let outcome = write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64);
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64);
   match outcome {
     Ok(value: written) => {
       let sample = table[written];
@@ -8526,11 +8407,11 @@ fn deferred(factory: &HandleFactory, output: &OutputStream, source: &[u8], limit
   return unit;
 }
 
-fn killed(factory: &HandleFactory, output: &OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
   define capacity = deref(source).len;
   requires limit <= capacity;
 } {
-  let outcome = write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit);
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit);
   set limit = 9_u64;
   match outcome {
     Ok(value: written) => {
@@ -8567,10 +8448,10 @@ fn a_read_at_endpoint_is_observed_on_its_own_outcome_variant() {
     // PRE-1 read_at uses Result and an ordinary selected ensures.
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(factory: &HandleFactory, file: &ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) contract {
+fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) contract {
   requires 3_u64 <= deref(destination).len;
 } {
-  match read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {
+  match std::fs::read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {
     Ok(value: next) => {
       let sample = table[next];
     }
@@ -8611,8 +8492,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -8648,8 +8529,8 @@ fn read(leave: Bool) -> result: i32 pure {
   return values[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -8679,18 +8560,26 @@ fn an_undischarged_subscript_is_an_op4_rejection_with_the_exact_residual() {
   return values[i];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_rule(
-        source,
-        SemanticRule::Op4,
-        SemanticIssueKind::UndischargedBoundsObligation {
-            residual: "i < values.len".to_owned(),
-            mechanical_fix: "when the relation must hold, establish the residual with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise restructure the access",
-        },
-    );
+    // Both terms are parameters no event of `read` writes, so the repair
+    // offers the requirement that holds at entry and reaches the access
+    // [DIAG-1]; its complete sentence is pinned in `driver::pinned_repairs`.
+    assert_rule_kind(source, SemanticRule::Op4, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedBoundsObligation {
+                residual,
+                disposition: StaticObligationDisposition::Unproved,
+                mechanical_fix,
+            } if residual == "i < values.len"
+                && mechanical_fix.starts_with(
+                    "add `requires i < values.len;` to the `contract` of `read`"
+                )
+        )
+    });
 }
 
 #[test]
@@ -8701,8 +8590,8 @@ fn read() -> result: i32 pure {
   return values[2_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read");
@@ -8727,8 +8616,8 @@ fn read() -> result: i32 pure {
   return values[2_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -8762,8 +8651,8 @@ fn read() -> result: i32 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -8835,30 +8724,32 @@ fn counted_sha256_discharges_all_nine_indices_from_counted_facts() {
 
 #[test]
 fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
-    let bundles: [&[SourceInput<'_>]; 3] = [
-        &[SourceInput::new(
+    // Each bundle is its sources' logical names and bytes, so a check below
+    // can select a bundle by the source it compiles rather than by position.
+    let bundles: [&[(&str, &[u8])]; 3] = [
+        &[(
             "utf8parse.wf",
             include_bytes!("../../../../tests/programs/utf8parse.wf"),
         )],
         &[
-            SourceInput::new(
+            (
                 "raw_deflate.wf",
                 include_bytes!("../../../../tests/programs/raw_deflate.wf"),
             ),
-            SourceInput::new(
+            (
                 "raw_deflate_dynamic.wf",
                 include_bytes!("../../../../tests/programs/raw_deflate_dynamic.wf"),
             ),
-            SourceInput::new(
+            (
                 "raw_deflate_dynamic_decode.wf",
                 include_bytes!("../../../../tests/programs/raw_deflate_dynamic_decode.wf"),
             ),
-            SourceInput::new(
+            (
                 "raw_deflate_boundary.wf",
                 include_bytes!("../../../../tests/programs/raw_deflate_boundary.wf"),
             ),
         ],
-        &[SourceInput::new(
+        &[(
             "wfgrep.wf",
             include_bytes!("../../../../tests/programs/wfgrep.wf"),
         )],
@@ -8868,8 +8759,16 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
     // exactly one of the three mains a counted loop of its own — utf8parse's
     // output run is taken from a bump extent and filled by a counted `for`
     // where it was a `buffer_new` with an initial value.
-    for (bundle, inputs) in bundles.into_iter().enumerate() {
-        super::with_semantics_inputs(inputs, |outcome| {
+    let mut raw_deflate_routes_checked = 0;
+    let mut wfgrep_routes_checked = 0;
+    for (bundle, sources) in bundles.into_iter().enumerate() {
+        let inputs = sources
+            .iter()
+            .map(|(name, bytes)| SourceInput::new(name, bytes))
+            .collect::<Vec<_>>();
+        let compiles_raw_deflate = sources.iter().any(|(name, _)| *name == "raw_deflate.wf");
+        let compiles_wfgrep = sources.iter().any(|(name, _)| *name == "wfgrep.wf");
+        super::with_semantics_inputs(&inputs, |outcome| {
             let SemanticOutcome::Complete(program) = outcome else {
                 panic!("real source bundle must remain accepted: {outcome:?}");
             };
@@ -8894,10 +8793,11 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
                     (1, "decode_fixed") => 1,
                     (1, "exercise") => 4,
                     (1, "main") => 0,
-                    // `wfgrep.wf`'s two fill helpers, which carry the zero
-                    // fill its runs took from `buffer_new` before B7c4b.
+                    // `wfgrep.wf`'s fill helper, which carries the zero fill
+                    // its runs took from `buffer_new` before B7c4b. Its word
+                    // helper retired when the walk's fixed visit order became
+                    // a growable offset store.
                     (2, "zeroed_bytes") => 1,
-                    (2, "zeroed_words") => 1,
                     _ => 0,
                 };
                 assert_eq!(
@@ -8907,25 +8807,32 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
                     function.name,
                 );
             }
-            if program
-                .data
-                .functions
-                .iter()
-                .any(|function| function.name == "read_bits")
-            {
+            // Both route checks are selected by the source the bundle
+            // compiles rather than by the presence of a function name: a name
+            // probe skipped wfgrep's assertions without failing when
+            // `report_failure` was renamed `assemble_failure`. A missing
+            // anchor function fails inside each check, a reordered bundle
+            // list cannot re-target either, and the counts below require
+            // each to run exactly once.
+            if compiles_raw_deflate {
                 assert_real_read_bits_routes(&program.data);
                 assert_real_raw_append_routes(&program.data);
+                raw_deflate_routes_checked += 1;
             }
-            if program
-                .data
-                .functions
-                .iter()
-                .any(|function| function.name == "report_failure")
-            {
+            if compiles_wfgrep {
                 assert_real_wfgrep_routes(&program.data);
+                wfgrep_routes_checked += 1;
             }
         });
     }
+    assert_eq!(
+        raw_deflate_routes_checked, 1,
+        "exactly one bundle compiles raw_deflate.wf and runs its route assertions"
+    );
+    assert_eq!(
+        wfgrep_routes_checked, 1,
+        "exactly one bundle compiles wfgrep.wf and runs its route assertions"
+    );
 }
 
 fn assert_real_read_bits_routes(program: &CheckedProgramData) {
@@ -8945,7 +8852,7 @@ fn assert_real_read_bits_routes(program: &CheckedProgramData) {
         .functions
         .iter()
         .find(|function| function.name == "read_bits")
-        .expect("read_bits declaration")
+        .expect("raw DEFLATE's bit reader, read_bits, anchors these routes")
         .id;
     let mut calls = Vec::new();
     for (caller, function) in program.functions.iter().enumerate() {
@@ -9076,7 +8983,7 @@ fn assert_real_read_bits_routes(program: &CheckedProgramData) {
         }));
     }
 
-    // PRE-1 supplies ordinary signatures: write_once and read_at each publish
+    // PRE-2 supplies ordinary signatures: write_once and read_at each publish
     // their two endpoint clauses through the same conditional call route.
     // The fourteen read_bits calls retain their original clause inventory.
     for (caller_name, callee_name) in [("publish_all", "write_once"), ("exercise", "read_at")] {
@@ -9240,6 +9147,28 @@ fn assert_real_read_bits_routes(program: &CheckedProgramData) {
 }
 
 fn assert_real_raw_append_routes(program: &CheckedProgramData) {
+    // The eight routes are `assemble_reason`'s eight direct-receiver
+    // `set length = append_slice(filled: length, ...)` sites in
+    // `raw_deflate_boundary.wf`, the only such form in the chain.
+    let assemble = program
+        .functions
+        .iter()
+        .find(|function| function.name == "assemble_reason")
+        .expect("raw DEFLATE's diagnostic assembly, assemble_reason, anchors these routes");
+    assert_eq!(
+        assemble
+            .entailment
+            .derivations
+            .roots
+            .iter()
+            .filter(|root| matches!(
+                root.kind,
+                DerivationRootKind::PostconditionDirectReceiver { .. }
+            ))
+            .count(),
+        8,
+        "every receiver route is one of assemble_reason's append sites",
+    );
     assert_eq!(
         program
             .functions
@@ -9258,11 +9187,12 @@ fn assert_real_raw_append_routes(program: &CheckedProgramData) {
 /// searching `wfgrep` retains.
 ///
 /// One route per source `append_slice` call site, and the count is derived
-/// from source, never from the module: `report_failure` appends the prefix
-/// and then, after the A10 clamp, the separator and six reasons — eight
-/// sites. `main` has the three startup-message sites plus the defensive
-/// root-length route introduced when `append_slice` gained its static input
-/// contract — four more sites.
+/// from source, never from the module: every site has the direct-receiver
+/// form `set x = append_slice(filled: x, ...)`. `assemble_failure` appends the
+/// prefix and then, after the A10 clamp, the separator and ten reasons —
+/// twelve sites. `exercise` has the three startup-message sites plus the
+/// defensive root-length route introduced when `append_slice` gained its
+/// static input contract — four more sites.
 fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
     let proof_nodes: u64 = program
         .functions
@@ -9275,10 +9205,14 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
         .map(|function| u64::from(function.entailment.derivations.metrics.parent_edges))
         .sum();
     // A wall-clock assertion would vary with the host and with the Rust
-    // profile.  These two deterministic sizes guard the cost shape instead:
-    // the current source retains 27,460 nodes and 53,423 parent edges, with a
-    // small margin for ordinary proof evolution.  A return to the former
-    // million-node shape fails here on every machine.
+    // profile.  These two deterministic sizes guard the cost shape instead,
+    // with a small margin for ordinary proof evolution.  A return to the
+    // former million-node shape fails here on every machine.  The history
+    // below records how the retained size moved; the last paragraph states
+    // the current measurement and ceilings.
+    //
+    // When this check was written the source retained 27,460 nodes and
+    // 53,423 parent edges.
     //
     // The counts rose from 23,394 and 45,669 when a `set` to a fragment place
     // gained the commit-value image [ENT-3.S5]: each such statement now
@@ -9304,13 +9238,32 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
     // search: no derivation family and no candidate set grew. The ceilings
     // keep the same proportional margin, and the million-node shape still
     // fails here.
+    //
+    // These assertions then stopped running: they were selected by the name
+    // `report_failure`, which b7bccc3f5 renamed `assemble_failure`, and no
+    // later change re-measured them. Re-measured at 803f37668 (main before the
+    // wfgrep directory-walk fix), wfgrep retained 3,796 nodes and 6,392 edges,
+    // about a twelfth of the v0.45 figures; the proof-engine changes in
+    // between were not attributed one by one, but the 52,000 and 100,000
+    // ceilings sat more than twelve times above the measurement and would
+    // have missed any regression short of that.
+    // The directory-walk fix raised the program to 4,040 nodes and 6,692
+    // edges: `assemble_failure` +114/+144 for its four new reason appends,
+    // `walk` +99/+141 for entry collection and the output-refusal paths, the
+    // new helpers `search_root`, `publish_oversized`, `widen_window`,
+    // `push_byte`, `push_word` and `keep_entry` +72/+61, the two `grow`
+    // instances +4/+0, while the retired `zeroed_words` -39/-32, `exercise`
+    // -6/-13 and `search_file` -0/-1. `append_slice` is unchanged at
+    // 2,600/5,124 and is still most of the total. The ceilings are tightened
+    // to 4,500 and 7,400, about the ten-percent margin the earlier ceilings
+    // kept above their measurement.
     assert!(
-        proof_nodes <= 52_000,
-        "wfgrep retained {proof_nodes} proof nodes; expected at most 52,000"
+        proof_nodes <= 4_500,
+        "wfgrep retained {proof_nodes} proof nodes; expected at most 4,500"
     );
     assert!(
-        proof_edges <= 100_000,
-        "wfgrep retained {proof_edges} proof edges; expected at most 100,000"
+        proof_edges <= 7_400,
+        "wfgrep retained {proof_edges} proof edges; expected at most 7,400"
     );
     let shift = program
         .functions
@@ -9352,15 +9305,15 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
                 DerivationRootKind::PostconditionDirectReceiver { .. }
             ))
             .count(),
-        12,
-        "wfgrep has exactly twelve append_slice receiver routes",
+        16,
+        "wfgrep has exactly sixteen append_slice receiver routes",
     );
 
     let report = program
         .functions
         .iter()
-        .find(|function| function.name == "report_failure")
-        .expect("report_failure function");
+        .find(|function| function.name == "assemble_failure")
+        .expect("wfgrep's diagnostic assembly, assemble_failure, anchors these routes");
     let mut delivery_receivers = report
         .entailment
         .derivations
@@ -9372,13 +9325,14 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
         })
         .collect::<Vec<_>>();
     // A10 survives the searching rewrite because the diagnostic still wants
-    // the shape: `report_failure` assembles `wfgrep: PATH: reason` in one
-    // reusable buffer and publishes it with one host write, so it has to
-    // clamp the assembled length against the buffer's capacity, and a
-    // `value_if` over the fits test is how that clamp is written. Publishing
-    // the three pieces separately would drop the clamp — and the delivery
-    // route with it — at the price of three host writes for one diagnostic
-    // and no guarantee that the pieces stay adjacent in a shared sink.
+    // the shape: `assemble_failure` assembles `wfgrep: PATH: reason` in one
+    // reusable range and hands the assembled length back for its caller to
+    // publish with one host write, so it has to clamp that length against the
+    // range's capacity, and a `value_if` over the fits test is how that clamp
+    // is written. Publishing the three pieces separately would drop the
+    // clamp — and the delivery route with it — at the price of three host
+    // writes for one diagnostic and no guarantee that the pieces stay
+    // adjacent in a shared sink.
     assert!(
         !delivery_receivers.is_empty(),
         "A10 must deliver one receiver"
@@ -9388,7 +9342,7 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
         delivery_receivers
             .drain(..)
             .all(|receiver| receiver == bounded_length),
-        "A10 is the only value_if delivery in report_failure",
+        "A10 is the only value_if delivery in assemble_failure",
     );
     let mut bounded_routes = report
         .entailment
@@ -9411,8 +9365,8 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
     bounded_routes.sort_by(|left, right| left.0.components().cmp(right.0.components()));
     assert_eq!(
         bounded_routes.len(),
-        7,
-        "the separator and six following reason appends use bounded_length",
+        11,
+        "the separator and ten following reason appends use bounded_length",
     );
     for (_, parent) in &bounded_routes {
         assert!(
@@ -9421,31 +9375,45 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
                 DerivationNode::PostconditionDeliveryJoin { detail }
                     if detail.receiver == bounded_length
             )),
-            "each A11-A16 receiver chain must descend from A10",
+            "each receiver chain after the clamp must descend from A10",
         );
     }
 
+    // The clamped length is what the caller publishes: `assemble_failure`
+    // makes no host write of its own, and its one return hands back the
+    // binding A10 delivered, which its `result <= capacity` postcondition
+    // then carries to each caller's `publish_all` requirement.
     let publish = program
         .functions
         .iter()
         .find(|function| function.name == "publish_all")
         .expect("publish_all function")
         .id;
+    let body = report.body.as_deref().expect("WF body");
     let mut publish_calls = Vec::new();
-    collect_direct_calls(
-        report.body.as_deref().expect("WF body"),
-        publish,
-        &mut publish_calls,
+    collect_direct_calls(body, publish, &mut publish_calls);
+    assert!(
+        publish_calls.is_empty(),
+        "assemble_failure hands its length back instead of publishing"
     );
-    assert_eq!(publish_calls.len(), 1);
-    assert!(matches!(
-        &publish_calls[0].1[2],
-        CheckedExpression::Binding {
-            binding,
-            consume_root: false,
-            ..
-        } if *binding == bounded_length
-    ));
+    let returns = body
+        .iter()
+        .filter_map(|statement| match statement {
+            CheckedStatement::Return { value, .. } => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(
+            returns.as_slice(),
+            [CheckedExpression::Binding {
+                binding,
+                consume_root: false,
+                ..
+            }] if *binding == bounded_length
+        ),
+        "assemble_failure returns the clamped length once"
+    );
 }
 
 #[test]
@@ -9463,8 +9431,8 @@ fn probe(holder: Holder) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -9503,8 +9471,8 @@ fn probe(limit: Limit) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -9527,8 +9495,8 @@ fn counted_range_preserves_multiple_box_content_steps_in_one_endpoint_term() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -9554,8 +9522,8 @@ fn counted_range_keeps_nested_box_steps_without_a_reference_wrapper_step() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -9579,8 +9547,8 @@ fn counted_range_does_not_treat_a_read_only_box_content_read_as_a_consume() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -9605,8 +9573,8 @@ fn counted_range_does_not_duplicate_the_content_step_of_a_let_bound_owning_box()
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "probe");
@@ -9639,8 +9607,8 @@ fn caller(value: u8) -> result: u8 pure {
   return shift_once(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -9696,8 +9664,8 @@ fn impossible_integer_domain_true_edge_closes_to_contradiction() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -9742,8 +9710,8 @@ fn impossible_integer_domain_false_edge_closes_to_contradiction() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -9837,8 +9805,8 @@ fn from_false(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -9889,8 +9857,8 @@ fn projected(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let exact = entailment(source, "exact");
@@ -9968,8 +9936,8 @@ fn one(value: u64, choose: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let both = entailment(source, "both");
@@ -10017,8 +9985,8 @@ fn probe(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = call_goals(source, "probe");
@@ -10057,8 +10025,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -10085,9 +10053,9 @@ fn setting_an_intermediate_bool_binding_stops_later_origin_expansion() {
 
 fn caller(value: u64) -> result: unit pure {
   let positive = value > 0_u64;
-  let alias = positive;
+  let aliased = positive;
   set positive = False();
-  if alias {
+  if aliased {
     guarded(value: value);
   } else {
     return unit;
@@ -10095,8 +10063,8 @@ fn caller(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = call_goals(source, "caller");
@@ -10123,8 +10091,8 @@ fn through_holder(first: Bool, second: Bool) -> result: unit pure {
   let source = band(first, second);
   let holder = &source;
   set deref(holder) = False();
-  let alias = source;
-  if alias {
+  let aliased = source;
+  if aliased {
     need(first: first, second: second);
   } else {
     return unit;
@@ -10135,8 +10103,8 @@ fn through_holder(first: Bool, second: Bool) -> result: unit pure {
 fn through_call(first: Bool, second: Bool) -> result: unit pure {
   let source = band(first, second);
   mutate(value: &source);
-  let alias = source;
-  if alias {
+  let aliased = source;
+  if aliased {
     need(first: first, second: second);
   } else {
     return unit;
@@ -10144,8 +10112,8 @@ fn through_call(first: Bool, second: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["through_holder", "through_call"] {
@@ -10198,8 +10166,8 @@ fn l0(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (function, is_goal) in [("signed", true), ("l0", false)] {
@@ -10255,8 +10223,8 @@ fn caller(slot: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "caller");
@@ -10301,8 +10269,8 @@ fn caller(slot: i32, replacement: i32) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = accepted_entailment(source, "caller");
@@ -10342,8 +10310,8 @@ fn caller(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -10380,8 +10348,8 @@ fn caller(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -10396,7 +10364,7 @@ fn main() -> status: ExitStatus pure {
             );
         };
         assert_eq!(detail.concrete_callee, "guarded");
-        assert!(!detail.requires_clause.components().is_empty());
+        assert!(!detail.requires_clause.path().components().is_empty());
         // The alpha-expanded requirement in the terms the caller wrote, with
         // the caller's own binder in it. The structural dump this replaced
         // opened `Boolean(And)<types=[], consts=[]>(Integer { operation:
@@ -10408,14 +10376,40 @@ fn main() -> status: ExitStatus pure {
             "band(value > 0_u64, value < 10_u64)"
         );
         assert_eq!(detail.disposition, CallRequirementDisposition::Unproved);
-        assert_eq!(
-            detail.mechanical_fix,
-            "when the call is required to succeed, establish the entire instantiated callee requirement with a verified requirement, a source invariant, or explicit finite proof steps before the call; use a dominating branch only when rejection is intended program behavior; otherwise restructure the call"
+        // `value` is a parameter of `caller` its body never writes, and the
+        // goal is no single comparison a clause could copy, so the repair
+        // asks for the relation as a requirement of `caller` [DIAG-1].
+        assert!(
+            detail
+                .mechanical_fix
+                .starts_with("state the relation over the parameters of `caller` as a `requires`"),
+            "{}",
+            detail.mechanical_fix
         );
         let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");
         let end = usize::try_from(coordinate.end().value()).expect("offset fits");
         assert_eq!(&source[start..end], b"guarded(value: value)");
+    });
+}
+
+/// [FN-8, FN-2] the payload names the callee instance as a call writes it,
+/// with its type and const arguments, never by the internal symbol that
+/// keys its lowering.
+#[test]
+fn a_call_requirement_names_the_generic_instance_as_written() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/blk0-neg-full-array-freeze-requires-fullness.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("the partial freeze must reject at FN-8: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
+            panic!("expected FN-8 payload, got {:?}", issue.kind());
+        };
+        assert_eq!(detail.concrete_callee, "slots_into_array::<u64, 2>");
     });
 }
 
@@ -10434,8 +10428,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(admitted_actual, |outcome| {
@@ -10448,9 +10442,14 @@ fn main() -> status: ExitStatus pure {
         };
         assert_eq!(detail.disposition, CallRequirementDisposition::Unproved);
         assert_eq!(detail.instantiated_goal, "values[0_u64] < 10_u8");
-        assert_eq!(
-            detail.mechanical_fix,
-            "when the call is required to succeed, establish the entire instantiated callee requirement with a verified requirement, a source invariant, or explicit finite proof steps before the call; use a dominating branch only when rejection is intended program behavior; otherwise restructure the call"
+        // The admitted element read is part of the goal's identity, so a
+        // condition naming the same expression establishes it [ENT-3].
+        assert!(
+            detail
+                .mechanical_fix
+                .contains("guard the call with `if values[0_u64] < 10_u8`"),
+            "{}",
+            detail.mechanical_fix
         );
     });
     let admitted = entailment(admitted_actual, "caller");
@@ -10495,8 +10494,8 @@ fn caller() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(failed_actual, |outcome| {
@@ -10541,8 +10540,8 @@ fn caller(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "caller");
@@ -10586,8 +10585,8 @@ fn update(value: &u64) -> result: unit writes(value) contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "update");
@@ -10662,8 +10661,8 @@ fn caller(values: Slots<u8, 2>) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = call_goals(source, "caller");
@@ -10708,8 +10707,8 @@ fn probe() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let outcomes = call_goals(source, "probe");
@@ -10734,8 +10733,8 @@ fn second(value: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for function in ["first", "second"] {
@@ -10759,8 +10758,8 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn a_forward_concrete_generic_call_uses_its_substituted_goal() {
-    let source = br#"fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 
 fn caller(value: i32) -> result: unit pure {
@@ -10809,7 +10808,7 @@ fn concrete_const_instances_keep_function_local_derivation_inventories() {
   return values[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = slots_new::<u8, 2>();
   place_back(window: &small, value: 7_u8);
   place_back(window: &small, value: 7_u8);
@@ -10821,7 +10820,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &large, value: 9_u8);
   place_back(window: &large, value: 9_u8);
   let large_first = first::<5>(values: move large);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -10900,16 +10899,22 @@ fn a_write_still_kills_an_established_bound_on_its_target() {
   return b[offset];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_rule(
-        source,
-        SemanticRule::Op4,
-        SemanticIssueKind::UndischargedBoundsObligation {
-            residual: "offset < b.len".to_owned(),
-            mechanical_fix: "when the relation must hold, establish the residual with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise restructure the access",
-        },
-    );
+    // `offset` is a local the body writes, so no requirement names it and
+    // the repair offers the proof and guard routes [DIAG-1].
+    assert_rule_kind(source, SemanticRule::Op4, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedBoundsObligation {
+                residual,
+                disposition: StaticObligationDisposition::Unproved,
+                mechanical_fix,
+            } if residual == "offset < b.len"
+                && mechanical_fix.starts_with("`offset < b.len` is not proved here")
+                && mechanical_fix.contains("guard the access with `if offset < b.len`")
+        )
+    });
 }

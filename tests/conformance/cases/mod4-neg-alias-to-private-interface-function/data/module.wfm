@@ -1,0 +1,3 @@
+fn secret() -> result: u8 pure doc "A private function the interface declares.";
+
+public fn seven() -> result: u8 pure doc "Seven.";

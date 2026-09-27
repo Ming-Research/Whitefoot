@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bad(x: i64) -> result: Result<i64, DivError> pure {
   let d = x +checked x;
   let v = propagate d;

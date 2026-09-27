@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn free_unproved<T, const n: u64>(run: Slots<T, n>) -> result: unit pure {
   doc "OP-14: free_empty consumes a window whose element type is linear under the contract requires window.len == 0_u64, submitted at the call. A type argument or an unused capacity does not establish that current-state fact, so the requirement stays undischarged.";
   free_empty(window: move run);

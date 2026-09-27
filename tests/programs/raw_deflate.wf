@@ -35,7 +35,7 @@ fn read_bits(state: &InflateState, input: &[u8], count: u32, mask: u64) -> outco
       let input_length = deref(input).len;
       let input_done = deref(state).input_offset >= input_length;
       if input_done {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let next_byte = deref(input)[deref(state).input_offset];
@@ -104,7 +104,7 @@ fn decode_fixed_symbol(state: &InflateState, input: &[u8]) -> result: Result<u64
     set first = ishl.wrap(first_after_count, 1_u32);
     set code = ishl.wrap(code, 1_u32);
     if bit_length == 9_u32 {
-      let error = InvalidHuffmanCode();
+      let error = InflateError::InvalidHuffmanCode();
       return Err<u64, InflateError>(error: error);
     }
     set bit_length = bit_length +wrap 1_u32;
@@ -117,7 +117,7 @@ fn emit_byte(state: &InflateState, out: &[u8], value: u8) -> result: Result<unit
   let output_length = deref(out).len;
   let output_full = deref(state).output_offset >= output_length;
   if output_full {
-    let error = OutputFull();
+    let error = InflateError::OutputFull();
     return Err<unit, InflateError>(error: error);
   }
   set deref(out)[deref(state).output_offset] = value;
@@ -138,19 +138,12 @@ fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Resul
     }
     let literal = symbol <= 255_u64;
     if literal {
-      match cvt.checked::<u64, u8>(symbol) {
-        Ok(value: byte) => {
-          match emit_byte(state: state, out: out, value: byte) {
-            Ok(value: emitted) => {
-            }
-            Err(error: emit_error) => {
-              return Err<unit, InflateError>(error: emit_error);
-            }
-          }
+      let byte = cvt::<u64, u8>(symbol);
+      match emit_byte(state: state, out: out, value: byte) {
+        Ok(value: emitted) => {
         }
-        Err(error: conversion_error) => {
-          let error = InvalidHuffmanCode();
-          return Err<unit, InflateError>(error: error);
+        Err(error: emit_error) => {
+          return Err<unit, InflateError>(error: emit_error);
         }
       }
     } else {
@@ -227,7 +220,7 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       let length_bytes_remaining = input_length -wrap state.input_offset;
       let length_truncated = length_bytes_remaining < 4_u64;
       if length_truncated {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let len_high_offset = state.input_offset +wrap 1_u64;
@@ -237,28 +230,28 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       let header_zero_ok = state.input_offset < header_room;
       if header_zero_ok {
       } else {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let len_low_byte = deref(input)[state.input_offset];
       let header_one_ok = len_high_offset < header_room;
       if header_one_ok {
       } else {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let len_high_byte = deref(input)[len_high_offset];
       let header_two_ok = nlen_low_offset < header_room;
       if header_two_ok {
       } else {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let nlen_low_byte = deref(input)[nlen_low_offset];
       let header_three_ok = nlen_high_offset < header_room;
       if header_three_ok {
       } else {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let nlen_high_byte = deref(input)[nlen_high_offset];
@@ -275,20 +268,20 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       let complement_valid = stored_complement == expected_complement;
       if complement_valid {
       } else {
-        let error = InvalidStoredLength();
+        let error = InflateError::InvalidStoredLength();
         return Err<u64, InflateError>(error: error);
       }
       let copy_length = cvt::<u16, u64>(stored_length);
       let input_remaining = input_length -wrap state.input_offset;
       let input_short = input_remaining < copy_length;
       if input_short {
-        let error = Truncated();
+        let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
       let output_remaining = output_length -wrap state.output_offset;
       let output_short = output_remaining < copy_length;
       if output_short {
-        let error = OutputFull();
+        let error = InflateError::OutputFull();
         return Err<u64, InflateError>(error: error);
       }
       let copied = 0_u64;
@@ -302,7 +295,7 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
           let source_in_input = source_index < stored_room;
           if source_in_input {
           } else {
-            let error = Truncated();
+            let error = InflateError::Truncated();
             return Err<u64, InflateError>(error: error);
           }
           let byte = deref(input)[source_index];
@@ -338,7 +331,7 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
             }
           }
         } else {
-          let error = InvalidBlockType();
+          let error = InflateError::InvalidBlockType();
           return Err<u64, InflateError>(error: error);
         }
       }

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn record(destination: &Slots<u8, 4>, value: u8) -> count: u64 writes(destination) contract {
   requires deref(destination).len < deref(destination).cap;
   ensures count == deref(destination).len;

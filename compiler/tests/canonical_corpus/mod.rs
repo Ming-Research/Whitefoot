@@ -24,7 +24,7 @@ use conformance_manifest::Expectation;
 use whitefoot::{
     ACTIVE_KERNEL_SPEC_HASH, CanonicalOutcome, CompilerLimits, FinalizeOutcome, LexOutcome,
     ParseOutcome, RenderOutcome, SourceBundle, SourceInput, TerminalOutcome, audit_canonical,
-    classify_terminals, finalize, lex, parse, render_canonical,
+    classify_terminals, finalize, lex, parse, parse_graph, render_canonical,
 };
 
 /// The two corpus roots, reached from the compiler package.
@@ -51,7 +51,11 @@ fn corpus_files() -> Vec<PathBuf> {
                 .path();
             if path.is_dir() {
                 directories.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "wf") {
+            } else if path.extension().is_some_and(|extension| {
+                extension == "wf" || extension == "wfm" || extension == "wfg"
+            }) {
+                // A module-form case or program keeps its interfaces and its
+                // graph beside its implementation records [MOD-1, MOD-2].
                 files.push(path);
             }
         }
@@ -86,7 +90,14 @@ fn read_through_the_tree(logical_path: &str, source: &[u8]) -> Option<Reading> {
     else {
         return None;
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, limits.parser) else {
+    // A graph file takes the `graph_file` start and every source record the
+    // `program` start [GRAM-2, MOD-1].
+    let parsed = if logical_path.ends_with(".wfg") {
+        parse_graph(classified, limits.parser)
+    } else {
+        parse(classified, limits.parser)
+    };
+    let ParseOutcome::Complete(parsed) = parsed else {
         return None;
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
@@ -101,7 +112,7 @@ fn read_through_the_tree(logical_path: &str, source: &[u8]) -> Option<Reading> {
         other => panic!("{logical_path}: a finalized tree must render: {other:?}"),
     };
     let canonical = matches!(
-        audit_canonical(finalized, limits.canonical),
+        audit_canonical(*finalized, limits.canonical),
         CanonicalOutcome::Complete(_)
     );
     Some(Reading {
@@ -118,11 +129,14 @@ fn file_name(path: &Path) -> String {
 }
 
 /// Exact conformance source paths and the expectations declared for them.
+/// A module-form case's directory stands for every record below it.
 fn manifest_expectations() -> BTreeMap<PathBuf, Expectation> {
     let cases = conformance_manifest::corpus_directory().join("cases");
     let mut expectations = BTreeMap::new();
     for case in conformance_manifest::load() {
-        let path = cases.join(format!("{}.wf", case.id));
+        let path = case
+            .module_root()
+            .unwrap_or_else(|| cases.join(format!("{}.wf", case.id)));
         assert!(
             expectations.insert(path.clone(), case.expect).is_none(),
             "{} appears more than once in the conformance manifest",
@@ -134,6 +148,16 @@ fn manifest_expectations() -> BTreeMap<PathBuf, Expectation> {
         "the conformance manifest must declare cases"
     );
     expectations
+}
+
+/// The expectation one corpus file is held to: its own case's, or that of the
+/// module-form case whose directory holds it.
+fn expectation_for<'a>(
+    expectations: &'a BTreeMap<PathBuf, Expectation>,
+    path: &Path,
+) -> Option<&'a Expectation> {
+    path.ancestors()
+        .find_map(|candidate| expectations.get(candidate))
 }
 
 /// The two ways a corpus source may need a manifest-declared exclusion.
@@ -219,7 +243,7 @@ fn every_canonical_corpus_file_re_renders_to_itself() {
         let name = file_name(path);
         let source = std::fs::read(path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-        let expectation = expectations.get(path);
+        let expectation = expectation_for(&expectations, path);
         let Some(reading) = read_through_the_tree(&name, &source) else {
             if manifest_allows_exclusion(Exclusion::Underived, expectation) {
                 manifest_underived.push(name);

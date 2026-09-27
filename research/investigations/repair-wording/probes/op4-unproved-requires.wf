@@ -1,0 +1,9 @@
+fn get(b: &[u8], i: u64) -> result: u8 reads(b) contract {
+  requires i < deref(b).len;
+} {
+  return deref(b)[i];
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The row lists pkg::b alone, so the public field x of pkg::a's Point is not accessible here.";
+  let point = pkg::b::corner();
+  return exit_status(code: point.x);
+}

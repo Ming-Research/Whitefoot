@@ -1,0 +1,22 @@
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn record(stats: &Stats, extra: &u64) -> result: unit reads(stats), reads(extra), writes(stats.count) {
+  let whole = deref(stats);
+  let added = deref(extra);
+  set deref(stats).count = whole.total +wrap added;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let stats = Stats(count: 1_u64, total: 7_u64);
+  record(stats: &stats, extra: &stats.total);
+  let seen = stats.count;
+  if seen == 14_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,6 @@
+public enum Shape {
+  Dot(public size: u8);
+  Blank();
+}
+
+public fn dot() -> shape: Shape pure doc "A dot of size seven.";

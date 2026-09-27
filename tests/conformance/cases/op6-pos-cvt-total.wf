@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn widen(x: i8) -> return_value: i32 pure {
   doc "Bare cvt returns Dst after proving its domain [OP-6]; i8->i32 is one of the 39 whole-type total pairs.";
   return cvt::<i8, i32>(x);

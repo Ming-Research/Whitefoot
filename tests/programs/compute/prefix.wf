@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn sum_block(input: &[u64]) -> result: u64 reads(input) {
   let count = deref(input).len;
   let total = 0_u64;

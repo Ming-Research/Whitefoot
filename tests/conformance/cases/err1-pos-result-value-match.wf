@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Recoverable error is a value: a `Result` dispatched by `match` arms [ERR-1].";
   let v = match 40_i32 +checked 2_i32 {

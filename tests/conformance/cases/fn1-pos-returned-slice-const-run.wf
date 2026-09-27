@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const fixed_bytes: Array<u8, 3> =[7_u8, 13_u8, 19_u8];
 
 fn second_byte(part: &[u8]) -> value: u8 reads(part) contract {

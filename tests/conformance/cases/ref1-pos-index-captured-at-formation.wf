@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-1: an index expression inside a path is evaluated when the reference is formed, and a later assignment to the variable the expression used does not change the path.";
   let a = array_filled::<u64, 4>(value: 0_u64);

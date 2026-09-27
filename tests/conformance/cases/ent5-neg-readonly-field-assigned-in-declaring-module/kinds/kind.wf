@@ -1,0 +1,13 @@
+fn sum_after_reset(rows: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(kids), writes(rows) contract {
+  requires i < deref(rows).len;
+  requires deref(rows)[i].count <= deref(kids).len;
+} {
+  doc "Inside its declaring module a readonly field is an ordinary field, so the assignment writes the requirement's own place and kills its fact; the counted endpoint reads the new count and the child read owes an unproved c < deref(kids).len.";
+  set deref(rows)[i].count = 9_u64;
+  let acc = 0_u64;
+  for (c in 0_u64..deref(rows)[i].count) {
+    let kid = deref(kids)[c];
+    set acc = acc +wrap kid;
+  }
+  return acc;
+}

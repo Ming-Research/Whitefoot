@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn source(x: &i32) -> result: i32 reads(x) {
   doc "A function hands back owned data rather than a reference; the caller keeps the reference it formed.";
   return deref(x);

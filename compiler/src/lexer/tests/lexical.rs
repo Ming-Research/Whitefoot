@@ -13,7 +13,13 @@ fn observed(source: &[u8]) -> Vec<(Vec<u8>, String)> {
                 Lexeme::Token(token) => format!("token:{:?}", token.kind()),
                 Lexeme::Trivia(trivia) => format!("trivia:{:?}", trivia.kind()),
             };
-            (lexeme.span().bytes().to_vec(), label)
+            (
+                source
+                    .span_bytes(lexeme.span())
+                    .expect("a lexeme of this bundle")
+                    .to_vec(),
+                label,
+            )
         })
         .collect()
 }
@@ -254,11 +260,13 @@ fn token_identity_is_source_bound_and_coordinate_visible() {
     assert_eq!(id.source(), SourceId::from_ordinal(0));
     assert_eq!(id.start().value(), 0);
     assert_eq!(id.end().value(), 4);
-    assert_eq!(id.span().bytes(), b"name");
+    assert_eq!(first_bundle.span_bytes(id.span()), Some(&b"name"[..]));
 }
 
+/// A token is a coordinate, read through the bundle that formed it: equal
+/// coordinates in two bundles name each bundle's own bytes.
 #[test]
-fn equal_coordinates_in_different_bundles_remain_distinct_handles() {
+fn equal_coordinates_read_each_bundles_own_bytes() {
     let first_bundle = bundle(&[("first.wf", b"fn")]);
     let second_bundle = bundle(&[("second.wf", b"xx")]);
     let first = complete(&first_bundle);
@@ -274,10 +282,19 @@ fn equal_coordinates_in_different_bundles_remain_distinct_handles() {
     assert_eq!(first_id.source(), second_id.source());
     assert_eq!(first_id.start(), second_id.start());
     assert_eq!(first_id.end(), second_id.end());
-    assert_eq!(first_id.span().bytes(), b"fn");
-    assert_eq!(second_id.span().bytes(), b"xx");
-    assert_eq!(first_id.span().file().logical_path().as_str(), "first.wf");
-    assert_eq!(second_id.span().file().logical_path().as_str(), "second.wf");
+    assert_eq!(first_bundle.span_bytes(first_id.span()), Some(&b"fn"[..]));
+    assert_eq!(second_bundle.span_bytes(second_id.span()), Some(&b"xx"[..]));
+    assert_eq!(second_bundle.span_bytes(first_id.span()), Some(&b"xx"[..]));
+    let path = |bundle: &crate::SourceBundle, id: crate::TokenId| {
+        bundle
+            .file(id.source())
+            .map(|file| file.logical_path().as_str().to_owned())
+    };
+    assert_eq!(path(&first_bundle, first_id).as_deref(), Some("first.wf"));
+    assert_eq!(
+        path(&second_bundle, second_id).as_deref(),
+        Some("second.wf")
+    );
 }
 
 #[test]

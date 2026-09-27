@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-2: a write at an element position of P overlaps the descriptor storage of P[i] and none of P's own. The swap at grid[0] therefore kills every measure of grid[0] and no measure of grid, which is exactly what the residual below names: the outer subscript is still discharged from grid.len, and the inner one has nothing left to stand on.";
   let row = slots_new::<u8, 8>();

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn widen_ok(x: u16) -> result: i32 pure {
   return cvt::<u16, i32>(x);
 }

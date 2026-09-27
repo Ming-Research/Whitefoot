@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn room(values: Slots<u64, 16>, extra: u64, limit: u64) -> result: u64 pure contract {
   requires values.len <= 16_u64;
   requires extra <= 16_u64;

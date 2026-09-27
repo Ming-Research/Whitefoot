@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-11: swap exchanges the values at two owned places of one type, consuming neither root and leaving each root the sole owner of the value the other held, so the exchange the retired multi-target commit spelled is one built-in call. A swap over a copy place is refused with the restructuring that reads the two values and assigns them back, which is what the copy pair does here; the exit code reports that exchange, and three affine windows are rotated by two swaps, each value moved by neither and released exactly once.";
   let low = 3_u8;

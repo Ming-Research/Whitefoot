@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Light {
   Off();
   On();
@@ -5,7 +8,7 @@ enum Light {
 
 fn main() -> status: ExitStatus pure {
   doc "enum is a composite type [TYPE-2]: construct and match a value.";
-  let s = On();
+  let s = Light::On();
   match s {
     Off() => {
       return exit_status(code: 1_u8);

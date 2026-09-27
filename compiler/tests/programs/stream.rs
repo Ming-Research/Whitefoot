@@ -1,4 +1,4 @@
-//! The invocation's ordinary standard input stream, end to end [PRE-1].
+//! The invocation's ordinary standard input stream, end to end [PRE-2].
 //!
 //! `stdin_echo.wf` reads the stream in `Inputs.stdin` to its end with `read_next` and
 //! publishes every byte it observed, so one run exercises both halves of the
@@ -29,19 +29,23 @@ fn payload() -> Vec<u8> {
 #[test]
 fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
     let llvm = compile_program("stdin_echo.wf");
-    // The source calls ordinary PRE-1 signatures. Native submission and join
+    // The source calls ordinary PRE-2 signatures. Native submission and join
     // belong to their linked bodies and cannot select a compiler call path.
     for (caller, callee) in [("main", "read_next"), ("publish_all", "write_once")] {
         let body = emitted_function(&llvm, caller);
-        assert_eq!(body.matches(&format!("call void @wf_{callee}(")).count(), 1);
+        assert_eq!(
+            body.matches(&format!("call void @wf_std.io.{callee}("))
+                .count(),
+            1
+        );
         assert_eq!(
             llvm.lines()
-                .filter(|line| line.starts_with(&format!("declare void @wf_{callee}(")))
+                .filter(|line| line.starts_with(&format!("declare void @wf_std.io.{callee}(")))
                 .count(),
             1
         );
     }
-    assert!(!llvm.contains("call void @wf_read_at("));
+    assert!(!llvm.contains("call void @wf_std.fs.read_at("));
     assert!(!llvm.contains("@wf__completion_"));
     // Build initialization supplies one ordinary Inputs owner, then receives
     // the ordinary opaque ExitStatus through its result destination. The

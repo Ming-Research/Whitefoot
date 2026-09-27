@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scan(data: &[u8]) -> result: u8 reads(data) {
   let count = deref(data).len;
   let cursor = 0_u64;

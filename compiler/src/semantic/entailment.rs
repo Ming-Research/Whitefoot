@@ -3,11 +3,11 @@
 //! signed goals.
 //!
 //! The engine is acceptance-bearing: [`analyze_function`] computes the
-//! closed fact state along the [FN-1] structural graph, the [ENT-6]
-//! disposition of every bounds obligation, the [FN-8] disposition of every
-//! ordinary call requirement. The checker rejects a function whose summary
-//! contains an undischarged obligation or call goal and retains the complete
-//! summary on the checked function [DIAG-2].
+//! closed fact state along the [FN-1] structural graph and judges every
+//! obligation it reaches, and [`answer_records`] answers each obligation
+//! record the checker formed with the judgment that decided it. The checker
+//! accepts a function exactly when every record is answered and discharged,
+//! and retains the complete summary on the checked function [DIAG-2].
 //!
 //! Judgments are per function body [ENT-2]; the [ENT-3] S4 `requires`
 //! relation is the one fact that enters from outside the body, and no fact
@@ -15,11 +15,10 @@
 //!
 //! Implemented fact sources: S1 branch and match facts with both
 //! comparison-origin shapes, S4 requires facts, S5 binding and post-SET-1
-//! copy/conversion equalities, S6 length facts, S7
-//! constant-offset arithmetic, S9 const-array element ranges, and S10
-//! boundary count facts; the label S8 is retired, not reused [ENT-3]. An
-//! absent source only under-derives, which is the version-monotone
-//! direction [ENT-1].
+//! copy/conversion equalities, S6 length facts, S7 operation facts, S9
+//! const-array element ranges, S11 counted-range facts, and the S12 and S13
+//! call publication sources. An absent source only under-derives, which is
+//! the version-monotone direction [ENT-1].
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod affine;
@@ -55,6 +54,7 @@ use super::model::{
     CheckedIntegerOperation, CheckedLoopId, CheckedMode, CheckedNominal, CheckedSetTarget,
     CheckedStatement, CheckedType, FunctionId, IntegerType,
 };
+use super::obligations::{ObligationSubject, RecordAnswer};
 use super::postcondition::CheckedPostcondition;
 use crate::{DeclarationId, NodePath};
 
@@ -274,7 +274,7 @@ impl EntailmentContext<'_> {
 }
 
 /// The [ENT-6] obligation family one outcome belongs to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ObligationFamily {
     /// A subscript bounds obligation `i < P.len` [OP-4, WIN-1].
     Bounds,
@@ -290,10 +290,12 @@ pub(crate) enum ObligationFamily {
     /// is [REF-4].
     RangeFormation,
     /// Two range steps of a compared pair of paths must be disjoint, by the
-    /// four non-strict orderings [OWN-7] submits under [ENT-6] [EFF-5].
-    CallSeparation,
-    /// Disjoint positions exclude proper ancestry at an exchange [OP-11].
-    ExchangeSeparation,
+    /// four non-strict orderings [OWN-7] submits under [ENT-6] [EFF-5]. The
+    /// number is the query's position in the function's call separations.
+    CallSeparation(u32),
+    /// Disjoint positions exclude proper ancestry at an exchange [OP-11]. The
+    /// number is the query's position in the function's call separations.
+    ExchangeSeparation(u32),
     /// A REF-2 use depends on this event-site separation query.
     ReferencePreservation(u32),
 }
@@ -378,6 +380,12 @@ pub(crate) struct ObligationOutcome {
     pub(crate) affine_index_maps: Vec<ProvedAffineIndexMap>,
     /// Adjacent-range images retained only at a discharged VIEW-2 formation.
     pub(crate) range_partitions: Vec<ProvedRangePartition>,
+    /// For an undischarged obligation, every binding at which a kill event
+    /// on some path to its node roots its place, sorted [ENT-5]. A
+    /// requirement over a parameter outside this set still holds at the
+    /// node, which is what its repair reads to offer one [DIAG-1].
+    /// Discharged obligations retain none.
+    pub(crate) written_before: Vec<BindingId>,
 }
 
 /// Exact normalized identity of one obligation query in the function-local
@@ -665,6 +673,12 @@ pub(crate) struct CountedDerivationSet {
 pub(crate) struct LoopInvariantProof {
     pub(crate) base: bool,
     pub(crate) step: Option<bool>,
+    /// The preheader state derives the negation of one of the target's
+    /// bounds, so the base judgment is refuted rather than unproved [MSR-4].
+    pub(crate) base_refuted: bool,
+    /// Some reachable backedge derives the negation of one of the
+    /// next-header target's bounds [MSR-4].
+    pub(crate) step_refuted: bool,
 }
 
 impl LoopInvariantProof {
@@ -759,6 +773,9 @@ pub(crate) struct SourceProofCheck {
     /// A nonempty `use` block is invalid when the specification-defined AUTO
     /// route already proves its outer target from the entering context.
     pub(crate) redundant: bool,
+    /// A blockless target no step discharged whose negation, for one of its
+    /// bounds, the entering context derives [MSR-4].
+    pub(crate) target_refuted: bool,
 }
 
 impl SourceProofCheck {
@@ -827,64 +844,6 @@ impl SourceProofOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JoinedSourceProofProvenance {
     pub(crate) predecessors: Box<[SourceAffineFactRef]>,
-}
-
-/// The exact written mathematical-one identity admitted by S7. Generic
-/// numeric identities and const-generic values deliberately have no member.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ShiftOneIdentity {
-    TypedLiteral { source: NodePath },
-    NamedConstant { declaration: DeclarationId },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum S7DerivationKind {
-    BitAndBound {
-        operand: u8,
-        admitted: TermId,
-    },
-    ShiftOneNonzero {
-        count_atom: NodePath,
-        one: ShiftOneIdentity,
-    },
-    UnsignedRemainderBound {
-        divisor: TermId,
-    },
-    UnsignedDivisionBound {
-        dividend: TermId,
-        divisor: TermId,
-    },
-    SignedRemainderBound {
-        divisor: i128,
-        endpoint: RemainderEndpoint,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RemainderEndpoint {
-    Minimum,
-    Maximum,
-}
-
-/// The value one retained S7 image was established on: a `let` binder, a
-/// `set` commit value, or a checked conversion's conditional payload.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum S7Subject {
-    Binding(BindingId),
-    Commit(NodePath),
-    ResultPayload(TermId),
-}
-
-/// One required unused-or-consumed S7 source root.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct S7Derivation {
-    pub(crate) source: NodePath,
-    pub(crate) row: IntegerType,
-    pub(crate) subject: S7Subject,
-    pub(crate) kind: S7DerivationKind,
-    pub(crate) relation: state::Relation,
-    pub(crate) event: state::FlowEventId,
-    pub(crate) parent: DerivationId,
 }
 
 /// The complete and exclusive FN-9 relation-query disposition.
@@ -1098,6 +1057,10 @@ pub(crate) struct CallGoalOutcome {
     /// One exact positive or contradiction root for a discharged call.
     /// Refuted and unproved calls carry none.
     pub(crate) derivation: Option<DerivationId>,
+    /// For a call no step discharged, every binding at which a kill event on
+    /// some path to the call roots its place, sorted [ENT-5], as
+    /// [`ObligationOutcome::written_before`] records it.
+    pub(crate) written_before: Vec<BindingId>,
 }
 
 /// One retained declaration-only [FN-4] implication result. Its enclosing
@@ -1145,9 +1108,6 @@ pub(crate) struct FunctionEntailment {
     /// Diagnostic-only DAG nodes introduced when equal source-proof facts
     /// meet at structural joins. Dense ordinals are function-local.
     pub(crate) joined_source_proofs: Vec<JoinedSourceProofProvenance>,
-    /// Every admitted S7 relation, in structural source and operand order.
-    /// Each entry owns one required source root.
-    pub(crate) s7_derivations: Vec<S7Derivation>,
     /// One entry per source-ordered FN-9 relation on a concrete function.
     pub(crate) postconditions: Vec<FunctionPostconditionProof>,
     /// O11 candidate decomposition sets recorded at the signed-goal
@@ -1157,11 +1117,208 @@ pub(crate) struct FunctionEntailment {
     /// statement pair and captured ranges whose first-point state proved
     /// them. Absence or an undischarged entry retains sequential lowering.
     pub(crate) permission_separations: Vec<super::permission::PermissionSeparationProof>,
+    /// One answer per obligation record of the analyzed function, in the
+    /// records' order; `None` where no judgment decided the record.
+    pub(crate) answers: Vec<Option<RecordAnswer>>,
+    /// The sites of judgments that answer no record. The checker and the
+    /// engine then disagree about the function's obligations, and it is not
+    /// accepted.
+    pub(crate) unrecorded: Vec<NodePath>,
     /// Function-local, lifetime-bound derivations for mandatory DIAG-2 roots.
     pub(crate) derivations: DerivationLedger,
     /// Canonical term and goal identities moved from the analyzer so every
     /// retained dense ID remains exact and interpretable after analysis.
     pub(crate) inventory: DerivationInventory,
+}
+
+/// Answers each obligation record of `function` with the judgment that
+/// decided it (`design/compiler/acceptance-records.md`).
+///
+/// A judgment answers a record formed at its own site for its own subject.
+/// Records and judgments of one identity pair in the order the checker formed
+/// and the engine made them, so the contract rests on their counts agreeing,
+/// not on identities being unique. A record no judgment is left for stays
+/// unanswered; a judgment no record is left for is returned by its site.
+/// Either way the function's obligations and the engine's judgments disagree,
+/// which acceptance refuses.
+pub(crate) fn answer_records(
+    function: &CheckedFunction,
+    entailment: &FunctionEntailment,
+) -> (Vec<Option<RecordAnswer>>, Vec<NodePath>) {
+    let mut obligations = Judgments::of(entailment.obligations.iter().map(|outcome| {
+        (
+            (&outcome.node_path, outcome.family, outcome.conjunct),
+            &outcome.node_path,
+        )
+    }));
+    let mut call_goals = Judgments::of(entailment.call_goals.iter().map(|outcome| {
+        (
+            (&outcome.node_path, &outcome.requires_clause),
+            &outcome.node_path,
+        )
+    }));
+    let mut loop_invariants = Judgments::of(
+        entailment
+            .loop_invariants
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
+    let mut source_proofs = Judgments::of(
+        entailment
+            .source_proofs
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
+    // [PRE-1] the relations of a signature without a body are declaration
+    // premises the analysis publishes, never obligations a record asks for.
+    let mut postconditions = Judgments::of(
+        entailment
+            .postconditions
+            .iter()
+            .filter(|_| function.body.is_some())
+            .map(|proof| ((&proof.selector, proof.relation_ordinal), &proof.selector)),
+    );
+    let uninhabited = matches!(
+        entailment.body_disposition,
+        super::model::CheckedBodyDisposition::Uninhabited { .. }
+    );
+    let answers = function
+        .obligations
+        .iter()
+        .map(|record| {
+            let site = &record.site;
+            match &record.subject {
+                ObligationSubject::Source { family, conjunct } => obligations
+                    .take(&(site, *family, *conjunct))
+                    .map(RecordAnswer::Obligation),
+                ObligationSubject::CallRequirement {
+                    requires_clause, ..
+                } => call_goals
+                    .take(&(site, requires_clause))
+                    .map(RecordAnswer::CallGoal),
+                ObligationSubject::LoopInvariant => {
+                    loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)
+                }
+                ObligationSubject::SourceProof => {
+                    source_proofs.take(&site).map(RecordAnswer::SourceProof)
+                }
+                // [FN-9] a relation of a body whose requirements contradict
+                // holds at every exit, since none is reachable.
+                ObligationSubject::Postcondition { .. } if uninhabited => {
+                    Some(RecordAnswer::Uninhabited)
+                }
+                ObligationSubject::Postcondition { relation_ordinal } => postconditions
+                    .take(&(site, *relation_ordinal))
+                    .map(RecordAnswer::Postcondition),
+            }
+        })
+        .collect();
+    let mut unrecorded = obligations
+        .unanswered()
+        .chain(call_goals.unanswered())
+        .chain(loop_invariants.unanswered())
+        .chain(source_proofs.unanswered())
+        .chain(postconditions.unanswered())
+        .cloned()
+        .collect::<Vec<_>>();
+    unrecorded.sort_by(|left, right| left.components().cmp(right.components()));
+    (answers, unrecorded)
+}
+
+/// One kind's judgments by the identity a record names them by, each identity
+/// holding its judgments' positions in the order they were made, with the
+/// site of each.
+struct Judgments<'judgment, Key> {
+    by_key: HashMap<Key, std::collections::VecDeque<(usize, &'judgment NodePath)>>,
+}
+
+impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
+    fn of(judgments: impl Iterator<Item = (Key, &'judgment NodePath)>) -> Self {
+        let mut by_key = HashMap::<Key, std::collections::VecDeque<_>>::new();
+        for (index, (key, site)) in judgments.enumerate() {
+            by_key.entry(key).or_default().push_back((index, site));
+        }
+        Self { by_key }
+    }
+
+    /// The earliest judgment of `key` no record has taken yet.
+    fn take(&mut self, key: &Key) -> Option<usize> {
+        self.by_key
+            .get_mut(key)?
+            .pop_front()
+            .map(|(index, _)| index)
+    }
+
+    /// The sites of the judgments no record took.
+    fn unanswered(&self) -> impl Iterator<Item = &'judgment NodePath> + '_ {
+        self.by_key
+            .values()
+            .flat_map(|judgments| judgments.iter().map(|(_, site)| *site))
+    }
+}
+
+/// What one term of a rejected obligation reads, which is what selects the
+/// routes its repair names [DIAG-1].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TermRead {
+    /// A constant, a const-generic parameter, the zero term, or a measure of
+    /// a named constant.
+    Constant,
+    /// A place, or a measure of one, rooted at this binding and reached by
+    /// field selections and `deref` alone, so a clause can spell it.
+    Binding(BindingId),
+    /// An operand that is no term at all [ENT-2], such as an element read:
+    /// no fact names its value until a `let` binds it.
+    Unnamed,
+    /// A captured, computed, subscripted or compiler-owned value.
+    Computed,
+}
+
+impl FunctionEntailment {
+    /// What each term of one obligation's normalized relations reads, in
+    /// component order. A component without a left term relates an operand
+    /// that is no term [ENT-2], which reads as [`TermRead::Unnamed`].
+    pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead> {
+        outcome
+            .components
+            .iter()
+            .flat_map(|component| {
+                [
+                    component
+                        .left
+                        .map_or(TermRead::Unnamed, |term| self.term_read(term)),
+                    self.term_read(component.right),
+                ]
+            })
+            .collect()
+    }
+
+    fn term_read(&self, term: TermId) -> TermRead {
+        let spelled = |place: &super::places::ResolvedPlace| {
+            let steps = place.path.iter().all(|step| {
+                matches!(
+                    step,
+                    super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
+                )
+            });
+            match place.root {
+                term::PlaceRoot::Binding(binding) if steps => TermRead::Binding(binding),
+                term::PlaceRoot::Constant(_) if steps => TermRead::Constant,
+                _ => TermRead::Computed,
+            }
+        };
+        match self.inventory.terms.get(term.0 as usize) {
+            Some(
+                term::TermKind::Zero
+                | term::TermKind::Constant(_)
+                | term::TermKind::ConstParameter(..),
+            ) => TermRead::Constant,
+            Some(term::TermKind::Place(place, _) | term::TermKind::Measure(_, place)) => {
+                spelled(place)
+            }
+            _ => TermRead::Computed,
+        }
+    }
 }
 
 /// Computes the combined entailment analysis of one checked function body.
@@ -1239,8 +1396,34 @@ pub(crate) fn postcondition_schedule<'function>(
         {
             return None;
         }
-        graph[index].sort_unstable_by_key(|function| function.0);
-        graph[index].dedup();
+    }
+    // [FN-9] a caller's component treats an instance of another module's
+    // generic callable as calling every function-kind actual supplied to it,
+    // whether or not the instance's body calls them. Components only grow,
+    // so no circular proof is admitted, and an edit to that body cannot
+    // change which summaries the calling module's proofs may use. Within one
+    // module the rule adds nothing.
+    let mut conservative = Vec::new();
+    for (caller, callees) in graph.iter().enumerate() {
+        for callee in callees {
+            let callee_function = functions.get(callee.0 as usize)?;
+            if callee_function.module != functions.get(caller)?.module {
+                conservative.push((callee.0 as usize, callee_function.function_actuals.clone()));
+            }
+        }
+    }
+    for (instance, actuals) in conservative {
+        if actuals
+            .iter()
+            .any(|actual| actual.0 as usize >= functions.len())
+        {
+            return None;
+        }
+        graph[instance].extend(actuals);
+    }
+    for callees in &mut graph {
+        callees.sort_unstable_by_key(|function| function.0);
+        callees.dedup();
     }
 
     let graph = graph
@@ -1374,7 +1557,7 @@ pub(super) fn collect_statement_calls(
             CheckedStatement::Proof(_) => {}
             CheckedStatement::Let { value, .. }
             | CheckedStatement::DestructuringLet { value, .. }
-            | CheckedStatement::Evaluate(value)
+            | CheckedStatement::Evaluate { value, .. }
             | CheckedStatement::DropExpression { value, .. }
             | CheckedStatement::Return { value, .. }
             | CheckedStatement::Give { value, .. } => {
@@ -1442,7 +1625,7 @@ fn collect_expression_calls(
     }
 }
 
-fn strongly_connected_components(graph: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(super) fn strongly_connected_components(graph: &[Vec<usize>]) -> Vec<Vec<usize>> {
     struct Tarjan<'graph> {
         graph: &'graph [Vec<usize>],
         next_index: usize,

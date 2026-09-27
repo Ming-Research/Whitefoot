@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Chain {
   Nil();
   Cons(kids: Box<Slots<Option<Chain>>>);
@@ -6,6 +9,6 @@ enum Chain {
 fn main() -> status: ExitStatus pure {
   doc "PROV-6 admits a release graph that closes through a cell and a window of recursive payloads: the derived release is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own. The compiler derives the element-before-backing order STOR-3 requires; native compiler tests separately observe actual release order and lifetimes.";
   let inner = box_slots_new::<Option<Chain>>(capacity: 2_u64);
-  let node = Cons(kids: move inner);
+  let node = Chain::Cons(kids: move inner);
   return exit_status(code: 0_u8);
 }

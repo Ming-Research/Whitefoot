@@ -1,0 +1,25 @@
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn bump(stats: &Stats) -> result: u64 reads(stats), writes(stats.count) {
+  set deref(stats).count = 5_u64;
+  let whole = deref(stats);
+  return whole.count;
+}
+
+fn main() -> status: ExitStatus pure {
+  let stats = Stats(count: 0_u64, total: 1_u64);
+  let returned = bump(stats: &stats);
+  let stored = stats.count;
+  if returned == 5_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if stored == 5_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

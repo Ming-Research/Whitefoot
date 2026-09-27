@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn overwrite(out: &Box<Slots<u8, 4>>, replacement: Slots<u8, 4>) -> result: unit writes(out) {
   doc "The heap-owned cell is reached by deref and its content, the field inner, is stored whole through a reference parameter whose row declares the write; the affine previous owner takes its ordinary release at the commit, so no read-out of it is required.";
   set deref(out).inner = move replacement;

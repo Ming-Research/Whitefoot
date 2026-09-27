@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn leak() -> return_value: i32 pure {
   doc "A reference formed over a local never leaves the function that formed it; the return hands back owned data instead.";
   let local = 0_i32;

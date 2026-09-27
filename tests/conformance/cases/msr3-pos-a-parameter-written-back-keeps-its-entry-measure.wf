@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn rebuild(vector: Slots<u8, 4>) -> result: Slots<u8, 4> pure contract {
   requires vector.len == 1_u64;
   ensures result.len == vector.len + 1_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn guarded(left: u32, right: u32) -> result: unit pure contract {
   define same = eeq(left, right);
   requires same;

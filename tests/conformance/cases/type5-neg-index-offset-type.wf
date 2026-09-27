@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-5: an index offset has the required type u64; a u32 atom is not accepted implicitly.";
   let items = slots_new::<u8, 2>();

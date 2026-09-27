@@ -1,4 +1,4 @@
-use crate::lexer::{LexedBundle, Token, TokenId};
+use crate::lexer::{Token, TokenId};
 use crate::syntax::terminal::TerminalSet;
 use crate::{ByteOffset, SourceBundle, SourceId, SpecHash};
 
@@ -118,15 +118,15 @@ impl TerminalIssueOwner {
 
 /// The first formed token that matched no approved terminal predicate.
 #[derive(Clone, Copy, Debug)]
-pub struct TerminalIssue<'source> {
-    pub(crate) token: TokenId<'source>,
+pub struct TerminalIssue {
+    pub(crate) token: TokenId,
     pub(crate) owner: TerminalIssueOwner,
 }
 
-impl<'source> TerminalIssue<'source> {
+impl TerminalIssue {
     /// Returns the exact source-bound offending token.
     #[must_use]
-    pub const fn token(self) -> TokenId<'source> {
+    pub const fn token(self) -> TokenId {
         self.token
     }
 
@@ -139,15 +139,15 @@ impl<'source> TerminalIssue<'source> {
 
 /// One formed token and every approved active-specification predicate it satisfies.
 #[derive(Clone, Copy, Debug)]
-pub struct ClassifiedToken<'source> {
-    pub(crate) token: Token<'source>,
+pub struct ClassifiedToken {
+    pub(crate) token: Token,
     pub(crate) terminals: TerminalSet,
 }
 
-impl<'source> ClassifiedToken<'source> {
+impl ClassifiedToken {
     /// Returns the original source-bound shape token.
     #[must_use]
-    pub const fn token(self) -> Token<'source> {
+    pub const fn token(self) -> Token {
         self.token
     }
 
@@ -160,39 +160,34 @@ impl<'source> ClassifiedToken<'source> {
 
 /// A complete terminal-membership projection over one lossless lexical result.
 ///
-/// The original lexical tape remains borrowed so later tree/source audit work
-/// can retain trivia and exact byte ownership. This type is not a parse tree,
-/// a portable token identity, or an acceptance capability.
-#[derive(Debug)]
-pub struct ClassifiedBundle<'lexed, 'source> {
+/// It keeps a handle on the source bundle its tokens were formed from, which
+/// every later stage reads token text through; the lexemes and trivia are
+/// not kept, since no stage after classification reads them. This type is
+/// not a parse tree, a portable token identity, or an acceptance capability.
+#[derive(Clone, Debug)]
+pub struct ClassifiedBundle {
     pub(crate) spec: SpecHash,
-    pub(crate) lexed: &'lexed LexedBundle<'source>,
-    pub(crate) tokens: Vec<ClassifiedToken<'source>>,
+    pub(crate) source: SourceBundle,
+    pub(crate) tokens: Vec<ClassifiedToken>,
     pub(crate) source_offsets: Vec<usize>,
 }
 
-impl<'lexed, 'source> ClassifiedBundle<'lexed, 'source> {
+impl ClassifiedBundle {
     /// Returns the exact numbered specification owning every predicate.
     #[must_use]
     pub const fn spec_hash(&self) -> SpecHash {
         self.spec
     }
 
-    /// Returns the complete lossless lexical input, including trivia.
-    #[must_use]
-    pub const fn lexed_bundle(&self) -> &'lexed LexedBundle<'source> {
-        self.lexed
-    }
-
     /// Returns all classified tokens in source order, then byte order.
     #[must_use]
-    pub fn tokens(&self) -> &[ClassifiedToken<'source>] {
+    pub fn tokens(&self) -> &[ClassifiedToken] {
         &self.tokens
     }
 
     /// Returns one source's classified token sequence, including an empty one.
     #[must_use]
-    pub fn source_tokens(&self, source: SourceId) -> Option<&[ClassifiedToken<'source>]> {
+    pub fn source_tokens(&self, source: SourceId) -> Option<&[ClassifiedToken]> {
         let index = usize::try_from(source.ordinal()).ok()?;
         let start = *self.source_offsets.get(index)?;
         let end = *self.source_offsets.get(index.checked_add(1)?)?;
@@ -201,18 +196,24 @@ impl<'lexed, 'source> ClassifiedBundle<'lexed, 'source> {
 
     /// Returns the exact source bundle underlying every token handle.
     #[must_use]
-    pub const fn source_bundle(&self) -> &'source SourceBundle {
-        self.lexed.source_bundle()
+    pub const fn source_bundle(&self) -> &SourceBundle {
+        &self.source
+    }
+
+    /// Returns the source bytes one token of this bundle covers.
+    #[must_use]
+    pub fn token_bytes(&self, token: Token) -> Option<&[u8]> {
+        self.source.span_bytes(token.span())
     }
 }
 
 /// Failure-atomic result of complete active-specification terminal classification.
 #[derive(Debug)]
-pub enum TerminalOutcome<'lexed, 'source> {
+pub enum TerminalOutcome {
     /// Every formed token retained at least one approved predicate.
-    Complete(ClassifiedBundle<'lexed, 'source>),
+    Complete(ClassifiedBundle),
     /// One token matched no approved terminal predicate.
-    SourceIssue(TerminalIssue<'source>),
+    SourceIssue(TerminalIssue),
     /// Explicit ceilings or host storage prevented completion.
     ResourceFailure(TerminalResourceFailure),
     /// The invocation does not select the exact contract required here.

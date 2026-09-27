@@ -121,7 +121,7 @@ pub(super) struct ControlScope<'state> {
     pub(super) give_context: Option<&'state GiveContext>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_block(
         &self,
         function: &FunctionSignature,
@@ -205,13 +205,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .first_child_with(node, Production::Call)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 let value = self.check_call(function, call, bindings, scope.loops.len())?;
+                let node_path = self.tree.path(node)?.clone();
                 // A discarded borrow-mode result is a reference, never the
                 // owner of its referent: no drop or release may run for it
                 // [REF-1, STOR-3]. Only an own-mode affine result is dropped.
                 let statement = if value.mode != CheckedMode::Own
                     || self.is_copy_type(value.expression.ty())?
                 {
-                    CheckedStatement::Evaluate(value.expression)
+                    CheckedStatement::Evaluate {
+                        node_path,
+                        value: value.expression,
+                    }
                 } else {
                     self.validate_scope_release(value.expression.ty(), "discarded result", node)?;
                     let drops = self
@@ -220,6 +224,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         .map(|(fields, ty)| CheckedProjectedDrop { fields, ty })
                         .collect();
                     CheckedStatement::DropExpression {
+                        node_path,
                         value: value.expression,
                         drops,
                     }
@@ -280,6 +285,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             self.tree.coordinate(expression_node)?,
                         ),
                         kind: SemanticIssueKind::ReturnMismatch,
+                        request: None,
                     }));
                 }
                 let drops = self.live_affine_drops(bindings, &HashSet::new(), node)?;
@@ -483,10 +489,22 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 );
             }
             // [GIVE-1] an empty delivery set — every arm leaves by `return`
-            // or by `break` — rejects at the `let_stmt` node, because the
-            // mechanical fix is the statement form with the binding dropped.
+            // or by `break` — rejects at the `let_stmt` node: its repair is
+            // the statement form with the binding dropped, and the statements
+            // after it, which no path reaches [FN-1], go with it.
             let Some((mode, expected)) = matched.delivered else {
-                return self.issue_node(SemanticRule::Give1, node, SemanticIssueKind::InvalidGive);
+                let binding = declaration.spelling().to_owned();
+                let form = if value_if.is_some() { "if" } else { "match" };
+                return self.issue_node(
+                    SemanticRule::Give1,
+                    node,
+                    SemanticIssueKind::EmptyDeliverySet {
+                        mechanical_fix: format!(
+                            "every arm leaves by `return` or `break`, so no value reaches `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
+                        ),
+                        binding,
+                    },
+                );
             };
             let result_range_element = if mode == CheckedMode::Range {
                 Some(self.intern_element(expected)?)
@@ -525,6 +543,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             compiler_updated: false,
                             reference,
                             refinement_witnesses: Vec::new(),
+                            call_value: false,
                         },
                     )
                     .is_some()
@@ -614,6 +633,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: false,
                     reference,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()

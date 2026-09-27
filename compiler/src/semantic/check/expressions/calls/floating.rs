@@ -44,7 +44,7 @@ fn float_operation(spelling: &str) -> Option<CheckedFloatOperation> {
     })
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_float_operation(
         &self,
         node: NodeId,

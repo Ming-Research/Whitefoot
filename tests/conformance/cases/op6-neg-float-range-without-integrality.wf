@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn integer(value: f64) -> result: i32 pure contract {
   requires fge(value, 0.0_f64);
   requires flt(value, 4.0_f64);

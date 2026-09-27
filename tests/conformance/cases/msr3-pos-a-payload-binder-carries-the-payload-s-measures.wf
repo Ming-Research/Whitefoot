@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-3: the payload placement over an enum exactly one of whose variants carries fields. The construct carries the window's measures into the payload, the match consumes the scrutinee, and the datum minted before that consume is read at the arm binder that names the payload, so the window keeps its figure across both events and the placement into it is discharged.";
   let block = slots_new::<u8, 8>();

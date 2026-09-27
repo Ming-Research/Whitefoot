@@ -30,8 +30,8 @@ fn nested_window_constants_are_a_const2_eligibility_rejection() {
     assert_rule(
         br#"const rows: Array<Slots<u64, 2>, 1> =[[7_u64, 9_u64]];
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Const2,
@@ -57,7 +57,7 @@ fn main() -> status: ExitStatus pure {
 fn constant_typed_places_remain_immutable_and_proof_checked() {
     let prefix = "const rows: Array<Array<u64, 2>, 1> =[[7_u64, 9_u64]];\n\n";
     let source = format!(
-        "{prefix}fn main() -> status: ExitStatus pure {{\n  set rows[0_u64][1_u64] = 5_u64;\n  return exit_status(code: 0_u8);\n}}\n"
+        "{prefix}fn main() -> status: std::process::ExitStatus pure {{\n  set rows[0_u64][1_u64] = 5_u64;\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     assert_rule_kind(source.as_bytes(), SemanticRule::Const2, |kind| {
         matches!(kind, SemanticIssueKind::ImmutableSetTarget)
@@ -71,7 +71,7 @@ fn constant_typed_places_remain_immutable_and_proof_checked() {
         ("let value = rows[1_u64][0_u64];", SemanticRule::Op4),
     ] {
         let source = format!(
-            "{prefix}fn main() -> status: ExitStatus pure {{\n  {action}\n  return exit_status(code: 0_u8);\n}}\n"
+            "{prefix}fn main() -> status: std::process::ExitStatus pure {{\n  {action}\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {
@@ -102,9 +102,9 @@ fn read(values: &Array<u64, 2>) -> result: u64 reads(values) {
   return deref(values)[1_u64];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = read(values: &table);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -126,8 +126,8 @@ fn constant_array_entries_follow_the_type_directed_value_shapes() {
 
 const rows: Array<Array<u64, 2>, 1> =[inner];
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Const2,
@@ -138,8 +138,8 @@ fn main() -> status: ExitStatus pure {
 
 const rows: Array<u64, 1> =[scalar];
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -155,7 +155,7 @@ fn main() -> status: ExitStatus pure {
 fn generic_struct_constants_prepare_their_own_instances() {
     for preparation in ["", "struct Holder {\n  pair: Pair<u64>;\n}\n\n"] {
         let source = format!(
-            "struct Pair<T: copy> {{\n  left: T;\n  right: T;\n}}\n\n{preparation}const pair: Pair<u64> = Pair<u64>(left: 3_u64, right: 2_u64);\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "struct Pair<T: copy> {{\n  left: T;\n  right: T;\n}}\n\n{preparation}const pair: Pair<u64> = Pair<u64>(left: 3_u64, right: 2_u64);\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::Complete(checked) = outcome else {
@@ -197,7 +197,7 @@ fn generic_struct_constants_match_phantom_arguments_and_require_explicit_lists()
         ("Marker<u64, 3, 4>()", Some(SemanticRule::Type5)),
     ] {
         let source = format!(
-            "{declarations}const marker: Marker<u64, 3> = {initializer};\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declarations}const marker: Marker<u64, 3> = {initializer};\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         if let Some(rule) = rule {
             super::assert_rule_at(source.as_bytes(), rule, initializer);
@@ -206,7 +206,7 @@ fn generic_struct_constants_match_phantom_arguments_and_require_explicit_lists()
         }
     }
     let source = format!(
-        "{declarations}const marker: Marker<u64, 3> = Marker<3, u64>();\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+        "{declarations}const marker: Marker<u64, 3> = Marker<3, u64>();\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     super::assert_rule_at(source.as_bytes(), SemanticRule::Type5, "3");
 }
@@ -228,7 +228,7 @@ fn generic_struct_constants_check_instantiated_fields_and_bounds() {
         ),
     ] {
         let source = format!(
-            "{declarations}const pair: Pair<u64> = {initializer};\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declarations}const pair: Pair<u64> = {initializer};\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {
@@ -252,12 +252,12 @@ fn generic_struct_constant_eligibility_follows_fields_not_phantom_arguments() {
     ] {
         let ty = format!("Cell<{argument}>");
         let source = format!(
-            "{declarations}const cell: {ty} = {ty}(value: unit);\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declarations}const cell: {ty} = {ty}(value: unit);\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         super::assert_rule_at(source.as_bytes(), SemanticRule::Const2, &ty);
     }
     let source = format!(
-        "{declarations}const marker: Phantom<Box<u64>> = Phantom<Box<u64>>();\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+        "{declarations}const marker: Phantom<Box<u64>> = Phantom<Box<u64>>();\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     super::assert_accepts(source.as_bytes());
 }
@@ -282,9 +282,9 @@ struct Cell<interface Read<T>> {
 
 const cell: Cell<ReadWord> = Cell<ReadWord>(value: 7_u64);
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = cell.value;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     super::assert_accepts(source);
@@ -298,8 +298,8 @@ fn constant_array_eligibility_closes_recursive_types_before_checking_the_value()
 
 const invalid: Recursive = Recursive(children:[unit]);
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -319,8 +319,8 @@ fn main() -> status: ExitStatus pure {
     });
     let forbidden = br#"const forbidden: Array<Array<Box<u64>, 0>, 1> =[unit];
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(forbidden, |outcome| {
@@ -343,11 +343,11 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn full_array_conversion_requires_fullness_and_preserves_linear_obligations() {
     assert_rule_kind(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let partial = slots_new::<u64, 2>();
   place_back(window: &partial, value: 7_u64);
   let invalid = slots_into_array::<u64, 2>(values: move partial);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn8,
@@ -362,8 +362,8 @@ fn abandon(values: Array<Token, 0>) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Prov6,
@@ -378,8 +378,8 @@ fn convert(values: Array<Token, 0>) -> result: Slots<Token, 0> pure {
   return slots_from_array::<Token, 0>(values: move values);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -415,8 +415,8 @@ fn incoming_array_element_reads_exhibit_the_resolved_formal_effect() {
   return values[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -431,8 +431,8 @@ fn main() -> status: ExitStatus pure {
   return values[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Eff1,
@@ -443,8 +443,8 @@ fn main() -> status: ExitStatus pure {
   return deref(values)[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -475,8 +475,8 @@ fn read(values: &Array<Record, 2>) -> result: u64 reads(values) {
   return deref(values)[0_u64].value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -529,11 +529,11 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn full_arrays_keep_their_inline_layout_boundaries() {
     super::assert_unsupported(
-        b"struct Recursive {\n  values: Array<Recursive, 1>;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"struct Recursive {\n  values: Array<Recursive, 1>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         crate::UnsupportedSemanticFeature::RecursiveNominalLayout,
     );
     with_semantics(
-        b"struct Empty {\n  values: Array<Empty, 0>;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"struct Empty {\n  values: Array<Empty, 0>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             let SemanticOutcome::Complete(checked) = outcome else { panic!("zero extent has no recursive layout edge: {outcome:?}"); };
             crate::lower_checked(*checked, crate::lowering::OverlapLowering::Off).expect("zero extent recursive type lowers");
@@ -550,12 +550,12 @@ fn full_arrays_keep_their_inline_layout_boundaries() {
 /// the `deref` route to a cell are retired [OP-15, TYPE-7].
 #[test]
 fn a_cell_content_is_an_admitted_measured_place() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let one = slots_new::<u8, 4>();
   let block = box_new::<Slots<u8, 4>>(value: move one);
   let capacity = block.inner.cap;
   let length = block.inner.len;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -594,7 +594,7 @@ fn a_cell_content_is_an_admitted_measured_place() {
 /// the displaced affine value.
 #[test]
 fn assigning_an_owned_cell_kills_its_contents_old_measure() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let old_run = slots_new::<u8, 1>();
   place_back(window: &old_run, value: 7_u8);
   let block = box_new::<Slots<u8, 1>>(value: move old_run);
@@ -605,9 +605,9 @@ fn assigning_an_owned_cell_kills_its_contents_old_measure() {
   if in_old {
     set block = move fresh;
     let invalid = block.inner[0_u64];
-    return exit_status(code: invalid);
+    return std::process::exit_status(code: invalid);
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
 }
 "#;
@@ -630,13 +630,13 @@ fn constants_fill_length_and_index_share_exact_run_types() {
 
 const table: Array<u8, count> =[10_u8, 20_u8, 30_u8, 40_u8];
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<i32, count>(value: 7_i32);
   let values = slots_from_array::<i32, count>(values: base);
   let length = values.len;
   let local = values[1_u64];
   let stored = table[2_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -719,7 +719,7 @@ fn const_expression_and_const_value_failures_keep_their_rule_owners() {
         SemanticIssueKind::InvalidConstValue,
     );
     assert_rule(
-        b"const table: Array<u8, 2> =[1_u8];\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"const table: Array<u8, 2> =[1_u8];\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Const2,
         SemanticIssueKind::InvalidConstValue,
     );
@@ -729,7 +729,7 @@ fn const_expression_and_const_value_failures_keep_their_rule_owners() {
         SemanticIssueKind::InvalidConstValue,
     );
     assert_rule(
-        b"struct Cell {\n  value: i32;\n}\n\nconst bad: Cell = unit;\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"struct Cell {\n  value: i32;\n}\n\nconst bad: Cell = unit;\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Const2,
         SemanticIssueKind::InvalidConstValue,
     );
@@ -739,7 +739,7 @@ fn const_expression_and_const_value_failures_keep_their_rule_owners() {
         SemanticIssueKind::ImmutableSetTarget,
     );
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let items = slots_new::<u8, 2>();\n  let value = items[0_u32];\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let items = slots_new::<u8, 2>();\n  let value = items[0_u32];\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );
@@ -758,8 +758,8 @@ struct Holder {
   flags: Slots<Flag, count>;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -791,19 +791,19 @@ fn main() -> status: ExitStatus pure {
     // TYPE-2 admits complete owning elements in full arrays too; the former
     // flat-only rejection is superseded by that explicit amendment.
     with_semantics(
-        b"enum Payload {\n  Item(value: i32);\n}\n\nstruct Holder {\n  values: Array<Payload, 2>;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"enum Payload {\n  Item(value: i32);\n}\n\nstruct Holder {\n  values: Array<Payload, 2>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| assert!(matches!(outcome, SemanticOutcome::Complete(_)), "owning array member: {outcome:?}"),
     );
 }
 
 #[test]
 fn indexed_set_retains_its_pre_rhs_guard_and_copy_target() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   set values[1_u64] = 9_u8;
   let stored = values[1_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -849,7 +849,7 @@ fn indexed_set_rechecks_type_effect_and_root_liveness() {
     // A discharged subscript adds no runtime effect: the indexed set with a
     // constant in-range offset is accepted in a `pure` function.
     with_semantics(
-        b"fn main() -> status: ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = 1_u8;\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = 1_u8;\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             assert!(
                 matches!(outcome, SemanticOutcome::Complete(_)),
@@ -858,12 +858,12 @@ fn indexed_set_rechecks_type_effect_and_root_liveness() {
         },
     );
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = 1_u16;\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = 1_u16;\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );
     assert_rule(
-        b"fn consume(values: Slots<u8, 2>) -> result: u8 pure {\n  return 1_u8;\n}\n\nfn main() -> status: ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = consume(values: move values);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn consume(values: Slots<u8, 2>) -> result: u8 pure {\n  return 1_u8;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let base = array_filled::<u8, 2>(value: 0_u8);\n  let values = slots_from_array::<u8, 2>(values: base);\n  set values[0_u64] = consume(values: move values);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Own1,
         SemanticIssueKind::UseAfterMove {
             mechanical_fix: "introduce a new `let` binding before reuse",
@@ -890,7 +890,7 @@ struct Outer {
   inner: Inner;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values);
@@ -898,7 +898,7 @@ fn main() -> status: ExitStatus pure {
   let length = outer.inner.values.len;
   set outer.inner.values[1_u64] = 9_u8;
   let stored = outer.inner.values[1_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -945,13 +945,13 @@ fn replacement(value: Outer) -> result: u8 pure {
   return 9_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values);
   let outer = Outer(inner: move inner);
   set outer.inner.values[1_u64] = replacement(value: move outer);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Own1,
@@ -974,7 +974,7 @@ fn observe(value: &Outer) -> result: u8 reads(value.marker) {
   return deref(value).marker;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values);
@@ -982,7 +982,7 @@ fn main() -> status: ExitStatus pure {
   let held = &outer;
   set outer.inner.values[1_u64] = 9_u8;
   let seen = observe(value: held);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         |outcome| {
@@ -1004,7 +1004,7 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn general_elements_allow_an_array_value_inside_a_run_slot() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let row = array_filled::<u64, 2>(value: 7_u64);
   let rows = slots_new::<Array<u64, 2>, 2>();
   place_back(window: &rows, value: row);
@@ -1013,7 +1013,7 @@ fn general_elements_allow_an_array_value_inside_a_run_slot() {
   let width = rows[0_u64].len;
   invariant width_lower: width >= 2_u64;
   invariant width_upper: width <= 2_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

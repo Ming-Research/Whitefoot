@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn element<const n: u64>(values: Slots<u8, n>) -> result: u8 pure contract {
   requires n <= values.len;
 } {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn store_u32_be(out: &[u8], offset: u64, value: u32) -> result: Result<unit, NarrowError> writes(out) {
   doc "Four big-endian bytes land in the caller's range reference; its len is the range's own measure [REF-4, MSR-1].";
   let first_word = ishr.wrap(value, 24_u32);
@@ -6,10 +9,10 @@ fn store_u32_be(out: &[u8], offset: u64, value: u32) -> result: Result<unit, Nar
   let third_shifted = ishr.wrap(value, 8_u32);
   let third_word = iand(third_shifted, 255_u32);
   let fourth_word = iand(value, 255_u32);
-  let first = propagate cvt.checked::<u32, u8>(first_word);
-  let second = propagate cvt.checked::<u32, u8>(second_word);
-  let third = propagate cvt.checked::<u32, u8>(third_word);
-  let fourth = propagate cvt.checked::<u32, u8>(fourth_word);
+  let first = cvt::<u32, u8>(first_word);
+  let second = cvt::<u32, u8>(second_word);
+  let third = cvt::<u32, u8>(third_word);
+  let fourth = cvt::<u32, u8>(fourth_word);
   let second_offset = offset +wrap 1_u64;
   let third_offset = offset +wrap 2_u64;
   let fourth_offset = offset +wrap 3_u64;

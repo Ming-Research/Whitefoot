@@ -63,17 +63,17 @@ fn depth(chain: &Box<Chain>) -> result: u64 reads(chain) {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  let end = End();
+fn main() -> status: std::process::ExitStatus pure {
+  let end = Chain::End();
   let bottom = box_new::<Chain>(value: move end);
-  let one = More(tail: move bottom);
+  let one = Chain::More(tail: move bottom);
   let boxed = box_new::<Chain>(value: move one);
   let measured = depth(chain: &boxed);
   if measured == 1_u64 {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -256,13 +256,13 @@ fn both(n: u64) -> result: u64 pure {
   return a +wrap c;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let r = both(n: 5_u64);
   let ok = r > 0_u64;
   if ok {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
 
@@ -318,14 +318,14 @@ const ALL_HEAP_FORMS: &[u8] = br#"fn shapes(n: u64) -> result: u64 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = shapes(n: 4_u64);
   match cvt.checked::<u64, u8>(total) {
     Ok(value: byte) => {
-      return exit_status(code: byte);
+      return std::process::exit_status(code: byte);
     }
     Err(error: wide) => {
-      return exit_status(code: 9_u8);
+      return std::process::exit_status(code: 9_u8);
     }
   }
 }
@@ -646,23 +646,23 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
   return a +wrap b;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let count = 0_u64;
-  set count = args_count(args: &args);
+  set count = std::text::args_count(args: &args);
   match cvt.checked::<u64, u8>(count) {
     Ok(value: idx) => {
       let depth = count *wrap 20000_u64;
       let r = spine(depth: depth, v: 3_u64, i: idx);
       let ok = r > 0_u64;
       if ok {
-        return exit_status(code: 0_u8);
+        return std::process::exit_status(code: 0_u8);
       }
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
     Err(error: e) => {
-      return exit_status(code: 9_u8);
+      return std::process::exit_status(code: 9_u8);
     }
   }
 }
@@ -984,16 +984,16 @@ struct Holder {{
 }}
 
 fn boxed_leaf() -> result: Box<Tree> pure {{
-  let leaf = Leaf();
+  let leaf = Tree::Leaf();
   return box_new::<Tree>(value: move leaf);
 }}
 
 fn boxed_branch(left: Box<Tree>, right: Box<Tree>) -> result: Box<Tree> pure {{
-  let branch = Branch(left: move left, right: move right);
+  let branch = Tree::Branch(left: move left, right: move right);
   return box_new::<Tree>(value: move branch);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let seed = boxed_leaf();
   let held = Holder(node: move seed);
   for @grow (i in 0_u64..{depth}_u64) {{
@@ -1003,7 +1003,7 @@ fn main() -> status: ExitStatus pure {{
     let taller = boxed_branch(left: move placeholder, right: move sibling);
     swap(first: &held.node, second: &taller);
   }}
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
     )
@@ -1041,12 +1041,12 @@ fn buffer_chain_source(depth: u64) -> Vec<u8> {
 fn nest(inner: Chain) -> result: Chain pure {{
   let held = box_slots_new::<Chain>(capacity: 1_u64);
   place_back(window: &held.inner, value: move inner);
-  return Cons(kids: move held);
+  return Chain::Cons(kids: move held);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let holder = box_slots_new::<Chain>(capacity: 1_u64);
-  let seed = Nil();
+  let seed = Chain::Nil();
   place_back(window: &holder.inner, value: move seed);
   for @build (
     i in 0_u64..{depth}_u64,
@@ -1057,7 +1057,7 @@ fn main() -> status: ExitStatus pure {{
     let grown = nest(inner: move taken);
     place_back(window: &holder.inner, value: move grown);
   }}
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
     )
@@ -1069,11 +1069,11 @@ fn main() -> status: ExitStatus pure {{
 ///
 /// The chain is `Box<Slots<Box<u64>>>` -> `Slots<Box<u64>>` -> `Box<u64>` ->
 /// `u64`, and no node type names another one above it.
-const SHALLOW_OWNERSHIP: &[u8] = br#"fn main() -> status: ExitStatus pure {
+const SHALLOW_OWNERSHIP: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = box_slots_new::<Box<u64>>(capacity: 2_u64);
   let boxed = box_new::<u64>(value: 7_u64);
   place_back(window: &slots.inner, value: move boxed);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -1232,10 +1232,10 @@ const WIDE_BUFFER_CYCLE: &[u8] = br#"enum Chain {
 
 fn leafy() -> result: Chain pure {
   let held = box_slots_new::<Chain>(capacity: 1_u64);
-  return Cons(kids: move held);
+  return Chain::Cons(kids: move held);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let slots = box_slots_new::<Chain>(capacity: 4_u64);
   let child0 = leafy();
   place_back(window: &slots.inner, value: move child0);
@@ -1245,8 +1245,8 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &slots.inner, value: move child2);
   let child3 = leafy();
   place_back(window: &slots.inner, value: move child3);
-  let root = Cons(kids: move slots);
-  return exit_status(code: 0_u8);
+  let root = Chain::Cons(kids: move slots);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 

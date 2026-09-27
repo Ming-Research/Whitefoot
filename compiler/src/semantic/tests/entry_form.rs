@@ -22,27 +22,27 @@ fn ordinary_prelude_calls_are_named_in_declared_order() {
         declared_parameters: parameters.iter().map(|name| (*name).to_owned()).collect(),
     };
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  return exit_status(value: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(value: 0_u8);\n}\n",
         SemanticRule::Gram11,
         declared("exit_status", &["code"]),
     );
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  return exit_status(0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(0_u8);\n}\n",
         SemanticRule::Gram11,
         declared("exit_status", &["code"]),
     );
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  return exit_status();\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status();\n}\n",
         SemanticRule::Gram11,
         declared("exit_status", &["code"]),
     );
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8, extra: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8, extra: 0_u8);\n}\n",
         SemanticRule::Gram11,
         declared("exit_status", &["code"]),
     );
     with_semantics(
-        b"fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
             assert!(
                 matches!(outcome, SemanticOutcome::Complete(_)),
@@ -59,12 +59,12 @@ fn arg_get_calls_are_checked_by_the_same_general_rule() {
         declared_parameters: vec!["args".to_owned(), "position".to_owned()],
     };
     assert_rule(
-        b"fn probe(args: &Args) -> result: unit reads(args) {\n  let value = arg_get(args: args);\n  return unit;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn probe(args: &std::text::Args) -> result: unit reads(args) {\n  let value = std::text::arg_get(args: args);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Gram11,
         declared.clone(),
     );
     assert_rule(
-        b"fn probe(args: &Args) -> result: unit reads(args) {\n  let value = arg_get(args: args, offset: 0_u64);\n  return unit;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn probe(args: &std::text::Args) -> result: unit reads(args) {\n  let value = std::text::arg_get(args: args, offset: 0_u64);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Gram11,
         declared,
     );
@@ -86,8 +86,8 @@ fn main_has_ordinary_parameters_results_and_generics() {
         // with [PROV-1]; the ordinary-parameter subject survives through the
         // owned-handle row below, and [STOR-8]'s one heap is not a parameter.
         &b"fn main(cell: Box<u64>) -> result: unit pure {\n  let value = cell.inner;\n  return unit;\n}\n"[..],
-        &b"fn main(env: Args, again: Args) -> result: unit pure {\n  return unit;\n}\n"[..],
-        &b"fn main(args: DirectoryRead) -> result: DirectoryRead pure {\n  return move args;\n}\n"[..],
+        &b"fn main(env: std::text::Args, again: std::text::Args) -> result: unit pure {\n  return unit;\n}\n"[..],
+        &b"fn main(args: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure {\n  return move args;\n}\n"[..],
     ] {
         assert_complete(source);
     }
@@ -119,24 +119,24 @@ fn unexhibited_main_effects_are_still_rejected_by_eff2() {
     // that row is refused one rule earlier. The surviving [EFF-2] subject is
     // an unexhibited entry on a reference parameter.
     assert_rule_kind(
-        b"fn main(handle: &HandleFactory) -> result: unit writes(handle) {\n  return unit;\n}\n",
+        b"fn main(handle: &std::io::HandleFactory) -> result: unit writes(handle) {\n  return unit;\n}\n",
         SemanticRule::Eff2,
         |kind| matches!(kind, SemanticIssueKind::EffectMismatch { .. }),
     );
     assert_rule_kind(
-        b"fn probe(args: Args) -> result: unit reads(args) {\n  return unit;\n}\n",
+        b"fn probe(args: std::text::Args) -> result: unit reads(args) {\n  return unit;\n}\n",
         SemanticRule::Eff1,
         |kind| matches!(kind, SemanticIssueKind::InvalidEffectRow { .. }),
     );
 }
 
 #[test]
-fn prelude_inputs_are_a_normal_linear_struct() {
+fn library_inputs_are_a_normal_linear_struct() {
     assert_complete(
-        b"fn relay(inputs: Inputs) -> result: Inputs pure {\n  return move inputs;\n}\n",
+        b"fn relay(inputs: std::process::Inputs) -> result: std::process::Inputs pure {\n  return move inputs;\n}\n",
     );
     assert_rule_kind(
-        b"fn discard(inputs: Inputs) -> result: unit pure {\n  return unit;\n}\n",
+        b"fn discard(inputs: std::process::Inputs) -> result: unit pure {\n  return unit;\n}\n",
         SemanticRule::Prov6,
         |_| true,
     );

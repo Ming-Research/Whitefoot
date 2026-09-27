@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn split(value: u64) -> (low: u64, high: u64) pure {
   doc "Two declared results, so one call has two ordinals.";
   let half = value /checked 2_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn unproved(value: i32, choose: Bool) -> result: i32 pure contract {
   ensures result == value;
 } {

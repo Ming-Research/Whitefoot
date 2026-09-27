@@ -1,0 +1,3 @@
+fn shape() -> shape: pkg::a::Shape pure {
+  return pkg::a::dot();
+}

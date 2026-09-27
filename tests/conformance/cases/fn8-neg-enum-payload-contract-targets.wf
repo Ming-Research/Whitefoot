@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Pair {
   Both(left: u64, right: u64);
 }
@@ -26,7 +29,7 @@ fn inspect(pair: &Pair) -> result: unit reads(pair) {
 }
 
 fn main() -> status: ExitStatus pure {
-  let pair = Both(left: 1_u64, right: 0_u64);
+  let pair = Pair::Both(left: 1_u64, right: 0_u64);
   inspect(pair: &pair);
   return exit_status(code: 0_u8);
 }

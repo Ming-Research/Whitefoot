@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nodrop enum Ticket {
   Open();
   Closed();
@@ -5,7 +8,7 @@ nodrop enum Ticket {
 
 fn main() -> status: ExitStatus pure {
   doc "A nodrop modifier removes both capabilities from a tag-only enum. Moving the value into a whole-value match consumes it exactly once and discharges the obligation.";
-  let ticket = Open();
+  let ticket = Ticket::Open();
   match move ticket {
     Open() => {
       return exit_status(code: 0_u8);

@@ -61,6 +61,7 @@ mod ranges;
 mod reinterpret;
 mod requires;
 mod resource_enums;
+mod result_abi;
 mod stack_ledger;
 mod system;
 mod tail_calls;
@@ -208,19 +209,20 @@ fn emit_arithmetic_obligations(source: &[u8]) -> String {
     ) else {
         panic!("backend test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("backend test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("backend test source must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("backend test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("backend test source must resolve");
     };
-    let SemanticOutcome::Complete(checked) = check_semantics_arithmetic_obligations(resolved)
+    let SemanticOutcome::Complete(checked) = check_semantics_arithmetic_obligations(&resolved)
     else {
         panic!("backend test source must check under the arithmetic switch");
     };
@@ -260,19 +262,20 @@ fn emit_division_obligations(source: &[u8]) -> String {
     ) else {
         panic!("backend test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("backend test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("backend test source must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("backend test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("backend test source must resolve");
     };
-    let SemanticOutcome::Complete(checked) = check_semantics_division_obligations(resolved) else {
+    let SemanticOutcome::Complete(checked) = check_semantics_division_obligations(&resolved) else {
         panic!("backend test source must check under the division switch");
     };
     assert!(
@@ -668,6 +671,25 @@ fn optimized_main(module: &str) -> &str {
     &module[start..end]
 }
 
+/// The LLVM type name the emitter gives the nominal whose stable spelling is
+/// `spelling`: `Name` for a root-module declaration, `a.b.Name` for one of
+/// module `pkg::a::b`, then its arguments [MOD-8].
+pub(super) fn nominal_type(spelling: &str) -> String {
+    format!("%wf.t.{}", link_name(spelling))
+}
+
+/// The LLVM global the emitter gives the constant named `spelling` [MOD-8].
+pub(super) fn constant_global(spelling: &str) -> String {
+    format!("@.wf_const.{}", link_name(spelling))
+}
+
+fn link_name(spelling: &str) -> String {
+    crate::spec::sha256::digest(spelling.as_bytes())[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
     let symbol = format!(" @wf_{name}(");
     let function_start = module
@@ -688,9 +710,47 @@ fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
     &module[function_start..function_end]
 }
 
+/// The definition that carries one source function's emitted body: the
+/// function's own definition, or, for a result returned in registers, the
+/// internal destination-form body its public entry calls
+/// (compiler/src/backend/abi.rs).
+fn emitted_body<'module>(module: &'module str, name: &str) -> &'module str {
+    let body = format!("{name}.body");
+    if module.contains(&format!(" @wf_{body}(")) {
+        emitted_function(module, &body)
+    } else {
+        emitted_function(module, name)
+    }
+}
+
+/// The first-class aggregate type one emitted definition returns in
+/// registers (compiler/src/backend/abi.rs), checked against its expected
+/// scalar fields independently of the module's nominal numbering.
+fn register_result_type<'function>(
+    module: &str,
+    function: &'function str,
+    fields: &[&str],
+) -> &'function str {
+    let (result_type, _) = function
+        .strip_prefix("define ")
+        .and_then(|header| header.split_once(" @"))
+        .expect("an emitted definition header");
+    assert!(
+        result_type.starts_with("%wf.t"),
+        "the result returns as its named aggregate: {result_type}"
+    );
+    assert!(
+        module.contains(&format!("{result_type} = type {{ {} }}", fields.join(", "))),
+        "the returned aggregate has the expected scalar layout: {result_type}"
+    );
+    result_type
+}
+
 /// These fixtures construct every variant of a result with scalar fields.
-/// Check its typed caller destination and field writes independently of a
-/// preliminary whole-aggregate store or the module's nominal numbering.
+/// Check the typed `%wf.result` construction and field writes independently
+/// of a preliminary whole-aggregate store or the module's nominal numbering.
+/// `function` is the definition that constructs the result, as
+/// [`emitted_body`] finds it, and `%wf.result` is its destination.
 fn assert_scalar_result_fields(module: &str, function: &str, fields: &[&str]) {
     let mut initialized = vec![false; fields.len()];
     for line in function.lines() {
@@ -773,22 +833,22 @@ enum Payload {
 }
 
 fn empty_payload() -> result: Payload pure {
-  return Empty();
+  return Payload::Empty();
 }
 
 fn number_payload() -> result: Payload pure {
-  return Value(number: 42_i32);
+  return Payload::Value(number: 42_i32);
 }
 
 fn wide_payload() -> result: Payload pure {
-  return Wide(first: 511_u64, last: 127_u8);
+  return Payload::Wide(first: 511_u64, last: 127_u8);
 }
 
-fn main() -> status: ExitStatus pure {
-  let flag = On();
+fn main() -> status: std::process::ExitStatus pure {
+  let flag = Flag::On();
   match flag {
     Off() => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
     On() => {
     }
@@ -796,44 +856,44 @@ fn main() -> status: ExitStatus pure {
   let payload = number_payload();
   match payload {
     Empty() => {
-      return exit_status(code: 2_u8);
+      return std::process::exit_status(code: 2_u8);
     }
     Value(number: value) => {
       if value != 42_i32 {
-        return exit_status(code: 3_u8);
+        return std::process::exit_status(code: 3_u8);
       }
     }
     Wide(first: first_word, last: last_byte) => {
-      return exit_status(code: 4_u8);
+      return std::process::exit_status(code: 4_u8);
     }
   }
   match empty_payload() {
     Empty() => {
     }
     Value(number: value) => {
-      return exit_status(code: 5_u8);
+      return std::process::exit_status(code: 5_u8);
     }
     Wide(first: first_word, last: last_byte) => {
-      return exit_status(code: 6_u8);
+      return std::process::exit_status(code: 6_u8);
     }
   }
   match wide_payload() {
     Empty() => {
-      return exit_status(code: 7_u8);
+      return std::process::exit_status(code: 7_u8);
     }
     Value(number: value) => {
-      return exit_status(code: 8_u8);
+      return std::process::exit_status(code: 8_u8);
     }
     Wide(first: first_word, last: last_byte) => {
       if first_word != 511_u64 {
-        return exit_status(code: 9_u8);
+        return std::process::exit_status(code: 9_u8);
       }
       if last_byte != 127_u8 {
-        return exit_status(code: 10_u8);
+        return std::process::exit_status(code: 10_u8);
       }
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = emit(source);
@@ -847,7 +907,10 @@ fn main() -> status: ExitStatus pure {
     for (name, tag, selected) in constructors {
         let body = emitted_function(&llvm, name);
         assert!(
-            body.contains("store %wf.t1 zeroinitializer, ptr %wf.result"),
+            body.contains(&format!(
+                "store {} zeroinitializer, ptr %wf.result",
+                nominal_type("Payload")
+            )),
             "the baseline constructor initializes the complete result: {body}"
         );
         assert!(!body.contains("poison"), "{body}");
@@ -855,8 +918,10 @@ fn main() -> status: ExitStatus pure {
         for (field, field_type) in ["i32", "i32", "i64", "i8"].iter().enumerate() {
             let address = body.lines().find_map(|line| {
                 let (address, operation) = line.trim().split_once(" = ")?;
-                (operation.starts_with("getelementptr inbounds %wf.t1, ptr ")
-                    && operation.ends_with(&format!(", i32 0, i32 {field}")))
+                (operation.starts_with(&format!(
+                    "getelementptr inbounds {}, ptr ",
+                    nominal_type("Payload")
+                )) && operation.ends_with(&format!(", i32 0, i32 {field}")))
                 .then_some(address)
             });
             if field != 0 && !selected.contains(&field) {
@@ -881,7 +946,7 @@ fn main() -> status: ExitStatus pure {
         }
     }
     assert!(llvm.contains("call void @abort()"));
-    assert!(!llvm.contains("%wf.t0 = type"));
+    assert!(!llvm.contains(&format!("{} = type", nominal_type("Flag"))));
     let output = compile_and_run(&llvm);
     assert!(output.status.success(), "{output:?}");
     assert!(output.stdout.is_empty());
@@ -943,17 +1008,19 @@ fn cleanup_match(value: Holder, flag: Bool) -> result: i32 pure {
   return selected;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   cleanup();
   let cell = Cell(value: 8_i32);
-  let holder = Held(cell: move cell);
+  let holder = Holder::Held(cell: move cell);
   let flag = True();
   cleanup_match(value: move holder, flag: flag);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = emit(source);
-    assert!(emitted_drop_ids(emitted_function(&llvm, "make")).is_empty());
+    // `Cell` returns in registers, so `make`'s moves and drops are in its
+    // destination-form body (compiler/src/backend/abi.rs).
+    assert!(emitted_drop_ids(emitted_body(&llvm, "make")).is_empty());
 
     let cleanup = emitted_function(&llvm, "cleanup");
     let cleanup_drops = emitted_drop_ids(cleanup);
@@ -982,7 +1049,7 @@ struct Outer {
   other: i32;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let number = 1_i32;
   let inner = Inner(value: 2_i32);
   let outer = Outer(inner: inner, other: 7_i32);
@@ -996,11 +1063,11 @@ fn main() -> status: ExitStatus pure {
   }
   let observed = outer.inner.value;
   if observed != 42_i32 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let preserved = outer.other;
   if preserved != 7_i32 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let selected = if flag {
     set number = 43_i32;
@@ -1010,26 +1077,34 @@ fn main() -> status: ExitStatus pure {
     give number;
   }
   if selected != 43_i32 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if number != 43_i32 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = emit(source);
     let main = emitted_function(&llvm, "main");
     assert!(main.contains(" = phi i32 "));
-    assert!(main.contains("store %wf.t1 zeroinitializer, ptr "));
-    assert!(main.contains("store %wf.t0 zeroinitializer, ptr "));
+    assert!(main.contains(&format!(
+        "store {} zeroinitializer, ptr ",
+        nominal_type("Outer")
+    )));
+    assert!(main.contains(&format!(
+        "store {} zeroinitializer, ptr ",
+        nominal_type("Inner")
+    )));
     let mut value_addresses = Vec::new();
     for line in main.lines() {
         let Some((address, operation)) = line.trim().split_once(" = ") else {
             continue;
         };
-        let selects_value = operation.starts_with("getelementptr inbounds %wf.t0, ptr ")
-            && operation.ends_with(", i32 0, i32 0");
+        let selects_value = operation.starts_with(&format!(
+            "getelementptr inbounds {}, ptr ",
+            nominal_type("Inner")
+        )) && operation.ends_with(", i32 0, i32 0");
         let aliases_value = operation
             .strip_prefix("getelementptr i8, ptr ")
             .and_then(|tail| tail.strip_suffix(", i64 0"))
@@ -1062,11 +1137,11 @@ fn main() -> status: ExitStatus pure {
 /// is no implicit runtime fallback.
 #[test]
 fn bare_infix_overflow_is_a_static_op2_rejection() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let hi = 2147483647_i32;
   let one = 1_i32;
   let overflowed = hi + one;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
@@ -1105,7 +1180,7 @@ struct Envelope {
 
 fn step(value: i32) -> result: Result<i32, StepError> pure {
   if value < 0_i32 {
-    let error = Failed();
+    let error = StepError::Failed();
     return Err<i32, StepError>(error: error);
   } else {
     return Ok<i32, StepError>(value: value);
@@ -1131,11 +1206,11 @@ fn make_pair() -> result: Result<Pair, StepError> pure {
   return Ok<Pair, StepError>(value: pair);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let arithmetic_result = 2147483647_i32 +checked 1_i32;
   match arithmetic_result {
     Ok(value: sum) => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
     Err(error: overflow) => {
     }
@@ -1143,7 +1218,7 @@ fn main() -> status: ExitStatus pure {
   let subtract_result = 0_u8 -checked 1_u8;
   match subtract_result {
     Ok(value: difference) => {
-      return exit_status(code: 2_u8);
+      return std::process::exit_status(code: 2_u8);
     }
     Err(error: underflow) => {
     }
@@ -1152,28 +1227,28 @@ fn main() -> status: ExitStatus pure {
   match multiply_result {
     Ok(value: product) => {
       if product != 42_i16 {
-        return exit_status(code: 3_u8);
+        return std::process::exit_status(code: 3_u8);
       }
     }
     Err(error: product_error) => {
-      return exit_status(code: 4_u8);
+      return std::process::exit_status(code: 4_u8);
     }
   }
   let success = forward(value: 7_i32);
   match success {
     Ok(value: answer) => {
       if answer != 42_i64 {
-        return exit_status(code: 5_u8);
+        return std::process::exit_status(code: 5_u8);
       }
     }
     Err(error: failure_error) => {
-      return exit_status(code: 6_u8);
+      return std::process::exit_status(code: 6_u8);
     }
   }
   let failure = forward(value: -1_i32);
   match failure {
     Ok(value: unexpected) => {
-      return exit_status(code: 7_u8);
+      return std::process::exit_status(code: 7_u8);
     }
     Err(error: forwarded_error) => {
     }
@@ -1182,17 +1257,17 @@ fn main() -> status: ExitStatus pure {
   match field_success {
     Ok(value: field_answer) => {
       if field_answer != 42_i64 {
-        return exit_status(code: 8_u8);
+        return std::process::exit_status(code: 8_u8);
       }
     }
     Err(error: field_failure) => {
-      return exit_status(code: 9_u8);
+      return std::process::exit_status(code: 9_u8);
     }
   }
   let field_failure = forward_field(value: -1_i32);
   match field_failure {
     Ok(value: field_unexpected) => {
-      return exit_status(code: 10_u8);
+      return std::process::exit_status(code: 10_u8);
     }
     Err(error: field_forwarded_error) => {
     }
@@ -1202,14 +1277,14 @@ fn main() -> status: ExitStatus pure {
     Ok(value: pair) => {
       let total = pair.left +wrap pair.right;
       if total != 42_i32 {
-        return exit_status(code: 11_u8);
+        return std::process::exit_status(code: 11_u8);
       }
     }
     Err(error: pair_error) => {
-      return exit_status(code: 12_u8);
+      return std::process::exit_status(code: 12_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1224,11 +1299,11 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn integer_overflow_has_no_op2_runtime_record_path() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let hi = 127_i8;
   let one = 1_i8;
   let overflow = hi + one;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);

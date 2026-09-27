@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get_bounded(b: &[u8], i: u64) -> value: u8 reads(b) contract {
   define spare = deref(b).len;
   requires i < spare;

@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const values: Array<u64, 8> =[1_u64, 1_u64, 1_u64, 1_u64, 1_u64, 1_u64, 1_u64, 1_u64];
+
+fn narrow(v: u64) -> result: u64 pure {
+  let bounded = imin(v, 8_u64);
+  return values[bounded];
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = 0_u64;
+  for @sum (i in 0_u64..16_u64) {
+    let got = narrow(v: i);
+    set total = total +wrap got;
+  }
+  return exit_status(code: 0_u8);
+}

@@ -66,7 +66,7 @@ impl LinearityClass {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [PROV-6, STOR-5] whether this type is or reaches a view, which owns
     /// nothing and contributes no release-graph node.
     pub(in crate::semantic) fn is_loan_bearing(&self, ty: CheckedType) -> Result<bool, CheckStop> {
@@ -239,8 +239,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         &self,
         ty: CheckedType,
     ) -> Result<Option<String>, CheckStop> {
+        // The marked nominal is named as the source writes its type, with an
+        // instance's type and const arguments [GRAM-3], not by the key the
+        // checker interned it under.
         if let Some(marked) = self.owns_modifier_linear_node(ty)? {
-            return Ok(Some(self.nominal(marked)?.name.clone()));
+            return Ok(Some(self.checked_type_name(CheckedType::Nominal(marked))?));
         }
         // A symbolic type parameter carries its class in the written bound,
         // not on a nominal node, so inspect each graph node explicitly.
@@ -414,12 +417,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .node_with_path(record.origin().node())
             .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
         if self.tree.production(node)? == Production::Type {
+            // A group binder's application is the `pack_use` holding its
+            // `targs`, or the `type_path` of a qualified group written
+            // beside them.
             let mut application = node;
-            while self.tree.production(application)? != Production::PackUse {
-                application = self
-                    .tree
-                    .parent(application)?
-                    .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+            loop {
+                match self.tree.production(application)? {
+                    Production::PackUse => break,
+                    Production::Gparam | Production::BindingDecl => {
+                        application = self
+                            .tree
+                            .group_application(application)?
+                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+                        break;
+                    }
+                    _ => {
+                        application = self
+                            .tree
+                            .parent(application)?
+                            .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
+                    }
+                }
             }
             for parameter in self.expand_formal_parameters(application)? {
                 if let super::generics::GenericParameter::Type {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn touch(part: &[u8], at: u64) -> result: u8 reads(part) contract {
   requires at < deref(part).len;
 } {

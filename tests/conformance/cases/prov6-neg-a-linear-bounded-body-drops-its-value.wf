@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn discard<T>(value: T) -> count: u8 pure {
   doc "The value reaches this scope's exit without being consumed.";
   return 2_u8;

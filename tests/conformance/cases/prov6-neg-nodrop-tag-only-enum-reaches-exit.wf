@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nodrop enum Ticket {
   Open();
   Closed();
@@ -5,6 +8,6 @@ nodrop enum Ticket {
 
 fn main() -> status: ExitStatus pure {
   doc "A tag-only declaration may remove drop, but the resulting linear value must still leave its scope by an explicit whole-value consume. This live ticket reaches the return edge and is refused.";
-  let ticket = Open();
+  let ticket = Ticket::Open();
   return exit_status(code: 0_u8);
 }

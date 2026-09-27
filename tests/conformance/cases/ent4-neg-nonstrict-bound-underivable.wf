@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   doc "Derivability is exact: a - b <= c is derivable only when the closed state contains a - b <= c' with c' at most c [ENT-4]. A checked i at most spare establishes i - spare <= 0, which does not derive the obligation's i - spare <= -1, so the subscript is undischarged [OP-4] -- correctly, since i may equal the length.";
   let spare = deref(b).len;

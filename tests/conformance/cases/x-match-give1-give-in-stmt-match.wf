@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "GIVE-1 is checker-scoped like break: `give` is legal only inside a `let`-initializer match arm; a give in a statement-position match is a hard error citing GIVE-1.";
   if 3_i32 < 4_i32 {

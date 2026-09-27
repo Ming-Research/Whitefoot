@@ -1,5 +1,8 @@
 program no_heap;
 
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The cell constructor accepts any ordinary operand type, but the store its content would occupy must exist: a compilation unit that declares no heap cannot call an allocating construction, and the call is refused at the complete call.";
   let cell = box_new::<u8>(value: 9_u8);

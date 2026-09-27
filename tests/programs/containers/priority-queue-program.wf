@@ -1,3 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias PriorityOrder = std::collections::priority_queue::PriorityOrder;
+alias exit_status = std::process::exit_status;
+alias priority_queue_drain = std::collections::priority_queue::priority_queue_drain;
+alias priority_queue_free = std::collections::priority_queue::priority_queue_free;
+alias priority_queue_heapify = std::collections::priority_queue::priority_queue_heapify;
+alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
+alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
+alias priority_queue_peek = std::collections::priority_queue::priority_queue_peek;
+alias priority_queue_pop = std::collections::priority_queue::priority_queue_pop;
+alias priority_queue_push = std::collections::priority_queue::priority_queue_push;
+alias priority_queue_replace_top = std::collections::priority_queue::priority_queue_replace_top;
+alias priority_queue_reserve = std::collections::priority_queue::priority_queue_reserve;
+
 struct PriorityTestEmpty {
 }
 

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scale(x: u8) -> result: u8 pure contract {
   requires x <= 25_u8;
 } {

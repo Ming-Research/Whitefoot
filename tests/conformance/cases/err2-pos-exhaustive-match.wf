@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Color {
   Red();
   Green();
@@ -20,7 +23,7 @@ fn pick(c: Color) -> result: i32 pure {
 
 fn main() -> status: ExitStatus pure {
   doc "An exhaustive match over all declared variants is accepted [ERR-2].";
-  let green_atom_0001 = Green();
+  let green_atom_0001 = Color::Green();
   let n = pick(c: green_atom_0001);
   if n == 2_i32 {
   } else {

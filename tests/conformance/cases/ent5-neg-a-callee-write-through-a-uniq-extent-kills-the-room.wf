@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn reserve(store: &Slots<u8, 64>) -> result: unit writes(store.next), writes(store.len) contract {
   requires deref(store).len < deref(store).cap;
 } {

@@ -237,7 +237,7 @@ pub(crate) fn sequential_clone_symbol(name: &str) -> String {
 /// Empty when no hand-out is reachable from any definition, including every
 /// default compilation: the default build carries no overlap group at all, so
 /// there is one world and this changes nothing about it.
-pub(crate) fn sequential_clone_set(program: &IrProgram<'_, '_, '_>) -> HashSet<u32> {
+pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
     let functions = program.functions();
     let mut callees: Vec<Vec<u32>> = vec![Vec::new(); functions.len()];
     let mut hands_out = Vec::with_capacity(functions.len());
@@ -335,6 +335,9 @@ pub(crate) fn sequential_clone_set(program: &IrProgram<'_, '_, '_>) -> HashSet<u
 pub(crate) struct ParallelThunks {
     definitions: String,
     count: u32,
+    /// How many thunks each function's emission has registered, which
+    /// numbers the next one's symbol within that function alone.
+    local: std::collections::HashMap<String, u32>,
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
@@ -362,9 +365,20 @@ impl ParallelThunks {
         self.queries_recursion_budget
     }
 
-    /// Records one thunk body and returns the symbol that names it.
-    fn register(&mut self, body: impl FnOnce(&str) -> String) -> Result<String, BackendFailure> {
-        let symbol = format!("@wf__par_thunk_{}", self.count);
+    /// Records one thunk body of `parent`'s emission and returns the symbol
+    /// that names it: `parent`'s name and the thunk's number among its own,
+    /// so an unchanged function's thunks keep their symbols when another
+    /// function gains or loses a hand-out [MOD-8].
+    fn register(
+        &mut self,
+        parent: &str,
+        body: impl FnOnce(&str) -> String,
+    ) -> Result<String, BackendFailure> {
+        let local = self.local.entry(parent.to_owned()).or_insert(0);
+        let symbol = format!("@wf__par_thunk_{parent}.{local}");
+        *local = local
+            .checked_add(1)
+            .ok_or(BackendFailure::CounterOverflow)?;
         self.count = self
             .count
             .checked_add(1)
@@ -430,11 +444,13 @@ impl FunctionEmitter<'_, '_> {
             let parameter_type = llvm_type(self.program, parameter.ty())?;
             let operand = self.value_operand(*argument)?;
             operands.push(format!("{parameter_type} {operand}"));
+            // The frame keeps a range reference's pair whole; the refused
+            // edge's own call receives it split, like every other call.
             call_arguments.push(if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
                 format!("ptr {address}")
             } else {
-                format!("{parameter_type} {operand}")
+                self.value_argument(*parameter, &operand)?
             });
             field_types.push(parameter_type);
         }
@@ -459,7 +475,7 @@ impl FunctionEmitter<'_, '_> {
             field_types.len() - 1
         });
         let frame_type = format!("{{ {} }}", field_types.join(", "));
-        let thunk = self.parallel.register(|symbol| {
+        let thunk = self.parallel.register(self.function.name(), |symbol| {
             thunk_definition(
                 symbol,
                 &ThunkFrame {
@@ -594,11 +610,8 @@ impl FunctionEmitter<'_, '_> {
                 let address = self.value_place(*capture)?;
                 format!("ptr {address}")
             } else {
-                format!(
-                    "{} {}",
-                    llvm_type(self.program, parameter.ty())?,
-                    self.value_name(*capture)
-                )
+                let operand = self.value_name(*capture);
+                self.value_argument(*parameter, &operand)?
             });
         }
 
@@ -902,6 +915,16 @@ fn thunk_definition(
             // The field still owns the complete argument payload. The callee
             // snapshots this content into its own activation before mutation.
             rendered.push(format!("ptr %p{index}"));
+        } else if parameter.is_range() {
+            // A range reference's pair crosses the call as its element
+            // pointer and count, the same split every call route passes.
+            let _ = writeln!(
+                body,
+                "  %a{index} = load {field_type}, ptr %p{index}\n  \
+                 %a{index}.data = extractvalue {field_type} %a{index}, 0\n  \
+                 %a{index}.len = extractvalue {field_type} %a{index}, 1"
+            );
+            rendered.push(format!("ptr %a{index}.data, i64 %a{index}.len"));
         } else {
             let _ = writeln!(body, "  %a{index} = load {field_type}, ptr %p{index}");
             rendered.push(format!("{field_type} %a{index}"));
