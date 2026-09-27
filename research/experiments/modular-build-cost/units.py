@@ -56,11 +56,11 @@ def fixture(name, root):
                 interface.append(f'public {signature} doc "Mixes one dependency value.";')
                 value = f"{previous}::f{function}(value: value)" if previous else "value"
                 body.append(f"{signature} {{\n  let inner = {value};\n  return inner +wrap 1_u64;\n}}")
-            write(root / f"m{index}/module.wfm", "\n".join(interface) + "\n")
+            write(root / f"m{index}/module.wfm", "\n\n".join(interface) + "\n")
             write(root / f"m{index}/body.wf", "\n\n".join(body) + "\n")
         dependencies = f"pkg::m{count - 1}, std::process"
         calculation = f"pkg::m{count - 1}::f0(value: 0_u64)"
-        body = f"  let value = {calculation};\n  if value == {count}_u64 {{\n    return std::process::exit_status(code: 0_u8);\n  }}\n  return std::process::exit_status(code: 1_u8);"
+        body = f"  let observed = {calculation};\n  if observed == {count}_u64 {{\n    return std::process::exit_status(code: 0_u8);\n  }}\n  return std::process::exit_status(code: 1_u8);"
         parameters = ""
     else:
         source = (REPO / PROGRAMS[name]).read_text()
@@ -72,7 +72,7 @@ def fixture(name, root):
         rows = [f"pkg::work: [{', '.join(dependencies)}];"]
         dependencies = "pkg::work, std::process"
         argument = "inputs: move inputs" if parameters else ""
-        body = f"  let value = pkg::work::main({argument});\n  return move value;"
+        body = f"  let observed = pkg::work::main({argument});\n  return move observed;"
     rows += [f"pkg: [{dependencies}];", "", "entry first = pkg::first;", "", "entry second = pkg::second;"]
     write(root / "modules.wfg", "\n".join(rows) + "\n")
     write(root / "module.wfm", "\n\n".join(
@@ -80,7 +80,7 @@ def fixture(name, root):
         for entry in ("first", "second")) + "\n")
     for entry in ("first", "second"):
         write(root / f"{entry}.wf", f"fn {entry}({parameters}) -> status: std::process::ExitStatus pure {{\n{body}\n}}\n")
-    return "first", "second", root / "second.wf", "value", "answer"
+    return "first", "second", root / "second.wf", "observed", "answer"
 
 
 def invoke(command, cwd):
@@ -171,8 +171,11 @@ def main():
     if platform.system() != "Darwin":
         parser.error("this measurement uses Darwin wait4 RSS bytes")
     compilers = {"baseline": args.baseline.resolve(), "candidate": args.candidate.resolve()}
+    compiler_hashes = {mode: digest(path) for mode, path in compilers.items()}
+    if compilers["baseline"] != compilers["candidate"] and len(set(compiler_hashes.values())) == 1:
+        parser.error("different compiler paths contain identical bytes; use the same path explicitly for a null comparison")
     print(json.dumps({"kind": "conditions", "host": platform.platform(), "rounds": args.rounds,
-                      "compilers": {mode: {"path": str(path), "sha256": digest(path)} for mode, path in compilers.items()},
+                      "compilers": {mode: {"path": str(path), "sha256": compiler_hashes[mode]} for mode, path in compilers.items()},
                       "programs": {name: {"path": path, "sha256": digest(REPO / path)} for name, path in PROGRAMS.items()}}), flush=True)
     with tempfile.TemporaryDirectory(prefix="whitefoot-units-") as scratch:
         scratch = Path(scratch)

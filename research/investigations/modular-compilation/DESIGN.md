@@ -1510,14 +1510,34 @@ rewriting finished diagnostic text. The `ir/products` schema and lowering
 product adapter serve this fragment store and leave with it if replaced.
 
 The first real-consumer cost probe found that the source-key constructor
-parsed a dependency's interface once per reached declaration. Memoize those
-declaration digests once per resolved checking view, using the existing digest
-producer and unchanged key bytes. Compare the same sources with the preceding
-binary as an ablation before attributing the observed GrowVector loss to that
-work. Also keep lowering checkpoints proportional to new helper reservations:
+requested a dependency's declaration digests once per reached declaration.
+The existing reading cache already avoids repeated parsing, but those requests
+still repeat hashing and cloning. Memoize those digests once per resolved
+checking view, using the existing producer and unchanged key bytes. Do not
+attribute the observed GrowVector loss to parsing from that call count. Also
+keep lowering checkpoints proportional to new helper reservations:
 a reservation journal avoids copying all earlier functions' helper counters
 at each source function. These are local work reductions under the retained
 representation, not new cache authority or a different invalidation boundary.
+
+Stage observations of the first complete candidate show that body import and
+record processing cost more than the saved walks on every selected workload.
+Before making a performance claim, remove duplicated work within the selected
+boundary: store a module's body records in one container under its complete
+source inputs, validating those inputs once rather than repeating their bytes
+and checksum work in every function record. Function keys still distinguish
+their structural identity, selector universe and signature; malformed containers
+miss as a whole. Publish completed structural products at the end of the
+checking invocation, including completed bodies preceding a later failure.
+This changes storage grouping, not the authority of a retained body or the
+module-verdict dependency boundary. Compare with the preceding candidate as
+well as the merged baseline; keep the previous work counters and equality
+checks as falsifiers. Share immutable source-identity/header tables between
+staged imports and use bulk copying for byte payloads under the same typed
+encoding. These remove repeated construction and byte-at-a-time framing, not
+formation judgments or input validation. Reopen the representation if the
+paired real-consumer measurements still show retention costing more than the
+work it replaces.
 
 ## Recursive dependencies and generic instances
 

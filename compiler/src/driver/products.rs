@@ -2,10 +2,41 @@
 
 use super::{BuildCache, CompilerLimits, Fields, reads};
 use crate::{ModuleId, ResolvedSyntaxUnit, SourceRole};
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+
+struct ModuleUnit {
+    key: Vec<u8>,
+    bodies: RefCell<BTreeMap<Vec<u8>, Vec<u8>>>,
+    changed: Cell<bool>,
+}
+
+impl ModuleUnit {
+    fn open(cache: &BuildCache, key: Vec<u8>) -> Self {
+        let bodies = cache.load("module-bodies", &key).and_then(|bytes| {
+            let fields = Fields::parse(&bytes)?;
+            if fields.len() % 2 != 0 {
+                return None;
+            }
+            let mut bodies = BTreeMap::new();
+            for pair in fields.chunks_exact(2) {
+                if bodies.insert(pair[0].to_vec(), pair[1].to_vec()).is_some() {
+                    return None;
+                }
+            }
+            Some(bodies)
+        });
+        Self {
+            key,
+            bodies: RefCell::new(bodies.unwrap_or_default()),
+            changed: Cell::new(false),
+        }
+    }
+}
 
 pub(super) struct CheckProducts<'a> {
     cache: &'a BuildCache,
-    modules: Vec<Option<Vec<u8>>>,
+    modules: Vec<Option<ModuleUnit>>,
     names: Vec<String>,
     reuse_proofs: bool,
 }
@@ -34,7 +65,7 @@ impl<'a> CheckProducts<'a> {
                     return None;
                 }
                 let mut fields = Fields::default();
-                fields.push(b"module-products 1");
+                fields.push(b"module-products 2");
                 fields.push(bundle.module(target)?.qualified_name().as_bytes());
                 let mut closure = std::collections::BTreeSet::new();
                 let mut pending = vec![target];
@@ -92,7 +123,7 @@ impl<'a> CheckProducts<'a> {
                     fields.push(item.0.as_bytes()).push(item.1.as_bytes());
                     fields.push(digests.get(&item)?);
                 }
-                Some(fields.into_bytes())
+                Some(ModuleUnit::open(cache, fields.into_bytes()))
             })
             .collect();
         let names = bundle
@@ -105,6 +136,27 @@ impl<'a> CheckProducts<'a> {
             modules,
             names,
             reuse_proofs,
+        }
+    }
+}
+
+impl Drop for CheckProducts<'_> {
+    fn drop(&mut self) {
+        // A later source failure does not invalidate earlier completed
+        // structural walks. Whole-container publication is still atomic.
+        for unit in self
+            .modules
+            .iter()
+            .flatten()
+            .filter(|unit| unit.changed.get())
+        {
+            let mut fields = Fields::default();
+            for (key, body) in unit.bodies.borrow().iter() {
+                fields.push(key).push(body);
+            }
+            let _ = self
+                .cache
+                .store("module-bodies", &unit.key, &fields.into_bytes());
         }
     }
 }
@@ -126,14 +178,27 @@ impl crate::semantic::ProofReceipts for CheckProducts<'_> {
 }
 
 impl crate::semantic::ModuleProducts for CheckProducts<'_> {
-    fn source_key(&self, module: ModuleId) -> Option<&[u8]> {
-        self.modules.get(module.index())?.as_deref()
+    fn has_module(&self, module: ModuleId) -> bool {
+        self.modules
+            .get(module.index())
+            .is_some_and(Option::is_some)
     }
-    fn load_body(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.cache.load("module-bodies", key)
+    fn load_body(&self, module: ModuleId, key: &[u8]) -> Option<Vec<u8>> {
+        self.modules
+            .get(module.index())?
+            .as_ref()?
+            .bodies
+            .borrow()
+            .get(key)
+            .cloned()
     }
-    fn store_body(&self, key: &[u8], bytes: &[u8]) {
-        let _ = self.cache.store("module-bodies", key, bytes);
+    fn store_body(&self, module: ModuleId, key: &[u8], bytes: &[u8]) {
+        if let Some(Some(unit)) = self.modules.get(module.index()) {
+            unit.bodies
+                .borrow_mut()
+                .insert(key.to_vec(), bytes.to_vec());
+            unit.changed.set(true);
+        }
     }
     fn header_checked(&self) {
         self.cache.header_checked();

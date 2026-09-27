@@ -10,6 +10,28 @@ use crate::semantic::products::{IdentityKind, IdentityMap, Reader, Record, Write
 use crate::syntax::views::SyntaxView;
 
 #[test]
+fn retained_byte_sequences_keep_length_framing_and_reject_every_truncation() {
+    let values = vec![0_u8, 255, 128];
+    let bytes = [3_u8, 0, 0, 0, 0, 0, 0, 0, 0, 255, 128];
+    let mut writer = Writer::default();
+    values.write(&mut writer);
+    assert_eq!(
+        writer.bytes, bytes,
+        "bulk writing preserves the length-prefixed byte encoding"
+    );
+    let mapping = IdentityMap::new();
+    let mut reader = Reader::new(&bytes, &mapping);
+    assert_eq!(Vec::<u8>::read(&mut reader), Some(values));
+    assert!(reader.finished());
+    for end in 0..bytes.len() {
+        assert!(
+            Vec::<u8>::read(&mut Reader::new(&bytes[..end], &mapping)).is_none(),
+            "truncation at {end}"
+        );
+    }
+}
+
+#[test]
 fn retained_products_rebind_declarations_occurrences_and_captures() {
     let original = b"fn keep(value: u64) -> result: u64 pure contract {\n  ensures result == value;\n} {\n  return value;\n}\n\nfn run(value: u64) -> result: u64 pure {\n  let kept = keep(value: value);\n  return kept;\n}\n";
     let mut changed =

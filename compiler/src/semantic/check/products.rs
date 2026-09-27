@@ -19,9 +19,9 @@ use crate::semantic::products::{
 /// Source inputs and storage supplied by the module driver, separate from
 /// proof receipts and target-dependent lowering products.
 pub(crate) trait ModuleProducts {
-    fn source_key(&self, module: crate::ModuleId) -> Option<&[u8]>;
-    fn load_body(&self, key: &[u8]) -> Option<Vec<u8>>;
-    fn store_body(&self, key: &[u8], bytes: &[u8]);
+    fn has_module(&self, module: crate::ModuleId) -> bool;
+    fn load_body(&self, module: crate::ModuleId, key: &[u8]) -> Option<Vec<u8>>;
+    fn store_body(&self, module: crate::ModuleId, key: &[u8], bytes: &[u8]);
     fn body_checked(&self, module: Option<crate::ModuleId>);
     fn header_checked(&self);
     fn body_reused(&self, module: Option<crate::ModuleId>);
@@ -73,8 +73,8 @@ record_enum!(PreludeType {
 /// view discovers new instances. Source lookups and structural names are
 /// shared by every imported body.
 pub(super) struct ProductIdentities<'a> {
-    sources: SourceIdentities<'a>,
-    headers: crate::resolution::CallableHeaders<'a>,
+    sources: std::rc::Rc<SourceIdentities<'a>>,
+    headers: std::rc::Rc<crate::resolution::CallableHeaders<'a>>,
     names: std::cell::RefCell<BTreeMap<Identity, Vec<u8>>>,
     current: std::cell::RefCell<BTreeMap<Vec<u8>, Identity>>,
     counts: std::cell::RefCell<BTreeMap<IdentityKind, usize>>,
@@ -83,12 +83,25 @@ pub(super) struct ProductIdentities<'a> {
 impl<'a> ProductIdentities<'a> {
     pub(super) fn new(declarations: &'a DeclarationInventory<'a>) -> Option<Self> {
         Some(Self {
-            sources: SourceIdentities::new(declarations.resolved, &declarations.tree)?,
-            headers: declarations.resolved.callable_headers().ok()?,
+            sources: std::rc::Rc::new(SourceIdentities::new(
+                declarations.resolved,
+                &declarations.tree,
+            )?),
+            headers: std::rc::Rc::new(declarations.resolved.callable_headers().ok()?),
             names: Default::default(),
             current: Default::default(),
             counts: Default::default(),
         })
+    }
+
+    fn staged(&self) -> Self {
+        Self {
+            sources: self.sources.clone(),
+            headers: self.headers.clone(),
+            names: Default::default(),
+            current: Default::default(),
+            counts: Default::default(),
+        }
     }
 }
 
@@ -198,8 +211,8 @@ impl Checker<'_, '_> {
                 && !signature.substitution.is_symbolic(),
             ..*context
         };
-        if let Some(key) = &key
-            && let Some(bytes) = products.load_body(key)
+        if let (Some(module), Some(key)) = (module, &key)
+            && let Some(bytes) = products.load_body(module, key)
             && let Some(body) = self.read_body_product(&import_context, &bytes, identities)
         {
             if let Some(effects) = body.written_effects {
@@ -208,7 +221,7 @@ impl Checker<'_, '_> {
                     .insert(body.checked.function.declaration, effects);
             }
             self.import_discovery(body.discovery);
-            products.body_reused(module);
+            products.body_reused(Some(module));
             return Ok(body.checked);
         }
         let before = self.discovery_state();
@@ -239,8 +252,10 @@ impl Checker<'_, '_> {
                     .cloned(),
                 checked,
             };
-            if let Some(bytes) = self.write_body_product(&product, &before, identities) {
-                products.store_body(&key, &bytes);
+            if let Some(module) = module
+                && let Some(bytes) = self.write_body_product(&product, &before, identities)
+            {
+                products.store_body(module, &key, &bytes);
             }
             return Ok(product.checked);
         }
@@ -262,7 +277,9 @@ impl Checker<'_, '_> {
             .module()?;
         let mut writer = Writer::default();
         b"structural-body 1".to_vec().write(&mut writer);
-        products.source_key(module)?.to_vec().write(&mut writer);
+        if !products.has_module(module) {
+            return None;
+        }
         self.identity_name((IdentityKind::Function, signature.id.0), identities)?
             .write(&mut writer);
         // The symbolic and ordinary selector universes can differ even for
@@ -573,7 +590,7 @@ impl Checker<'_, '_> {
             ..AnalysisState::default()
         };
         let mut body = BodyChecker::default();
-        let staged_identities = ProductIdentities::new(self.types.declarations)?;
+        let staged_identities = identities.staged();
         let mapping = {
             let mut staged = Checker {
                 types: &mut staged_types,

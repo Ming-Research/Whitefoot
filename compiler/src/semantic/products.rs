@@ -104,6 +104,18 @@ impl<'a> Reader<'a> {
 pub(crate) trait Record: Sized {
     fn write(&self, writer: &mut Writer);
     fn read(reader: &mut Reader<'_>) -> Option<Self>;
+
+    fn write_slice(values: &[Self], writer: &mut Writer) {
+        values.len().write(writer);
+        for value in values {
+            value.write(writer);
+        }
+    }
+
+    fn read_vec(reader: &mut Reader<'_>) -> Option<Vec<Self>> {
+        let count = usize::read(reader)?;
+        (0..count).map(|_| Self::read(reader)).collect()
+    }
 }
 
 macro_rules! integers {
@@ -120,7 +132,24 @@ macro_rules! integers {
     )*};
 }
 
-integers!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+integers!(u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+impl Record for u8 {
+    fn write(&self, writer: &mut Writer) {
+        writer.bytes.push(*self);
+    }
+    fn read(reader: &mut Reader<'_>) -> Option<Self> {
+        Some(*reader.take(1)?.first()?)
+    }
+    fn write_slice(values: &[Self], writer: &mut Writer) {
+        values.len().write(writer);
+        writer.bytes.extend_from_slice(values);
+    }
+    fn read_vec(reader: &mut Reader<'_>) -> Option<Vec<Self>> {
+        let count = usize::read(reader)?;
+        Some(reader.take(count)?.to_vec())
+    }
+}
 
 impl Record for usize {
     fn write(&self, writer: &mut Writer) {
@@ -148,15 +177,11 @@ impl Record for bool {
 
 impl<T: Record> Record for Vec<T> {
     fn write(&self, writer: &mut Writer) {
-        self.len().write(writer);
-        for value in self {
-            value.write(writer);
-        }
+        T::write_slice(self, writer);
     }
 
     fn read(reader: &mut Reader<'_>) -> Option<Self> {
-        let count = usize::read(reader)?;
-        (0..count).map(|_| T::read(reader)).collect()
+        T::read_vec(reader)
     }
 }
 
@@ -189,10 +214,7 @@ impl<T: Record> Record for Box<T> {
 
 impl<T: Record> Record for Box<[T]> {
     fn write(&self, writer: &mut Writer) {
-        self.len().write(writer);
-        for value in self {
-            value.write(writer);
-        }
+        T::write_slice(self, writer);
     }
 
     fn read(reader: &mut Reader<'_>) -> Option<Self> {

@@ -209,7 +209,8 @@ it is not a cold-compiler memory estimate.
 
 For stage attribution, export each revision to a disposable scratch tree,
 then run `python3 units.py --instrument TREE` and build that tree's compiler
-under the shared verification guard. The same exact source boundaries report
+under the shared verification guard, with a distinct Cargo target directory
+for each exported tree. The same exact source boundaries report
 source validation/resolution plus dependency-key assembly, formation/checking,
 typed lowering and emission. These instrumented binaries are separate from
 the primary timing pair. The instrumentation refuses the working repository
@@ -218,6 +219,13 @@ retires with this retained-product comparison. No timers enter the compiler's
 maintained acceptance path. Run the instrumented pair with `--compiler-only`;
 the raw stage observations are retained in `stages_ms`.
 
+A first profiling setup shared one Cargo target directory between exported
+trees. Cargo reused its preceding binary; the two executable hashes exposed
+that mistake. Those stage samples are discarded. The caller now rejects
+distinct input paths with identical executable bytes; a null comparison must
+explicitly pass the same compiler path twice. Candidate-only import timings
+are nested subsets of driver stages and are never summed into their totals.
+
 Driver controls ran the actual caller against one-shot compiler stand-ins:
 the success control completed; compiler exit 23, program exit 5, unequal
 program output and unequal LLVM each caused a nonzero experiment exit before
@@ -225,7 +233,47 @@ the offending sample was admitted. The stand-ins were temporary and are not
 an oracle for compiler behavior. A baseline-against-itself run supplies the
 host's null comparison. Measurements and conclusions follow qualification;
 the initial real-consumer probes already identified repeated interface digest
-parsing in dependency-key assembly, addressed before the final comparison.
+requests in dependency-key assembly. Parsing was already memoized; the local
+fix removes repeated hashing and cloning, not repeated syntax judgments.
+
+### First complete import cost probe
+
+A single diagnostic trial of `8f9208176c216aec10b3ff6772f28f30b6d46056` (compiler SHA-256
+`7c58986d560588e6684142c161ea66eb1dd55070b135f3a01b395a4ed2aa4623`) compared the merged baseline with the
+complete body/discovery/lowering importer. Every admitted real-program and
+chain sample compared baseline/candidate LLVM bytes and native results; all
+executables exited zero. The generated-chain local rename initially also
+renamed a named-argument label; the compiler rejected it and the driver stopped
+without an edit sample. Correcting that fixture and rerunning both chains
+supplied their complete observations below. These are one-run attribution
+observations, not seven-pair timing claims or evidence that the cost target
+has been met.
+
+Entry-edit front-end milliseconds and actual body work:
+
+| Workload | Baseline ms | Candidate ms | Candidate body walks/imports | Library bodies and lowered functions walked |
+|---|---:|---:|---:|---:|
+| queue | 49.1 | 62.0 | 1/19 | 0 |
+| sha256 | 40.7 | 52.6 | 2/24 | 0 |
+| grow-vector | 112.8 | 199.0 | 2/100 | 0 |
+| wfgrep | 144.6 | 213.1 | 2/58 | 0 |
+| hash-map | 251.2 | 571.2 | 2/301 | 0 |
+| chain-8 | 83.8 | 136.6 | 2/262 | 0 |
+| chain-32 | 294.7 | 580.7 | 2/1030 | 0 |
+
+Thus avoiding body and lowering walks alone did not make this implementation
+cheaper. The valid, separately built stage probe attributes the HashMap entry
+edit to 432.0 ms formation/checking versus 166.6 ms in the baseline, with
+106.8 ms inside body import and only 1.7 ms in missing-instance formation;
+source/input assembly costs 64.3 versus 52.4 ms, and lowering 51.5 versus
+3.0 ms. These nested observations are not additive. The 32-module chain's
+source/input assembly costs 235.5 versus 121.9 ms. They select the recorded
+work-reduction experiment: share module input validation, immutable identity
+tables and byte framing, and stop constructing a complete syntax view merely
+to enumerate the resolver's existing item keys. The following candidate must
+retain the same equality and work-count observations and beat the prior
+candidate on the same sources before attributing an improvement to those
+changes. The null and seven-pair final comparison remain required.
 
 ## Limits
 

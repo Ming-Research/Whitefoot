@@ -94,13 +94,8 @@ impl<'a> SourceIdentities<'a> {
             }
         }
         let mut items = BTreeMap::new();
-        let item_count = view.children(view.root()).ok()?.len();
         for definition in [false, true] {
-            for ordinal in 0..item_count {
-                let ordinal = u32::try_from(ordinal).ok()?;
-                let Some(item) = resolved.item_key(ordinal) else {
-                    continue;
-                };
+            for (ordinal, item) in resolved.item_keys() {
                 if implementation(item) == definition {
                     items.insert(boundary_item(item).to_string(), ordinal);
                 }

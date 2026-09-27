@@ -230,10 +230,9 @@ pub(super) fn read_declarations(
             named.entry(from).or_default().insert(to);
         }
     }
-    let view = SyntaxView::new(resolved.syntax()).ok()?;
-    let items = view.items().ok()?.len();
-    let mut pending = (0..items)
-        .filter_map(|ordinal| resolved.item_key(u32::try_from(ordinal).ok()?))
+    let mut pending = resolved
+        .item_keys()
+        .map(|(_, key)| key)
         .filter(|key| module_of(key) == Some(target.index()))
         .cloned()
         .collect::<Vec<_>>();

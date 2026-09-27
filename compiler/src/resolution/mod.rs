@@ -1505,6 +1505,15 @@ impl ResolvedSyntaxUnit {
         self.items.get(ordinal as usize)?.as_ref()
     }
 
+    /// Declaration-bearing items already indexed during resolution. Consumers
+    /// that only need these keys need not rebuild a syntax view to count items.
+    pub(crate) fn item_keys(&self) -> impl Iterator<Item = (u32, &ItemKey)> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, key)| Some((u32::try_from(ordinal).ok()?, key.as_ref()?)))
+    }
+
     /// Returns the stable identity of the node at `path`, relative to the
     /// item that holds it; `None` for the root and within an item that heads
     /// no declaration.
