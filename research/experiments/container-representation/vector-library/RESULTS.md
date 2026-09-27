@@ -2696,6 +2696,17 @@ diagnostic. The experiment measures the remaining scalar consumer-loop
 component; it does not select a production loop form or imply that the
 unmodified public truncate contract can omit its proof checks.
 
+The corrected candidate compiled and linked with the frozen reserved-append
+image, but its native scalar loop has five instructions per element after
+inlining (`ldr`, digest update, pointer advance, decrement/flag update and
+branch), not the preregistered maximum of four. The control has six. The
+target function, entry guard, callback, empty behavior and terminal length
+store otherwise match, and the only LLVM changes are the intended scalar
+truncate loop. The code check therefore failed before timing, as required;
+the scratch IR and guarded construction record remain under
+`/private/tmp/whitefoot-scalar-pointer-count-current`. No pointer/count timing
+or performance claim is made.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
@@ -2719,7 +2730,7 @@ does not establish that a fully exposed lifetime cannot fold or select any
 production inline policy. Exact paths and phase times remain under
 `/private/tmp/whitefoot-vector-two-edge-f-e2125011`.
 
-### Next discriminator: native empty-header cost
+### Native empty-header A/B: the allocation pair explains most of the standard gap
 
 The remaining strict Vector cell is scalar growth at eight-byte length 16.
 Before changing the storage representation, a native control will keep the
@@ -2730,7 +2741,7 @@ is a controlled source-equivalent cost injection, not a proposed library
 implementation. The ordinary C++ source, seeds, driver ABI, work budget,
 allocator-accounting image and operation order remain unchanged.
 
-The code criterion is that the only optimized C++ difference is one matched
+The code criterion was that the only optimized C++ difference is one matched
 empty-header allocation and release per trace, with no changed vector
 capacity, element movement, checksum or cleanup path. The accounting image
 must show exactly one additional request and release per trace and the same
@@ -2741,6 +2752,35 @@ evidence for the empty-state representation cost; if it does not, the
 representation hypothesis is rejected as the main explanation and the next
 comparison is the growth-helper ABI. This experiment cannot select a WF
 representation by itself.
+
+The preregistered control passed the criterion. Both timed and accounting
+images passed the complete 1,260-configuration / 8,820-execution check, and
+both checksum and cleanup fault injections still rejected. All 294 accounting
+rows retain their checksum. For scalar growth-at-16, C++ changes from 18
+requests / 18 releases / 1,512 requested bytes / 384 peak bytes to 21 / 21 /
+1,560 / 400; every non-growth row is byte-identical. The timed guards took
+`79.64 s` and `79.67 s`; raw samples and target summaries are [`baseline samples`](ecosystem-cpp-empty-header-baseline-samples.csv),
+[`candidate samples`](ecosystem-cpp-empty-header-candidate-samples.csv),
+[`baseline targets`](ecosystem-cpp-empty-header-baseline-targets.csv) and
+[`candidate targets`](ecosystem-cpp-empty-header-candidate-targets.csv), with
+accounting in [`A`](ecosystem-cpp-empty-header-a-account.csv) and
+[`B`](ecosystem-cpp-empty-header-b-account.csv). The source criterion and
+exact patch are [`criterion`](empty-header-ab-criterion.md) and
+[`patch`](empty-header-ab.patch).
+
+The baseline composite has 23 passes, 2 deficits and 11 inconclusive cells
+(6 unranked); the injected-header composite has 24 passes, no deficits and
+12 inconclusive cells (6 unranked). In scalar growth-at-16, the C++ median
+increases by about `17.7–19.0 ns` per round, changing WF from `1.086–1.088`
+times C++ to an overlapping `0.967–0.971`. In wide growth-at-16, it increases
+by `28.2–30.9 ns` per round and changes the WF ratio from `1.026–1.029` to
+`0.976–0.979`. This is causal evidence that the empty-header/first-growth
+allocation contract accounts for most of the remaining standard-library gap.
+It is not an exact per-instruction time split: the diagnostic header remains
+live until the end of `work`, whereas WF releases its zero-capacity header at
+the first growth. The result selects a lazy-empty representation as the next
+production candidate to measure, but does not silently select its public API
+or storage type.
 
 ### Fresh main integration: identical executable inputs, no retiming
 

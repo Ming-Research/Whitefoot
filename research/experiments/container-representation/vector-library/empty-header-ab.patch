@@ -1,0 +1,43 @@
+--- /private/tmp/whitefoot-vector-empty-header-ab/vector-library/vector-ecosystem.baseline.cpp	2026-09-27 06:38:54
++++ /private/tmp/whitefoot-vector-empty-header-ab/vector-library/vector-ecosystem.cpp	2026-09-27 06:39:35
+@@ -2,6 +2,7 @@
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdlib>
+ #include <utility>
+ #include <vector>
+ #if defined(ACCOUNT_ONLY)
+@@ -36,6 +37,22 @@
+ template<class T> using Vector = std::vector<T>;
+ #endif
+ 
++[[gnu::noinline]] void *empty_header_new() {
++    void *header = std::calloc(1, 16);
++    if (header == nullptr) std::abort();
++#if defined(ACCOUNT_ONLY)
++    wf_ecosystem_note_alloc(16);
++#endif
++    return header;
++}
++
++[[gnu::noinline]] void empty_header_free(void *header) {
++#if defined(ACCOUNT_ONLY)
++    wf_ecosystem_note_dealloc(16);
++#endif
++    std::free(header);
++}
++
+ template<class T>
+ void consume_suffix(Vector<T> &values, std::size_t retained, std::uint64_t &digest) {
+     // vector::erase does not return its erased owners. Move each result to the
+@@ -99,7 +116,9 @@
+         for (std::uint64_t round = 0; round < rounds; ++round) {
+             Vector<T> values;
+             if (path == 0) values.reserve(count + 1);
++            void *empty_header = path == 1 ? empty_header_new() : nullptr;
+             checksum = checksum * UINT64_C(257) + work(values, count, seed + round);
++            if (empty_header != nullptr) empty_header_free(empty_header);
+         }
+     }
+     return checksum;

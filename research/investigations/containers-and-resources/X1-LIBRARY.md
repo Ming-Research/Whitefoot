@@ -2592,7 +2592,19 @@ growth-at-16 row, WF/direct-C is `1.018–1.024`, compared with WF/C++
 `1.085–1.107` and WF/Rust `1.152–1.154`. Direct C uses the same header-first
 representation, so most of the standard-library gap is the empty-header and
 first-growth contract; the residual roughly two percent against direct C is a
-lowering question. This attribution does not relax the Rust/C++ target.
+lowering question. This attribution does not relax the Rust/C++ target. The
+follow-up scalar pointer/count loop was rejected before timing: after
+inlining it used five native instructions per element, while its preregistered
+criterion required at most four. Its exact LLVM diff and construction record
+are retained in the Vector results; no pointer-loop speed claim is made.
+The native C++ empty-header A/B then added one 16-byte allocation/release per
+fresh growth round. It changed the diagnostic composite from two strict
+deficits to none, with the scalar growth ratio moving from `1.086–1.088` to
+`0.967–0.971` and the wide growth ratio from `1.026–1.029` to `0.976–0.979`.
+Because the injected header remains live until the end of `work`, this is
+evidence for the allocation contract rather than an exact time split. A
+lazy-empty storage candidate is therefore the next production experiment;
+its enum representation and contract changes remain pending design work.
 
 Two target choices address the demonstrated extra temporary copies. A complete
 take captures the old physical slot, updates the window descriptor, then
