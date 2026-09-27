@@ -2782,6 +2782,28 @@ the first growth. The result selects a lazy-empty representation as the next
 production candidate to measure, but does not silently select its public API
 or storage type.
 
+### Next discriminator: merge the first growth into construction
+
+The native A/B identifies the empty-header/first-growth pair, while a lazy
+enum would change the public storage shape and the source contracts. The next
+source-equivalent diagnostic therefore keeps `Box<Slots<T>>` and changes only
+`grow_vector_new`: for a positive caller ceiling it constructs capacity one;
+the `ceiling == 0` instance remains capacity zero. No caller, operation,
+growth formula, element order, allocator observer or public ABI changes. This
+eliminates the first `grow` edge without adding a new representation.
+
+The pre-construction criterion is that the diff contains only this conditional
+construction and its documentation; the zero-ceiling program remains
+unchanged. The complete correctness/accounting images must retain every
+checksum, cleanup refusal and owner ledger, with exactly one fewer allocation
+and release at each positive-ceiling fresh growth trace and no change to
+reserved/reuse rows except their initial capacity. A useful-cell regression or
+an unexpected field/contract verdict stops without timing. If the candidate
+removes the strict growth deficit without regressing another qualified cell,
+the changed initial-capacity policy is a production candidate; otherwise it is
+rejected and the remaining choice is a lazy-empty representation or a
+compiler/lowering optimization.
+
 ### Fresh main integration: identical executable inputs, no retiming
 
 At `f945eceecb3aacac20e76864c73edf8b7c87902b`, a fresh gate compiler
