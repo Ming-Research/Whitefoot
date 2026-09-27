@@ -538,6 +538,50 @@ uint64_t wf_file_monotonic_ns(void) {
  * receive whose bytes have already arrived complete here, with no ring, no
  * park and no wake, which is the same rule the bounded adapter applies to a
  * positioned read the submitting thread would run itself. */
+int wf_file_readiness_supported(void) {
+    return 1;
+}
+
+/* One `poll` over the descriptors the parked contexts name.  Only the thread
+ * that runs every context calls it, so the host array is this unit's own. */
+int wf_file_wait_readiness(wf_file_readiness *entries, size_t count, int timeout_ms) {
+    static struct pollfd polled[WF_FILE_READINESS_BATCH];
+    int answered;
+    size_t index;
+    if (entries == NULL || count == 0 || count > WF_FILE_READINESS_BATCH) {
+        return -1;
+    }
+    for (index = 0; index < count; index++) {
+        polled[index].fd = entries[index].descriptor;
+        polled[index].events = (short)(
+            ((entries[index].events & WF_FILE_READABLE) != 0 ? POLLIN : 0)
+            | ((entries[index].events & WF_FILE_WRITABLE) != 0 ? POLLOUT : 0)
+        );
+        polled[index].revents = 0;
+        entries[index].ready = 0;
+    }
+    do {
+        answered = poll(polled, (nfds_t)count, timeout_ms);
+    } while (answered < 0 && errno == EINTR);
+    if (answered < 0) {
+        return -1;
+    }
+    for (index = 0; index < count; index++) {
+        short seen = polled[index].revents;
+        if ((seen & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            entries[index].ready = WF_FILE_READABLE | WF_FILE_WRITABLE;
+            continue;
+        }
+        if ((seen & POLLIN) != 0) {
+            entries[index].ready |= WF_FILE_READABLE;
+        }
+        if ((seen & POLLOUT) != 0) {
+            entries[index].ready |= WF_FILE_WRITABLE;
+        }
+    }
+    return answered;
+}
+
 int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result) {
     ssize_t moved;
     memset(result, 0, sizeof(*result));

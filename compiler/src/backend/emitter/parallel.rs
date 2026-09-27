@@ -254,7 +254,13 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
                     continue;
                 };
                 match operation {
-                    IrOperation::Call { function, .. } => callees[ordinal].push(*function),
+                    // A started context runs its wrapper in the world of the
+                    // activation that starts it, so the wrapper is reached
+                    // exactly as a call is.
+                    IrOperation::Call { function, .. }
+                    | IrOperation::ContextStart { function, .. } => {
+                        callees[ordinal].push(*function);
+                    }
                     // A split reaches both halves: the overlapped world calls
                     // the splitter and the sequential world calls the chunk, so
                     // each world's reachability has to hold the one it uses.
@@ -341,6 +347,10 @@ pub(crate) struct ParallelThunks {
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
+    /// The thunks of started contexts [PAR-4], which name the bridge's context
+    /// entry points and no compute scheduler symbol.
+    context_definitions: String,
+    context_local: std::collections::HashMap<String, u32>,
     /// The same for the recursion budget: a module with no budgeted component
     /// names that symbol nowhere either.
     pub(super) queries_recursion_budget: bool,
@@ -355,6 +365,32 @@ impl ParallelThunks {
 
     pub(crate) const fn is_used(&self) -> bool {
         self.count != 0
+    }
+
+    /// The started contexts' thunk definitions, or empty when no function
+    /// starts one.
+    pub(crate) fn context_definitions(&self) -> &str {
+        &self.context_definitions
+    }
+
+    pub(crate) fn starts_contexts(&self) -> bool {
+        !self.context_definitions.is_empty()
+    }
+
+    /// Records one started context's thunk, numbered among `parent`'s own as
+    /// [`Self::register`] numbers a hand-out's.
+    pub(super) fn register_context(
+        &mut self,
+        parent: &str,
+        body: impl FnOnce(&str) -> String,
+    ) -> Result<String, BackendFailure> {
+        let local = self.context_local.entry(parent.to_owned()).or_insert(0);
+        let symbol = format!("@wf__ctx_thunk_{parent}.{local}");
+        *local = local
+            .checked_add(1)
+            .ok_or(BackendFailure::CounterOverflow)?;
+        self.context_definitions.push_str(&body(&symbol));
+        Ok(symbol)
     }
 
     pub(crate) const fn queries_split_budget(&self) -> bool {
@@ -880,18 +916,19 @@ impl FunctionEmitter<'_, '_> {
 
 /// The lane frame one hand-out fills, as its thunk reads it back: the LLVM
 /// struct type, its field types in order, and which fields are not arguments.
-struct ThunkFrame<'site> {
-    ty: &'site str,
-    field_types: &'site [String],
+/// A started context's frame has the same shape [PAR-4].
+pub(super) struct ThunkFrame<'site> {
+    pub(super) ty: &'site str,
+    pub(super) field_types: &'site [String],
     /// The field the result is left in: the argument count.
-    result: usize,
+    pub(super) result: usize,
     /// The field carrying the callee variant's budget, where the callback
     /// lands inside a budgeted component.
-    budget: Option<usize>,
+    pub(super) budget: Option<usize>,
 }
 
 /// One outlined call over its frame.
-fn thunk_definition(
+pub(super) fn thunk_definition(
     symbol: &str,
     frame: &ThunkFrame<'_>,
     abi: &FunctionAbi,

@@ -257,7 +257,10 @@ enum wf_completion_route {
     WF_COMPLETION_ROUTE_FILE_ADAPTER = 1,
     WF_COMPLETION_ROUTE_LINUX_IO_URING = 2,
     WF_COMPLETION_ROUTE_INLINE = 3,
-    WF_COMPLETION_ROUTE_WINDOWS_IOCP = 4
+    WF_COMPLETION_ROUTE_WINDOWS_IOCP = 4,
+    /* No engine yet: the operation's join makes it once its descriptor is
+     * ready, because another context shares the thread [WAIT-2]. */
+    WF_COMPLETION_ROUTE_READINESS = 5
 };
 
 /* The ring's own state inside the record, one platform's at a time.

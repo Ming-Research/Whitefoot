@@ -184,6 +184,14 @@ entry:
   ret void
 }
 
+declare void @wf__body_factory_share(ptr, ptr)
+
+define void @wf_std.io.factory_share(ptr %result, ptr %factory) {
+entry:
+  tail call void @wf__body_factory_share(ptr %result, ptr %factory)
+  ret void
+}
+
 declare void @wf__body_open_read(ptr, ptr, ptr, ptr)
 
 define void @wf_std.fs.open_read(ptr %result, ptr %factory, ptr %root, ptr %path) {

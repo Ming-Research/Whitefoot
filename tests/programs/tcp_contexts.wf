@@ -1,0 +1,208 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_listen = std::net::tcp_listen;
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = deref(store).len;
+  let inside = index < room;
+  if inside {
+    let value = deref(store)[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u16>(value);
+      let scaled = port *wrap 10_u16;
+      set port = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return port;
+}
+
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+  define source_length = deref(source).len;
+  requires length <= source_length;
+} {
+  doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @sending {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @sending;
+    }
+    match send_once(send: send, source: source, start: sent, end: length) {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return Err<unit, IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure waits {
+  doc "Returns every byte one peer sends until the peer stops sending, then closes both halves. It runs in a context of its own [PAR-4], so a peer that is silent holds only this context, and the chunk it echoes through is an inline window of this context's own frame.";
+  let chunk = slots_new::<u8, 16384>();
+  for @fill_chunk (
+    at in 0_u64..16384_u64,
+    invariant grown_chunk: chunk.len == at
+  ) {
+    place_back(window: &chunk, value: 0_u8);
+  }
+  let held = 16384_u64;
+  let sink = &chunk[0_u64..16384_u64];
+  loop @chunks {
+    let available = 0_u64;
+    let ended = 0_u8;
+    match receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held) {
+      Ok(value: endpoint) => {
+        set available = endpoint;
+      }
+      Err(error: stop) => {
+        set ended = 1_u8;
+      }
+    }
+    if ended == 0_u8 {
+      match send_all(send: &connection.send, source: sink, length: available) {
+        Ok(value: delivered) => {
+        }
+        Err(error: problem) => {
+          set ended = 1_u8;
+        }
+      }
+    }
+    if ended == 0_u8 {
+    } else {
+      break @chunks;
+    }
+  }
+  let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
+  close_receive(factory: &factory, receive: move closing_receive);
+  close_send(factory: &factory, send: move closing_send);
+  return unit;
+}
+
+fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64 reads(args), writes(window) contract {
+  requires 16_u64 <= deref(window).len;
+} {
+  doc "Copies one invocation argument into the window and returns its length, or zero when it is absent or does not fit.";
+  let carried = 0_u64;
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      set carried = 0_u64;
+    }
+  }
+  return carried;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Listens on the loopback port the first argument names and serves each accepted connection in a context of its own [PAR-4], echoing until its peer stops sending. The second argument is how many connections to accept; zero accepts until the listener fails. Every started context completes before main returns.";
+  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  close_directory(factory: &handles, directory: move unused_cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let arguments = args_count(args: &args);
+  if arguments < 3_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let port_length = argument(args: &args, position: 1_u64, window: window);
+  if port_length == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let port = parse_port(digits: window, length: port_length);
+  let count_length = argument(args: &args, position: 2_u64, window: window);
+  let written_count = parse_port(digits: window, length: count_length);
+  let count = cvt::<u16, u64>(written_count);
+  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  match tcp_listen(factory: &handles, address: &address) {
+    Ok(value: listener) => {
+      let accepted = 0_u64;
+      loop @accepting {
+        if count != 0_u64 {
+          if accepted >= count {
+            break @accepting;
+          }
+        }
+        match tcp_accept(factory: &handles, listener: &listener) {
+          Ok(value: next) => {
+            let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
+            let factory = factory_share(factory: &handles);
+            mustpar serve(connection: move connection, factory: move factory);
+          }
+          Err(error: problem) => {
+            break @accepting;
+          }
+        }
+        set accepted = accepted +wrap 1_u64;
+      }
+      close_listener(factory: &handles, listener: move listener);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 3_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

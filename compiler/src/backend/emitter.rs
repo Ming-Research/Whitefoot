@@ -9,6 +9,7 @@ mod array;
 mod boxes;
 mod buffer;
 mod cleanup;
+mod contexts;
 mod conversion;
 mod floating;
 mod floor;
@@ -404,6 +405,12 @@ pub(super) fn emit_llvm_with_window_address_facts(
             } => writeln!(text, "declare {result_ty} @{name}({argument_ty})")
                 .map_err(|_| BackendFailure::TextEmission)?,
         }
+    }
+    // [PAR-4] a module that starts no context names no context symbol.
+    if thunks.starts_contexts() {
+        text.push('\n');
+        text.push_str(contexts::CONTEXT_RUNTIME_DECLARATIONS);
+        text.push_str(thunks.context_definitions());
     }
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
@@ -1223,7 +1230,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 result_slot,
             },
         )?;
-        let entry_prelude = frame.render(program)?;
+        let mut entry_prelude = frame.render(program)?;
+        if contexts::keeps_context_group(function) {
+            entry_prelude.push_str(&contexts::context_group_prelude());
+        }
         Ok(Self {
             program,
             function,
@@ -1859,6 +1869,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     self.emit_call(result, ty, *function, arguments)
                 }
             }
+            IrOperation::ContextStart {
+                function,
+                arguments,
+            } => self.emit_context_start(result, *function, arguments),
+            IrOperation::ContextJoin => self.emit_context_join(result),
             IrOperation::LoopSplit {
                 splitter,
                 chunk,

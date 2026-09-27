@@ -71,6 +71,7 @@ impl IrBuilder<'_> {
             },
         )?;
         let drops = self.lower_drops(error_drops)?;
+        self.join_contexts()?;
         self.terminate(IrTerminator::Return {
             value: returned,
             drops,

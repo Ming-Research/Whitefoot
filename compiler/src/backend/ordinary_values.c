@@ -290,18 +290,34 @@ static void wf_error(wf_io_error *error, int code, unsigned origin) {
 #endif
 }
 
+/* The handle budget a factory draws on. The invocation's factory and every
+ * factory `factory_share` relates to it name one process cell in their third
+ * word, so an acquisition through any of them spends a credit of that one
+ * budget; a factory built without one keeps its budget in its first word.
+ * The cell is a plain counter: every acquisition and close is a waiting call,
+ * and every context runs on the one thread that runs the entry [WAIT-2]. */
+static uint64_t wf_handle_budget;
+
+static uint64_t *wf_factory_budget(wf_value *factory) {
+    return factory->words[2] != 0
+        ? (uint64_t *)(uintptr_t)factory->words[2]
+        : &factory->words[0];
+}
+
 static int wf_factory_take(wf_value *factory, wf_io_error *error) {
+    uint64_t *budget = wf_factory_budget(factory);
     wf_transition(factory);
-    if (factory->words[0] == 0) {
+    if (*budget == 0) {
         wf_error_class(error, 21, 0, 0);
         return 0;
     }
-    factory->words[0]--;
+    *budget -= 1;
     return 1;
 }
 
 static void wf_factory_return(wf_value *factory) {
-    if (factory->words[0] != UINT64_MAX) factory->words[0]++;
+    uint64_t *budget = wf_factory_budget(factory);
+    if (*budget != UINT64_MAX) *budget += 1;
 }
 
 static void wf_read_result_value(wf_read_result *result, int64_t amount,
@@ -560,6 +576,16 @@ void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_va
     wf_close(result, factory, send, WF_SOCKET_DIRECTION_SEND);
 }
 
+/* [PRE-2] a second factory on the same budget. A factory with no budget cell
+ * is only ever built by hand in a probe; a source program's factories all
+ * descend from the invocation's. */
+void wf__body_factory_share(wf_value *result, const wf_value *factory) {
+    memset(result, 0, sizeof(*result));
+    result->words[2] = factory->words[2] != 0
+        ? factory->words[2]
+        : (uint64_t)(uintptr_t)&factory->words[0];
+}
+
 void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
     wf_completion_record record;
     int64_t descriptor;
@@ -669,7 +695,8 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     if (cwd < 0) return 0;
     wf_descriptor_value(&inputs->cwd, cwd);
     wf_text(&inputs->args, argv, argc > 0 ? (uint64_t)(unsigned)argc : 0);
-    inputs->handles.words[0] = capacity;
+    wf_handle_budget = capacity;
+    inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;
     return 1;
 }
 
