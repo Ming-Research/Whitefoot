@@ -60,7 +60,9 @@
 
 use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 
-use super::{assert_accepts, assert_rule_kind, check_case_directory, check_module_sources};
+use super::{
+    assert_accepts, assert_rule_at, assert_rule_kind, check_case_directory, check_module_sources,
+};
 
 fn assert_op9_allocation_fit(source: &[u8], context: &str) {
     super::with_semantics(source, |outcome| match outcome {
@@ -953,6 +955,48 @@ fn a_no_heap_unit_names_no_box_and_calls_no_allocating_row() {
     assert_rule_kind(called, SemanticRule::Stor8, |kind| {
         matches!(kind, SemanticIssueKind::HeapTypeUnderNoHeap { .. })
     });
+}
+
+/// [STOR-8] a nominal whose field or payload names `Box`, allocated with
+/// `box_new` in a no-heap unit, is rejected at the `Box` it names. Interning
+/// the call's `Box<Cell>` once stopped the compiler with `InvalidResolution`
+/// before that rejection was reported; both sources are accepted without the
+/// declaration.
+#[test]
+fn a_no_heap_unit_rejects_a_box_field_of_an_allocated_nominal() {
+    let field = br#"program no_heap;
+
+struct Cell {
+  next: Box<u64>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let inner = box_new::<u64>(value: 1_u64);
+  let cell = Cell(next: move inner);
+  let boxed = box_new::<Cell>(value: move cell);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_at(field, SemanticRule::Stor8, "Box<u64>");
+    let payload = br#"program no_heap;
+
+enum Chain {
+  End();
+  Link(value: u64, next: Box<Chain>);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let empty = Chain::End();
+  let chain = box_new::<Chain>(value: move empty);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_at(payload, SemanticRule::Stor8, "Box<Chain>");
+    for source in [field.as_slice(), payload.as_slice()] {
+        let declaration = b"program no_heap;\n\n";
+        assert!(source.starts_with(declaration));
+        assert_accepts(&source[declaration.len()..]);
+    }
 }
 
 /// [STOR-8] allocation is total in the source: it never returns a failure and
