@@ -58,7 +58,7 @@ branch. [AGENTS.md](../AGENTS.md#branch-and-main-boundary) holds the rules.
 
 | Check | Command | Locally | In CI | Covers |
 |---|---|---|---|---|
-| Static group | `make static` | Any time, before every push | `gate.yml`, every push | Repository invariants, compiler sources over 4,000 lines named in `docs/todo.md`'s Code structure section, specification archives, prose integrity, guidance references and this map's inventory, design-tree form |
+| Static group | `make static` | Any time, before every push | `gate.yml`, every push | Repository invariants, compiler sources over 4,000 lines named in `docs/todo.md`'s Code structure section, specification archives, the README and its Chinese translation changed together, prose integrity, guidance references and this map's inventory, design-tree form |
 | Full gate | `make check` | On the revision to merge | `gate.yml`, Linux and macOS | The static group plus the compiler build, tests, conformance adapter and runtime (`make check-groups` lists the groups) |
 | Design readiness | `make design-ready` | Before marking ready | `design-readiness.yml`, ready PRs and `main` | No pending amendment; tree changes logged |
 | Platform I/O | — | — | `io-hosts.yml`, every push | Linux io_uring and Windows IOCP runtime |
@@ -103,6 +103,7 @@ or self-description merely to satisfy this table.
 | Document | Content that serves its reader | Content that does not belong |
 |---|---|---|
 | Root `README.md` | Project introduction, getting started, navigation | Detailed compiler inventory, a second specification, task history |
+| Root `README.zh-CN.md` | The content of `README.md` in Chinese, changed together with it | Anything `README.md` does not say |
 | `AGENTS.md` | Agent entry: goal and priorities, authority, the approval and merge rules, integrity and hygiene rules, and pointers to this map, skills and detailed guidance | Research narration, a procedure a skill owns, a second detailed checklist or compiler inventory |
 | `docs/workflow.md` | The development loop, decision rights, checks, document roles and process health signals, each pointing to its owner | A rule, procedure or check stated in full, which its owner holds |
 | `docs/skills/`, `design/skill/` (linked from `.agents/skills/` and `.claude/skills/`) | One recurring procedure per skill: its trigger, steps, commands and formats, loaded when the task matches its description | Project rules that `AGENTS.md` owns, language semantics, a copy of the review checklist |

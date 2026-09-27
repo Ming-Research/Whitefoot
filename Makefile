@@ -94,7 +94,7 @@ _check-runtime:
 # second copy of the list is a copy that goes stale, and did — retiring two
 # stages left the workflow naming targets that no longer exist.
 static:
-	@for stage in repository-invariants spec-archives spec-prose-integrity guidance source-size design-lint; do \
+	@for stage in repository-invariants spec-archives readme-translation spec-prose-integrity guidance source-size design-lint; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
 	done
 
@@ -153,6 +153,14 @@ spec-archives:
 	@sh .github/check-spec-archives.sh --self-test
 	@sh .github/check-spec-archives.sh main
 
+# README.zh-CN.md translates README.md, so a merge that changes one of them
+# changes both (AGENTS.md). Like spec-archives, the script compares with the
+# merge base of main.
+readme-translation:
+	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "readme translation: local main ref is required" >&2; exit 1; }
+	@sh .github/check-readme-translation.sh --self-test
+	@sh .github/check-readme-translation.sh main
+
 # Cited review items, entry-document paths and the two agents' skill links
 # resolve; this reads references only, never the guidance's meaning.
 guidance:
@@ -201,12 +209,12 @@ spec-append-only-staged:
 # negative check keeps them out of the guidance files.
 spec-prose-integrity:
 	@failed=0; \
-	for file in README.md AGENTS.md docs/*.md; do \
+	for file in README.md README.zh-CN.md AGENTS.md docs/*.md; do \
 		if grep -nE '(^|[^0-9a-f])[0-9a-f]{64}([^0-9a-f]|$$)' "$$file"; then \
 			echo "spec prose integrity: $$file quotes a specification digest; the identity is derived from the specification's own bytes" >&2; failed=1; \
 		fi; \
 	done; \
-	for file in README.md AGENTS.md docs/*.md; do \
+	for file in README.md README.zh-CN.md AGENTS.md docs/*.md; do \
 		if grep -nE 'Kernel specification v[0-9]+\.[0-9]+ is the active|[Aa]ctive language authority(:| is) v[0-9]+\.[0-9]+|active v[0-9]+\.[0-9]+ (guidance|authority)|the exact v[0-9]+\.[0-9]+ bytes' "$$file"; then \
 			echo "spec prose integrity: $$file names a version as the active authority; say 'the active specification at spec/kernel-spec.md' instead" >&2; failed=1; \
 		fi; \
@@ -252,4 +260,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives guidance source-size review-scope spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance source-size review-scope spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
