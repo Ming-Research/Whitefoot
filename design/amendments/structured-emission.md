@@ -1,7 +1,0 @@
-Node: design/compiler/structured-emission.md
-
-Decision: LLVM emission builds a structured module of function headers, blocks, entry allocations, attributes, symbol definitions and references before rendering text, recording each emitted block's actual exit label and deriving link fragments from that same model, because the [current emitter](../../research/investigations/compiler-architecture/DESIGN.md#p42-structured-emission) predicts split blocks separately from their construction, patches finished text and parses it again to recover ownership and dependencies, instead of byte-offset insertion, a second exit-label classifier or reparsing the compiler's own LLVM. Textual LLVM remains the output and fragment ownership, ABI, target qualification and deterministic output order remain unchanged.
-
-Rejected:
-- Adopting an LLVM library as part of this change: rejected because the missing contract is between this compiler's emission and fragment construction, and an external IR dependency adds integration work without being required to record it.
-- A second optimization IR in the emitter: rejected because lowering already owns the typed control-flow graph; the emission model only records the target structure and dependencies needed for correct printing and partitioning.

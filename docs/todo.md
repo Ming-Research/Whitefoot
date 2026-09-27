@@ -1407,8 +1407,7 @@ rarely insert at the same place.
   list (`definition_exit_label`) apart from the code that opens them, and
   `compiler/src/backend/fragments.rs` re-parses the finished text to split it.
   A structured function model printed once (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, a design
-  amendment) records exit labels, places allocas and cuts fragments from the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, now owner-approved) records exit labels, places allocas and cuts fragments from the
   model. Validate with byte-identical output, which keeps the backend tests'
   substring checks as the net. Reopen when an operation that opens blocks is
   added.
@@ -1462,13 +1461,13 @@ rarely insert at the same place.
   Generic validation still replays bodies in a scratch nominal suffix
   (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`), carrying
   what must survive rollback in a `Stable*` mirror. P2.3's grow-only inventory
-  and validation views remove that rollback and mirror, but require the
-  pending `generic-validation-scope` amendment's ruling. See the
+  and validation views remove that rollback and mirror under the approved
+  `generic-validation-scope` decision; implementation remains pending. See the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries).
   Validate each step with identical verdicts, diagnostics and LLVM on the
   corpus and module graphs plus `make check`. Reopen for the next P2.2 step
-  or the P2.3 ruling; close when both are done or declined and the composition
-  entry point is under 4,000 lines.
+  or the P2.3 implementation; close when both are done or declined and the
+  composition entry point is under 4,000 lines.
 
 - **The checker reads raw syntax.** The checker components still inspect
   `TreeView` children and match `Production` to learn which alternative was
@@ -1478,7 +1477,7 @@ rarely insert at the same place.
   records: resolution indexes them by owner node and the checker reads them
   by node (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1).
-  A typed syntax access layer (P3.4, a design amendment) confines each
+  A typed syntax access layer (P3.4, now owner-approved) confines each
   grammar amendment to one place. Validate with identical verdicts,
   diagnostics and LLVM on the corpus and the module graphs. Reopen with the
   next grammar amendment.

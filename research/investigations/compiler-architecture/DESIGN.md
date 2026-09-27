@@ -430,7 +430,8 @@ and applied (`design/log.md`, 2026-09-25).
    the `Stable*` type mirror and the preflight duplicates and, by reading,
    the second structural check of every body. Cost: large. Tree: it removes
    the ground of the refusal in `design/compiler/generic-validation-scope.md`
-   (identities discarded at the checkpoint), so it needs the owner's ruling.
+   (identities discarded at the checkpoint). The owner approved its
+   replacement; implementation remains pending.
 
 ### P3. Identity and ownership
 
@@ -475,7 +476,7 @@ and applied (`design/log.md`, 2026-09-25).
    checks, which the owner-selected prelude and standard-library work also
    needs. Cost: large (the 228 lifetime-bearing lines). Tree: this is the
    representation step the composition staging deferred on edit-latency
-   grounds alone; see the amendment below.
+   grounds alone; see [Relation to recorded decisions](#relation-to-recorded-decisions).
    Done on the follow-up branch (`IrProgram` had already dropped `_checked`
    with P4.4).
    - **Syntax.** Only four fields borrowed: a span its file, the lexed
@@ -500,7 +501,8 @@ and applied (`design/log.md`, 2026-09-25).
    codes on the corpus and the module graphs.
 4. **A typed syntax access layer** used by resolution, the checker, the graph
    reader and the driver, with alternatives normalized once. Cost: large,
-   migrated file by file. Tree: a new decision (amendment).
+   migrated file by file. Tree: `design/compiler/typed-syntax-access.md`
+   (owner-approved; implementation pending).
 
 ### P4. Lowering and backend
 
@@ -517,8 +519,9 @@ and applied (`design/log.md`, 2026-09-25).
    become recorded facts, allocas go into the entry block, and fragments are
    cut from the model instead of re-parsed text. Cost: medium to large.
    Validation: byte-identical output, which keeps the backend tests' 547
-   substring checks (`.contains(`) as the regression net. Tree: a new
-   decision (amendment).
+   substring checks (`.contains(`) as the regression net. Tree:
+   `design/compiler/structured-emission.md` (owner-approved; implementation
+   pending).
 3. **Remove region specialization** down to the call table, reachability and
    interning. Cost: small. No tree change. Done on this branch: the
    `$release$` symbols proved unreachable, since every function has one
@@ -579,8 +582,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
    `docs/todo.md`.
 2. With amendments ruled: P6, P1.3 and P2.1, then P2.2. P6 is done in
    [PR #128](https://github.com/mbbill/Whitefoot/pull/128), P1.3 and P2.1 in
-   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 has its component stage implemented on this branch; shared place
-   elaboration remains.
+   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 has its
+   component stage implemented on this branch; shared place elaboration remains.
 3. Identity and ownership, P3.2 and P3.3, before the prelude and
    standard-library work, which needs formed interfaces that outlive one
    check. Done in [PR #146](https://github.com/mbbill/Whitefoot/pull/146);
@@ -591,8 +594,9 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
    them, or earlier if parallel work stalls on the current structure.
 5. P5.1 and P5.2 whenever a harness or entry point changes next.
 
-P2.3, P3.4 and P4.2 have pending amendments in `design/amendments/`,
-described in [Pending architectural decisions](#pending-architectural-decisions).
+P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
+described in [Approved architectural decisions](#approved-architectural-decisions).
+Their implementation remains pending; P2.2's shared place elaboration comes next.
 P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
@@ -616,20 +620,23 @@ A check forms proof receipts only with `--cache`, which this comparison does
 not pass, so a change to receipts is tested by the driver tests that build
 with a cache.
 
-## Pending architectural decisions
+## Approved architectural decisions
 
-These proposals change compiler structure, not language rules. They are
-submitted before implementation at the owner's request. P2.2 proceeds while
-they await a ruling; a ruling on these proposals does not claim their
-implementation or validation is complete.
+The owner approved P2.3, P3.4 and P4.2 before implementation, including the
+review finding that P4.2's model must retain named type definitions, their
+transitive dependencies and attribute-group uses. Their decisions now live
+under `design/compiler/`; their implementation and validation remain pending.
+They change compiler structure, not language rules. P2.2's shared place
+elaboration is the next implementation step.
 
 ### P2.3: one inventory without rollback
 
-Replace the first decision of `design/compiler/generic-validation-scope.md`
-and its refusal of reusing nongeneric validation analyses. The other
-decisions remain unchanged. The current refusal is justified by discarded
-function and nominal identities; keeping identities invalidates that ground,
-but does not by itself establish that an analysis can be reused.
+The approved revision replaces the first decision of
+`design/compiler/generic-validation-scope.md` and its refusal of reusing
+nongeneric validation analyses. The other decisions remain unchanged. The
+former refusal was justified by discarded function and nominal identities;
+keeping identities invalidates that ground, but does not by itself establish
+that an analysis can be reused.
 
 Use structurally keyed, grow-only type and function inventories within one
 check. Symbolic validation, selector preflight and concrete checking select
@@ -661,7 +668,7 @@ symbolic-only inventory growth does not reach executable output.
 
 ### P3.4: typed syntax access
 
-Add `design/compiler/typed-syntax-access.md` under the compiler root. The
+`design/compiler/typed-syntax-access.md` records the approved views. The
 current `semantic/tree.rs` already offers some grammar-aware helpers, but
 resolution and other consumers still decode the same alternatives locally;
 the if/else split in `resolution/scopes.rs` and `semantic/tree.rs` is one
@@ -684,7 +691,7 @@ grammar alternatives and source locations must retain their existing tests.
 
 ### P4.2: structured emission
 
-Add `design/compiler/structured-emission.md` under the compiler root. The
+`design/compiler/structured-emission.md` records the approved model. The
 current emitter and `backend/fragments.rs` reconstruct structure from text:
 alloca insertion uses byte offsets, attributes rewrite definition lines,
 phi predecessors rely on a separately maintained exit-label classification,
@@ -693,7 +700,8 @@ emission model records these facts as they are constructed, then renders
 either the whole module or selected fragments.
 
 The model owns headers, blocks and their actual final labels, entry allocas,
-attributes, definitions and symbol references. Instruction text can remain
+attributes, named type definitions and their transitive dependencies,
+attribute-group uses, definitions and symbol references. Instruction text can remain
 text where no consumer needs its structure; this is not another optimizer.
 The fragment ownership and dependency algorithm, linkage transformations,
 native ABI and target qualification keep their current contracts. Internal

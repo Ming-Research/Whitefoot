@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-26 Share validation identities, typed syntax views and structured emission
+
+Nodes: compiler/generic-validation-scope, compiler/typed-syntax-access, compiler/structured-emission
+
+Owner-approved: The owner approved all four decision cards on PR #148 ("all approved", written in Chinese): P2.3, P3.4, P4.2 and the review finding adding named type definitions, their transitive dependencies and attribute-group uses to P4.2.
+
+Summary: Apply the three reviewed amendments. Replace generic-validation-scope's scratch-inventory decision and identity-discard refusal with one structurally keyed, grow-only inventory and validation views, retaining all mandatory symbolic and concrete judgments and admitting reuse only with equal substitution, checking context and consumed callee claims. Add typed-syntax-access for shared typed views over owned syntax, with source identity and semantic-stage authority retained. Add structured-emission for a module model shared by printing and fragment construction, including the approved named-type and attribute-group dependencies; the LLVM, ABI and fragment contracts remain unchanged. The [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#approved-architectural-decisions) holds the grounds, alternatives and validation criteria. Remove the three accepted amendments and their directory. These decisions remain to be implemented beyond the P2.2 component checkpoint; approval selects their design, not completed implementation or a merge.
+
 ## 2026-09-26 Name a captured offset by its binding only until a write of the binding reaches the reference
 
 Nodes: compiler/checker-facts, language/ownership, language/ownership/range-reference
