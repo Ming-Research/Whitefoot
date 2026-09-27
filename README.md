@@ -23,6 +23,88 @@ never disagree about whether a program is accepted
 You write the rest as loop invariants and, now and then, a short proof step,
 and the compiler checks them.
 
+## Safe: no undefined behavior, no panics, no failing checks
+
+Every operation that could go wrong at run time, such as an index, an integer
+operation, a narrowing conversion, a division or an allocation size, must be
+proved in range before the program is accepted. The language has no
+`unsafe`, no panic, no exceptions and no unwinding; an expected failure is a
+value (`Result`, `Option`) the caller handles. When the trusted base is
+correct, an accepted program cannot:
+
+- read or write out of bounds, use freed memory, or read uninitialized memory;
+- overflow an integer silently. Each operation states its meaning (`+wrap`,
+  `+checked`, `+sat`), and a bare `+` must be proved not to overflow;
+- lose a value in a narrowing conversion, or divide by zero;
+- race: parallel execution comes only from proved independence, and its
+  result equals the sequential one;
+- panic, abort, throw or unwind. The language has no such construct;
+- behave differently between a debug and a release build. There is one build.
+
+It still can:
+
+- run out of stack. It then stops with the fixed record
+  `{"resource":"stack"}`, the same way on every run, and `--stack-ledger`
+  reports each function's frame and how many levels each recursive cycle fits;
+- run out of heap. The allocator stops the program; on Linux with overcommit,
+  the kernel's OOM killer may act first;
+- loop forever, or compute the wrong answer. Contracts describe what was
+  written down, not what was meant;
+- be miscompiled. The trusted base is the Whitefoot compiler and its checker,
+  LLVM and clang, the runtime and allocator, C functions linked in as trusted
+  definitions, libc and the operating system
+  ([SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)).
+
+Other systems prove the same absence of runtime errors in other ways. SPARK,
+a subset of Ada for high-integrity software, uses SMT solvers in an analysis
+separate from compilation: the Ada compiler builds a program whether or not it
+has been proved. Wuffs checks similar proofs without a solver, but it is a
+language for libraries that parse, decode and encode file formats, and its
+code cannot make system calls or allocate memory.
+
+### Beyond memory: resources
+
+Memory safety is where the proofs start, not where they stop. The aim is to
+make Whitefoot as safe and robust as proofs can make a systems language,
+enough to carry the most critical infrastructure, and the next step is the
+program's resources: the memory it uses, its stack, its time and the devices
+it drives.
+
+Today:
+
+- **The heap is optional.** A program that begins with `program no_heap;`,
+  or an entry that a module program declares with `no_heap`, cannot allocate:
+  the compiler rejects every heap type and every allocating call in the code
+  that program or entry runs ([STOR-8](spec/kernel-spec.md#6-storage)).
+- **Resources that must be released are linear.** A linear value cannot be
+  copied, and the compiler never discards it on its own: the program has to
+  pass it on or hand it to a function that consumes it. The standard
+  library's files, directories, listeners and connection halves are linear,
+  so each is closed exactly once, by an explicit call such as `close_read`,
+  and code that could lose one is rejected.
+- **The stack is reported, and tail calls do not grow it.** Running out of
+  stack stops the program with the fixed record above, `--stack-ledger`
+  reports each function's frame, and a self call marked `musttail` transfers
+  without growing the stack.
+
+Planned: a maximum-safety mode, for systems where a failure is not
+acceptable. A program compiled in that mode would have:
+
+- no heap and no other dynamic resource;
+- a peak stack proved to fit a capacity given in bytes;
+- every loop and every recursion proved to finish;
+- hardware peripherals mapped as linear values, so that a device is owned,
+  used and released under the same proofs as a file;
+- no parallelism scheduled at run time;
+- proved bounds on how long each peripheral takes to respond and how long the
+  program takes to start.
+
+None of this mode is implemented yet. The [fixed-resource
+investigation](research/investigations/fixed-resource-execution/README.md)
+records the design so far for the heap, the stack and termination, and what
+each still needs; the peripheral, parallelism and timing parts are not
+designed yet.
+
 ## Fast: the proofs pay for the speed
 
 A proof that an operation is in range also makes its runtime check
@@ -95,9 +177,14 @@ depth derived from the number of workers, because the compiler proves that
 sequential program computes. Sorting 2 million numbers took 0.18 s
 sequentially and 0.07 s on 4 workers, the best of seven runs on a shared
 machine ([measurement](research/experiments/par-quicksort/README.md));
-`--par-ledger` prints every decision with its reason. [Write sequential code,
-get parallel results](docs/articles/sequential-code-parallel-results.md)
-follows the compiler from the checked rows to the parallel code.
+`--par-ledger` prints every decision with its reason. In Rust, `rayon::join`
+would run the two calls in parallel after a small change to the source, and
+its types rule out data races. Here no line asks for parallelism, and the
+compiler runs calls in parallel only when it has proved that the result equals
+the sequential one.
+[Write sequential code, get parallel
+results](docs/articles/sequential-code-parallel-results.md) follows the
+compiler from the checked rows to the parallel code.
 
 ### Other uses of the same proofs
 
@@ -110,89 +197,6 @@ follows the compiler from the checked rows to the parallel code.
 - A loop whose iterations write their own elements, or combine one value with
   one of a fixed set of associative and commutative operations such as
   `+wrap`, can be split across workers.
-
-## Safe: no undefined behavior, no panics, no failing checks
-
-Every operation that could go wrong at run time, such as an index, an integer
-operation, a narrowing conversion, a division or an allocation size, must be
-proved in range before the program is accepted. The language has no
-`unsafe`, no panic, no exceptions and no unwinding; an expected failure is a
-value (`Result`, `Option`) the caller handles. When the trusted base is
-correct, an accepted program cannot:
-
-- read or write out of bounds, use freed memory, or read uninitialized memory;
-- overflow an integer silently. Each operation states its meaning (`+wrap`,
-  `+checked`, `+sat`), and a bare `+` must be proved not to overflow;
-- lose a value in a narrowing conversion, or divide by zero;
-- race: parallel execution comes only from proved independence, and its
-  result equals the sequential one;
-- panic, abort, throw or unwind. The language has no such construct;
-- behave differently between a debug and a release build. There is one build.
-
-It still can:
-
-- run out of stack. It then stops with the fixed record
-  `{"resource":"stack"}`, the same way on every run, and `--stack-ledger`
-  reports each function's frame and how many levels each recursive cycle fits;
-- run out of heap. The allocator stops the program; on Linux with overcommit,
-  the kernel's OOM killer may act first;
-- loop forever, or compute the wrong answer. Contracts describe what was
-  written down, not what was meant;
-- be miscompiled. The trusted base is the Whitefoot compiler and its checker,
-  LLVM and clang, the runtime and allocator, C functions linked in as trusted
-  definitions, libc and the operating system
-  ([SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)).
-
-As far as we know, no other general-purpose systems language gives this
-guarantee for every program it accepts. SPARK, a subset of Ada for
-high-integrity software, proves the same absence of runtime errors, with SMT
-solvers, as an analysis separate from compilation: the Ada compiler builds a
-program whether or not it has been proved. Wuffs checks similar proofs without
-a solver, but it is a language for libraries that parse, decode and encode
-file formats, and its code cannot make system calls or allocate memory.
-
-### Beyond memory: resources
-
-Memory safety is where the proofs start, not where they stop. The aim is to
-make Whitefoot as safe and robust as proofs can make a systems language,
-enough to carry the most critical infrastructure, and the next step is the
-program's resources: the memory it uses, its stack, its time and the devices
-it drives.
-
-Today:
-
-- **The heap is optional.** A program that begins with `program no_heap;`,
-  or an entry that a module program declares with `no_heap`, cannot allocate:
-  the compiler rejects every heap type and every allocating call in the code
-  that program or entry runs ([STOR-8](spec/kernel-spec.md#6-storage)).
-- **Resources that must be released are linear.** A linear value cannot be
-  copied, and the compiler never discards it on its own: the program has to
-  pass it on or hand it to a function that consumes it. The standard
-  library's files, directories, listeners and connection halves are linear,
-  so each is closed exactly once, by an explicit call such as `close_read`,
-  and code that could lose one is rejected.
-- **The stack is reported, and tail calls do not grow it.** Running out of
-  stack stops the program with the fixed record above, `--stack-ledger`
-  reports each function's frame, and a self call marked `musttail` transfers
-  without growing the stack.
-
-Planned: a maximum-safety mode, for systems where a failure is not
-acceptable. A program compiled in that mode would have:
-
-- no heap and no other dynamic resource;
-- a peak stack proved to fit a capacity given in bytes;
-- every loop and every recursion proved to finish;
-- hardware peripherals mapped as linear values, so that a device is owned,
-  used and released under the same proofs as a file;
-- no parallelism scheduled at run time;
-- proved bounds on how long each peripheral takes to respond and how long the
-  program takes to start.
-
-None of this mode is implemented yet. The [fixed-resource
-investigation](research/investigations/fixed-resource-execution/README.md)
-records the design so far for the heap, the stack and termination, and what
-each still needs; the peripheral, parallelism and timing parts are not
-designed yet.
 
 ## Small: C's simple structure, some of Rust's syntax
 
@@ -241,7 +245,10 @@ reference. Rust code written this way needs no lifetime annotations either.
 Rust also allows a cursor that holds its buffer,
 `struct Cursor<'a> { input: &'a [u8], position: usize }`, and then every
 struct that contains such a cursor needs a lifetime annotation too. Whitefoot
-has only the first way, so there are no lifetimes to learn.
+has only the first way, so there are no lifetimes to learn. The cost is that a
+function cannot hand back a reference into its input: a tokenizer returns the
+positions of its tokens, not borrowed slices, and the caller forms the
+references.
 
 Generics are explicit: a generic function takes its type arguments at every
 call, as in `array_filled::<u8, 4>(value: 0_u8)`, and is compiled once for
@@ -307,6 +314,9 @@ Safe, fast and small are the core. These are the other things worth knowing.
   memory](#beyond-memory-resources): no dynamic resources, a proved stack
   bound, proved termination, peripherals as linear values, no parallelism
   scheduled at run time, and proved response and startup times.
+- **Bare-metal targets.** Today the compiler builds programs that run on
+  Linux, macOS and Windows. Programs that run without an operating system,
+  such as firmware, are planned.
 
 ### Research directions
 
@@ -414,6 +424,7 @@ and the [workflow map](docs/workflow.md).
 | C | functions and structs as the main building blocks | no undefined behavior; every partial operation is proved; enums carry payloads |
 | SPARK | proving the absence of runtime errors | no SMT solver, and acceptance is the proof; what the fixed procedure cannot prove is written as explicit steps |
 | Wuffs | a proof checker instead of a solver | a general-purpose language with heap data and effects |
+| Astrée, Frama-C (Eva) | a fixed, terminating analysis that proves the absence of runtime errors without a solver | they analyze C programs beside the compiler, which builds them either way; in Whitefoot the proof is a condition of compiling |
 | Dafny, Verus | contracts and invariants | the goal is runtime safety, not full functional correctness |
 
 ## Disclaimer
