@@ -45,7 +45,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         };
         let source = self.value_place(value)?;
         let destination = self.value_place(result)?;
-        let window_llvm = llvm_type(self.program, window_type)?;
+        let window_llvm = self.output.type_name(self.program, window_type)?;
         // A `Slots<T, N>` is `{ i64 len, [N x T] }`, so the slots are field
         // one and the length is field zero.
         let (window_place, slots) = if to_array {
@@ -74,7 +74,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .program
             .element(element)
             .ok_or(BackendFailure::InvalidIr)?;
-        let element_llvm = llvm_type(self.program, element_type)?;
+        let element_llvm = self.output.type_name(self.program, element_type)?;
         let length = length.to_string();
         let count = self.element_address_index(element_type, &length)?;
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
@@ -97,6 +97,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         let end = self.next_temporary()?;
         let bytes = self.next_temporary()?;
+        self.output.symbol("llvm.memmove.p0.p0.i64");
         writeln!(self.output, "  %{end} = getelementptr {element_llvm}, ptr null, i64 {count}\n  %{bytes} = ptrtoint ptr %{end} to i64\n  call void @llvm.memmove.p0.p0.i64(ptr {destination}, ptr {source}, i64 %{bytes}, i1 false)")
             .map_err(|_| BackendFailure::TextEmission)
     }
@@ -122,7 +123,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
 
-        let array_type = llvm_type(self.program, ty)?;
+        let array_type = self.output.type_name(self.program, ty)?;
         let array_slot = self.value_place(result)?;
         let index_slot = self.entry_slot(FunctionSlot::ArrayFillIndex(result))?;
         let index = self.next_temporary()?;
@@ -131,24 +132,32 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let next_index = self.next_temporary()?;
         let logical_index = format!("%{index}");
         let address_index = self.element_address_index(element_type, &logical_index)?;
-        writeln!(
-            self.output,
-            "  store i64 0, ptr {index_slot}\n  br label %{}\n{}:\n  %{index} = load i64, ptr {index_slot}\n  %{in_range} = icmp ult i64 %{index}, {length}\n  br i1 %{in_range}, label %{}, label %{}\n{}:\n  %{element_pointer} = getelementptr inbounds {array_type}, ptr {array_slot}, i64 0, i64 {address_index}",
-            array_fill_head_label(result),
-            array_fill_head_label(result),
-            array_fill_body_label(result),
-            array_fill_done_label(result),
-            array_fill_body_label(result),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = array_fill_head_label(result);
+            let emission_argument_1 = array_fill_head_label(result);
+            let emission_argument_2 = array_fill_body_label(result);
+            let emission_argument_3 = array_fill_done_label(result);
+            let emission_argument_4 = array_fill_body_label(result);
+
+            write!(
+                self.output,
+                "  store i64 0, ptr {index_slot}\n  br label %{emission_argument_0}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_1.to_string());
+            write!(self.output, "  %{index} = load i64, ptr {index_slot}\n  %{in_range} = icmp ult i64 %{index}, {length}\n  br i1 %{in_range}, label %{emission_argument_2}, label %{emission_argument_3}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_4.to_string());
+            writeln!(self.output, "  %{element_pointer} = getelementptr inbounds {array_type}, ptr {array_slot}, i64 0, i64 {address_index}").map_err(|_| BackendFailure::TextEmission)?;
+        };
         self.store_value_at(value, &format!("%{element_pointer}"))?;
-        writeln!(
-            self.output,
-            "  %{next_index} = add i64 %{index}, 1\n  store i64 %{next_index}, ptr {index_slot}\n  br label %{}\n{}:",
-            array_fill_head_label(result),
-            array_fill_done_label(result),
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        {
+            let emission_argument_0 = array_fill_head_label(result);
+            let emission_argument_1 = array_fill_done_label(result);
+
+            write!(self.output, "  %{next_index} = add i64 %{index}, 1\n  store i64 %{next_index}, ptr {index_slot}\n  br label %{emission_argument_0}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(emission_argument_1.to_string());
+            Ok::<_, BackendFailure>(())
+        }
     }
 
     /// Emits a discharged source subscript read [OP-4]: the checker derived
@@ -191,7 +200,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
 
-        let array_type = llvm_type(self.program, root_type)?;
+        let array_type = self.output.type_name(self.program, root_type)?;
         let root_pointer = match root {
             IrArrayRoot::Value(value) => self.value_place(value)?,
             IrArrayRoot::Constant(id) => {

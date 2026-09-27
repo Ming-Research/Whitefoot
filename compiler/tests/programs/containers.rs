@@ -33,7 +33,7 @@ fn dense_expected(words: usize, seed: u64, rounds: u64) -> u64 {
 #[cfg(unix)]
 #[test]
 fn dense_scalar_and_record_updates_match_the_complete_sequence_digest() {
-    let mut llvm = compile_program("containers/dense.wf");
+    let mut llvm = compile_program("containers/dense.wf").into_string();
     for name in ["scalar16", "scalar256", "wide16"] {
         let definition = format!("define i64 @wf_dense_{name}(");
         assert_eq!(llvm.matches(&definition).count(), 1);

@@ -6,6 +6,8 @@
 //! record and the judgment that answered it. [DIAG-1] admits one rule and one
 //! location, selected by the order in which obligations are decided.
 
+use crate::semantic::check::DeclarationInventory;
+use crate::semantic::check::TypeContext;
 use crate::syntax::NodeId;
 use crate::{
     NodePath, Production, SemanticCompilerFailure, SemanticIssue, SemanticIssueKind,
@@ -19,7 +21,7 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
-use super::{CheckStop, Checker, references, repairs};
+use super::{CheckStop, references, repairs};
 
 /// One position in the causal order in which obligations are decided.
 ///
@@ -34,69 +36,23 @@ enum ProofPosition {
     AfterSubtree,
 }
 
-impl Checker<'_> {
-    /// Accepts `function` exactly when every record is answered and
-    /// discharged, and otherwise reports the undischarged record decided
-    /// first.
-    ///
-    /// Body obligations are ordered by where they are decided and then by
-    /// their rule's rank; the relations of FN-9, decided at the exits, follow
-    /// in source order. A record left unanswered while another is answered
-    /// undischarged is that failure's consequence: the engine stops judging
-    /// what a failed obligation guards. Unanswered records alone, or a
-    /// judgment answering none, are the checker and the engine disagreeing,
-    /// and the function is not accepted.
-    pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
-        let entailment = &function.entailment;
-        if entailment.answers.len() != function.obligations.len()
-            || !entailment.unrecorded.is_empty()
-        {
-            return Err(SemanticCompilerFailure::ObligationContract.into());
-        }
-        let mut body = Vec::new();
-        let mut relations = Vec::new();
-        for (record, answer) in function.obligations.iter().zip(&entailment.answers) {
-            let Some(answer) = *answer else {
-                continue;
-            };
-            if answer.discharged(entailment) {
-                continue;
-            }
-            if record.rule == SemanticRule::Fn9 {
-                relations.push((record, answer));
-            } else {
-                body.push((
-                    self.proof_position(record, answer, entailment)?,
-                    record,
-                    answer,
-                ));
-            }
-        }
-        // `min_by` keeps the first of several equal minima, so the selection
-        // depends only on this order and on record order, never on a hash.
-        let selected = body
-            .into_iter()
-            .min_by(|left, right| {
-                left.0.cmp(&right.0).then_with(|| {
-                    left.1
-                        .rule
-                        .definition_rank()
-                        .cmp(&right.1.rule.definition_rank())
-                })
-            })
-            .map(|(_, record, answer)| (record, answer))
-            .or_else(|| relations.into_iter().next());
-        if let Some((record, answer)) = selected {
-            return Err(CheckStop::source_issue(
-                self.undischarged_issue(function, record, answer)?,
-            ));
-        }
-        if entailment.answers.iter().any(Option::is_none) {
-            return Err(SemanticCompilerFailure::ObligationContract.into());
-        }
-        Ok(())
+/// The payload disposition and the repair's disposition of one goal no step
+/// discharged [ENT-4, MSR-4].
+fn dispositions(refuted: bool) -> (StaticObligationDisposition, repairs::Disposition) {
+    if refuted {
+        (
+            StaticObligationDisposition::Refuted,
+            repairs::Disposition::Refuted,
+        )
+    } else {
+        (
+            StaticObligationDisposition::Unproved,
+            repairs::Disposition::Unproved,
+        )
     }
+}
 
+impl<'unit> DeclarationInventory<'unit> {
     /// Where one undischarged body record is decided.
     ///
     /// Every judgment but one is decided where it stands. INV-1's backedge
@@ -156,7 +112,6 @@ impl Checker<'_> {
             .map(ProofPosition::Child)
             .collect())
     }
-
     /// The enclosing `loop_stmt` or `for_stmt` of one loop-header invariant.
     ///
     /// A header invariant is always written inside its loop statement, so the
@@ -175,7 +130,6 @@ impl Checker<'_> {
             }
         }
     }
-
     fn source_location(&self, path: &NodePath) -> Result<SemanticLocation, CheckStop> {
         let node = self
             .tree
@@ -186,214 +140,6 @@ impl Checker<'_> {
             self.tree.coordinate(node)?,
         ))
     }
-
-    /// The issue one undischarged record reports: its rule selects the kind,
-    /// and the record with the judgment that answered it fill it in.
-    fn undischarged_issue(
-        &self,
-        function: &CheckedFunction,
-        record: &ObligationRecord,
-        answer: RecordAnswer,
-    ) -> Result<SemanticIssue, CheckStop> {
-        match (record.rule, answer) {
-            (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => {
-                self.undischarged_loop_invariant(&function.entailment, index)
-            }
-            (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => {
-                self.undischarged_source_proof(&function.entailment, index)
-            }
-            (
-                SemanticRule::Op4
-                | SemanticRule::Op2
-                | SemanticRule::Op9
-                | SemanticRule::Op6
-                | SemanticRule::Eff5
-                | SemanticRule::Op11
-                | SemanticRule::Ref2
-                | SemanticRule::Ref4,
-                RecordAnswer::Obligation(index),
-            ) => self.undischarged_obligation(function, record.rule, index),
-            (SemanticRule::Fn8 | SemanticRule::Op14, RecordAnswer::CallGoal(index)) => {
-                self.undischarged_call_requirement(function, record.rule, index)
-            }
-            (SemanticRule::Fn9, RecordAnswer::Postcondition(index)) => {
-                self.undischarged_postcondition(function, index)
-            }
-            _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
-        }
-    }
-
-    /// [ENT-6] one undischarged source obligation, reported under its
-    /// record's rule with the repair what its goal reads selects.
-    fn undischarged_obligation(
-        &self,
-        function: &CheckedFunction,
-        rule: SemanticRule,
-        index: usize,
-    ) -> Result<SemanticIssue, CheckStop> {
-        let outcome = function
-            .entailment
-            .obligations
-            .get(index)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let residual = outcome
-            .residual
-            .clone()
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let location = self.source_location(&outcome.node_path)?;
-        let (disposition, repair) = dispositions(outcome.refuted);
-        // [DIAG-1] what the goal reads selects its routes: a canonical goal
-        // names its data, a bounds relation its terms. A bounds or allocation
-        // residual is written from the source atoms it relates, so it is
-        // itself a condition.
-        let editable = self.editable_functions()?;
-        let reads = match &outcome.canonical_goal {
-            Some(goal) => {
-                repairs::GoalTerms::of_goal(goal, function, &outcome.written_before, &editable)
-            }
-            None => repairs::GoalTerms::of_terms(
-                &function.entailment.obligation_term_reads(outcome),
-                function,
-                &outcome.written_before,
-                &editable,
-            ),
-        };
-        let condition = match outcome.family {
-            ObligationFamily::Bounds | ObligationFamily::AllocationFit => true,
-            _ => outcome
-                .canonical_goal
-                .as_ref()
-                .is_some_and(repairs::is_source_relation),
-        };
-        let case = repairs::GoalCase {
-            disposition: repair,
-            terms: reads.terms,
-            referenced: reads.referenced,
-            called: reads.called,
-            text: &residual,
-            condition,
-            function: &function.name,
-        };
-        let kind = match (rule, outcome.family) {
-            (SemanticRule::Op4, ObligationFamily::Bounds) => {
-                // A subscript a contract clause forms is established by an
-                // earlier requirement and skipped by no guard [FN-8].
-                let constant_offset = matches!(
-                    function.entailment.obligation_term_reads(outcome).first(),
-                    Some(TermRead::Constant)
-                );
-                let mechanical_fix = if self.in_requirement(&outcome.node_path)? {
-                    repairs::clause_bounds(&case, constant_offset)
-                } else {
-                    repairs::bounds(&case, constant_offset)
-                };
-                SemanticIssueKind::UndischargedBoundsObligation {
-                    mechanical_fix,
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Op2, ObligationFamily::IntegerDomain) => {
-                SemanticIssueKind::UndischargedIntegerDomainObligation {
-                    mechanical_fix: repairs::integer_domain(
-                        &case,
-                        outcome
-                            .canonical_goal
-                            .as_ref()
-                            .and_then(repairs::total_forms),
-                    ),
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Op9, ObligationFamily::AllocationFit) => {
-                SemanticIssueKind::UndischargedAllocationFitObligation {
-                    mechanical_fix: repairs::allocation_fit(&case),
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Op6, ObligationFamily::ConversionDomain) => {
-                let Some(GoalExpression::Operation {
-                    row:
-                        GoalOperation::NumericConversion {
-                            source,
-                            destination,
-                            ..
-                        },
-                    ..
-                }) = &outcome.canonical_goal
-                else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let source_name = self.checked_type_name(source.checked_type())?;
-                let destination_name = self.checked_type_name(destination.checked_type())?;
-                let checked = format!("cvt.checked::<{source_name}, {destination_name}>");
-                // An affine invariant bounds an integer operand only.
-                let integer_source = matches!(
-                    source,
-                    CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
-                );
-                SemanticIssueKind::UndischargedConversionDomainObligation {
-                    mechanical_fix: repairs::conversion_domain(
-                        &case,
-                        &checked,
-                        &destination_name,
-                        integer_source,
-                    ),
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
-                let separation = function
-                    .call_separations
-                    .get(query as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let mechanical_fix = repairs::call_separation(
-                    separation.positions.first().copied(),
-                    separation.one_argument,
-                );
-                SemanticIssueKind::UndischargedCallSeparation {
-                    residual,
-                    mechanical_fix,
-                }
-            }
-            (SemanticRule::Op11, ObligationFamily::ExchangeSeparation(_)) => {
-                SemanticIssueKind::UndischargedCallSeparation {
-                    residual,
-                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
-                }
-            }
-            (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
-                let use_site = function
-                    .call_separations
-                    .get(query as usize)
-                    .and_then(|query| query.reference_use.as_ref())
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                SemanticIssueKind::InvalidReferenceUse {
-                    binder: use_site.binder.clone(),
-                    event: use_site.event,
-                    mechanical_fix: references::REF2_FORM_AGAIN,
-                }
-            }
-            (SemanticRule::Ref4, ObligationFamily::RangeFormation) => {
-                SemanticIssueKind::UndischargedRangeFormationObligation {
-                    mechanical_fix: repairs::range_formation(&case),
-                    residual,
-                    disposition,
-                }
-            }
-            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-        };
-        Ok(SemanticIssue {
-            rule,
-            location,
-            kind,
-            request: None,
-        })
-    }
-
     fn undischarged_loop_invariant(
         &self,
         entailment: &FunctionEntailment,
@@ -438,7 +184,6 @@ impl Checker<'_> {
             request: None,
         })
     }
-
     fn undischarged_source_proof(
         &self,
         entailment: &FunctionEntailment,
@@ -573,7 +318,292 @@ impl Checker<'_> {
             request: None,
         })
     }
+    /// Whether a node lies in a `requires_clause` or a `contract_define`,
+    /// whose places a requirement forms at body entry and which evaluate
+    /// nothing [FN-8].
+    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
+        let mut node = self.tree.node_with_path(path);
+        while let Some(current) = node {
+            if matches!(
+                self.tree.production(current)?,
+                Production::RequiresClause | Production::ContractDefine
+            ) {
+                return Ok(true);
+            }
+            node = self.tree.parent(current)?;
+        }
+        Ok(false)
+    }
+}
 
+impl<'unit> TypeContext<'unit> {
+    /// Accepts `function` exactly when every record is answered and
+    /// discharged, and otherwise reports the undischarged record decided
+    /// first.
+    ///
+    /// Body obligations are ordered by where they are decided and then by
+    /// their rule's rank; the relations of FN-9, decided at the exits, follow
+    /// in source order. A record left unanswered while another is answered
+    /// undischarged is that failure's consequence: the engine stops judging
+    /// what a failed obligation guards. Unanswered records alone, or a
+    /// judgment answering none, are the checker and the engine disagreeing,
+    /// and the function is not accepted.
+    pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
+        let entailment = &function.entailment;
+        if entailment.answers.len() != function.obligations.len()
+            || !entailment.unrecorded.is_empty()
+        {
+            return Err(SemanticCompilerFailure::ObligationContract.into());
+        }
+        let mut body = Vec::new();
+        let mut relations = Vec::new();
+        for (record, answer) in function.obligations.iter().zip(&entailment.answers) {
+            let Some(answer) = *answer else {
+                continue;
+            };
+            if answer.discharged(entailment) {
+                continue;
+            }
+            if record.rule == SemanticRule::Fn9 {
+                relations.push((record, answer));
+            } else {
+                body.push((
+                    self.declarations
+                        .proof_position(record, answer, entailment)?,
+                    record,
+                    answer,
+                ));
+            }
+        }
+        // `min_by` keeps the first of several equal minima, so the selection
+        // depends only on this order and on record order, never on a hash.
+        let selected = body
+            .into_iter()
+            .min_by(|left, right| {
+                left.0.cmp(&right.0).then_with(|| {
+                    left.1
+                        .rule
+                        .definition_rank()
+                        .cmp(&right.1.rule.definition_rank())
+                })
+            })
+            .map(|(_, record, answer)| (record, answer))
+            .or_else(|| relations.into_iter().next());
+        if let Some((record, answer)) = selected {
+            return Err(CheckStop::source_issue(
+                self.undischarged_issue(function, record, answer)?,
+            ));
+        }
+        if entailment.answers.iter().any(Option::is_none) {
+            return Err(SemanticCompilerFailure::ObligationContract.into());
+        }
+        Ok(())
+    }
+    /// The issue one undischarged record reports: its rule selects the kind,
+    /// and the record with the judgment that answered it fill it in.
+    fn undischarged_issue(
+        &self,
+        function: &CheckedFunction,
+        record: &ObligationRecord,
+        answer: RecordAnswer,
+    ) -> Result<SemanticIssue, CheckStop> {
+        match (record.rule, answer) {
+            (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => self
+                .declarations
+                .undischarged_loop_invariant(&function.entailment, index),
+            (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => self
+                .declarations
+                .undischarged_source_proof(&function.entailment, index),
+            (
+                SemanticRule::Op4
+                | SemanticRule::Op2
+                | SemanticRule::Op9
+                | SemanticRule::Op6
+                | SemanticRule::Eff5
+                | SemanticRule::Op11
+                | SemanticRule::Ref2
+                | SemanticRule::Ref4,
+                RecordAnswer::Obligation(index),
+            ) => self.undischarged_obligation(function, record.rule, index),
+            (SemanticRule::Fn8 | SemanticRule::Op14, RecordAnswer::CallGoal(index)) => {
+                self.undischarged_call_requirement(function, record.rule, index)
+            }
+            (SemanticRule::Fn9, RecordAnswer::Postcondition(index)) => {
+                self.undischarged_postcondition(function, index)
+            }
+            _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
+        }
+    }
+    /// [ENT-6] one undischarged source obligation, reported under its
+    /// record's rule with the repair what its goal reads selects.
+    fn undischarged_obligation(
+        &self,
+        function: &CheckedFunction,
+        rule: SemanticRule,
+        index: usize,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let outcome = function
+            .entailment
+            .obligations
+            .get(index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let residual = outcome
+            .residual
+            .clone()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let location = self.declarations.source_location(&outcome.node_path)?;
+        let (disposition, repair) = dispositions(outcome.refuted);
+        // [DIAG-1] what the goal reads selects its routes: a canonical goal
+        // names its data, a bounds relation its terms. A bounds or allocation
+        // residual is written from the source atoms it relates, so it is
+        // itself a condition.
+        let editable = self.editable_functions()?;
+        let reads = match &outcome.canonical_goal {
+            Some(goal) => {
+                repairs::GoalTerms::of_goal(goal, function, &outcome.written_before, &editable)
+            }
+            None => repairs::GoalTerms::of_terms(
+                &function.entailment.obligation_term_reads(outcome),
+                function,
+                &outcome.written_before,
+                &editable,
+            ),
+        };
+        let condition = match outcome.family {
+            ObligationFamily::Bounds | ObligationFamily::AllocationFit => true,
+            _ => outcome
+                .canonical_goal
+                .as_ref()
+                .is_some_and(repairs::is_source_relation),
+        };
+        let case = repairs::GoalCase {
+            disposition: repair,
+            terms: reads.terms,
+            referenced: reads.referenced,
+            called: reads.called,
+            text: &residual,
+            condition,
+            function: &function.name,
+        };
+        let kind = match (rule, outcome.family) {
+            (SemanticRule::Op4, ObligationFamily::Bounds) => {
+                // A subscript a contract clause forms is established by an
+                // earlier requirement and skipped by no guard [FN-8].
+                let constant_offset = matches!(
+                    function.entailment.obligation_term_reads(outcome).first(),
+                    Some(TermRead::Constant)
+                );
+                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
+                    repairs::clause_bounds(&case, constant_offset)
+                } else {
+                    repairs::bounds(&case, constant_offset)
+                };
+                SemanticIssueKind::UndischargedBoundsObligation {
+                    mechanical_fix,
+                    residual,
+                    disposition,
+                }
+            }
+            (SemanticRule::Op2, ObligationFamily::IntegerDomain) => {
+                SemanticIssueKind::UndischargedIntegerDomainObligation {
+                    mechanical_fix: repairs::integer_domain(
+                        &case,
+                        outcome
+                            .canonical_goal
+                            .as_ref()
+                            .and_then(repairs::total_forms),
+                    ),
+                    residual,
+                    disposition,
+                }
+            }
+            (SemanticRule::Op9, ObligationFamily::AllocationFit) => {
+                SemanticIssueKind::UndischargedAllocationFitObligation {
+                    mechanical_fix: repairs::allocation_fit(&case),
+                    residual,
+                    disposition,
+                }
+            }
+            (SemanticRule::Op6, ObligationFamily::ConversionDomain) => {
+                let Some(GoalExpression::Operation {
+                    row:
+                        GoalOperation::NumericConversion {
+                            source,
+                            destination,
+                            ..
+                        },
+                    ..
+                }) = &outcome.canonical_goal
+                else {
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                };
+                let source_name = self.checked_type_name(source.checked_type())?;
+                let destination_name = self.checked_type_name(destination.checked_type())?;
+                let checked = format!("cvt.checked::<{source_name}, {destination_name}>");
+                // An affine invariant bounds an integer operand only.
+                let integer_source = matches!(
+                    source,
+                    CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
+                );
+                SemanticIssueKind::UndischargedConversionDomainObligation {
+                    mechanical_fix: repairs::conversion_domain(
+                        &case,
+                        &checked,
+                        &destination_name,
+                        integer_source,
+                    ),
+                    residual,
+                    disposition,
+                }
+            }
+            (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
+                let separation = function
+                    .call_separations
+                    .get(query as usize)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let mechanical_fix = repairs::call_separation(
+                    separation.positions.first().copied(),
+                    separation.one_argument,
+                );
+                SemanticIssueKind::UndischargedCallSeparation {
+                    residual,
+                    mechanical_fix,
+                }
+            }
+            (SemanticRule::Op11, ObligationFamily::ExchangeSeparation(_)) => {
+                SemanticIssueKind::UndischargedCallSeparation {
+                    residual,
+                    mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                }
+            }
+            (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
+                let use_site = function
+                    .call_separations
+                    .get(query as usize)
+                    .and_then(|query| query.reference_use.as_ref())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                SemanticIssueKind::InvalidReferenceUse {
+                    binder: use_site.binder.clone(),
+                    event: use_site.event,
+                    mechanical_fix: references::REF2_FORM_AGAIN,
+                }
+            }
+            (SemanticRule::Ref4, ObligationFamily::RangeFormation) => {
+                SemanticIssueKind::UndischargedRangeFormationObligation {
+                    mechanical_fix: repairs::range_formation(&case),
+                    residual,
+                    disposition,
+                }
+            }
+            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+        };
+        Ok(SemanticIssue {
+            rule,
+            location,
+            kind,
+            request: None,
+        })
+    }
     fn undischarged_call_requirement(
         &self,
         function: &CheckedFunction,
@@ -585,7 +615,7 @@ impl Checker<'_> {
             .call_goals
             .get(index)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let location = self.source_location(&outcome.node_path)?;
+        let location = self.declarations.source_location(&outcome.node_path)?;
         let signature = self
             .signatures
             .get(outcome.callee.0 as usize)
@@ -630,7 +660,7 @@ impl Checker<'_> {
                 request: None,
             });
         }
-        let requires_clause = self.node_location(&outcome.requires_clause)?;
+        let requires_clause = self.declarations.node_location(&outcome.requires_clause)?;
         let mechanical_fix = repairs::call_requirement(&case);
         Ok(SemanticIssue {
             rule: SemanticRule::Fn8,
@@ -647,7 +677,6 @@ impl Checker<'_> {
             request: None,
         })
     }
-
     /// [FN-9] the first failed exit of one relation, or its missing exit.
     fn undischarged_postcondition(
         &self,
@@ -669,7 +698,7 @@ impl Checker<'_> {
             }
             return Ok(SemanticIssue {
                 rule: SemanticRule::Fn9,
-                location: self.source_location(&proof.selector)?,
+                location: self.declarations.source_location(&proof.selector)?,
                 kind: SemanticIssueKind::NoSelectedNormalExit {
                     residual: "no selected normal exit",
                     mechanical_fix: repairs::NO_SELECTED_EXIT,
@@ -692,7 +721,7 @@ impl Checker<'_> {
         };
         Ok(SemanticIssue {
             rule: SemanticRule::Fn9,
-            location: self.source_location(&exit.statement)?,
+            location: self.declarations.source_location(&exit.statement)?,
             kind: SemanticIssueKind::UndischargedPostcondition(Box::new(
                 crate::UndischargedPostconditionDetail {
                     concrete_function: match self
@@ -703,9 +732,9 @@ impl Checker<'_> {
                         Some(signature) => self.render_function_instance(signature)?,
                         None => function.name.clone(),
                     },
-                    postcondition: self.node_location(&proof.block)?,
+                    postcondition: self.declarations.node_location(&proof.block)?,
                     conjunct: proof.relation_ordinal,
-                    selector: self.node_location(&proof.selector)?,
+                    selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
                     disposition,
                     mechanical_fix: repairs::postcondition(
@@ -721,51 +750,15 @@ impl Checker<'_> {
             request: None,
         })
     }
-}
-
-impl Checker<'_> {
     /// [FN-9] the functions whose `ensures` a writer can add to: every one
     /// but the prelude's.
     fn editable_functions(&self) -> Result<std::collections::HashSet<FunctionId>, CheckStop> {
         let mut editable = std::collections::HashSet::new();
         for signature in &self.signatures {
-            if !self.tree.is_prelude_node(signature.node)? {
+            if !self.declarations.tree.is_prelude_node(signature.node)? {
                 editable.insert(signature.id);
             }
         }
         Ok(editable)
-    }
-
-    /// Whether a node lies in a `requires_clause` or a `contract_define`,
-    /// whose places a requirement forms at body entry and which evaluate
-    /// nothing [FN-8].
-    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if matches!(
-                self.tree.production(current)?,
-                Production::RequiresClause | Production::ContractDefine
-            ) {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
-}
-
-/// The payload disposition and the repair's disposition of one goal no step
-/// discharged [ENT-4, MSR-4].
-fn dispositions(refuted: bool) -> (StaticObligationDisposition, repairs::Disposition) {
-    if refuted {
-        (
-            StaticObligationDisposition::Refuted,
-            repairs::Disposition::Refuted,
-        )
-    } else {
-        (
-            StaticObligationDisposition::Unproved,
-            repairs::Disposition::Unproved,
-        )
     }
 }

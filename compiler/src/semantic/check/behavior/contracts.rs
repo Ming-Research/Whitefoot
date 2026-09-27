@@ -2,6 +2,10 @@
 //! binding. Ordinary clause checking owns formation and define expansion;
 //! the shared entailment engine owns each finite implication query.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::DeclarationInventory;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::TypeContext;
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
@@ -53,67 +57,21 @@ struct ContractVariable {
     ty: CheckedType,
 }
 
-impl<'unit> Checker<'unit> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_formal_contract_formation(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        self.check_entry_formers(signature)?;
-        let contracts = self.behavior_contracts(signature)?;
-        self.judge_formal_requirement_places(signature, &contracts.requires)
-    }
-
-    /// [ENT-2, FN-8] a formal's block has an ordinary block's formation rules,
-    /// so each requirement forms its places at the body entry of whatever
-    /// function is bound to it, in the state holding the formal's requirements
-    /// written before its clause, and their subscripts owe [OP-4] there. That
-    /// state is the hypothetical premise set every [FN-4] query over these
-    /// requirements establishes, so no query premise names a place whose
-    /// subscripts nothing judged.
-    fn judge_formal_requirement_places(
-        &self,
-        signature: &FunctionSignature,
-        requires: &[InterfaceRequirement],
-    ) -> Result<(), CheckStop> {
-        if requires
-            .iter()
-            .all(|requirement| requirement.places.is_empty())
-        {
-            return Ok(());
-        }
-        let variables = signature
-            .parameters
-            .iter()
-            .map(|parameter| ContractVariable {
-                mode: parameter.mode,
-                ty: parameter.ty,
-            })
-            .collect::<Vec<_>>();
-        let premises = requires
-            .iter()
-            .map(|requirement| {
-                (
-                    requirement.clause.clone(),
-                    requirement.template.clone(),
-                    requirement.places.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut function = self.contract_hypothesis(signature, &variables, premises)?;
-        // A residual is read at the formal's own clause, so it names the
-        // formal's own parameters rather than the alpha-renamed datums.
-        for (parameter, formal) in function.parameters.iter_mut().zip(&signature.parameters) {
-            parameter.name.clone_from(&formal.name);
-        }
-        self.form_function_obligation_records(&mut function)?;
-        let entailment =
-            self.with_contract_context(&function, |context| analyze_function(&function, context));
-        function.entailment = entailment;
-        self.entailment_rejection(&function)
+        self.types.declarations.check_entry_formers(signature)?;
+        let contracts = self.behavior_contracts(check_context, signature)?;
+        self.types
+            .judge_formal_requirement_places(signature, &contracts.requires)
     }
 
     pub(super) fn check_behavior_contracts(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         instance: Option<super::super::super::model::FunctionId>,
         formal: &FunctionSignature,
@@ -133,9 +91,9 @@ impl<'unit> Checker<'unit> {
         normalized.result = actual.result;
         normalized.result_mode = actual.result_mode;
         normalized.result_list = actual.result_list;
-        let formal_contracts = self.behavior_contracts(&normalized)?;
-        let actual_contracts = self.behavior_contracts(actual)?;
-        let site = self.tree.path(node)?.clone();
+        let formal_contracts = self.behavior_contracts(check_context, &normalized)?;
+        let actual_contracts = self.behavior_contracts(check_context, actual)?;
+        let site = self.types.declarations.tree.path(node)?.clone();
         let mut accepted_queries = Vec::new();
         let requirement_variables = normalized
             .parameters
@@ -158,7 +116,7 @@ impl<'unit> Checker<'unit> {
             .map(|requirement| requirement.clause.clone())
             .collect::<Vec<_>>();
         for required in &actual_contracts.requires {
-            let mut proof = self.contract_implication(
+            let mut proof = self.types.contract_implication(
                 &normalized,
                 &requirement_variables,
                 &formal_requirement_paths,
@@ -166,7 +124,7 @@ impl<'unit> Checker<'unit> {
                 &required.template.root,
             )?;
             if !contract_query_discharged(&proof) {
-                return self.behavior_mismatch(
+                return self.types.declarations.behavior_mismatch(
                     SemanticRule::Fn4,
                     node,
                     "a requirement no caller of the formal interface establishes",
@@ -206,7 +164,7 @@ impl<'unit> Checker<'unit> {
                 .collect::<Vec<_>>();
             let goal = expanded_contract_goal(&promised.expression, parameter_count)?;
             let postcondition_variables = contract_postcondition_variables(&normalized, promised);
-            let mut proof = self.contract_implication(
+            let mut proof = self.types.contract_implication(
                 &normalized,
                 &postcondition_variables,
                 &premise_paths,
@@ -214,7 +172,7 @@ impl<'unit> Checker<'unit> {
                 &goal,
             )?;
             if !contract_query_discharged(&proof) {
-                return self.behavior_mismatch(
+                return self.types.declarations.behavior_mismatch(
                     SemanticRule::Fn4,
                     node,
                     "a promised relation the supplied function does not publish",
@@ -235,7 +193,7 @@ impl<'unit> Checker<'unit> {
                     .collect::<Vec<_>>(),
             );
         }
-        let mut retained = self.contract_queries.borrow_mut();
+        let retained = &mut self.analysis.contract_queries;
         let mut query_ids = Vec::with_capacity(accepted_queries.len());
         for query in accepted_queries {
             let index = if let Some(index) = retained.iter().position(|existing| *existing == query)
@@ -279,136 +237,14 @@ impl<'unit> Checker<'unit> {
         })
     }
 
-    /// One finite [FN-4] query over alpha-renamed declaration datums. The
-    /// temporary checked function has no body and publishes no summary; its
-    /// requirements are only the hypothetical premise set submitted to the
-    /// ordinary S4/AUTO entry. A formal requirement premise's places were
-    /// judged in this same premise state when the formal was formed
-    /// [`Self::judge_formal_requirement_places`], so the query forms none.
-    fn contract_implication(
-        &self,
-        signature: &FunctionSignature,
-        variables: &[ContractVariable],
-        premise_paths: &[NodePath],
-        premises: &[GoalTemplate],
-        goal: &GoalExpression,
-    ) -> Result<FunctionEntailment, CheckStop> {
-        if premise_paths.len() != premises.len() {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        }
-        let premises = premise_paths
-            .iter()
-            .zip(premises)
-            .map(|(clause, template)| (clause.clone(), template.clone(), Vec::new()))
-            .collect();
-        let function = self.contract_hypothesis(signature, variables, premises)?;
-        Ok(self.with_contract_context(&function, |context| {
-            contract_implies(&function, context, goal)
-        }))
-    }
-
-    /// The body-less function one contract query or formation judgment
-    /// runs in: its parameters are alpha-renamed contract datums, and its
-    /// requirements are the hypothetical premise set, each with the clause
-    /// places it forms.
-    fn contract_hypothesis(
-        &self,
-        signature: &FunctionSignature,
-        variables: &[ContractVariable],
-        premises: Vec<(NodePath, GoalTemplate, Vec<CheckedExpression>)>,
-    ) -> Result<CheckedFunction, CheckStop> {
-        let parameters = variables
-            .iter()
-            .enumerate()
-            .map(|(ordinal, variable)| {
-                let ordinal =
-                    u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                Ok(CheckedParameter {
-                    name: format!("contract_{ordinal}"),
-                    declaration: DeclarationId::from_index(ordinal as usize)
-                        .ok_or(SemanticCompilerFailure::CounterOverflow)?,
-                    node_path: NodePath {
-                        components: vec![ordinal],
-                    },
-                    binding: BindingId(ordinal),
-                    mode: variable.mode,
-                    ty: variable.ty,
-                    range_element: None,
-                })
-            })
-            .collect::<Result<Vec<_>, CheckStop>>()?;
-        let mut requirements = Vec::with_capacity(premises.len());
-        let mut requirement_places = Vec::with_capacity(premises.len());
-        for (clause, template, places) in premises {
-            requirements.push(CheckedRequirement { template, clause });
-            requirement_places.push(places);
-        }
-        Ok(CheckedFunction {
-            formal_hypothesis: true,
-            id: signature.id,
-            declaration: signature.declaration,
-            module: self
-                .resolved
-                .declaration(signature.declaration)
-                .and_then(crate::DeclarationRecord::module)
-                .unwrap_or(crate::ModuleId::BUNDLE_ROOT),
-            name: signature.name.clone(),
-            symbol: signature.symbol.clone(),
-            function_actuals: Vec::new(),
-            region_parameters: Vec::new(),
-            parameters,
-            result_mode: signature.result_mode,
-            result: signature.result,
-            declared_state_writes: Vec::new(),
-            requirements,
-            requirement_places,
-            postconditions: Vec::new(),
-            body: None,
-            reference_origins: Vec::new(),
-            body_disposition: Default::default(),
-            allocates: false,
-            call_separations: Vec::new(),
-            permission_separation_queries: Vec::new(),
-            obligations: Vec::new(),
-            entailment: FunctionEntailment::default(),
-        })
-    }
-
-    /// Runs `query` in the declaration-only proof context of one contract
-    /// hypothesis: no callee, contract query or verified summary is visible.
-    fn with_contract_context<ResultValue>(
-        &self,
-        function: &CheckedFunction,
-        query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,
-    ) -> ResultValue {
-        let binding_names = function
-            .parameters
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect::<Vec<_>>();
-        let elements = self.elements.borrow();
-        let const_parameter_types = self.const_generic_types().collect();
-        let context = EntailmentContext {
-            declarations: self.resolved.declarations(),
-            callees: &[],
-            constants: &self.checked_constants,
-            constant_ids: &self.constants,
-            const_parameter_types: &const_parameter_types,
-            nominals: &self.nominals,
-            elements: &elements,
-            contract_queries: &[],
-            verified_postconditions: &[],
-            verified_postcondition_proofs: &[],
-            binding_names: &binding_names,
-        };
-        query(&context)
-    }
-
     fn behavior_contracts(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
     ) -> Result<InterfaceContracts, CheckStop> {
         let Some(block) = self
+            .types
+            .declarations
             .tree
             .first_child_with(signature.node, Production::ContractBlock)?
         else {
@@ -424,7 +260,7 @@ impl<'unit> Checker<'unit> {
             );
             bindings.insert(
                 parameter.declaration,
-                self.parameter_local(parameter, binding)?,
+                Checker::parameter_local(parameter, binding)?,
             );
         }
         let mut next_binding =
@@ -440,8 +276,15 @@ impl<'unit> Checker<'unit> {
             next_loop: &mut next_loop,
             binding_names: &mut names,
         };
-        let checked =
-            self.check_requires(signature, block, &mut bindings.clone(), &mut counters)?;
+        let checked = self.check_requires(
+            FunctionContext {
+                check_context,
+                function: signature,
+            },
+            block,
+            &mut bindings.clone(),
+            &mut counters,
+        )?;
         let requires = checked
             .requirements
             .into_iter()
@@ -453,18 +296,24 @@ impl<'unit> Checker<'unit> {
             })
             .collect();
         let mut ensures = Vec::new();
-        let selectors = self.postcondition_selectors_from_source(signature)?;
+        let selectors = self.types.postcondition_selectors_from_source(signature)?;
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
             let relation = self.check_postcondition_clause(
-                signature,
+                FunctionContext {
+                    check_context,
+                    function: signature,
+                },
                 selector,
                 &mut bindings.clone(),
                 &mut counters,
             )?;
             relations.push(relation.clone());
             let mut expression = self.expand_postcondition_clause(
-                signature,
+                FunctionContext {
+                    check_context,
+                    function: signature,
+                },
                 selector,
                 &mut bindings.clone(),
                 &mut counters,
@@ -483,7 +332,9 @@ impl<'unit> Checker<'unit> {
                 relation,
             });
         }
-        self.check_published_relation_consistency(signature, &selectors, &relations)?;
+        self.types
+            .declarations
+            .check_published_relation_consistency(signature, &selectors, &relations)?;
         Ok(InterfaceContracts { requires, ensures })
     }
 }
@@ -633,5 +484,185 @@ fn normalize_substituted_constants(expression: &mut ExpandedClauseExpression) {
         }
         ExpandedClauseExpression::Datum(_)
         | ExpandedClauseExpression::InvalidSelectorUse { .. } => {}
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    /// The body-less function one contract query or formation judgment
+    /// runs in: its parameters are alpha-renamed contract datums, and its
+    /// requirements are the hypothetical premise set, each with the clause
+    /// places it forms.
+    fn contract_hypothesis(
+        &self,
+        signature: &FunctionSignature,
+        variables: &[ContractVariable],
+        premises: Vec<(NodePath, GoalTemplate, Vec<CheckedExpression>)>,
+    ) -> Result<CheckedFunction, CheckStop> {
+        let parameters = variables
+            .iter()
+            .enumerate()
+            .map(|(ordinal, variable)| {
+                let ordinal =
+                    u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+                Ok(CheckedParameter {
+                    name: format!("contract_{ordinal}"),
+                    declaration: DeclarationId::from_index(ordinal as usize)
+                        .ok_or(SemanticCompilerFailure::CounterOverflow)?,
+                    node_path: NodePath {
+                        components: vec![ordinal],
+                    },
+                    binding: BindingId(ordinal),
+                    mode: variable.mode,
+                    ty: variable.ty,
+                    range_element: None,
+                })
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
+        let mut requirements = Vec::with_capacity(premises.len());
+        let mut requirement_places = Vec::with_capacity(premises.len());
+        for (clause, template, places) in premises {
+            requirements.push(CheckedRequirement { template, clause });
+            requirement_places.push(places);
+        }
+        Ok(CheckedFunction {
+            formal_hypothesis: true,
+            id: signature.id,
+            declaration: signature.declaration,
+            module: self
+                .resolved
+                .declaration(signature.declaration)
+                .and_then(crate::DeclarationRecord::module)
+                .unwrap_or(crate::ModuleId::BUNDLE_ROOT),
+            name: signature.name.clone(),
+            symbol: signature.symbol.clone(),
+            function_actuals: Vec::new(),
+            region_parameters: Vec::new(),
+            parameters,
+            result_mode: signature.result_mode,
+            result: signature.result,
+            declared_state_writes: Vec::new(),
+            requirements,
+            requirement_places,
+            postconditions: Vec::new(),
+            body: None,
+            reference_origins: Vec::new(),
+            body_disposition: Default::default(),
+            allocates: false,
+            call_separations: Vec::new(),
+            permission_separation_queries: Vec::new(),
+            obligations: Vec::new(),
+            entailment: FunctionEntailment::default(),
+        })
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// [ENT-2, FN-8] a formal's block has an ordinary block's formation rules,
+    /// so each requirement forms its places at the body entry of whatever
+    /// function is bound to it, in the state holding the formal's requirements
+    /// written before its clause, and their subscripts owe [OP-4] there. That
+    /// state is the hypothetical premise set every [FN-4] query over these
+    /// requirements establishes, so no query premise names a place whose
+    /// subscripts nothing judged.
+    fn judge_formal_requirement_places(
+        &self,
+        signature: &FunctionSignature,
+        requires: &[InterfaceRequirement],
+    ) -> Result<(), CheckStop> {
+        if requires
+            .iter()
+            .all(|requirement| requirement.places.is_empty())
+        {
+            return Ok(());
+        }
+        let variables = signature
+            .parameters
+            .iter()
+            .map(|parameter| ContractVariable {
+                mode: parameter.mode,
+                ty: parameter.ty,
+            })
+            .collect::<Vec<_>>();
+        let premises = requires
+            .iter()
+            .map(|requirement| {
+                (
+                    requirement.clause.clone(),
+                    requirement.template.clone(),
+                    requirement.places.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut function = self
+            .declarations
+            .contract_hypothesis(signature, &variables, premises)?;
+        // A residual is read at the formal's own clause, so it names the
+        // formal's own parameters rather than the alpha-renamed datums.
+        for (parameter, formal) in function.parameters.iter_mut().zip(&signature.parameters) {
+            parameter.name.clone_from(&formal.name);
+        }
+        self.form_function_obligation_records(&mut function)?;
+        let entailment =
+            self.with_contract_context(&function, |context| analyze_function(&function, context));
+        function.entailment = entailment;
+        self.entailment_rejection(&function)
+    }
+    /// One finite [FN-4] query over alpha-renamed declaration datums. The
+    /// temporary checked function has no body and publishes no summary; its
+    /// requirements are only the hypothetical premise set submitted to the
+    /// ordinary S4/AUTO entry. A formal requirement premise's places were
+    /// judged in this same premise state when the formal was formed
+    /// [`Checker::judge_formal_requirement_places`], so the query forms none.
+    fn contract_implication(
+        &self,
+        signature: &FunctionSignature,
+        variables: &[ContractVariable],
+        premise_paths: &[NodePath],
+        premises: &[GoalTemplate],
+        goal: &GoalExpression,
+    ) -> Result<FunctionEntailment, CheckStop> {
+        if premise_paths.len() != premises.len() {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        }
+        let premises = premise_paths
+            .iter()
+            .zip(premises)
+            .map(|(clause, template)| (clause.clone(), template.clone(), Vec::new()))
+            .collect();
+        let function = self
+            .declarations
+            .contract_hypothesis(signature, variables, premises)?;
+        Ok(self.with_contract_context(&function, |context| {
+            contract_implies(&function, context, goal)
+        }))
+    }
+    /// Runs `query` in the declaration-only proof context of one contract
+    /// hypothesis: no callee, contract query or verified summary is visible.
+    fn with_contract_context<ResultValue>(
+        &self,
+        function: &CheckedFunction,
+        query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,
+    ) -> ResultValue {
+        let binding_names = function
+            .parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        let elements = &self.elements;
+        let const_parameter_types = self.const_generic_types().collect();
+        let context = EntailmentContext {
+            declarations: self.declarations.resolved.declarations(),
+            callees: &[],
+            constants: &self.checked_constants,
+            constant_ids: &self.constants,
+            const_parameter_types: &const_parameter_types,
+            nominals: &self.nominals,
+            elements,
+            contract_queries: &[],
+            verified_postconditions: &[],
+            verified_postcondition_proofs: &[],
+            binding_names: &binding_names,
+        };
+        query(&context)
     }
 }

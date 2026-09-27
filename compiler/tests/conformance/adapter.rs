@@ -66,7 +66,10 @@ struct Reached {
 /// [MOD-1, MOD-2, MOD-9]: its graph is formed, its modules' records are read
 /// from its directory, and a source verdict checks every module and admits
 /// every named entry, while an executed case builds the entry named `main`.
-fn reach_module_program(case: &Case, root: &Path) -> Result<Option<String>, CompilationFailure> {
+fn reach_module_program(
+    case: &Case,
+    root: &Path,
+) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
     let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
     let graph = form_module_graph(
         SourceInput::new("modules.wfg", &graph_bytes),

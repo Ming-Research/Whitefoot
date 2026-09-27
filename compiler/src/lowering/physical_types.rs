@@ -12,21 +12,21 @@ use crate::semantic::{CheckedNominalKind, CheckedProgramData};
 use super::*;
 
 pub(super) struct PhysicalTypeMap {
-    pub(super) nominals: Vec<IrNominalId>,
+    pub(super) nominals: Vec<Option<IrNominalId>>,
     pub(super) elements: Vec<Option<IrElement>>,
 }
 
-/// Lower only elements reached by executable types. Generic proof replay can
-/// leave symbolic entries in the checked table; they have no physical type.
+/// Lower only elements reached by executable types. Symbolic checking retains
+/// entries outside the ordinary view; they have no physical type.
 /// Structural children are interned before parents, so ascending handle order
 /// is a topological order even when nominal references close an owning graph.
 pub(super) fn base_elements(
     data: &CheckedProgramData,
-    nominals: &[IrNominalId],
+    nominals: &[Option<IrNominalId>],
 ) -> Result<(Vec<IrType>, Vec<Option<IrElement>>), LoweringFailure> {
     let mut pending = Vec::new();
     let mut needed = BTreeSet::new();
-    for function in &data.functions {
+    for function in data.executable_functions() {
         let (types, elements) = specialize::executable_storage(function);
         pending.extend(types);
         needed.extend(elements.into_iter().map(CheckedElement::index));
@@ -53,7 +53,11 @@ pub(super) fn base_elements(
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?,
         );
     }
-    for nominal in data.nominals.iter().take(data.executable_nominal_count) {
+    for id in &data.executable_nominals {
+        let nominal = data
+            .nominals
+            .get(id.0 as usize)
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         match &nominal.kind {
             CheckedNominalKind::Struct { fields } => {
                 pending.extend(fields.iter().map(|field| field.ty))
@@ -123,6 +127,7 @@ pub(super) struct PhysicalTypes<'a> {
     pub(super) nominals: Vec<IrNominal>,
     pub(super) elements: Vec<IrType>,
     base_elements: Vec<Option<IrElement>>,
+    base_nominals: Vec<Option<IrNominalId>>,
     interned_elements: HashMap<IrType, IrElement>,
     element_instances: HashMap<CheckedElement, IrElement>,
     instances: Vec<Instance>,
@@ -134,16 +139,18 @@ impl<'a> PhysicalTypes<'a> {
         nominals: Vec<IrNominal>,
         elements: Vec<IrType>,
         base_elements: Vec<Option<IrElement>>,
+        base_nominals: Vec<Option<IrNominalId>>,
     ) -> Self {
         let instances = data
-            .nominal_lowering_alias
+            .executable_nominals
             .iter()
             .enumerate()
-            .take(data.executable_nominal_count)
-            .filter(|(index, alias)| *index == alias.0 as usize)
-            .map(|(_, alias)| Instance {
-                source: *alias,
-                id: IrNominalId(alias.0),
+            .filter(|(ordinal, source)| {
+                base_nominals[source.0 as usize] == Some(IrNominalId(*ordinal as u32))
+            })
+            .map(|(ordinal, source)| Instance {
+                source: *source,
+                id: IrNominalId(ordinal as u32),
             })
             .collect();
         Self {
@@ -156,19 +163,17 @@ impl<'a> PhysicalTypes<'a> {
                 .collect(),
             elements,
             base_elements,
+            base_nominals,
             element_instances: HashMap::new(),
             instances,
         }
     }
 
     pub(super) fn map(&mut self) -> Result<PhysicalTypeMap, LoweringFailure> {
-        let nominals = (0..self.data.executable_nominal_count)
-            .map(|index| {
-                self.nominal(NominalId(
-                    u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut nominals = vec![None; self.data.nominals.len()];
+        for source in &self.data.executable_nominals {
+            nominals[source.0 as usize] = Some(self.nominal(*source)?);
+        }
         let mut elements = vec![None; self.data.elements.len()];
         for (index, mapped) in elements.iter_mut().enumerate() {
             if self.base_elements[index].is_some() {
@@ -217,7 +222,14 @@ impl<'a> PhysicalTypes<'a> {
         );
         let mut nominal = self
             .nominals
-            .get(source.0 as usize)
+            .get(
+                self.base_nominals
+                    .get(source.0 as usize)
+                    .copied()
+                    .flatten()
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                    .index(),
+            )
             .cloned()
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         nominal.id = id;
@@ -308,14 +320,9 @@ impl<'a> PhysicalTypes<'a> {
             }
             _ => {}
         }
-        let mut map = self
-            .data
-            .nominal_lowering_alias
-            .iter()
-            .map(|id| IrNominalId(id.0))
-            .collect::<Vec<_>>();
+        let mut map = self.base_nominals.clone();
         if let CheckedType::Nominal(id) = ty {
-            map[id.0 as usize] = self.nominal(id)?;
+            map[id.0 as usize] = Some(self.nominal(id)?);
         }
         lower_type(
             TypeLowering {

@@ -40,13 +40,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != referent.ty() || self.value_type(address) != Some(IrType::Address(referent)) {
             return Err(BackendFailure::InvalidIr);
         }
-        writeln!(
-            self.output,
-            "  {} = load {}, ptr {}",
-            self.value_name(result),
-            llvm_type(self.program, ty)?,
-            self.value_name(address)
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  {} = load {}, ptr {}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(address)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -93,7 +96,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         constant: IrConstant,
     ) -> Result<(), BackendFailure> {
         let rendered = constant_operand(constant, ty)?;
-        let llvm_ty = llvm_type(self.program, ty)?;
+        let llvm_ty = self.output.type_name(self.program, ty)?;
         writeln!(
             self.output,
             "  {} = select i1 true, {llvm_ty} {rendered}, {llvm_ty} {rendered}",
@@ -144,20 +147,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             rendered.push(format!("i64 {budget}"));
         }
         if stored_result {
-            return writeln!(
-                self.output,
-                "  call void @{callee}({})",
-                rendered.join(", ")
-            )
+            return {
+                self.output.symbol(callee.to_string());
+                writeln!(
+                    self.output,
+                    "  call void @{callee}({})",
+                    rendered.join(", ")
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission);
         }
-        writeln!(
-            self.output,
-            "  {} = call {} @{callee}({})",
-            self.value_name(result),
-            llvm_type(self.program, ty)?,
-            rendered.join(", ")
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
+            {
+                self.output.symbol(callee.to_string());
+                writeln!(
+                    self.output,
+                    "  {} = call {} @{callee}({})",
+                    self.value_name(result),
+                    emitted_type_1,
+                    rendered.join(", ")
+                )
+            }
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         // A stored aggregate returned in registers enters the storage the
         // plan selected for it. A scalar result has no storage.
@@ -175,7 +187,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         parameter: ParameterAbi,
         operand: &str,
     ) -> Result<String, BackendFailure> {
-        let ty = llvm_type(self.program, parameter.ty())?;
+        let ty = self.output.type_name(self.program, parameter.ty())?;
         if !parameter.is_range() {
             return Ok(format!("{ty} {operand}"));
         }
@@ -237,15 +249,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        writeln!(
-            self.output,
-            "  {} = icmp {} {} {}, {}",
-            self.value_name(result),
-            if equal { "eq" } else { "ne" },
-            llvm_type(self.program, operand_type)?,
-            self.value_name(arguments[0]),
-            self.value_name(arguments[1])
-        )
+        {
+            let emitted_type_2 = self.output.type_name(self.program, operand_type)?;
+            writeln!(
+                self.output,
+                "  {} = icmp {} {} {}, {}",
+                self.value_name(result),
+                if equal { "eq" } else { "ne" },
+                emitted_type_2,
+                self.value_name(arguments[0]),
+                self.value_name(arguments[1])
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -312,7 +327,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
         }
         if nominal_data.is_tag_only_enum() {
-            let llvm_ty = llvm_type(self.program, ty)?;
+            let llvm_ty = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
                 "  {} = or {llvm_ty} 0, {variant}",
@@ -338,7 +353,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ty: IrType,
         fields: Vec<(usize, IrValueId)>,
     ) -> Result<(), BackendFailure> {
-        let aggregate_ty = llvm_type(self.program, ty)?;
+        let aggregate_ty = self.output.type_name(self.program, ty)?;
         if fields.is_empty() {
             writeln!(
                 self.output,
@@ -360,12 +375,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } else {
                 format!("%{}", self.next_temporary()?)
             };
-            writeln!(
-                self.output,
-                "  {output} = insertvalue {aggregate_ty} {base}, {} {}, {index}",
-                llvm_type(self.program, field_ty)?,
-                self.value_name(value)
-            )
+            {
+                let emitted_type_0 = self.output.type_name(self.program, field_ty)?;
+                writeln!(
+                    self.output,
+                    "  {output} = insertvalue {aggregate_ty} {base}, {} {}, {index}",
+                    emitted_type_0,
+                    self.value_name(value)
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission)?;
             base = output;
         }
@@ -379,7 +397,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         tag: u32,
         inserts: Vec<(usize, Option<IrValueId>)>,
     ) -> Result<(), BackendFailure> {
-        let aggregate_ty = llvm_type(self.program, ty)?;
+        let aggregate_ty = self.output.type_name(self.program, ty)?;
         let mut base = "zeroinitializer".to_owned();
         let total = inserts.len();
         for (ordinal, (index, value)) in inserts.into_iter().enumerate() {
@@ -394,12 +412,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         .function
                         .value_type(value)
                         .ok_or(BackendFailure::InvalidIr)?;
-                    writeln!(
-                        self.output,
-                        "  {output} = insertvalue {aggregate_ty} {base}, {} {}, {index}",
-                        llvm_type(self.program, field_ty)?,
-                        self.value_name(value)
-                    )
+                    {
+                        let emitted_type_0 = self.output.type_name(self.program, field_ty)?;
+                        writeln!(
+                            self.output,
+                            "  {output} = insertvalue {aggregate_ty} {base}, {} {}, {index}",
+                            emitted_type_0,
+                            self.value_name(value)
+                        )
+                    }
                     .map_err(|_| BackendFailure::TextEmission)?;
                 }
                 None => {
@@ -437,13 +458,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             writeln!(self.output, "  ; ownership-consuming projection")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
-        writeln!(
-            self.output,
-            "  {} = extractvalue {} {}, {field}",
-            self.value_name(result),
-            llvm_type(self.program, IrType::Nominal(nominal))?,
-            self.value_name(aggregate)
-        )
+        {
+            let emitted_type_1 = self
+                .output
+                .type_name(self.program, IrType::Nominal(nominal))?;
+            writeln!(
+                self.output,
+                "  {} = extractvalue {} {}, {field}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(aggregate)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -469,15 +495,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.value_type(value) != Some(field_ty) {
             return Err(BackendFailure::InvalidIr);
         }
-        writeln!(
-            self.output,
-            "  {} = insertvalue {} {}, {} {}, {field}",
-            self.value_name(result),
-            llvm_type(self.program, ty)?,
-            self.value_name(aggregate),
-            llvm_type(self.program, field_ty)?,
-            self.value_name(value)
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
+            let emitted_type_3 = self.output.type_name(self.program, field_ty)?;
+            writeln!(
+                self.output,
+                "  {} = insertvalue {} {}, {} {}, {field}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(aggregate),
+                emitted_type_3,
+                self.value_name(value)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -509,13 +539,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let index = variant_field_base(variants, variant)? + field as usize;
-        writeln!(
-            self.output,
-            "  {} = extractvalue {} {}, {index}",
-            self.value_name(result),
-            llvm_type(self.program, IrType::Nominal(nominal))?,
-            self.value_name(aggregate)
-        )
+        {
+            let emitted_type_1 = self
+                .output
+                .type_name(self.program, IrType::Nominal(nominal))?;
+            writeln!(
+                self.output,
+                "  {} = extractvalue {} {}, {index}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(aggregate)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 }
