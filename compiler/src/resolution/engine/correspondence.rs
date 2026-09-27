@@ -51,7 +51,7 @@ struct Scope {
 
 struct Tables<'a> {
     topology: &'a FinalizedTopology,
-    classified: &'a crate::ClassifiedBundle<'a, 'a>,
+    classified: &'a crate::ClassifiedBundle,
     direct: Vec<Vec<usize>>,
     uses: HashMap<Coordinate, &'a LexicalUseRecord>,
     declarations: HashMap<Coordinate, &'a DeclarationRecord>,
@@ -61,7 +61,7 @@ struct Tables<'a> {
 /// returns the first difference, in definition source order.
 pub(super) fn check_correspondence<'a>(
     topology: &'a FinalizedTopology,
-    classified: &'a crate::ClassifiedBundle<'a, 'a>,
+    classified: &'a crate::ClassifiedBundle,
     declarations: &'a [DeclarationRecord],
     uses: impl Iterator<Item = &'a LexicalUseRecord>,
     pairs: &[(usize, usize)],
@@ -331,7 +331,10 @@ impl Tables<'_> {
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
         let token = classified.token();
         let key = (token.id().source().ordinal(), token.id().start().value());
-        let spelling = token.span().bytes();
+        let spelling = self
+            .classified
+            .token_bytes(token)
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
         if let Some(usage) = self.uses.get(&key) {
             if let ResolvedTarget::Source { declaration, .. } = usage.target()
                 && let Some(ordinal) = scope.binders.get(&declaration)

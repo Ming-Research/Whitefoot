@@ -282,14 +282,14 @@ mod tests {
         else {
             panic!("ordinary prelude terminals");
         };
-        let parsed = parse(&classified, limits.parser);
+        let parsed = parse(classified, limits.parser);
         let ParseOutcome::Complete(parsed) = parsed else {
             panic!("ordinary prelude grammar: {parsed:?}");
         };
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
             panic!("ordinary prelude topology");
         };
-        let canonical = audit_canonical(finalized, limits.canonical);
+        let canonical = audit_canonical(*finalized, limits.canonical);
         let CanonicalOutcome::Complete(canonical) = canonical else {
             panic!("ordinary prelude canonical bytes: {canonical:?}");
         };
@@ -297,7 +297,7 @@ mod tests {
         let ResolutionOutcome::Complete(resolved) = resolved else {
             panic!("ordinary prelude resolution: {resolved:?}");
         };
-        let checked = check_semantics(resolved);
+        let checked = check_semantics(&resolved);
         let SemanticOutcome::Complete(checked) = checked else {
             panic!("ordinary declaration and owned transfer: {checked:?}");
         };

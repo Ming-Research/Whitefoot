@@ -26,10 +26,10 @@ pub(crate) struct EntryRequest<'a> {
 
 /// Why a checked module program does not compose one entry.
 #[derive(Debug)]
-pub(crate) enum EntryRejection<'checked> {
+pub(crate) enum EntryRejection<'resolved> {
     /// An interface declares this function and no implementation record of
     /// its module defines it yet [MOD-8].
-    PendingDeclaration(&'checked crate::DeclarationRecord),
+    PendingDeclaration(&'resolved crate::DeclarationRecord),
     /// The entry names no ordinary nongeneric function of its module [MOD-9].
     FunctionMissing,
     /// A named entry selects a function private to its module [MOD-9].
@@ -39,7 +39,7 @@ pub(crate) enum EntryRejection<'checked> {
     /// by `introducer`, introduces the requirement [STOR-8].
     HeapInClosure {
         path: Vec<FunctionId>,
-        introducer: Option<&'checked crate::DeclarationRecord>,
+        introducer: Option<&'resolved crate::DeclarationRecord>,
     },
 }
 
@@ -54,21 +54,21 @@ impl EntryRejection<'_> {
     }
 }
 
-impl CheckedProgram<'_, '_, '_> {
+impl CheckedProgram {
     /// The ordinary function a selection names, found by its declaration's
     /// module: a PRE-1 function's checked record carries the first registered
     /// module, but its declaration belongs to no module's inventory [MOD-9,
     /// PROG-3].
     pub(crate) fn selected_function(
         &self,
+        resolved: &crate::ResolvedSyntaxUnit,
         module: crate::ModuleId,
         name: &str,
     ) -> Option<&CheckedFunction> {
         self.data.functions.iter().find(|function| {
             !function.formal_hypothesis
                 && function.name == name
-                && self
-                    ._resolved
+                && resolved
                     .declaration(function.declaration)
                     .and_then(crate::DeclarationRecord::module)
                     == Some(module)
@@ -78,18 +78,22 @@ impl CheckedProgram<'_, '_, '_> {
     /// [MOD-8, MOD-9, STOR-8] a module program's entry composes when no
     /// interface declaration is pending, it selects one ordinary function of
     /// its module, public for a named entry, and a no-heap entry's execution
-    /// closure introduces no heap requirement.
-    pub(crate) fn admit_entry(&self, request: EntryRequest<'_>) -> Result<(), EntryRejection<'_>> {
+    /// closure introduces no heap requirement. `resolved` is the unit this
+    /// program was checked over.
+    pub(crate) fn admit_entry<'resolved>(
+        &self,
+        resolved: &'resolved crate::ResolvedSyntaxUnit,
+        request: EntryRequest<'_>,
+    ) -> Result<(), EntryRejection<'resolved>> {
         // [MOD-8] composition needs every declared function's definition; a
         // pending interface declaration blocks it at the declaration, and the
         // build supplies the definition of every host module's function [PRE-2].
-        let bundle = self._resolved.syntax().classified_bundle().source_bundle();
-        if let Some(pending) = self
-            ._resolved
+        let bundle = resolved.syntax().classified_bundle().source_bundle();
+        if let Some(pending) = resolved
             .interface_functions()
             .iter()
             .filter(|function| function.definition().is_none())
-            .filter_map(|function| self._resolved.declaration(function.declaration()))
+            .filter_map(|function| resolved.declaration(function.declaration()))
             .find(|declaration| {
                 !declaration
                     .module()
@@ -102,10 +106,10 @@ impl CheckedProgram<'_, '_, '_> {
         {
             return Err(EntryRejection::PendingDeclaration(pending));
         }
-        let Some(function) = self.selected_function(request.module, request.name) else {
+        let Some(function) = self.selected_function(resolved, request.module, request.name) else {
             return Err(EntryRejection::FunctionMissing);
         };
-        let declaration = self._resolved.declaration(function.declaration);
+        let declaration = resolved.declaration(function.declaration);
         if request.public && !declaration.is_some_and(crate::DeclarationRecord::is_public) {
             return Err(EntryRejection::FunctionPrivate);
         }
@@ -115,7 +119,7 @@ impl CheckedProgram<'_, '_, '_> {
             let introducer = path
                 .last()
                 .and_then(|id| self.data.functions.get(id.0 as usize))
-                .and_then(|function| self._resolved.declaration(function.declaration));
+                .and_then(|function| resolved.declaration(function.declaration));
             return Err(EntryRejection::HeapInClosure { path, introducer });
         }
         Ok(())

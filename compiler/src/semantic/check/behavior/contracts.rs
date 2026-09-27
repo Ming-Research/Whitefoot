@@ -53,7 +53,7 @@ struct ContractVariable {
     ty: CheckedType,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_formal_contract_formation(
         &self,
         signature: &FunctionSignature,

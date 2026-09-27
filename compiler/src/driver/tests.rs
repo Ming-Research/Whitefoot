@@ -3226,3 +3226,55 @@ fn a_library_module_verdict_key_ignores_the_programs_modules() {
         String::from_utf8_lossy(&beside)
     );
 }
+
+/// [MOD-8] a function's interface declaration and its definition are one
+/// function to a proof receipt. A module verdict reads another module's
+/// function through that module's interface, and the composition reads the
+/// function's definition; spelled alike, every analysis the verdicts
+/// recorded is reused by the entry build, which analyzes nothing afresh.
+#[test]
+fn an_entry_build_reuses_every_analysis_its_module_verdicts_recorded() {
+    let directory = CacheDirectory::new("receipt-sharing");
+    let cache = directory.open();
+    let graph = crate::form_module_graph(
+        SourceInput::new("modules.wfg", PROGRAM_GRAPH),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: Vec<(&str, &[u8])> = vec![
+        ("base/module.wfm", BASE_INTERFACE),
+        ("base/half.wf", BASE_BODY),
+        ("user/module.wfm", USER_INTERFACE),
+        ("user/use.wf", USER_BODY),
+        ("tool/module.wfm", TOOL_INTERFACE),
+        ("tool/spare.wf", TOOL_BODY),
+        ("module.wfm", ROOT_INTERFACE),
+        ("main.wf", ROOT_BODY),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let modules = graph.program_modules().collect::<Vec<_>>();
+    super::require_module_verdicts(
+        &graph,
+        &super::with_library_records(&graph, &inputs),
+        &modules,
+        CompilerLimits::default(),
+        Some(&cache),
+    )
+    .expect("every module is accepted");
+    let (_, recorded) = cache.receipt_counts();
+    super::build_module_entry(
+        &graph,
+        &inputs,
+        super::ModuleEntry::Named("app"),
+        CompilerLimits::default(),
+        OverlapLowering::Off,
+        Some(&cache),
+    )
+    .expect("the entry builds");
+    let (reused, rebuilt) = cache.receipt_counts();
+    assert!(reused > 0, "the entry build reads the verdicts' receipts");
+    assert_eq!(
+        rebuilt, recorded,
+        "the entry build analyzes no function its module verdicts analyzed"
+    );
+}

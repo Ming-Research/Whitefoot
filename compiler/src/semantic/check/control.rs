@@ -121,7 +121,7 @@ pub(super) struct ControlScope<'state> {
     pub(super) give_context: Option<&'state GiveContext>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_block(
         &self,
         function: &FunctionSignature,

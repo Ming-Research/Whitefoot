@@ -49,7 +49,7 @@ pub(in crate::semantic::check) struct CommitReadOut {
     read_out: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [OP-12] a read-out spends the target for the rest of the right-hand
     /// side, including later scalar reads or references of its descendants. A
     /// measure reads only its descriptor, so reading an enclosing run's

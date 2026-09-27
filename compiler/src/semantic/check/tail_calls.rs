@@ -13,7 +13,7 @@ use super::super::model::CheckedMode;
 use super::super::places::{PlaceRoot, ResolvedPlace};
 use super::{CheckStop, Checker, FunctionSignature, LocalBinding};
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     pub(super) fn is_musttail_call(&self, node: NodeId) -> Result<bool, CheckStop> {
         for token in self.tree.direct_token_indices(node)? {
             if self.tree.token_bytes(*token)? == b"musttail" {

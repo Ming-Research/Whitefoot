@@ -619,9 +619,7 @@ fn with_ir_mode<ResultValue>(
 
 fn with_checked<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        crate::semantic::CheckedProgram<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(crate::semantic::CheckedProgram) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     let Ok(bundle) = SourceBundle::with_prelude(&inputs, SOURCE_LIMITS) else {
@@ -639,19 +637,20 @@ fn with_checked<ResultValue>(
     ) else {
         panic!("lowering test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("lowering test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("lowering test derivation must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("lowering test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("lowering test source must resolve");
     };
-    let outcome = check_semantics(resolved);
+    let outcome = check_semantics(&resolved);
     let SemanticOutcome::Complete(checked) = outcome else {
         panic!("lowering test source must check: {outcome:?}");
     };

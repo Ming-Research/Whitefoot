@@ -426,6 +426,27 @@ and applied (`design/log.md`, 2026-09-25).
 2. **Stable declaration keys.** Resolution mints a key per declaration and an
    item-relative key per occurrence; receipts, read sets and link names use
    them instead of respelled `Debug` text and item ordinals. Cost: medium.
+   Done on the follow-up branch.
+   - **Keys.** An item's key is the declaration that heads it, by home (the
+     module's package, path and which of its records, or the PRE-1 records),
+     role and spelling; a file-local alias is keyed by the source that binds
+     it. A heading declaration takes its item's key, and every other
+     declaration is placed within its item by the child path from the item's
+     node and its role and subtoken ordinals, so the variants of two enums
+     that share a name stay apart. A node's occurrence key is its item's key
+     and the path below it. A repeated key in a resolved unit is a compiler
+     failure.
+   - **Consumers.** Symbol prefixes, receipts and read sets read the keys.
+     Receipts still render the checked function with `Debug`; what changed
+     is that each program-wide identity in that text is spelled by the key
+     resolution minted, not by a spelling the receipt module assembles from
+     declaration records and item ordinals. A function's interface
+     declaration and its definition are two keys and still one receipt
+     spelling, since a receipt one check records is read by another: once
+     the module verdicts of a four-module program record 25 analyses, its
+     entry build records none, on main and here, and spelling the two apart
+     analyzes one function afresh. A read set follows uses from item key to
+     item key.
 3. **Owned syntax and an owned checked program.** Tokens become a source id
    and a byte range; `CheckedProgram` stops holding the resolved unit and
    `IrProgram` drops `_checked`. Formed interfaces can then be kept between
@@ -433,6 +454,28 @@ and applied (`design/log.md`, 2026-09-25).
    needs. Cost: large (the 228 lifetime-bearing lines). Tree: this is the
    representation step the composition staging deferred on edit-latency
    grounds alone; see the amendment below.
+   Done on the follow-up branch (`IrProgram` had already dropped `_checked`
+   with P4.4).
+   - **Syntax.** Only four fields borrowed: a span its file, the lexed
+     bundle its source bundle, the classified bundle the lexed bundle and the
+     parsed bundle the classified bundle; every later stage already held its
+     predecessor by value. The source bundle is now a shared handle, a span
+     is its source and byte offsets read through that bundle, the lexed and
+     classified bundles keep a handle on it, and the parsed bundle owns the
+     classified bundle. The classified bundle no longer keeps the lexemes and
+     trivia, which no stage after classification read. The three source
+     lifetimes, on 239 lines in 55 files, are gone, and the driver's syntax
+     step returns the canonical unit instead of lending it to a
+     continuation.
+   - **Checked program.** Checking borrows the resolved unit, and the checked
+     program holds only what checking concluded. The driver keeps the
+     resolved unit beside it and hands it to the consumers that read
+     resolution records: interface rendering, pending declarations, read
+     sets, entry admission and the executable caller.
+
+   Nothing keeps a formed interface between checks yet; module build units
+   are that step. Every step emits identical LLVM, diagnostics and exit
+   codes on the corpus and the module graphs.
 4. **A typed syntax access layer** used by resolution, the checker, the graph
    reader and the driver, with alternatives normalized once. Cost: large,
    migrated file by file. Tree: a new decision (amendment).

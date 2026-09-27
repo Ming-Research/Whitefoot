@@ -105,7 +105,7 @@ struct FormalCallBoundary {
     contract: CheckedCallContract,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_user_call(
         &self,
         node: NodeId,

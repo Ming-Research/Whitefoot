@@ -108,7 +108,7 @@ fn push_task(
 
 fn accepts(
     predicate: LookaheadPredicate,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     offset: usize,
 ) -> Result<bool, FinalizeCompilerFailure> {
@@ -126,7 +126,7 @@ fn accepts(
 
 fn select_arm(
     decision: Decision,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     work: &mut FinalizeWork,
 ) -> Result<Option<u8>, ShapeFailure> {
@@ -208,7 +208,7 @@ fn verify(
     production: Production,
     prelude_signature: bool,
     children: &[Completed],
-    source_tokens: &[ClassifiedToken<'_>],
+    source_tokens: &[ClassifiedToken],
     tasks: &mut Vec<ShapeTask>,
     limits: FinalizeLimits,
     work: &mut FinalizeWork,
@@ -369,7 +369,7 @@ pub(crate) fn verify_production_shape(
     production: Production,
     prelude_signature: bool,
     children: &[Completed],
-    source_tokens: &[ClassifiedToken<'_>],
+    source_tokens: &[ClassifiedToken],
     tasks: &mut Vec<ShapeTask>,
     limits: FinalizeLimits,
     work: &mut FinalizeWork,

@@ -61,7 +61,7 @@ pub(super) struct ExplicitPlace {
     pub(super) range_referent: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// A read of a place written through an explicit `deref` [TYPE-7].
     pub(super) fn check_dereferenced_place_use(
         &self,
@@ -404,8 +404,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         root: CheckedType,
         selected: &[CheckedPlaceStep],
     ) -> Result<Vec<CheckedOwnedTakeCleanup>, CheckStop> {
-        fn walk<'a, 'b, 'c, 'd>(
-            checker: &Checker<'a, 'b, 'c, 'd>,
+        fn walk<'a>(
+            checker: &Checker<'a>,
             ty: CheckedType,
             selected: &[CheckedPlaceStep],
             path: &mut Vec<CheckedPlaceStep>,

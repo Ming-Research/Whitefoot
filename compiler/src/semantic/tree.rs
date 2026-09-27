@@ -21,8 +21,8 @@ pub(super) enum ConditionalAlternative {
     Chain(NodeId),
 }
 
-pub(super) struct TreeView<'unit, 'classified, 'lexed, 'source> {
-    resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+pub(super) struct TreeView<'unit> {
+    resolved: &'unit ResolvedSyntaxUnit,
     paths: Vec<NodePath>,
     /// Every node ordered by its path, so a path finds its node by binary
     /// search.
@@ -30,9 +30,9 @@ pub(super) struct TreeView<'unit, 'classified, 'lexed, 'source> {
     direct_terminals: Vec<Vec<usize>>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> TreeView<'unit> {
     pub(super) fn new(
-        resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+        resolved: &'unit ResolvedSyntaxUnit,
     ) -> Result<Self, SemanticCompilerFailure> {
         let topology = Self::topology_of(resolved);
         let mut paths = Vec::with_capacity(topology.nodes.len());
@@ -84,9 +84,7 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         Self::topology_of(self.resolved)
     }
 
-    fn topology_of<'resolved>(
-        resolved: &'resolved ResolvedSyntaxUnit<'_, '_, '_>,
-    ) -> &'resolved FinalizedTopology {
+    fn topology_of(resolved: &ResolvedSyntaxUnit) -> &FinalizedTopology {
         &resolved.syntax().finalized.topology
     }
 
@@ -439,18 +437,17 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
     }
 
     /// Copies the exact canonical source spelling owned by one production
-    /// node. Semantic metadata uses this only while the source bundle is
-    /// live; it is not a portable source identity or a second parser.
+    /// node. It is not a portable source identity or a second parser.
     pub(super) fn source_spelling(&self, node: NodeId) -> Result<String, SemanticCompilerFailure> {
         let coordinate = self.coordinate(node)?;
-        let span = self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
+        let bundle = self.resolved.syntax().classified_bundle().source_bundle();
+        let span = bundle
             .span(coordinate.source(), coordinate.start(), coordinate.end())
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?;
-        std::str::from_utf8(span.bytes())
+        let bytes = bundle
+            .span_bytes(span)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        std::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)
     }
@@ -494,14 +491,16 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         path: &NodePath,
     ) -> Result<(String, u64), SemanticCompilerFailure> {
         let (display_path, coordinate) = self.source_identity(path)?;
-        let prefix = self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
+        let bundle = self.resolved.syntax().classified_bundle().source_bundle();
+        let prefix = bundle
             .span(coordinate.source(), ByteOffset::new(0), coordinate.start())
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let newlines = prefix.bytes().iter().filter(|byte| **byte == b'\n').count();
+        let newlines = bundle
+            .span_bytes(prefix)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count();
         let line = u64::try_from(newlines)
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?
             .saturating_add(1);
@@ -555,13 +554,12 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
     pub(super) fn token_bytes(
         &self,
         terminal: usize,
-    ) -> Result<&'source [u8], SemanticCompilerFailure> {
-        self.resolved
-            .syntax()
-            .classified_bundle()
+    ) -> Result<&'unit [u8], SemanticCompilerFailure> {
+        let classified = self.resolved.syntax().classified_bundle();
+        classified
             .tokens()
             .get(terminal)
-            .map(|token| token.token().span().bytes())
+            .and_then(|token| classified.token_bytes(token.token()))
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)
     }
 

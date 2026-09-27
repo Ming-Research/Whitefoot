@@ -323,7 +323,7 @@ impl ExpandedClauseExpression {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_requires(
         &self,
         function: &FunctionSignature,

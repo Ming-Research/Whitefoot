@@ -7,7 +7,7 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_semantics, with_semantics_dark};
+use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
 
 /// A reference is a local name for a path and its validity is a fact [REF-1,
 /// REF-2]; the value fact a requirement needs is killed exactly when a write
@@ -738,7 +738,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("unused generic requirement must survive symbolic checking: {outcome:?}");
         };
@@ -752,8 +752,7 @@ fn main() -> status: std::process::ExitStatus pure {
             1
         );
         assert_eq!(checked.data.functions[0].name, "main");
-        let positive = checked
-            ._resolved
+        let positive = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -808,12 +807,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("symbolic nominal requirements must remain valid metadata: {outcome:?}");
         };
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -912,7 +910,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("the symbolic const requirement must be retained: {outcome:?}");
         };
@@ -920,8 +918,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let derived = checked.data.derived_consts[0];
         assert!(matches!(derived.left, CheckedConst::Parameter(_)));
         assert_eq!(derived.right, CheckedConst::Value(1));
-        let need = checked
-            ._resolved
+        let need = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -1016,7 +1013,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
+    with_resolved_semantics(source, |resolved, outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("transitive symbolic validation must retain canonical entries: {outcome:?}");
         };
@@ -1029,8 +1026,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .count(),
             1
         );
-        let inner = checked
-            ._resolved
+        let inner = resolved
             .declarations()
             .iter()
             .find(|declaration| {
@@ -1038,8 +1034,7 @@ fn main() -> status: std::process::ExitStatus pure {
             })
             .expect("inner source declaration")
             .id();
-        let outer = checked
-            ._resolved
+        let outer = resolved
             .declarations()
             .iter()
             .find(|declaration| {

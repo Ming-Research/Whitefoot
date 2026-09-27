@@ -212,7 +212,7 @@ impl CheckedIndexedPlace {
         }
     }
 
-    fn element_type(&self, checker: &Checker<'_, '_, '_, '_>) -> Result<CheckedType, CheckStop> {
+    fn element_type(&self, checker: &Checker<'_>) -> Result<CheckedType, CheckStop> {
         match self {
             Self::Array(array) => Ok(array.element_type),
             Self::Buffer(buffer) => Ok(buffer.element_type),
@@ -230,7 +230,7 @@ impl CheckedIndexedPlace {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Chooses the subscript that establishes the indexable base of a place.
     ///
     /// Ordinary nested storage is addressed inside-out, so its final

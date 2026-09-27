@@ -71,7 +71,7 @@ pub(super) enum SelectedPlaceType {
     UnresolvedWindowElement,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [TYPE-9] a runtime-capacity shape may appear only as the content of a
     /// `Box` — the type of its `inner` field — and never inline in another
     /// value and never as a local binding.

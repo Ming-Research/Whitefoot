@@ -61,7 +61,7 @@ enum ScrutineeSpelling {
     Other,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     fn scrutinee_spelling(&self, expression: NodeId) -> Result<ScrutineeSpelling, CheckStop> {
         // [GRAM-5] `expr := atom infix_tail? | call`, and [OWN-13] asks its
         // question of a *place* scrutinee: an `infix_tail` makes the

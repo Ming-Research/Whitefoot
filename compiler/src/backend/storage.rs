@@ -1379,21 +1379,21 @@ fn main() -> status: std::process::ExitStatus pure {
         else {
             panic!("terminals")
         };
-        let parsed = match parse(&classified, limits.parser) {
+        let parsed = match parse(classified, limits.parser) {
             ParseOutcome::Complete(parsed) => parsed,
             other => panic!("parse: {other:?}"),
         };
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
             panic!("finalize")
         };
-        let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, limits.canonical)
+        let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, limits.canonical)
         else {
             panic!("canonical")
         };
         let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
             panic!("resolve")
         };
-        let checked = match check_semantics(resolved) {
+        let checked = match check_semantics(&resolved) {
             SemanticOutcome::Complete(checked) => checked,
             other => panic!("semantics: {other:?}"),
         };

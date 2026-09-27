@@ -192,7 +192,7 @@ const OPERAND_ROWS: &[OperandRow] = &[
     },
 ];
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Whether this template is one of the eleven rows whose type parameters
     /// an operand supplies [OP-10, OP-11, OP-14].
     ///

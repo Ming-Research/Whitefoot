@@ -36,7 +36,7 @@ enum ProofPosition {
     AfterSubtree,
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     /// Accepts `function` exactly when every record is answered and
     /// discharged, and otherwise reports the undischarged record decided
     /// first.
@@ -746,7 +746,7 @@ impl Checker<'_, '_, '_, '_> {
     }
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     /// [FN-9] the functions whose `ensures` a writer can add to: every one
     /// but the prelude's.
     fn editable_functions(&self) -> Result<std::collections::HashSet<FunctionId>, CheckStop> {

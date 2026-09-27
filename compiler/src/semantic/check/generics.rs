@@ -306,7 +306,7 @@ pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 5
     "grow",
 ];
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Substitute captured brands without reintroducing scratch nominal IDs
     /// into the structural identity of a function argument.
     pub(super) fn substitute_stable_regions(
@@ -2520,7 +2520,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     fn collect_goal_nominals(
         &self,
         expression: &GoalExpression,

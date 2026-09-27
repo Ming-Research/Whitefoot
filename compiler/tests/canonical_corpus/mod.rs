@@ -93,9 +93,9 @@ fn read_through_the_tree(logical_path: &str, source: &[u8]) -> Option<Reading> {
     // A graph file takes the `graph_file` start and every source record the
     // `program` start [GRAM-2, MOD-1].
     let parsed = if logical_path.ends_with(".wfg") {
-        parse_graph(&classified, limits.parser)
+        parse_graph(classified, limits.parser)
     } else {
-        parse(&classified, limits.parser)
+        parse(classified, limits.parser)
     };
     let ParseOutcome::Complete(parsed) = parsed else {
         return None;
@@ -112,7 +112,7 @@ fn read_through_the_tree(logical_path: &str, source: &[u8]) -> Option<Reading> {
         other => panic!("{logical_path}: a finalized tree must render: {other:?}"),
     };
     let canonical = matches!(
-        audit_canonical(finalized, limits.canonical),
+        audit_canonical(*finalized, limits.canonical),
         CanonicalOutcome::Complete(_)
     );
     Some(Reading {

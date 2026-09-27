@@ -8,7 +8,7 @@ use crate::{
 
 use super::{CheckStop, Checker};
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn has_fixed(
         &self,
         node: NodeId,

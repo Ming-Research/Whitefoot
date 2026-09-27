@@ -149,7 +149,7 @@ fn node_origin(
 pub(super) fn check_module_forms(
     topology: &FinalizedTopology,
     scopes: &ScopeBuild,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
 ) -> Result<Option<ResolutionIssue>, ResolutionCompilerFailure> {
     let bundle = classified.source_bundle();
     let mut direct = vec![Vec::new(); topology.nodes.len()];
@@ -333,7 +333,7 @@ pub(super) fn check_module_forms(
 
 fn function_spelling(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct: &[Vec<usize>],
     function: NodeId,
 ) -> Result<String, ResolutionCompilerFailure> {
@@ -354,7 +354,10 @@ fn function_spelling(
         .get(terminal)
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
         .token();
-    std::str::from_utf8(token.span().bytes())
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)
 }
@@ -369,7 +372,7 @@ fn function_spelling(
 pub(super) fn check_public_closure<'a>(
     topology: &FinalizedTopology,
     scopes: &ScopeBuild,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     declarations: &[super::super::DeclarationRecord],
     uses: impl Iterator<Item = &'a super::super::LexicalUseRecord>,
 ) -> Result<Option<ResolutionIssue>, ResolutionCompilerFailure> {

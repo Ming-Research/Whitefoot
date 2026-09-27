@@ -46,7 +46,7 @@ struct OrderedRelationNormalization {
     equality: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_local_invariant(
         &self,
         node: NodeId,

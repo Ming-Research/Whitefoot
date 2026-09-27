@@ -8,7 +8,7 @@ use super::super::model::{
 };
 use super::{CheckStop, Checker, PendingNominal, PreludeType};
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Appends one nominal instance, a change to the table.
     pub(super) fn push_nominal(&mut self, nominal: CheckedNominal) {
         self.nominals.push(nominal);

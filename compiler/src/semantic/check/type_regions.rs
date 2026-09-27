@@ -34,7 +34,7 @@ impl TypeRegionShape {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [BLK-4] the complete value type, including phantom nominal brands and
     /// instantiated element types. This is independent of the declaration's
     /// region-argument matching shape: an opaque `T` can carry confinement.

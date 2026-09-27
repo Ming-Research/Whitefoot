@@ -41,7 +41,7 @@ struct Dependency {
     unchanged: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(in crate::semantic::check) fn reject_instantiation_cycles(
         &self,
         items: &[NodeId],

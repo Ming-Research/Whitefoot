@@ -61,19 +61,20 @@ pub(super) fn with_ir_layout<R>(
     ) else {
         panic!("ordinary ABI test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("ordinary ABI test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("ordinary ABI test source must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("ordinary ABI test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("ordinary ABI test source must resolve");
     };
-    let checked = match check_semantics(resolved) {
+    let checked = match check_semantics(&resolved) {
         SemanticOutcome::Complete(checked) => checked,
         other => panic!("ordinary ABI test source must check: {other:?}"),
     };

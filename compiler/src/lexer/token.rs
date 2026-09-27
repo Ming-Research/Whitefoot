@@ -4,16 +4,17 @@ use crate::{ByteOffset, SourceId, SourceSpan};
 
 /// A validated in-memory identity for one token occurrence.
 ///
-/// The handle is tied to the exact borrowed source file that the lexer
-/// inspected. Its source and offsets are portable coordinates only when they
-/// are accompanied by a separately verified source binding; they are not a
-/// global identifier, digest, or authentication token.
+/// It is the source and byte range the lexer validated against its bundle,
+/// whose bytes are read through that bundle. Its source and offsets are
+/// portable coordinates only when they are accompanied by a separately
+/// verified source binding; they are not a global identifier, digest, or
+/// authentication token.
 #[derive(Clone, Copy)]
-pub struct TokenId<'source> {
-    span: SourceSpan<'source>,
+pub struct TokenId {
+    span: SourceSpan,
 }
 
-impl fmt::Debug for TokenId<'_> {
+impl fmt::Debug for TokenId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TokenId")
@@ -24,8 +25,8 @@ impl fmt::Debug for TokenId<'_> {
     }
 }
 
-impl<'source> TokenId<'source> {
-    pub(crate) const fn new(span: SourceSpan<'source>) -> Self {
+impl TokenId {
+    pub(crate) const fn new(span: SourceSpan) -> Self {
         Self { span }
     }
 
@@ -49,7 +50,7 @@ impl<'source> TokenId<'source> {
 
     /// Returns the exact source-bound span that validates this handle.
     #[must_use]
-    pub const fn span(self) -> SourceSpan<'source> {
+    pub const fn span(self) -> SourceSpan {
         self.span
     }
 }
@@ -125,21 +126,21 @@ pub enum TokenKind {
     Ampersand,
 }
 
-/// One validated token bound to the exact source bytes it covers.
+/// One validated token: the source range it covers and its shape.
 #[derive(Clone, Copy, Debug)]
-pub struct Token<'source> {
-    span: SourceSpan<'source>,
+pub struct Token {
+    span: SourceSpan,
     kind: TokenKind,
 }
 
-impl<'source> Token<'source> {
-    pub(crate) const fn new(span: SourceSpan<'source>, kind: TokenKind) -> Self {
+impl Token {
+    pub(crate) const fn new(span: SourceSpan, kind: TokenKind) -> Self {
         Self { span, kind }
     }
 
     /// Returns the source-bound token identity.
     #[must_use]
-    pub const fn id(self) -> TokenId<'source> {
+    pub const fn id(self) -> TokenId {
         TokenId::new(self.span)
     }
 
@@ -151,7 +152,7 @@ impl<'source> Token<'source> {
 
     /// Returns the exact source span and bytes for this token.
     #[must_use]
-    pub const fn span(self) -> SourceSpan<'source> {
+    pub const fn span(self) -> SourceSpan {
         self.span
     }
 }
@@ -167,13 +168,13 @@ pub enum TriviaKind {
 
 /// One trivia piece bound to the exact source bytes it covers.
 #[derive(Clone, Copy, Debug)]
-pub struct Trivia<'source> {
-    span: SourceSpan<'source>,
+pub struct Trivia {
+    span: SourceSpan,
     kind: TriviaKind,
 }
 
-impl<'source> Trivia<'source> {
-    pub(crate) const fn new(span: SourceSpan<'source>, kind: TriviaKind) -> Self {
+impl Trivia {
+    pub(crate) const fn new(span: SourceSpan, kind: TriviaKind) -> Self {
         Self { span, kind }
     }
 
@@ -185,24 +186,24 @@ impl<'source> Trivia<'source> {
 
     /// Returns the exact source span and bytes for this trivia.
     #[must_use]
-    pub const fn span(self) -> SourceSpan<'source> {
+    pub const fn span(self) -> SourceSpan {
         self.span
     }
 }
 
 /// One member of the exact lexical partition of a source file.
 #[derive(Clone, Copy, Debug)]
-pub enum Lexeme<'source> {
+pub enum Lexeme {
     /// A token-shaped byte range.
-    Token(Token<'source>),
+    Token(Token),
     /// A retained space or line-feed byte range.
-    Trivia(Trivia<'source>),
+    Trivia(Trivia),
 }
 
-impl<'source> Lexeme<'source> {
+impl Lexeme {
     /// Returns the exact source span covered by this partition member.
     #[must_use]
-    pub const fn span(self) -> SourceSpan<'source> {
+    pub const fn span(self) -> SourceSpan {
         match self {
             Self::Token(token) => token.span(),
             Self::Trivia(trivia) => trivia.span(),

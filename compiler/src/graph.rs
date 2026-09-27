@@ -321,7 +321,7 @@ impl WrittenPath {
 /// row order and then every module of `library`. The first refusal in
 /// written order is returned.
 pub(crate) fn form_graph(
-    unit: &CanonicalSyntaxUnit<'_, '_, '_>,
+    unit: &CanonicalSyntaxUnit,
     package: Package,
     library: Option<&ModuleGraph>,
 ) -> Result<Result<ModuleGraph, GraphIssue>, GraphCompilerFailure> {
@@ -343,7 +343,10 @@ pub(crate) fn form_graph(
             .get(terminal)
             .ok_or(GraphCompilerFailure::InvalidGraphTree)?
             .token();
-        std::str::from_utf8(token.span().bytes())
+        let bytes = classified
+            .token_bytes(token)
+            .ok_or(GraphCompilerFailure::InvalidGraphTree)?;
+        std::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| GraphCompilerFailure::InvalidGraphTree)
     };

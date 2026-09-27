@@ -112,7 +112,7 @@ pub(in crate::semantic::check) struct MutationTarget {
     pub(in crate::semantic::check) unsupported: Option<UnsupportedSemanticFeature>,
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     /// Re-establish writability at the commit [SET-1, LIV-1].
     ///
     /// The loan state this re-read v0.59 is gone with the loans. What [SET-1]
@@ -148,7 +148,7 @@ pub(in crate::semantic::check) const WIN3_LINEAR_TARGET: &str =
 const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below deref of a reference whose \
      row declares that write";
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_set_target(
         &self,
         function: &FunctionSignature,

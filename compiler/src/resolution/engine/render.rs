@@ -30,7 +30,7 @@ type Coordinate = (u32, u64);
 
 struct Renderer<'a> {
     topology: &'a crate::syntax::FinalizedTopology,
-    classified: &'a crate::ClassifiedBundle<'a, 'a>,
+    classified: &'a crate::ClassifiedBundle,
     direct: Vec<Vec<usize>>,
     uses: HashMap<Coordinate, &'a LexicalUseRecord>,
     declarations: HashMap<Coordinate, &'a DeclarationRecord>,
@@ -45,7 +45,7 @@ struct Renderer<'a> {
 /// Renders one module's public interface; see the module documentation.
 pub(in crate::resolution) fn render_interface<'a>(
     topology: &'a crate::syntax::FinalizedTopology,
-    classified: &'a crate::ClassifiedBundle<'a, 'a>,
+    classified: &'a crate::ClassifiedBundle,
     declarations: &'a [DeclarationRecord],
     uses: &'a [LexicalUseRecord],
     module: ModuleId,
@@ -156,14 +156,15 @@ impl Renderer<'_> {
     }
 
     fn spelling(&self, terminal: usize) -> Result<&[u8], ResolutionCompilerFailure> {
-        Ok(self
+        let token = self
             .classified
             .tokens()
             .get(terminal)
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
-            .token()
-            .span()
-            .bytes())
+            .token();
+        self.classified
+            .token_bytes(token)
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)
     }
 
     /// The source record an item belongs to.

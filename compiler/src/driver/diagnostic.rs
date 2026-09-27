@@ -944,7 +944,7 @@ impl Report for ResolutionIssue {
 
 /// [DIAG-1]'s raw lexical defects: the kind is the defect shape, and the
 /// offending bytes are printed escaped because they are often invisible.
-impl Report for SourceIssue<'_> {
+impl Report for SourceIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self { span, kind } = self;
         fields.field(
@@ -961,7 +961,7 @@ impl Report for SourceIssue<'_> {
 
 /// A formed token that satisfies no terminal predicate [GRAM-1]; its owner
 /// is the envelope's rule.
-impl Report for TerminalIssue<'_> {
+impl Report for TerminalIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self { token, owner: _ } = self;
         fields.field(

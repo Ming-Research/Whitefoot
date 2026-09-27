@@ -91,7 +91,7 @@ impl WrittenArgument {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Diagnostic provenance is not part of function or nominal instance
     /// identity. Stabilize its type axis because discovery rolls back scratch
     /// nominal IDs; an independently attached region vector is not an argument

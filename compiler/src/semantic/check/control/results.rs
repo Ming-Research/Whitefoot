@@ -29,7 +29,7 @@ pub(super) struct ConsumedPlace {
     pub(super) spelling: String,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// The result-list nominal a checked value carries, when it is one
     /// [GRAM-2, CALL-4].
     ///

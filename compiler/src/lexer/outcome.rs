@@ -179,13 +179,13 @@ impl SourceIssueKind {
 
 /// One source-local issue found before a canonical tree exists.
 #[derive(Clone, Copy, Debug)]
-pub struct SourceIssue<'source> {
-    pub(crate) span: SourceSpan<'source>,
+pub struct SourceIssue {
+    pub(crate) span: SourceSpan,
     pub(crate) kind: SourceIssueKind,
 }
 
-impl<'source> SourceIssue<'source> {
-    pub(crate) const fn new(span: SourceSpan<'source>, kind: SourceIssueKind) -> Self {
+impl SourceIssue {
+    pub(crate) const fn new(span: SourceSpan, kind: SourceIssueKind) -> Self {
         Self { span, kind }
     }
 
@@ -197,7 +197,7 @@ impl<'source> SourceIssue<'source> {
 
     /// Returns the exact source-bound location discovered by the scanner.
     #[must_use]
-    pub const fn span(self) -> SourceSpan<'source> {
+    pub const fn span(self) -> SourceSpan {
         self.span
     }
 }
@@ -208,29 +208,29 @@ impl<'source> SourceIssue<'source> {
 /// retained trivia shape. It does not prove parsing, canonical formatting, or
 /// semantic acceptance.
 #[derive(Debug)]
-pub struct LexedBundle<'source> {
-    pub(crate) source: &'source SourceBundle,
-    pub(crate) lexemes: Vec<Lexeme<'source>>,
+pub struct LexedBundle {
+    pub(crate) source: SourceBundle,
+    pub(crate) lexemes: Vec<Lexeme>,
     pub(crate) source_offsets: Vec<usize>,
     pub(crate) token_count: u64,
 }
 
-impl<'source> LexedBundle<'source> {
+impl LexedBundle {
     /// Returns the exact source bundle from which all handles were derived.
     #[must_use]
-    pub const fn source_bundle(&self) -> &'source SourceBundle {
-        self.source
+    pub const fn source_bundle(&self) -> &SourceBundle {
+        &self.source
     }
 
     /// Returns all partition members in source order, then byte order.
     #[must_use]
-    pub fn lexemes(&self) -> &[Lexeme<'source>] {
+    pub fn lexemes(&self) -> &[Lexeme] {
         &self.lexemes
     }
 
     /// Returns the partition of one bundle source, including an empty one.
     #[must_use]
-    pub fn source_lexemes(&self, source: SourceId) -> Option<&[Lexeme<'source>]> {
+    pub fn source_lexemes(&self, source: SourceId) -> Option<&[Lexeme]> {
         let index = usize::try_from(source.ordinal()).ok()?;
         let start = *self.source_offsets.get(index)?;
         let end = *self.source_offsets.get(index.checked_add(1)?)?;
@@ -246,11 +246,11 @@ impl<'source> LexedBundle<'source> {
 
 /// Failure-atomic result of lexing an ordered source bundle.
 #[derive(Debug)]
-pub enum LexOutcome<'source> {
+pub enum LexOutcome {
     /// Every source byte has exactly one token-or-trivia owner.
-    Complete(LexedBundle<'source>),
+    Complete(LexedBundle),
     /// Source bytes do not form a complete lexical partition.
-    SourceIssue(SourceIssue<'source>),
+    SourceIssue(SourceIssue),
     /// Explicit ceilings or host storage prevented completion.
     ResourceFailure(LexResourceFailure),
     /// An internal invariant failed; this is not a source verdict.

@@ -64,7 +64,7 @@ fn parameter_has_exit_state(function: &FunctionSignature, parameter: &ParameterS
             .any(|path| path.root == parameter.declaration)
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn with_postcondition_context<T>(
         &self,
         record: &PostconditionResolutionRecord,

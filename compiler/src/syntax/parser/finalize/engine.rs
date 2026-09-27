@@ -56,8 +56,8 @@ fn check_limit(actual: u64, maximum: u64, limit: FinalizeLimit) -> Result<(), St
     Ok(())
 }
 
-struct Finalizer<'parsed, 'classified, 'lexed, 'source> {
-    parsed: &'parsed ParsedBundle<'classified, 'lexed, 'source>,
+struct Finalizer<'parsed> {
+    parsed: &'parsed ParsedBundle,
     limits: FinalizeLimits,
     work: FinalizeWork,
     roots: Vec<Completed>,
@@ -68,11 +68,8 @@ struct Finalizer<'parsed, 'classified, 'lexed, 'source> {
     source_extents: Vec<BundleSourceExtent>,
 }
 
-impl<'parsed, 'classified, 'lexed, 'source> Finalizer<'parsed, 'classified, 'lexed, 'source> {
-    fn new(
-        parsed: &'parsed ParsedBundle<'classified, 'lexed, 'source>,
-        limits: FinalizeLimits,
-    ) -> Self {
+impl<'parsed> Finalizer<'parsed> {
+    fn new(parsed: &'parsed ParsedBundle, limits: FinalizeLimits) -> Self {
         Self {
             parsed,
             limits,
@@ -145,7 +142,7 @@ impl<'parsed, 'classified, 'lexed, 'source> Finalizer<'parsed, 'classified, 'lex
     }
 
     fn build_source_extents(&mut self) -> Result<(), Stop> {
-        let classified = self.parsed.classified;
+        let classified = &self.parsed.classified;
         let source_count = classified.source_bundle().len();
         let expected_offsets = source_count
             .checked_add(1)
@@ -210,7 +207,7 @@ impl<'parsed, 'classified, 'lexed, 'source> Finalizer<'parsed, 'classified, 'lex
     fn terminal(
         &mut self,
         element_index: usize,
-        token: crate::lexer::Token<'source>,
+        token: crate::lexer::Token,
         predicate: TerminalPredicate,
     ) -> Result<(), Stop> {
         let ordinal = u64::try_from(self.terminals.len())
@@ -764,12 +761,9 @@ impl<'parsed, 'classified, 'lexed, 'source> Finalizer<'parsed, 'classified, 'lex
 
 /// Finalizes one complete private active-specification derivation in linear space and work.
 #[must_use]
-pub fn finalize<'classified, 'lexed, 'source>(
-    parsed: ParsedBundle<'classified, 'lexed, 'source>,
-    limits: FinalizeLimits,
-) -> FinalizeOutcome<'classified, 'lexed, 'source> {
+pub fn finalize(parsed: ParsedBundle, limits: FinalizeLimits) -> FinalizeOutcome {
     match Finalizer::new(&parsed, limits).run() {
-        Ok(topology) => FinalizeOutcome::Complete(FinalizedBundle { parsed, topology }),
+        Ok(topology) => FinalizeOutcome::Complete(Box::new(FinalizedBundle { parsed, topology })),
         Err(Stop::Resource(failure)) => FinalizeOutcome::ResourceFailure(failure),
         Err(Stop::Compiler(failure)) => FinalizeOutcome::CompilerFailure(failure),
     }

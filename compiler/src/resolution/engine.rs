@@ -14,6 +14,7 @@ use super::{
     PreludeDeclarationRecord, ResolutionCompilerFailure, ResolutionIssue, ResolutionIssueKind,
     ResolutionOutcome, ResolvedSyntaxUnit, ResolvedTarget, ScopeId, SourceOrigin,
 };
+use super::{DeclarationKey, ItemHome, ItemKey};
 
 mod admission;
 mod correspondence;
@@ -250,6 +251,7 @@ struct Tables {
     postconditions: Vec<PostconditionResolutionRecord>,
     interface_functions: Vec<super::InterfaceFunction>,
     by_node: super::NodeRecords,
+    items: Vec<Option<ItemKey>>,
 }
 
 enum BuildStop {
@@ -265,9 +267,7 @@ impl From<ResolutionCompilerFailure> for BuildStop {
 
 /// Resolves every active-specification declaration and lexical use in canonical syntax.
 #[must_use]
-pub fn resolve<'classified, 'lexed, 'source>(
-    syntax: CanonicalSyntaxUnit<'classified, 'lexed, 'source>,
-) -> ResolutionOutcome<'classified, 'lexed, 'source> {
+pub fn resolve(syntax: CanonicalSyntaxUnit) -> ResolutionOutcome {
     match build_tables(&syntax) {
         Ok(tables) => ResolutionOutcome::Complete(ResolvedSyntaxUnit {
             syntax,
@@ -280,6 +280,7 @@ pub fn resolve<'classified, 'lexed, 'source>(
             postconditions: tables.postconditions,
             interface_functions: tables.interface_functions,
             by_node: tables.by_node,
+            items: tables.items,
         }),
         Err(BuildStop::Issue(issue)) => ResolutionOutcome::SourceIssue {
             syntax,
@@ -289,7 +290,7 @@ pub fn resolve<'classified, 'lexed, 'source>(
     }
 }
 
-fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, BuildStop> {
+fn build_tables(syntax: &CanonicalSyntaxUnit) -> Result<Tables, BuildStop> {
     let topology = &syntax.finalized.topology;
     let scopes = ScopeBuild::build(topology, syntax.finalized.parsed.classified.source_bundle())?;
     // [DIAG-1] fixes this order: complete unit-wide FN-8 admission precedes
@@ -325,6 +326,7 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
     let bare_set_targets = bare_set_target_roles(topology, &roles)?;
     let classified = syntax.classified_bundle();
     let bundle = classified.source_bundle();
+    let items = item_keys(topology, &roles, bundle)?;
     {
         let mut declarations = Vec::new();
         let mut dependent_declarations = Vec::new();
@@ -440,6 +442,7 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                         diagnostic_origins: prelude.roles[role_index].clone(),
                         module,
                         public,
+                        key: declaration_key(&role.origin, role_index, &items)?,
                     });
                     declaration_by_role[role_index] = Some(record_index);
                     declaration_metas.push(DeclarationMeta {
@@ -656,6 +659,12 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
                 _ => None,
             })
             .collect();
+        // Inventory has rejected every duplicate declaration of one scope, so
+        // each key now names exactly one declaration.
+        let mut keys = std::collections::HashSet::with_capacity(declarations.len());
+        if !declarations.iter().all(|record| keys.insert(&record.key)) {
+            return Err(ResolutionCompilerFailure::DuplicateDeclarationKey.into());
+        }
         let nodes_by_path = scopes.nodes_by_path();
         let by_node = super::NodeRecords::build(
             topology.nodes.len(),
@@ -675,6 +684,10 @@ fn build_tables(syntax: &CanonicalSyntaxUnit<'_, '_, '_>) -> Result<Tables, Buil
             postconditions,
             interface_functions,
             by_node,
+            items: items
+                .into_iter()
+                .map(|item| item.map(|(key, _)| key))
+                .collect(),
         })
     }
 }
@@ -1286,10 +1299,95 @@ const fn is_top_level_role(role: DeclarationRole) -> bool {
     )
 }
 
+/// The key of every item of the unit, by its ordinal among the root's
+/// children, with the index of the role that heads it: the item's function,
+/// struct, enum, interface, binding or constant declaration by home, role and
+/// spelling, or the alias it binds. `program no_heap` heads none.
+fn item_keys(
+    topology: &FinalizedTopology,
+    roles: &[ClassifiedRole],
+    bundle: &crate::SourceBundle,
+) -> Result<Vec<Option<(ItemKey, usize)>>, ResolutionCompilerFailure> {
+    let count = topology
+        .node_children(topology.root)
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?
+        .len();
+    let mut items = vec![None; count];
+    for (index, role) in roles.iter().enumerate() {
+        let RawRoleKind::Declaration(declaration_role) = role.kind else {
+            continue;
+        };
+        let heads = matches!(
+            declaration_role,
+            DeclarationRole::Function
+                | DeclarationRole::Struct
+                | DeclarationRole::Enum
+                | DeclarationRole::Interface
+                | DeclarationRole::Binding
+                | DeclarationRole::NamedConst
+                | DeclarationRole::Alias
+        );
+        let Some(&ordinal) = role.origin.node.components().first() else {
+            continue;
+        };
+        let slot = items
+            .get_mut(ordinal as usize)
+            .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+        if !heads || slot.is_some() {
+            continue;
+        }
+        let file = bundle
+            .file(role.origin.coordinate.source())
+            .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+        let key = if declaration_role == DeclarationRole::Alias {
+            ItemKey::Alias {
+                source: file.logical_path().as_str().to_owned(),
+                spelling: role.spelling.clone(),
+            }
+        } else {
+            ItemKey::Declared {
+                home: ItemHome::of(file, bundle)
+                    .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?,
+                role: declaration_role,
+                spelling: role.spelling.clone(),
+            }
+        };
+        *slot = Some((key, index));
+    }
+    Ok(items)
+}
+
+/// The key of the declaration role `index` forms: its item's key when it
+/// heads the item, and otherwise its place within the item.
+fn declaration_key(
+    origin: &SourceOrigin,
+    index: usize,
+    items: &[Option<(ItemKey, usize)>],
+) -> Result<DeclarationKey, ResolutionCompilerFailure> {
+    let (first, rest) = origin
+        .node
+        .components()
+        .split_first()
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+    let (item, head) = items
+        .get(*first as usize)
+        .and_then(Option::as_ref)
+        .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+    Ok(if *head == index {
+        DeclarationKey::Item(item.clone())
+    } else {
+        DeclarationKey::Local {
+            item: item.clone(),
+            path: rest.to_vec(),
+            ordinal: (origin.role_ordinal, origin.subtoken_ordinal),
+        }
+    })
+}
+
 /// Whether the item that owns this declaration node writes `public` [MOD-6].
 fn declares_public(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     declaration: NodeId,
 ) -> bool {
     topology
@@ -1307,7 +1405,7 @@ fn declares_public(
 /// entry [GRAM-2, MOD-7].
 fn has_body(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     declaration: NodeId,
 ) -> bool {
     writes_fixed(topology, classified, declaration, FixedTerminal::LeftBrace)
@@ -1316,7 +1414,7 @@ fn has_body(
 /// Whether one node writes this fixed terminal directly.
 fn writes_fixed(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     node: NodeId,
     terminal: FixedTerminal,
 ) -> bool {

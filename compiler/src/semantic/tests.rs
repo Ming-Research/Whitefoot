@@ -133,9 +133,7 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
 
 fn with_semantics<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        SemanticOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     with_semantics_inputs(&inputs, run)
@@ -147,9 +145,7 @@ fn with_semantics<ResultValue>(
 /// resolver-owned rather than delayed semantic entry failures.
 fn with_resolution<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        ResolutionOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     let Ok(bundle) = SourceBundle::with_limits(&inputs, SOURCE_LIMITS) else {
@@ -167,13 +163,14 @@ fn with_resolution<ResultValue>(
     ) else {
         panic!("resolution test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("resolution test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("resolution test derivation must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("resolution test source must be canonical");
     };
     run(resolve(canonical))
@@ -202,7 +199,7 @@ fn assert_parse_rule(source: &[u8], rule: crate::SyntaxRule) {
     ) else {
         panic!("parse test source must classify");
     };
-    let outcome = parse(&classified, PARSE_LIMITS);
+    let outcome = parse(classified, PARSE_LIMITS);
     let ParseOutcome::SourceIssue(issue) = outcome else {
         panic!("parse test source must be refused at the parse stage");
     };
@@ -211,9 +208,25 @@ fn assert_parse_rule(source: &[u8], rule: crate::SyntaxRule) {
 
 fn with_semantics_inputs<ResultValue>(
     inputs: &[SourceInput<'_>],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        SemanticOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(SemanticOutcome) -> ResultValue,
+) -> ResultValue {
+    with_resolved_semantics_inputs(inputs, |_, outcome| run(outcome))
+}
+
+/// [`with_semantics`] that also lends the resolved unit the program was
+/// checked over, for a test that reads resolution records beside the checked
+/// program.
+fn with_resolved_semantics<ResultValue>(
+    source: &[u8],
+    run: impl FnOnce(&crate::ResolvedSyntaxUnit, SemanticOutcome) -> ResultValue,
+) -> ResultValue {
+    let inputs = [SourceInput::new("test.wf", source)];
+    with_resolved_semantics_inputs(&inputs, run)
+}
+
+fn with_resolved_semantics_inputs<ResultValue>(
+    inputs: &[SourceInput<'_>],
+    run: impl FnOnce(&crate::ResolvedSyntaxUnit, SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
     let Ok(bundle) = SourceBundle::with_prelude(inputs, SOURCE_LIMITS) else {
         panic!("semantic test bundle must be valid");
@@ -230,13 +243,13 @@ fn with_semantics_inputs<ResultValue>(
     ) else {
         panic!("semantic test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("semantic test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("semantic test derivation must finalize");
     };
-    let canonical = audit_canonical(finalized, CANONICAL_LIMITS);
+    let canonical = audit_canonical(*finalized, CANONICAL_LIMITS);
     let CanonicalOutcome::Complete(canonical) = canonical else {
         panic!("semantic test source must be canonical: {canonical:?}");
     };
@@ -244,8 +257,9 @@ fn with_semantics_inputs<ResultValue>(
     let ResolutionOutcome::Complete(resolved) = outcome else {
         panic!("semantic test source must resolve: {outcome:?}");
     };
-    let checked = crate::native_test_support::timed("semantic-check", || check_semantics(resolved));
-    crate::native_test_support::timed("semantic-test-assertions", || run(checked))
+    let checked =
+        crate::native_test_support::timed("semantic-check", || check_semantics(&resolved));
+    crate::native_test_support::timed("semantic-test-assertions", || run(&resolved, checked))
 }
 
 /// [`with_semantics`] through the test-only dark checker, which retains every
@@ -253,9 +267,7 @@ fn with_semantics_inputs<ResultValue>(
 /// tests can observe complete per-function derivations.
 fn with_semantics_dark<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        SemanticOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     let Ok(bundle) = SourceBundle::with_prelude(&inputs, SOURCE_LIMITS) else {
@@ -273,20 +285,20 @@ fn with_semantics_dark<ResultValue>(
     ) else {
         panic!("semantic test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("semantic test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("semantic test derivation must finalize");
     };
-    let canonical = audit_canonical(finalized, CANONICAL_LIMITS);
+    let canonical = audit_canonical(*finalized, CANONICAL_LIMITS);
     let CanonicalOutcome::Complete(canonical) = canonical else {
         panic!("semantic test source must be canonical: {canonical:?}");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("semantic test source must resolve");
     };
-    run(super::check::check_semantics_dark(resolved))
+    run(super::check::check_semantics_dark(&resolved))
 }
 
 fn assert_rule(source: &[u8], rule: SemanticRule, kind: SemanticIssueKind) {

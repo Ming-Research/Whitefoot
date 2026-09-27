@@ -55,7 +55,7 @@ struct LoopReferenceResolution {
     preservations: Vec<super::super::super::model::CheckedCallSeparation>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     fn loop_binding_agrees(
         &self,
         entry: Option<&LocalBinding>,

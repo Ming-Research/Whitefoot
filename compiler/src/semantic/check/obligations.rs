@@ -19,7 +19,7 @@ use super::super::obligations::{ObligationRecord, ObligationSubject};
 use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::{NodePath, SemanticCompilerFailure, SemanticRule};
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     /// Forms the records of every function in `functions`, once its call
     /// requirements are installed and before any of them is analyzed.
     pub(super) fn form_obligation_records(

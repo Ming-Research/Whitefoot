@@ -49,13 +49,13 @@ fn extend_rendering(
 }
 
 fn render(
-    finalized: &FinalizedBundle<'_, '_, '_>,
+    finalized: &FinalizedBundle,
     limits: CanonicalLimits,
     work: &mut AuditWork,
 ) -> Result<Vec<RenderedSource>, Stop> {
     preflight_sources(finalized, limits, work)?;
     let gaps = build_gap_styles(&finalized.topology, limits, work)?;
-    let classified = finalized.parsed.classified;
+    let classified = &finalized.parsed.classified;
     let mut rendered = Vec::new();
     let sources = classified.source_bundle().len();
     rendered.try_reserve_exact(sources).map_err(|_| {
@@ -94,7 +94,8 @@ fn render(
         for ordinal in start..end {
             work.spend(1)?;
             let (token, predicate) = terminal_element(finalized, ordinal)?;
-            let terminal = expected_terminal_bytes(token, predicate);
+            let terminal = expected_terminal_bytes(classified, token, predicate)
+                .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
             extend_rendering(
                 &mut bytes,
                 terminal.iter().copied(),
@@ -146,10 +147,7 @@ fn render(
 ///
 /// The result is canonical by construction: auditing it always succeeds.
 #[must_use]
-pub fn render_canonical(
-    finalized: &FinalizedBundle<'_, '_, '_>,
-    limits: CanonicalLimits,
-) -> RenderOutcome {
+pub fn render_canonical(finalized: &FinalizedBundle, limits: CanonicalLimits) -> RenderOutcome {
     let mut work = AuditWork::new(limits.max_work);
     match render(finalized, limits, &mut work) {
         Ok(sources) => RenderOutcome::Complete(sources),

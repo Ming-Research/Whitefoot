@@ -15,7 +15,7 @@ pub(super) struct PreludeInventory {
 
 impl PreludeInventory {
     pub(super) fn build(
-        syntax: &CanonicalSyntaxUnit<'_, '_, '_>,
+        syntax: &CanonicalSyntaxUnit,
         roles: &[ClassifiedRole],
     ) -> Result<Self, ResolutionCompilerFailure> {
         let sources = syntax.classified_bundle().source_bundle();

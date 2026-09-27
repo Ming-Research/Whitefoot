@@ -137,14 +137,13 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<String, Back
 /// facts alone. A failed proof leaves a callable library module, not a runtime
 /// precondition test or an acceptance exception for the selected function.
 pub(super) fn caller_source(
-    checked: &crate::CheckedProgram<'_, '_, '_>,
+    resolved: &crate::ResolvedSyntaxUnit,
     function: &crate::semantic::CheckedFunction,
 ) -> Option<(String, String)> {
     use crate::Production;
     use crate::syntax::{FinalizedExtent, NodeId};
 
     let selected = function.name.as_str();
-    let resolved = &checked._resolved;
     let origin = resolved
         .declaration(function.declaration)?
         .origin()

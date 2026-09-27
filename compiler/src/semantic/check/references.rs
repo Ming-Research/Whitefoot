@@ -399,7 +399,7 @@ pub(super) enum RequiredReferent {
     IndexableStorage,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Retains the structural walk's already-resolved [REF-1] paths without
     /// interpreting their roots again. Recording at formation and rebinding
     /// sites also retains origins of invalidated and out-of-scope holders;

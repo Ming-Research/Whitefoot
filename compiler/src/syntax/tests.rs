@@ -30,7 +30,7 @@ fn source_bundle(inputs: &[SourceInput<'_>]) -> Result<SourceBundle, String> {
     SourceBundle::with_limits(inputs, SOURCE_LIMITS).map_err(|error| format!("{error:?}"))
 }
 
-fn lexed(bundle: &SourceBundle) -> Result<LexedBundle<'_>, String> {
+fn lexed(bundle: &SourceBundle) -> Result<LexedBundle, String> {
     match lex(bundle, LEX_LIMITS) {
         LexOutcome::Complete(lexed) => Ok(lexed),
         other => Err(format!("{other:?}")),
@@ -411,8 +411,7 @@ fn source_boundaries_and_empty_partitions_survive_classification() {
             .source_tokens(SourceId::from_ordinal(3))
             .is_none()
     );
-    assert!(core::ptr::eq(classified.lexed_bundle(), &lexed));
-    assert!(core::ptr::eq(classified.source_bundle(), &bundle));
+    assert_eq!(classified.source_bundle(), &bundle);
 }
 
 #[test]

@@ -30,8 +30,8 @@ use split::{Synthesis, SynthesisCell};
 use storage::collect_addressed_bindings;
 
 #[cfg(test)]
-pub fn lower_checked<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub fn lower_checked(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
 ) -> Result<IrProgram, LoweringFailure> {
     lower_checked_with_layout(checked, overlap, TargetLayout::host()?)
@@ -40,8 +40,8 @@ pub fn lower_checked<'classified, 'lexed, 'source>(
 /// Select optional target-fitting loop shapes after semantic acceptance, using
 /// the same target that will qualify and emit their transported signatures.
 #[cfg(test)]
-pub(crate) fn lower_checked_with_layout<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub(crate) fn lower_checked_with_layout(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
 ) -> Result<IrProgram, LoweringFailure> {
@@ -52,8 +52,8 @@ pub(crate) fn lower_checked_with_layout<'classified, 'lexed, 'source>(
 /// the same target that will qualify and emit their transported signatures,
 /// emitting only the functions `roots` reach through their calls when roots
 /// are given: a module program entry's build [MOD-9].
-pub(crate) fn lower_checked_from<'classified, 'lexed, 'source>(
-    checked: CheckedProgram<'classified, 'lexed, 'source>,
+pub(crate) fn lower_checked_from(
+    checked: CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,

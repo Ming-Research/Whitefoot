@@ -59,11 +59,11 @@ use generics::{GenericParameter, GenericSubstitution, PendingGenericRequirement}
 use references::ReferenceInfo;
 
 /// The syntax tree, as the permission ledger's citations reach it.
-struct PermissionLedgerSource<'view, 'unit, 'classified, 'lexed, 'source> {
-    tree: &'view TreeView<'unit, 'classified, 'lexed, 'source>,
+struct PermissionLedgerSource<'view, 'unit> {
+    tree: &'view TreeView<'unit>,
 }
 
-impl LedgerSource for PermissionLedgerSource<'_, '_, '_, '_, '_> {
+impl LedgerSource for PermissionLedgerSource<'_, '_> {
     type Error = SemanticCompilerFailure;
 
     fn location(&self, path: &NodePath) -> Result<(String, u64), Self::Error> {
@@ -510,8 +510,8 @@ enum PreludeType {
     NarrowError,
 }
 
-struct Checker<'unit, 'classified, 'lexed, 'source> {
-    resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+struct Checker<'unit> {
+    resolved: &'unit ResolvedSyntaxUnit,
     /// [DIAG-1, FN-10] retain tail-condition failures until ordinary call
     /// checking, including FN-8 proofs, can establish a prior same-node rule.
     musttail_rejections: RefCell<Vec<SemanticIssue>>,
@@ -528,7 +528,7 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// Whether an undischarged obligation rejects. Always true outside the
     /// test-only observability hooks.
     reject_entailment: bool,
-    tree: TreeView<'unit, 'classified, 'lexed, 'source>,
+    tree: TreeView<'unit>,
     nominals: Vec<CheckedNominal>,
     /// Counts the changes to `nominals`: an instance appended or completed,
     /// or a checkpoint restored. The table's layout recursion is judged again
@@ -659,9 +659,7 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
 /// Unsupported language families remain explicit compiler capability results;
 /// only a proved numbered-rule violation becomes [`SemanticOutcome::SourceIssue`].
 #[must_use]
-pub fn check_semantics<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+pub fn check_semantics(resolved: &ResolvedSyntaxUnit) -> SemanticOutcome {
     check_semantics_with(resolved, true, None)
 }
 
@@ -674,10 +672,10 @@ pub fn check_semantics<'classified, 'lexed, 'source>(
 /// publication, body dispositions and allocation ceilings, such as the
 /// permission table, checks without receipts.
 #[must_use]
-pub(crate) fn check_semantics_with_receipts<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+pub(crate) fn check_semantics_with_receipts(
+    resolved: &ResolvedSyntaxUnit,
     receipts: &dyn receipts::ProofReceipts,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+) -> SemanticOutcome {
     check_semantics_with(resolved, true, Some(receipts))
 }
 
@@ -688,9 +686,7 @@ pub(crate) fn check_semantics_with_receipts<'classified, 'lexed, 'source>(
 /// exactly one path.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_dark<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+pub(crate) fn check_semantics_dark(resolved: &ResolvedSyntaxUnit) -> SemanticOutcome {
     check_semantics_with(resolved, false, None)
 }
 
@@ -698,9 +694,9 @@ pub(crate) fn check_semantics_dark<'classified, 'lexed, 'source>(
 /// only while the arithmetic obligation tests are renamed around IntegerDomain.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_arithmetic_obligations<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+pub(crate) fn check_semantics_arithmetic_obligations(
+    resolved: &ResolvedSyntaxUnit,
+) -> SemanticOutcome {
     check_semantics_with(resolved, true, None)
 }
 
@@ -708,36 +704,33 @@ pub(crate) fn check_semantics_arithmetic_obligations<'classified, 'lexed, 'sourc
 /// only while the division obligation tests are renamed around IntegerDomain.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_division_obligations<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+pub(crate) fn check_semantics_division_obligations(
+    resolved: &ResolvedSyntaxUnit,
+) -> SemanticOutcome {
     check_semantics_with(resolved, true, None)
 }
 
-fn check_semantics_with<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+fn check_semantics_with(
+    resolved: &ResolvedSyntaxUnit,
     reject_entailment: bool,
     receipts: Option<&dyn receipts::ProofReceipts>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+) -> SemanticOutcome {
     let preflight = if resolved.postconditions().is_empty() {
         Ok(())
     } else {
-        Checker::new(&resolved, reject_entailment, None).and_then(|mut checker| {
+        Checker::new(resolved, reject_entailment, None).and_then(|mut checker| {
             let items = checker.item_declarations()?;
             checker.preflight_postcondition_selectors(&items)
         })
     };
     let result = preflight.and_then(|()| {
-        Checker::new(&resolved, reject_entailment, receipts).and_then(|mut checker| {
+        Checker::new(resolved, reject_entailment, receipts).and_then(|mut checker| {
             let result = checker.check_program();
             checker.finish_musttail_checks(result)
         })
     });
     match result {
-        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram {
-            _resolved: resolved,
-            data,
-        })),
+        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
         Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
         Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
         Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
@@ -756,7 +749,7 @@ fn check_semantics_with<'classified, 'lexed, 'source>(
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     fn mark_postcondition_unavailable(&mut self, declaration: DeclarationId) {
         if !self
             .postcondition_unavailable_declarations
@@ -1199,33 +1192,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         declaration: DeclarationId,
         name: &str,
     ) -> String {
-        match self.declaring_module(declaration) {
-            Some(module) if module.package() == crate::Package::Standard => {
-                format!("std.{}.{name}", module.path().join("."))
-            }
-            Some(module) if !module.path().is_empty() => {
-                format!("{}.{name}", module.path().join("."))
-            }
+        match self.declaration_home(declaration) {
+            Some((crate::Package::Standard, path)) => format!("std.{}.{name}", path.join(".")),
+            Some((_, path)) if !path.is_empty() => format!("{}.{name}", path.join(".")),
             _ => name.to_owned(),
         }
     }
 
-    /// The module whose records declare a declaration; `None` for a PRE-1
-    /// declaration and in a source bundle [MOD-3].
-    pub(in crate::semantic::check) fn declaring_module(
+    /// The package and path of the module whose records declare a
+    /// declaration, as its key names them; `None` for a PRE-1 declaration
+    /// [MOD-3].
+    pub(in crate::semantic::check) fn declaration_home(
         &self,
         declaration: DeclarationId,
-    ) -> Option<&crate::ModuleRecord> {
-        self.resolved
-            .declaration(declaration)
-            .and_then(crate::DeclarationRecord::module)
-            .and_then(|module| {
-                self.resolved
-                    .syntax()
-                    .classified_bundle()
-                    .source_bundle()
-                    .module(module)
-            })
+    ) -> Option<(crate::Package, &[String])> {
+        match self.resolved.declaration(declaration)?.key().item() {
+            crate::ItemKey::Declared {
+                home: crate::ItemHome::Module { package, path, .. },
+                ..
+            } => Some((*package, path)),
+            _ => None,
+        }
     }
 
     /// The concrete function ids of a substitution's function-kind actuals
@@ -1495,9 +1482,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// Resolution has already refused a second `heap_decl` and one at any
     /// later item position, so a `heap_decl` present anywhere under the root
     /// is the admitted first-item declaration.
-    fn declares_no_heap(
-        tree: &TreeView<'unit, 'classified, 'lexed, 'source>,
-    ) -> Result<bool, CheckStop> {
+    fn declares_no_heap(tree: &TreeView<'unit>) -> Result<bool, CheckStop> {
         for item in tree.children(tree.root())? {
             if tree.production(*item)? != Production::Item {
                 continue;
@@ -1512,7 +1497,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     fn new(
-        resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+        resolved: &'unit ResolvedSyntaxUnit,
         reject_entailment: bool,
         receipts: Option<&'unit dyn receipts::ProofReceipts>,
     ) -> Result<Self, CheckStop> {

@@ -26,10 +26,10 @@ pub(crate) enum DecisionSelection {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DiagnosticSite<'tokens, 'source> {
+pub(crate) struct DiagnosticSite<'tokens> {
     pub(crate) source: SourceId,
     pub(crate) source_len: u64,
-    pub(crate) tokens: &'tokens [ClassifiedToken<'source>],
+    pub(crate) tokens: &'tokens [ClassifiedToken],
     pub(crate) cursor: usize,
     pub(crate) limits: ParseLimits,
 }
@@ -104,7 +104,7 @@ enum ProbeTask {
 
 fn accepts(
     predicate: LookaheadPredicate,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     position: usize,
 ) -> Result<bool, ParseCompilerFailure> {
@@ -122,7 +122,7 @@ fn accepts(
 
 fn row_score(
     row: SelectRow,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
 ) -> Result<u8, ParseCompilerFailure> {
     let first = row
@@ -143,7 +143,7 @@ fn row_score(
 
 pub(crate) fn select_arm(
     decision: Decision,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     work: &mut Work,
 ) -> Result<DecisionSelection, DiagnosticResult> {
@@ -165,7 +165,7 @@ pub(crate) fn select_arm(
 fn boundary_coordinate(
     source: SourceId,
     source_len: u64,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     offset: usize,
 ) -> Result<SyntaxCoordinate, ParseCompilerFailure> {
@@ -181,17 +181,17 @@ fn boundary_coordinate(
     }
 }
 
-fn has(token: &ClassifiedToken<'_>, predicate: TerminalPredicate) -> bool {
+fn has(token: &ClassifiedToken, predicate: TerminalPredicate) -> bool {
     token.terminals().contains(predicate)
 }
 
-fn fixed(token: &ClassifiedToken<'_>, terminal: FixedTerminal) -> bool {
+fn fixed(token: &ClassifiedToken, terminal: FixedTerminal) -> bool {
     has(token, TerminalPredicate::Fixed(terminal))
 }
 
 fn dotted_override(
     source: SourceId,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     boundary: usize,
     expected: super::ExpectedTerminals,
     work: &mut Work,
@@ -234,7 +234,7 @@ fn dotted_override(
 
 fn forbidden_atom_override(
     source: SourceId,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     atom_only: bool,
     in_contract: bool,
@@ -280,7 +280,7 @@ fn forbidden_atom_override(
 }
 
 fn raw_restriction_owner(
-    token: &ClassifiedToken<'_>,
+    token: &ClassifiedToken,
     expected: super::ExpectedTerminals,
 ) -> Option<SyntaxRule> {
     for predicate in expected.iter() {
@@ -331,7 +331,7 @@ fn is_const_position(expected: super::ExpectedTerminals) -> bool {
     ])
 }
 
-fn actual_name(token: &ClassifiedToken<'_>) -> Option<NamePredicate> {
+fn actual_name(token: &ClassifiedToken) -> Option<NamePredicate> {
     [
         NamePredicate::Identifier,
         NamePredicate::TypeIdentifier,
@@ -345,7 +345,7 @@ fn actual_name(token: &ClassifiedToken<'_>) -> Option<NamePredicate> {
 /// The owning rule and the lexical class the slot admits, for a name slot
 /// filled from another class.
 fn name_slot_owner(
-    token: &ClassifiedToken<'_>,
+    token: &ClassifiedToken,
     transparent: Option<NamePredicate>,
     paths_agree: bool,
 ) -> Option<(SyntaxRule, NamePredicate)> {
@@ -357,7 +357,7 @@ fn name_slot_owner(
 fn construct_override(
     context: DecisionContext,
     source: SourceId,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     expected: super::ExpectedTerminals,
 ) -> Option<SyntaxIssue> {
@@ -383,7 +383,7 @@ fn construct_override(
 fn program_leftover(
     context: DecisionContext,
     source: SourceId,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     maximum: u8,
 ) -> Option<SyntaxIssue> {
@@ -420,7 +420,7 @@ struct Frontier {
 
 fn frontier(
     decision: Decision,
-    tokens: &[ClassifiedToken<'_>],
+    tokens: &[ClassifiedToken],
     cursor: usize,
     work: &mut Work,
 ) -> Result<Frontier, DiagnosticResult> {
@@ -516,7 +516,7 @@ fn frontier(
 fn override_issue(
     decision: Decision,
     frontier: &Frontier,
-    site: DiagnosticSite<'_, '_>,
+    site: DiagnosticSite<'_>,
     context: ProbeContext,
     work: &mut Work,
 ) -> Result<Option<SyntaxIssue>, DiagnosticResult> {
@@ -650,7 +650,7 @@ fn arm_node(decision: Decision, arm: u8) -> Result<Option<GrammarNodeId>, ParseC
 fn descend_or_issue(
     decision: Decision,
     context: ProbeContext,
-    site: DiagnosticSite<'_, '_>,
+    site: DiagnosticSite<'_>,
     work: &mut Work,
     tasks: &mut Vec<ProbeTask>,
 ) -> Result<Option<SyntaxIssue>, DiagnosticResult> {
@@ -701,7 +701,7 @@ fn descend_or_issue(
 pub(crate) fn direct_mismatch(
     expected_terminal: TerminalPredicate,
     context: ProbeContext,
-    site: DiagnosticSite<'_, '_>,
+    site: DiagnosticSite<'_>,
     work: &mut Work,
 ) -> DiagnosticResult {
     let mut builder = ExpectedBuilder::empty();
@@ -770,7 +770,7 @@ pub(crate) fn direct_mismatch(
 fn probe(
     initial: GrammarNodeId,
     context: ProbeContext,
-    site: DiagnosticSite<'_, '_>,
+    site: DiagnosticSite<'_>,
     work: &mut Work,
 ) -> DiagnosticResult {
     let mut cursor = site.cursor;
@@ -991,7 +991,7 @@ fn probe(
 pub(crate) fn diagnose_decision(
     decision: Decision,
     context: ProbeContext,
-    site: DiagnosticSite<'_, '_>,
+    site: DiagnosticSite<'_>,
     work: &mut Work,
 ) -> DiagnosticResult {
     let value = match frontier(decision, site.tokens, site.cursor, work) {

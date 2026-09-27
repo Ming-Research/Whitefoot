@@ -66,7 +66,7 @@ impl LinearityClass {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [PROV-6, STOR-5] whether this type is or reaches a view, which owns
     /// nothing and contributes no release-graph node.
     pub(in crate::semantic) fn is_loan_bearing(&self, ty: CheckedType) -> Result<bool, CheckStop> {
