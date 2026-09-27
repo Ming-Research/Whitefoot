@@ -183,7 +183,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 2. [写顺序的代码，得到并行的结果](docs/articles/sequential-code-parallel-results.md)——编译器如何在普通代码（包括递归）中找到独立性，并把它交给工作线程。
 3. [不用求解器，手工证明](docs/articles/proofs-by-hand.md)——差分约束（difference bounds）、约束闭包和循环不变式，在纸上演算一遍。
 4. [拒绝告诉你什么](docs/articles/what-a-rejection-tells-you.md)——为负责修复代码的 agent 编写的诊断信息。
-5. 整数——每个运算都写明自己的含义。
+5. [整数](docs/articles/integers.md)——每个运算都写明自己的含义。
 6. 只有一种构建——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
 7. 从内存到资源——不用堆、线性资源，以及最高安全模式的计划。
 8. 审查者读什么——把契约和效应行作为审查的对象。

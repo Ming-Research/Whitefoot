@@ -358,7 +358,7 @@ start from the examples above:
    difference bounds, closure and loop invariants, worked on paper.
 4. [What a rejection tells you](docs/articles/what-a-rejection-tells-you.md) —
    diagnostics written for the agent that fixes the code.
-5. Integers — every operation states its meaning.
+5. [Integers](docs/articles/integers.md) — every operation states its meaning.
 6. One build — no panic, no debug/release split, a fixed record on resource
    exhaustion.
 7. Beyond memory — no heap, linear resources, and the plan for a
