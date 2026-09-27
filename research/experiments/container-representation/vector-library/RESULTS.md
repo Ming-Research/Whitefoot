@@ -2556,22 +2556,41 @@ large contributor, but this candidate neither wins the required cells nor
 preserves the full target matrix as a production policy. It is rejected for
 selection; the remaining call/setup/placement and close-cell work stays open.
 
-### Next discriminator: counted consumer with wide tail and truncate `alwaysinline`
+### Counted consumer with wide tail and truncate `alwaysinline`: completed, improved but rejected
 
-The next diagnostic is preregistered before construction. Start from the
-counted-consumer plus wide tail-only `alwaysinline` image just measured, and
-add `alwaysinline` only to the wide
+The preregistered candidate started from the counted-consumer plus wide
+tail-only `alwaysinline` image and added `alwaysinline` only to the wide
 `wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd`
-definition. Keep the source, callbacks, allocation policy, scalar definitions,
-native inputs and counted loop fixed. The code criterion is that the tail's
-truncate call disappears while the same final length store remains, the wide
-work frame does not grow beyond `0x250`, and no 256B owner snapshot, spill or
-new append/helper boundary appears. A failure stops without timing. If it
-passes, rerun the full correctness/accounting pair and one complete 4,116-row
-pair. This is a narrower follow-up to the earlier late-inlining diagnostic:
-it uses the actual forward counted image and exposes only the remaining wide
-truncate boundary. Any timing result combines call/setup/placement effects and
-does not select a general always-inline rule.
+definition. The exact patch is [`tail-truncate-inline.patch`](tail-truncate-inline.patch);
+the paired raw samples are [`control`](ecosystem-tail-truncate-inline-control-samples.csv)
+and [`candidate`](ecosystem-tail-truncate-inline-candidate-samples.csv). The
+wide tail's truncate call disappeared and its final length store remained. The
+wide work frame stayed at `0x250`, with no new owner snapshot or spill; the
+wide drain call site was also exposed because it shares this monomorphized
+truncate instance.
+
+Both arms passed the full correctness matrix (1,260 configurations and 8,820
+executions), and their 295-row accounting outputs were byte-identical with
+SHA-256 `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+The child runs took `80.04 s` for control and `79.65 s` for candidate. The
+control/candidate samples have SHA-256
+`08681c15b3cc9891380bd9587b901c23e32b10a69e06939131ca4ff5bc266123` /
+`ff2430c3c92ab7ca3e870701610df617d4bc473f357544e6b53054ff7f821152`.
+The timed object/image pairs are
+`9a4188f0ef1e96d08e8c8a3cd9b697c46f786bd94e130ed08bdead998d43f926` /
+`e1cf26b095999dc30fcde54d2357fcfdb0b317a1c97c27de4a250f3f10139143` and
+`903f7015d47a9d657639202ec17155b0c24ef4acb0d2a150fec3091169a57e06` /
+`3ca6538159bd32a15dd50ec6b7c1c352c5f342b66b1d4ad20826086a7644490f`.
+
+Against its counted tail-only control, the target summary moved from 19
+passes, 8 deficits and 9 inconclusive cells to 21 passes, 4 deficits and 11
+inconclusive cells. Wide suffix-one medians are now `0.963–0.963` in the
+first cohort and `0.989–1.012` in the second, with range overlap still leaving
+all three cells inconclusive. The remaining four strict deficits are scalar
+growth at population 16 and scalar suffix-two at populations 16, 256 and
+4096. This is a substantial diagnostic improvement, but it does not satisfy
+the per-cell target and is rejected as a production policy; scalar
+reserved-append and suffix-two costs remain open.
 
 ### Empty allocation: two-edge exposure does not remove the allocation
 

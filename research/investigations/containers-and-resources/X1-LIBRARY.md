@@ -142,6 +142,11 @@ suffix-one to near parity but left all three cells range-overlapping, so it is
 also a diagnostic rejection; the paired samples and accounting identity are
 recorded in the [completed result](../../experiments/container-representation/vector-library/RESULTS.md#counted-consumer-with-wide-tail-only-alwaysinline-completed-near-parity-but-rejected).
 
+A final wide truncate-only exposure improved the diagnostic matrix to 21
+passes and four scalar deficits, but the remaining scalar growth/suffix-two
+cells and overlapping wide ranges still reject production selection. The
+paired result is recorded in the [truncate-boundary diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#counted-consumer-with-wide-tail-and-truncate-alwaysinline-completed-improved-but-rejected).
+
 The first recognizer is deliberately closed. After ignoring erased proof
 statements, the whole own-unit body must contain an entry window length `n`,
 exact `n-r` and division by two, the counted first-half take-back/exchange/
