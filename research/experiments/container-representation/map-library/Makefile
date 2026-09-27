@@ -11,9 +11,9 @@ STAGED_SOURCE_DIR := $(abspath $(BUILD)/staged-source)
 STAGED_BASE := $(STAGED_SOURCE_DIR)/sparse-map.wf
 STAGED_SOURCE := $(STAGED_SOURCE_DIR)/staged-map.wf
 LIBRARY_SOURCE := $(ROOT)/lib/containers/hash-map.wf
-SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) $(LIBRARY_SOURCE) map-library.wf
+SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) $(LIBRARY_SOURCE) map-candidates.wf map-library.wf
 COMPACT_SOURCE_DIR := $(abspath $(BUILD)/compact-source)
-COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(LIBRARY_SOURCE) $(COMPACT_SOURCE_DIR)/map-library.wf
+COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(LIBRARY_SOURCE) $(COMPACT_SOURCE_DIR)/map-candidates.wf map-library.wf
 INLINE_SOURCE_DIR := $(abspath $(BUILD)/inline-source)
 INLINE_SOURCE := $(INLINE_SOURCE_DIR)/hash-map.wf
 OBSERVER := $(ROOT)/tests/programs/containers/container-allocation-observer.c
@@ -40,7 +40,7 @@ $(STAGED_SOURCE): $(STAGED_BASE) Makefile
 
 staged-source: $(STAGED_SOURCE)
 
-$(BUILD)/map-native-%$(EXE): map-costs.c Makefile | $(BUILD)
+$(BUILD)/map-native-%$(EXE): map-costs.c map-oracle.h Makefile | $(BUILD)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
 	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror $$flags $< -o $@
 
@@ -134,7 +134,7 @@ $(BUILD)/map-library-retained.ll: $(BUILD)/map-library-normal.ll Makefile
 $(BUILD)/map-library-%.opt.ll: $(BUILD)/map-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
 
-$(BUILD)/control-%.opt.ll: map-costs.c Makefile | $(BUILD)
+$(BUILD)/control-%.opt.ll: map-costs.c map-oracle.h Makefile | $(BUILD)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
 	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -DWITH_WF $$flags -S -emit-llvm $< -o $@
 
@@ -173,10 +173,11 @@ check: native-check check-candidates check-costs
 
 # A reproducible source-shape control, kept separate from the original result
 # and from ordinary correctness gates. It reuses the same build and oracle.
-$(COMPACT_SOURCE_DIR)/.patched: dense-map.wf sparse-map.wf map-library.wf compact-put.patch
+$(COMPACT_SOURCE_DIR)/.patched: dense-map.wf sparse-map.wf map-candidates.wf compact-put.patch
 	mkdir -p $(COMPACT_SOURCE_DIR)
-	cp dense-map.wf sparse-map.wf map-library.wf $(COMPACT_SOURCE_DIR)/
-	patch -s -f -F 0 -p1 -d $(COMPACT_SOURCE_DIR) < compact-put.patch
+	cp dense-map.wf sparse-map.wf map-candidates.wf $(COMPACT_SOURCE_DIR)/
+	sed -e 's,a/map-library.wf,a/map-candidates.wf,' -e 's,b/map-library.wf,b/map-candidates.wf,' compact-put.patch > $(COMPACT_SOURCE_DIR)/compact-put.patch
+	patch -s -f -F 0 -p1 -d $(COMPACT_SOURCE_DIR) < $(COMPACT_SOURCE_DIR)/compact-put.patch
 	touch $@
 
 compact-source: $(COMPACT_SOURCE_DIR)/.patched
@@ -247,3 +248,72 @@ summarize:
 
 clean:
 	rm -rf $(BUILD)
+
+# Explicit current-library comparison. The legacy representation targets above
+# retain their historical sources and recorded results; this path imports the
+# compiler-bundled std module through map-library.wf alone.
+ECO_FAMILY := map
+ECO_ABSL_PACKAGES := absl_flat_hash_map
+ECO_WORK ?= 262144
+include ../ecosystem.mk
+
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+
+$(ECO_BUILD)/map.raw.ll: map-library.wf $(WHITEFOOTC) $(ECO_CONFIG) Makefile | $(ECO_BUILD)
+	$(WHITEFOOTC) --emit-llvm $< -o $@
+
+$(ECO_BUILD)/wf-timed.ll: $(ECO_BUILD)/map.raw.ll Makefile
+	sed -e 's/@main(/@wf_fixture_main(/g' $< > $@
+
+$(ECO_BUILD)/wf-account.ll: $(ECO_BUILD)/map.raw.ll Makefile
+	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' $< > $@
+
+$(ECO_BUILD)/wf-%.o: $(ECO_BUILD)/wf-%.ll $(ECO_CONFIG)
+	$(CLANG) -O3 -Wno-override-module -c $< -o $@
+
+$(ECO_BUILD)/driver-%.o: map-ecosystem.c map-oracle.h $(ECO_CONFIG) Makefile
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) $$account -c $< -o $@
+
+$(ECO_BUILD)/control-%.o: map-costs.c map-oracle.h $(ECO_CONFIG) Makefile
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) -DECO_MAP_CONTROL $$account -c $< -o $@
+
+$(ECO_BUILD)/map-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/wf-%.o \
+                         $(ECO_BUILD)/rust-%.a $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/control-%.o $(NATIVE_OBJECTS)
+	$(CXX) $(ECO_LDFLAGS) $^ $(ECO_ABSL_LDFLAGS) $(ECO_RUST_LINK_FLAGS) $(NATIVE_LINK_FLAGS) -o $@
+
+.SECONDARY: $(addprefix $(ECO_BUILD)/,wf-timed.ll wf-account.ll wf-timed.o wf-account.o driver-timed.o driver-account.o rust-timed.a rust-account.a cpp-timed.o cpp-account.o control-timed.o control-account.o)
+
+ecosystem-build: $(ECO_BUILD)/map-timed$(EXE) $(ECO_BUILD)/map-account$(EXE)
+
+ecosystem-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) check
+	$(ECO_BUILD)/map-account$(EXE) check
+	@set -eu; \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) negative-checksum > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	  test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: independent key-ID/content/outcome oracle'; \
+	  status=0; $(ECO_BUILD)/map-account$(EXE) negative-leak > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	  test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: every allocation is reclaimed'; \
+	  for variant in 0 1 2 3 5 6 7 8; do \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve $$variant > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: reserve capacity floor'; \
+	  done; \
+	  echo 'Map ecosystem: checksum, cleanup and eight omitted-reserve controls rejected'
+
+ecosystem-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) account $(ECO_WORK) > '$(ECO_ACCOUNT)'
+	@echo 'Map allocation accounting: $(ECO_ACCOUNT)'
+
+ecosystem-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) measure $$cohort $(ECO_WORK) > $(ECO_BUILD)/cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/cohort-0.csv > '$(ECO_SAMPLE_FILE)'; \
+	  awk 'NR > 1' $(ECO_BUILD)/cohort-1.csv >> '$(ECO_SAMPLE_FILE)'; \
+	  echo 'Map raw samples: $(ECO_SAMPLE_FILE)'

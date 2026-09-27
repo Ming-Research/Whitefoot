@@ -1,7 +1,7 @@
 # Ordered map library costs
 
 This explicit experiment compares the complete boxed-node B-tree in
-[`ordered-map.wf`](../../../../lib/containers/ordered-map.wf), source-shaped C,
+[`ordered-map.wf`](../../../../lib/std/collections/ordered_map/ordered-map.wf), source-shaped C,
 direct C, and a complete native AVL. The prospective criterion is
 [Ordered map trial at v0.68](../../../investigations/containers-and-resources/X1-LIBRARY.md#ordered-map-trial-at-v068),
 committed before implementation at `5f10d1d3a`. The complete matched matrix
@@ -792,3 +792,79 @@ candidate still loses on replacement. Retain the baseline library. Further
 source or lowering work requires a newly motivated experiment; this bounded
 follow-up does not authorize a third candidate or settle the remaining causal
 attribution. No specification rule changed.
+
+## Current Rust and C++ comparison
+
+The explicit `ecosystem-*` targets implement the separately registered
+[practical comparison contract](../ECOSYSTEM.md). They rebuild the current
+Whitefoot `std::collections::ordered_map`, the unchanged source-shaped C,
+direct B-tree C and AVL controls, Rust `BTreeMap`, C++ `std::map`, and pinned
+Abseil `btree_map`. No historical timing is reused as a denominator. The active
+WF caller now imports the standard module; the insertion and promotion replay
+targets above retain their frozen hashes and require the recorded historical
+source and compiler checkout. Their patches and published data are unchanged.
+
+The five complete traces and their sorted flat-sequence oracle are unchanged.
+They observe 16-byte scalar pairs and 264-byte inline pairs, sorted full
+traversal, half-open ranges, replacement and removed owners, and final cleanup.
+They retain no references across mutations and impose no physical destruction
+order. Rust and C++ use their native entry operations below the 8192-entry
+logical ceiling. At that ceiling, an existing key still replaces its value;
+an absent key returns the offered value and preserves the map. All keys are
+`u64`: retaining an equal stored key is equivalent here, but does not establish
+equivalence for distinct comparator-equal owning keys. The wide Rust and C++
+records are movable inline values without copying APIs or per-value heap
+allocation. Separate boxed-owner audits check transfer and exactly-once
+destruction; the timed records do not measure nested-owner performance.
+
+Normal practical images use Clang `-O3`, C++ `-O3 -DNDEBUG`, and Rust
+`opt-level=3`, without forced operation barriers. Whole traces cross the C ABI;
+internal operations remain ordinarily optimizable. Timed WF and C nodes use
+ordinary `malloc`/`free`, and native containers use their ordinary allocator.
+Separate `ACCOUNT_ONLY` images observe requested allocation bytes and live
+peaks. These are not process RSS or allocator-resident memory. The allocation
+image checks that WF and source C still match, and every implementation must
+return to zero live allocations after each trace. Native container audits also
+cover replacement/refusal at the ceiling, absent removal, empty/inverted
+ranges, complete removal, and reuse. Timed rows check that every allocation
+counter remains zero; allocation costs are reported only by the separate
+accounting image.
+
+Samples use counts 8, 256 and 4096, both payloads, and all five paths. Before
+sampling each cell in each cohort, every variant completes one untimed whole
+trace and passes the independent oracle and cleanup checks. Sample 0 remains
+a recorded warm-up batch; samples 1--5 are paired measurements. Implementation
+order rotates each sample, and cohort 1 reverses cohort 0's order. `ECO_SCALE`
+defaults to 16 and repeats whole traces: build/cleanup uses
+`(4096 / count) * ECO_SCALE` traces, while other paths use `ECO_SCALE` traces
+of `8192 / count` rounds. The trace seeds advance within each batch and match
+across implementations and cohorts. Report elapsed time per complete trace;
+do not subtract setup to claim isolated operation latency. Allocation rows use
+one complete trace per cell with seed 101, separately from timing.
+
+From the repository root, run construction, verification, accounting, and
+timing as separate guarded commands:
+
+```sh
+perl .github/run-check.pl ordered-ecosystem-build \
+  make -C research/experiments/container-representation/ordered-library ecosystem-build \
+  WHITEFOOTC=/path/to/current/whitefootc ABSEIL_PREFIX=/path/to/pinned/abseil
+perl .github/run-check.pl ordered-ecosystem-check \
+  make -C research/experiments/container-representation/ordered-library ecosystem-check \
+  WHITEFOOTC=/path/to/current/whitefootc ABSEIL_PREFIX=/path/to/pinned/abseil
+perl .github/run-check.pl ordered-ecosystem-account \
+  make -C research/experiments/container-representation/ordered-library ecosystem-account \
+  WHITEFOOTC=/path/to/current/whitefootc ABSEIL_PREFIX=/path/to/pinned/abseil
+perl .github/run-check.pl ordered-ecosystem-measure \
+  make -C research/experiments/container-representation/ordered-library ecosystem-measure-only \
+  ABSEIL_PREFIX=/path/to/pinned/abseil ECO_SCALE=16
+make -C research/experiments/container-representation/ordered-library ecosystem-identities \
+  WHITEFOOTC=/path/to/current/whitefootc ABSEIL_PREFIX=/path/to/pinned/abseil
+```
+
+The check target includes bounded negative controls: a deliberately corrupted
+checksum and a simulated unreleased allocation must each exit unsuccessfully
+with the matching diagnostic. Raw samples, accounting, clock resolution, and
+construction identities are written under `.build/ecosystem/`. Construction,
+execution results, and the practical comparison are pending; this source
+extension makes no performance claim and changes no specification rule.

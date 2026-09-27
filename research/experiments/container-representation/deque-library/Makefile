@@ -4,7 +4,8 @@ EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 CLANG ?= clang
 BUILD ?= .build
-SOURCES := $(ROOT)/lib/containers/deque.wf deque-library.wf
+SOURCES := deque-library.wf
+LIBRARY_INPUTS := $(wildcard $(ROOT)/lib/std/collections/deque/*) $(ROOT)/lib/std/modules.wfg
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -14,15 +15,15 @@ include ../../../../compiler/runtime.mk
 $(BUILD):
 	mkdir -p $@
 
-$(BUILD)/deque-library.raw.ll: $(SOURCES) $(WHITEFOOTC) Makefile | $(BUILD)
+$(BUILD)/deque-library.raw.ll: $(SOURCES) $(LIBRARY_INPUTS) $(WHITEFOOTC) Makefile | $(BUILD)
 	$(WHITEFOOTC) --emit-llvm $(SOURCES) -o $@
 
-$(BUILD)/deque-library-normal.ll: $(BUILD)/deque-library.raw.ll
+$(BUILD)/deque-library-normal.ll: $(BUILD)/deque-library.raw.ll Makefile
 	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' -e 's/@main(/@wf_fixture_main(/g' \
 	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
 
-$(BUILD)/deque-library-retained.ll: $(BUILD)/deque-library-normal.ll
-	awk '/^define .* @wf_deque_/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Deque helpers: " retained > "/dev/stderr" }' $< > $@
+$(BUILD)/deque-library-retained.ll: $(BUILD)/deque-library-normal.ll Makefile
+	awk '/^define .* @"?wf_(std[.]collections[.]deque[.]deque_|deque_(library|word|record)_)/ && !/[.]body["(]/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Deque helpers: " retained > "/dev/stderr" }' $< > $@
 
 $(BUILD)/deque-library-%.opt.ll: $(BUILD)/deque-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
@@ -41,7 +42,7 @@ check: $(addprefix $(BUILD)/deque-costs-,normal$(EXE) retained$(EXE)) \
 	@grep -Eq '^declare noalias nonnull ptr @wf_cost_allocate\(i64\)' $(BUILD)/deque-library-normal.ll
 	$(BUILD)/deque-costs-normal$(EXE) check
 	$(BUILD)/deque-costs-retained$(EXE) check
-	@set -eu; wf=`grep -Ec 'call .*@"?wf_deque_(push|pop|rebase|drain)' $(BUILD)/deque-library-retained.opt.ll || true`; \
+	@set -eu; wf=`grep -Ec 'call .*@"?wf_std[.]collections[.]deque[.]deque_(push|pop|rebase|drain)' $(BUILD)/deque-library-retained.opt.ll || true`; \
 	  control=`grep -Ec 'call .*@(word|record)_(loop|bulk)_(push|pop|rebase|drain)' $(BUILD)/control-retained.opt.ll || true`; \
 	  test "$$wf" -gt 0; test "$$control" -gt 0; \
 	  echo "Retained Deque helper call sites: WF=$$wf C=$$control"
@@ -93,3 +94,66 @@ probe-scalar-gep: $(BUILD)/deque-library-normal.ll deque-costs.c $(NATIVE_OBJECT
 
 clean:
 	rm -rf $(BUILD)
+
+# Opt-in practical native-library comparison. Historical O2/retained targets
+# remain above; this O3 series has ordinary timed allocation and a separate
+# allocation observer image. Neither is part of canonical correctness CI.
+ECO_FAMILY := deque
+ECO_WORK ?= 1048576
+ECO_REPEATS ?= 7
+include ../ecosystem.mk
+
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+.SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
+            $(ECO_BUILD)/whitefoot-timed.o $(ECO_BUILD)/whitefoot-account.o \
+            $(ECO_BUILD)/driver-timed.o $(ECO_BUILD)/driver-account.o \
+            $(ECO_BUILD)/rust-timed.a $(ECO_BUILD)/rust-account.a \
+            $(ECO_BUILD)/cpp-timed.o $(ECO_BUILD)/cpp-account.o
+
+$(ECO_BUILD)/whitefoot-timed.ll: $(BUILD)/deque-library.raw.ll Makefile $(ECO_CONFIG)
+	sed 's/@main(/@wf_fixture_main(/g' $< > $@
+
+$(ECO_BUILD)/whitefoot-account.ll: $(BUILD)/deque-library.raw.ll Makefile $(ECO_CONFIG)
+	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
+
+$(ECO_BUILD)/whitefoot-%.o: $(ECO_BUILD)/whitefoot-%.ll $(ECO_CONFIG)
+	$(CLANG) $(ECO_LDFLAGS) -Wno-override-module -x ir -c $< -o $@
+
+$(ECO_BUILD)/driver-%.o: deque-costs.c Makefile $(ECO_CONFIG)
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) $$account -c $< -o $@
+
+$(ECO_BUILD)/deque-costs-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/whitefoot-%.o \
+                                   $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/rust-%.a $(NATIVE_OBJECTS) $(ECO_CONFIG)
+	$(CXX) $(ECO_LDFLAGS) $(ECO_BUILD)/driver-$*.o $(ECO_BUILD)/whitefoot-$*.o \
+	  $(ECO_BUILD)/cpp-$*.o $(ECO_BUILD)/rust-$*.a $(NATIVE_OBJECTS) \
+	  $(NATIVE_LINK_FLAGS) $(ECO_RUST_LINK_FLAGS) -o $@
+
+ecosystem-build: $(ECO_BUILD)/deque-costs-timed$(EXE) $(ECO_BUILD)/deque-costs-account$(EXE)
+
+ecosystem-check: ecosystem-build
+	$(ECO_BUILD)/deque-costs-timed$(EXE) check
+	$(ECO_BUILD)/deque-costs-account$(EXE) check
+	@set -eu; \
+	  if $(ECO_BUILD)/deque-costs-account$(EXE) fail-checksum > $(ECO_BUILD)/fail-checksum.txt 2>&1; then \
+	    echo 'Corrupted checksum was accepted' >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
+	  grep -Fx 'deque library costs: independent logical-order checksum' $(ECO_BUILD)/fail-checksum.txt; \
+	  if $(ECO_BUILD)/deque-costs-account$(EXE) fail-cleanup > $(ECO_BUILD)/fail-cleanup.txt 2>&1; then \
+	    echo 'Unreleased allocation was accepted' >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
+	  grep -Fx 'deque library costs: complete cleanup' $(ECO_BUILD)/fail-cleanup.txt
+	@set -eu; \
+	  if grep -Eq '@wf_(cost_allocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/whitefoot-timed.ll; then \
+	    echo 'Timed Whitefoot includes allocation observer hooks' >&2; exit 1; fi; \
+	  nm -g $(ECO_BUILD)/deque-costs-timed$(EXE) > $(ECO_BUILD)/timed-symbols.txt; \
+	  if grep -Eq 'wf_(cost_allocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/timed-symbols.txt; then \
+	    echo 'Timed native image includes allocation observer hooks' >&2; exit 1; fi
+
+ecosystem-account: $(ECO_BUILD)/deque-costs-account$(EXE)
+	$(ECO_BUILD)/deque-costs-account$(EXE) account > '$(ECO_ACCOUNT)'
+	@echo 'Allocation observations: $(ECO_ACCOUNT)'
+
+ecosystem-measure: $(ECO_BUILD)/deque-costs-timed$(EXE)
+	$(ECO_BUILD)/deque-costs-timed$(EXE) measure $(ECO_WORK) $(ECO_REPEATS) > '$(ECO_SAMPLE_FILE)'
+	@echo 'Raw practical samples: $(ECO_SAMPLE_FILE)'

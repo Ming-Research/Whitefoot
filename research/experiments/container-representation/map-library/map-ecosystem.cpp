@@ -17,8 +17,16 @@ template<class T> using NativeAllocator = std::allocator<T>;
 
 namespace {
 using Word = std::uint64_t;
-using Record = std::array<Word, 32>;
-enum : Word { Hit, Miss, Replace, Churn, Grow, Rehash, Setup, Edit };
+struct Record {
+    std::array<Word, 32> words;
+    Record() = default;
+    Record(const Record&) = delete;
+    Record& operator=(const Record&) = delete;
+    Record(Record&&) noexcept = default;
+    Record& operator=(Record&&) noexcept = default;
+};
+static_assert(sizeof(Record) == 256);
+enum : Word { Hit, Miss, Replace, Churn, Grow, Rehash, Setup, Edit, Policy, ReserveCheck, ReserveOmitted };
 
 Word mix(Word value) {
     value ^= value >> 30; value *= UINT64_C(0xbf58476d1ce4e5b9);
@@ -41,15 +49,15 @@ template<> struct Payload<Word> {
 template<> struct Payload<Record> {
     static Record make(Word seed) {
         Record value;
-        for (std::size_t index = 0; index < value.size(); ++index) value[index] = seed + index;
+        for (std::size_t index = 0; index < value.words.size(); ++index) value.words[index] = seed + index;
         return value;
     }
-    static Word identity(const Record& value) { return value[0]; }
+    static Word identity(const Record& value) { return value.words[0]; }
     static Word content(Word key, Record value) {
-        for (Word word : value) key = key * 131 + word;
+        for (Word word : value.words) key = key * 131 + word;
         return key;
     }
-    static Word increment(Record& value) { return ++value[0]; }
+    static Word increment(Record& value) { return ++value.words[0]; }
 };
 struct Digest {
     Word ordered_value, sum = 0, parity = 0, count = 0;
@@ -69,8 +77,22 @@ using FlatMap = absl::flat_hash_map<Word, V, Hash, std::equal_to<Word>,
                                   NativeAllocator<std::pair<const Word, V>>>;
 
 template<class Map>
-void put(Map& map, Digest& digest, Word key, typename Map::mapped_type offered) {
+void put(Map& map, Digest& digest, Word key, typename Map::mapped_type offered, Word ceiling) {
     using V = typename Map::mapped_type;
+    if (map.size() == ceiling) {
+        // Replacement succeeds at the application ceiling. Only this path
+        // needs a prior lookup to keep a missing insertion from allocating.
+        auto entry = map.find(key);
+        if (entry == map.end()) {
+            digest.ordered(2);
+            digest.ordered(Payload<V>::content(key, std::move(offered)));
+        } else {
+            digest.ordered(1);
+            V old = std::exchange(entry->second, std::move(offered));
+            digest.ordered(Payload<V>::content(entry->first, std::move(old)));
+        }
+        return;
+    }
     auto [entry, inserted] = map.try_emplace(key, std::move(offered));
     digest.ordered(inserted ? 0 : 1);
     if (!inserted) {
@@ -84,26 +106,38 @@ void put(Map& map, Digest& digest, Word key, typename Map::mapped_type offered) 
 template<class Map>
 Word trace(Word capacity, Word count, Word rounds, Word seed, Word path,
            typename Map::hasher hash) {
-    if (path > Edit || path == Rehash) std::abort();
+    if (path > ReserveOmitted || path == Rehash) std::abort();
     using V = typename Map::mapped_type;
     Map map(0, hash);
     map.reserve(capacity);
     Digest digest(seed);
+    const Word ceiling = path == Policy ? 3 : 16384;
     for (Word index = 0; index < count; ++index)
-        put(map, digest, key_at(index), Payload<V>::make(seed + index));
+        put(map, digest, key_at(index), Payload<V>::make(seed + index), ceiling);
+    if (path == Policy) {
+        put(map, digest, key_at(0), Payload<V>::make(seed + 10), ceiling);
+        put(map, digest, key_at(count), Payload<V>::make(seed + 20), ceiling);
+    }
     for (Word round = 0; round < rounds; ++round) {
-        if (path == Grow) {
-            map.reserve(capacity ? capacity * 2 : 1);
+        if (path == Grow || path == ReserveCheck || path == ReserveOmitted) {
+            Word target = capacity ? capacity * 2 : 1;
+            if (path != ReserveOmitted) map.reserve(target);
             digest.ordered(1);
+            if (path != Grow) {
+                if constexpr (requires { map.capacity(); })
+                    digest.ordered(map.capacity() >= target);
+                else
+                    digest.ordered(map.bucket_count() * map.max_load_factor() >= target);
+            }
         }
         for (Word index = 0; index < count; ++index) {
             Word key = key_at(path == Miss ? count + index : index);
-            if (path == Hit || path == Miss || path == Grow) {
+            if (path == Hit || path == Miss || path == Grow || path == ReserveCheck || path == ReserveOmitted) {
                 auto found = map.find(key);
                 digest.ordered(found != map.end());
                 if (found != map.end()) digest.ordered(Payload<V>::identity(found->second));
             } else if (path == Replace) {
-                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index));
+                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index), ceiling);
             } else if (path == Churn) {
                 auto removed = map.extract(key);
                 digest.ordered(!removed.empty());
@@ -114,7 +148,7 @@ Word trace(Word capacity, Word count, Word rounds, Word seed, Word path,
                 auto absent = map.find(key);
                 digest.ordered(absent != map.end());
                 if (absent != map.end()) digest.ordered(Payload<V>::identity(absent->second));
-                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index));
+                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index), ceiling);
             } else if (path == Edit) {
                 auto found = map.find(key);
                 digest.ordered(found != map.end());

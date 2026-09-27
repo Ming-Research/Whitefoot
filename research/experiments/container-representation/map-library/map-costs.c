@@ -70,6 +70,17 @@ static void require(bool condition, const char *message) {
     }
 }
 
+#if defined(ECO_MAP_CONTROL)
+#if defined(ACCOUNT_ONLY)
+extern void *wf_cost_allocate(uint64_t bytes);
+extern void wf_cost_release(void *pointer);
+#else
+/* Practical C attribution image: ordinary allocation, without an observer
+ * wrapper or a forced operation boundary. */
+#define wf_cost_allocate malloc
+#define wf_cost_release free
+#endif
+#else
 NOINLINE void *wf_cost_allocate(uint64_t bytes) {
     require(bytes <= SIZE_MAX - sizeof(AllocationHeader), "allocation extent");
     AllocationHeader *header = malloc(sizeof *header + (size_t)bytes);
@@ -93,6 +104,7 @@ NOINLINE void wf_cost_release(void *pointer) {
     header->data.magic = 0;
     free(header);
 }
+#endif
 
 static void reset_ledger(void) {
     require(ledger.live == 0, "owner remained live between traces");
@@ -1115,69 +1127,7 @@ POLICY_CHECK(record_planned_small, record, Record)
 POLICY_CHECK(word_repaired_small, word, uint64_t)
 POLICY_CHECK(record_repaired_small, record, Record)
 
-/* The oracle uses key IDs and generations, not buckets, probing, a reverse
- * index, or any of the control implementations. All arithmetic wraps in u64. */
-static uint64_t oracle_content(bool wide, uint64_t key, uint64_t seed) {
-    unsigned words = wide ? WORDS : 1;
-    for (unsigned i = 0; i < words; ++i) key = key * UINT64_C(131) + seed + i;
-    return key;
-}
-static uint64_t oracle_edited_content(bool wide, uint64_t key, uint64_t seed, uint64_t rounds) {
-    unsigned words = wide ? WORDS : 1;
-    for (unsigned i = 0; i < words; ++i) {
-        uint64_t word = seed + i;
-        if (i == 0) word += rounds;
-        key = key * UINT64_C(131) + word;
-    }
-    return key;
-}
-static uint64_t oracle(bool wide, uint64_t count, uint64_t rounds,
-                       uint64_t seed, unsigned path) {
-    Digest digest = {seed, 0, 0, 0};
-    for (uint64_t i = 0; i < count; ++i) ordered(&digest, INSERTED);
-    for (uint64_t round = 0; round < rounds; ++round) {
-        if (path == REHASH) {
-            for (uint64_t i = 0; i < count; i += 2) {
-                ordered(&digest, true);
-                ordered(&digest, oracle_content(wide, key_at(i), seed + round * count + i));
-                ordered(&digest, false);
-            }
-            ordered(&digest, true);
-            for (uint64_t i = 0; i < count; ++i) {
-                ordered(&digest, i % 2 != 0);
-                if (i % 2 != 0) ordered(&digest, seed + i);
-            }
-            for (uint64_t i = 0; i < count; i += 2) ordered(&digest, INSERTED);
-            continue;
-        }
-        if (path == GROW) ordered(&digest, true);
-        for (uint64_t i = 0; i < count; ++i) {
-            uint64_t key = key_at(i);
-            if (path == HIT || path == GROW) {
-                ordered(&digest, true); ordered(&digest, seed + i);
-            } else if (path == MISS) ordered(&digest, false);
-            else if (path == REPLACE) {
-                ordered(&digest, REPLACED);
-                ordered(&digest, oracle_content(wide, key, seed + round * count + i));
-            } else if (path == CHURN) {
-                ordered(&digest, true);
-                ordered(&digest, oracle_content(wide, key, seed + round * count + i));
-                ordered(&digest, false); ordered(&digest, INSERTED);
-            } else if (path == EDIT) {
-                ordered(&digest, true);
-                ordered(&digest, seed + i + round + 1);
-            }
-        }
-    }
-    for (uint64_t i = 0; i < count; ++i) {
-        uint64_t generation = path == REPLACE || path == CHURN
-            || (path == REHASH && i % 2 == 0) ? rounds : 0;
-        final_value(&digest, path == EDIT
-            ? oracle_edited_content(wide, key_at(i), seed + i, rounds)
-            : oracle_content(wide, key_at(i), seed + generation * count + i));
-    }
-    return finish(digest);
-}
+#include "map-oracle.h"
 
 typedef uint64_t (*Trace)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 enum { WF_VARIANT = 1, REBUILD_VARIANT = 2, ZERO_REHASH_NOOP = 4,
@@ -1268,6 +1218,9 @@ static void check_ledger(Ledger expected) {
             && ledger.peak == expected.peak, "backing counts, bytes, peak and cleanup");
 }
 
+#if defined(ECO_MAP_CONTROL)
+__attribute__((unused))
+#endif
 static void check(void) {
     const struct { uint64_t capacity, count; } shapes[] = {
         {0, 0}, {1, 0}, {1, 1}, {3, 2}, {3, 3}, {63, 55}, {64, 32}, {64, 56}, {64, 64}
@@ -1425,6 +1378,18 @@ static void measure(unsigned cohort, unsigned set, const char *source_shape) {
 }
 #endif
 
+#if defined(ECO_MAP_CONTROL)
+/* Reuse the existing ordinary sparse implementation and its complete trace.
+ * Only this C ABI boundary remains visible to the ecosystem driver. */
+uint64_t eco_c_map_word(uint64_t capacity, uint64_t count, uint64_t rounds,
+                        uint64_t seed, uint64_t path, uint64_t collide) {
+    return word_sparse_trace(capacity, count, rounds, seed, path, collide);
+}
+uint64_t eco_c_map_record(uint64_t capacity, uint64_t count, uint64_t rounds,
+                          uint64_t seed, uint64_t path, uint64_t collide) {
+    return record_sparse_trace(capacity, count, rounds, seed, path, collide);
+}
+#else
 int main(int argc, char **argv) {
     require(argc >= 2, "usage: map-costs check | clock-quantum | measure 0|1 primary|boundary|edit|rebuild|library|inactive original|compact");
     if (strcmp(argv[1], "check") == 0) {
@@ -1458,3 +1423,4 @@ int main(int argc, char **argv) {
     else require(false, "unknown mode");
     return 0;
 }
+#endif

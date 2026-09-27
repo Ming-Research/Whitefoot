@@ -1,5 +1,133 @@
 # Growable vector library costs
 
+## Current standard-container comparison
+
+The opt-in `ecosystem-*` targets implement the question and criteria in
+[ECOSYSTEM.md](../ECOSYSTEM.md). They import the current
+[`std::collections::vector`](../../../../lib/std/collections/vector/module.wfm)
+module and compare complete traces with Rust `Vec` and C++ `std::vector`.
+The four C variants remain source-composition controls. All implementations
+are freshly built at normal O3 against the same recorded source revision;
+the historical O2 samples below are separate evidence.
+
+The native adapters own the entire trace behind one C ABI call. `Vec` uses
+its own push, insert, remove, swap-remove and drain operations. C++ uses its
+ordinary vector operations, moving each removed value to the consumer before
+erasing it because erase does not return an owner. Every word of the scalar
+or 256-byte inline record enters the same ordered digest. Rust records are
+neither `Copy` nor `Clone`; C++ records delete copy construction and assignment.
+Neither native record adds an allocation. These values do not establish
+nested-owner or expensive-destructor performance.
+
+No trace keeps a reference into the collection across mutation. Required
+order is the consumed result sequence, including the replacement by the last
+item after swap removal. The retained prefix and backing survive suffix
+cycles and are fully consumed and released afterward. Whitefoot's static
+ceiling is 8193; tested logical populations never require an operation beyond
+that ceiling, and native growth capacities remain unconstrained.
+
+The ecosystem matrix includes reserved, growth, reuse, and suffix removal
+counts zero through three, at populations 16, 256 and 4096, with both payloads.
+The suffix-zero cell is an overhead control: it retains the initial prefix
+and consumes it at the end, with no values removed during each cycle. Treat
+it separately from comparisons of useful container mutations. Correctness
+also includes populations 0, 1, 2, 3, 8, 63 and 8192, rounds 0, 1 and 3, and
+seeds 0, 17 and `UINT64_MAX`. Its independent arithmetic oracle constructs
+no vector and derives every consumed seed and word from the logical trace.
+
+Run construction, correctness, accounting and timing as separate guarded
+commands from the repository root, replacing `<target>` in this command:
+
+```sh
+perl .github/run-check.pl vector-ecosystem \
+  make -C research/experiments/container-representation/vector-library <target>
+```
+
+The targets are `ecosystem-build`, `ecosystem-check`, `ecosystem-account`, and
+`ecosystem-measure`. The last two write `.build/ecosystem/accounting.csv` and
+`.build/ecosystem/measurements.csv`. The native compiler identities and flags
+are in `.build/ecosystem/configuration.txt`. Keep them with source/compiler
+identities and any reported samples. These files retire with this comparison
+or a maintained successor that preserves its evidence.
+
+`ECO_ACCOUNT` and `ECO_SAMPLE_FILE` override those output paths.
+`ECO_WORK` defaults to 1048576 and `ECO_REPEATS` to 7. For the three full-chain
+paths, rounds are `max(1, ECO_WORK / count)`. For suffix paths, rounds are
+`max(1, ECO_WORK / max(removed, 1))`. Each timed call completes one trace.
+Each cell warms every implementation with at least one round, otherwise one
+sixteenth of the timed rounds; two cohorts then rotate implementation order
+by sample, with the second cohort reversing that rotation. CSV rows retain
+work, rounds, cohort and sample, so an extended bounded run remains explicit.
+Whole-trace ratios include setup, mutation, consumption and cleanup; they
+are not isolated append, growth or truncation latency. Check short cells
+before treating their ratios as stable.
+
+Timed images use ordinary allocation and have no observer hooks. Allocation
+images use the same native algorithms with accounting hooks; they run three
+rounds per cell. Requested-byte peaks exclude the observer's private header
+and are neither RSS nor allocator-resident bytes. Rust's ordinary `System`
+reallocation is preserved: `peak_bytes` is logical live requested storage,
+while `peak_overlap_upper_bytes` also permits old/new requests to overlap at
+reallocation and does not assert that this overlap actually occurred.
+`requests` includes successful reallocations, `realloc_requests` counts them
+separately, and `releases` counts final deallocations; a complete native trace
+has `requests == releases + realloc_requests`. Whitefoot and C additionally
+check independently calculated request, requested-byte and peak formulas.
+The check target exercises a corrupted checksum and an unreleased allocation,
+requiring the corresponding failures, and rejects observer symbols in the
+timed image. No new specification rule is selected by this comparison.
+
+### Verified correctness and allocation observations
+
+The current guarded build and both correctness images completed successfully.
+Each image passed 1,260 configurations and 8,820 complete trace
+executions, for 17,640 executions across timed and accounting builds.
+The negative checksum and cleanup controls produced their expected rejection
+messages; the target also checked that observer hooks are absent from the
+timed image. The allocation CSV contains 294 rows. Independently reading
+the CSV confirms equal complete checksums within every application cell,
+balanced allocation lifetimes, and the stated peak upper bound; every C
+control's allocation columns equal Whitefoot's corresponding row.
+
+The raw `.build/ecosystem/accounting.csv` SHA-256 is
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`. These are requested-storage observations
+from the accounting build, not timed results. Build/check phase durations
+belong to the central [experiment record](../ECOSYSTEM.md); fresh container
+timing is pending.
+
+At population 4096, the three-round growth trace produced the following
+allocation totals. All four C controls have the Whitefoot entries shown.
+
+| Payload bytes | Implementation | Requests | Reallocations | Releases | Requested bytes | Logical peak bytes | Possible-overlap upper bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Whitefoot / C controls | 45 | 0 | 45 | 393,912 | 98,336 | 98,336 |
+| 8 | Rust Vec | 36 | 33 | 3 | 393,120 | 65,536 | 98,304 |
+| 8 | C++ std::vector | 42 | 0 | 42 | 393,192 | 98,304 | 98,304 |
+| 256 | Whitefoot / C controls | 45 | 0 | 45 | 12,582,864 | 3,145,760 | 3,145,760 |
+| 256 | Rust Vec | 36 | 33 | 3 | 12,579,840 | 2,097,152 | 3,145,728 |
+| 256 | C++ std::vector | 42 | 0 | 42 | 12,582,144 | 3,145,728 | 3,145,728 |
+
+The 36 Rust requests consist of three initial allocations and 33 successful
+reallocations. Three final releases therefore complete its allocation
+lifetimes; comparing release counts alone with Whitefoot's 45 would be
+misleading. Rust's lower logical peak does not establish a lower physical
+peak: its possible-overlap bound is nearly the C++ peak and the observer
+does not measure whether System realloc moved its backing.
+
+Reserved traces at this population use six requests/releases for Whitefoot
+and three for either native vector across three rounds. The requested totals
+are 98,424 versus 98,328 bytes for scalars, and 3,146,592 versus 3,146,496 for
+wide records. Whitefoot constructs and replaces its empty header-backed
+window; the native reserve starts without that heap-owned empty header.
+Reuse and all four suffix paths use two Whitefoot requests/releases and one
+native request/release for the entire trace. Their peaks are 32,808 versus
+32,776 bytes for scalars and 1,048,864 versus 1,048,832 for records. Thus the
+extra initial request is visible even where large-population byte totals are
+close. These policy and representation observations motivate timing; they
+do not assign a causal elapsed percentage.
+
+## Historical source-composition evidence
+
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
 passes this experiment's complete correctness matrix and finds unchanged
 native bodies in both modes, so it adds no Vector timing samples. Its v0.68
@@ -9,7 +137,7 @@ rejected that compiler optimization on the Map and Slab evidence; Vector's
 unchanged bodies do not establish a benefit or override those regressions.
 
 This experiment bundles the current reusable
-[`GrowVector`](../../../../lib/containers/grow-vector.wf), not a second
+[`GrowVector`](../../../../lib/std/collections/vector/grow-vector.wf), not a second
 benchmark-only implementation. The selection criteria precede measurement in
 [X1-LIBRARY.md](../../../investigations/containers-and-resources/X1-LIBRARY.md#vector-consumption-trial).
 The paired measurements use kernel v0.62's global heap and total allocation.

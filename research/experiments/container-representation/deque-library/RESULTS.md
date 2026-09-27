@@ -1,6 +1,150 @@
 # Deque library costs
 
-This explicit experiment bundles [`deque.wf`](../../../../lib/containers/deque.wf).
+## Current standard-container comparison
+
+The opt-in `ecosystem-*` targets implement [ECOSYSTEM.md](../ECOSYSTEM.md) with
+the current [`std::collections::deque`](../../../../lib/std/collections/deque/module.wfm)
+module, Rust `VecDeque`, and C++ `std::deque`. The C loop and bulk variants
+remain attribution controls. This fresh O3 comparison is separate from the
+historical O2 and retained-helper measurements below.
+
+The whole trace stays inside each implementation behind one C ABI call;
+there is no per-operation foreign call. The common application tasks are
+forward churn, reverse churn, actual growth, and setup plus cleanup. No trace
+keeps references into the deque across mutation. All removed owners and all
+remaining elements are consumed in logical order and every payload word
+enters the digest. Native values are an 8-byte scalar or a 256-byte inline
+record, with Rust `Copy`/`Clone` absent and C++ copies deleted. There is no
+per-element allocation and no nested-owner performance claim.
+
+Growth (source path 3) fills `count`, then appends `count + 1` further values
+and consumes all `2 * count + 1` owners. Whitefoot explicitly rebases its full
+ring to that capacity. Rust starts with capacity for `count` and grows through
+its ordinary deque policy. C++ deque has no reserve operation and keeps its
+ordinary block policy. Native capacities and reference stability guarantees
+are not made to imitate Whitefoot. The former wrapped-rebase trace (source
+path 2) is still checked for Whitefoot/C, but excluded from native ranking:
+it never uses its extra capacity and neither native API promises its exact
+conversion. Whitefoot's fixture bounds the original population by 4096 and
+the larger backing by 8193.
+
+The independent oracle derives the logical sequence arithmetically without
+constructing a deque. Correctness includes counts 0, 1, 2, 3, 16, 63, 256 and
+4096; rounds 0, 1 and 3; seeds 0, 17 and `UINT64_MAX`; and both payloads. The
+zero-count growth trace still appends and consumes one value whenever rounds
+are nonzero. The measured populations are 16, 256 and 4096.
+
+Run the phases separately under the repository guard from the root:
+
+```sh
+perl .github/run-check.pl deque-ecosystem \
+  make -C research/experiments/container-representation/deque-library <target>
+```
+
+Replace `<target>` by `ecosystem-build`, `ecosystem-check`,
+`ecosystem-account`, or `ecosystem-measure`. Outputs live in
+`.build/ecosystem/`: `configuration.txt` records native flags and toolchains,
+`accounting.csv` contains allocation observations, and `measurements.csv`
+contains raw timed samples. Keep these with recorded source/compiler
+identities. These adapters and targets retire with this experiment or a
+maintained successor that preserves its evidence.
+
+`ECO_ACCOUNT` and `ECO_SAMPLE_FILE` override those output paths.
+`ECO_WORK` defaults to 1048576 and `ECO_REPEATS` to 7. Each active trace uses
+`max(1, ECO_WORK / count)` rounds. A churn round performs `count` pop/push
+pairs; a growth round constructs and consumes `2 * count + 1` values.
+Setup-cleanup instead has zero rounds and repeats that many complete
+fill/drain/free traces. Thus equal work does not mean equal individual
+operation counts between path names. Warmup runs every implementation with
+one sixteenth of the nonzero rounds or trace repetitions, clamped to one.
+Two cohorts rotate implementation order by sample and reverse it in the
+second cohort. The CSV records work, rounds and repetitions. Compare whole
+trace costs; do not subtract setup or call these isolated growth pauses.
+Extend bounded runs where a cell remains too short or unstable.
+
+Timed images use ordinary allocation and omit all observer hooks. Separate
+allocation images execute three rounds (zero for setup) and one trace per
+cell. Whitefoot/C request, requested-byte and peak formulas are independent
+of observed counters; native policies are measured without forcing those
+formulas. All paths require complete cleanup and balanced allocation lifetimes.
+`requests` includes successful reallocations, `realloc_requests` counts them
+separately, and final deallocations are `releases`; native totals must satisfy
+`requests == releases + realloc_requests`. `peak_bytes` records logical live
+requested storage. `peak_overlap_upper_bytes` permits old and new requests
+to overlap at Rust realloc without claiming that hidden allocator storage
+did overlap. Both exclude private observer headers, RSS and allocator-resident
+memory. `ecosystem-check` requires checksum-corruption and unreleased-allocation
+controls to fail and verifies that timed images contain no observer symbols.
+No specification rule changes for this comparison.
+
+### Verified correctness and allocation observations
+
+The current guarded build and both correctness images completed successfully.
+Each image passed 576 configurations and 2,592 complete trace
+executions, for 5,184 executions across timed and accounting builds.
+The negative checksum and cleanup controls produced their expected rejection
+messages; the target also checked that observer hooks are absent from the
+timed image. The allocation CSV contains 120 rows. Independently reading
+the CSV confirms equal complete checksums within every application cell,
+balanced allocation lifetimes, and the stated peak upper bound; every C
+control's allocation columns equal Whitefoot's corresponding row.
+
+The raw `.build/ecosystem/accounting.csv` SHA-256 is
+`0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`. These are requested-storage observations
+from the accounting build, not timed results. Build/check phase durations
+belong to the central [experiment record](../ECOSYSTEM.md); fresh container
+timing is pending.
+
+At population 4096, forward churn, reverse churn and setup-cleanup have
+identical allocation columns within each implementation and payload, despite
+their different consumed sequences and round counts. The table shows forward
+churn; both C controls have the Whitefoot entries shown.
+
+| Payload bytes | Implementation | Requests | Reallocations | Releases | Requested bytes | Logical peak bytes | Possible-overlap upper bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Whitefoot / C controls | 1 | 0 | 1 | 32,792 | 32,792 | 32,792 |
+| 8 | Rust VecDeque | 1 | 0 | 1 | 32,768 | 32,768 | 32,768 |
+| 8 | C++ std::deque | 14 | 0 | 14 | 37,112 | 37,056 | 37,056 |
+| 256 | Whitefoot / C controls | 1 | 0 | 1 | 1,048,600 | 1,048,600 | 1,048,600 |
+| 256 | Rust VecDeque | 1 | 0 | 1 | 1,048,576 | 1,048,576 | 1,048,576 |
+| 256 | C++ std::deque | 267 | 0 | 267 | 1,060,856 | 1,058,816 | 1,058,816 |
+
+That equality does not generalize to every smaller population. With 16 scalar
+items, C++ forward churn requests 4,104 bytes in two requests, while reverse
+churn requests 8,216 in four. With 256 scalar items, setup-cleanup requests
+4,104 bytes in two requests but churn requests 8,216 in four. Native block
+policy therefore remains an observable part of the path, rather than a fixed
+per-container adjustment. At 16 scalar items, Whitefoot and Rust forward
+churn request 152 and 128 bytes respectively; the large-population ratios
+would conceal this small-population overhead.
+
+The three-round growth trace at population 4096 has different allocation
+tradeoffs:
+
+| Payload bytes | Implementation | Requests | Reallocations | Releases | Requested bytes | Logical peak bytes | Possible-overlap upper bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Whitefoot / C controls | 6 | 0 | 6 | 295,080 | 98,360 | 98,360 |
+| 8 | Rust VecDeque | 9 | 6 | 3 | 688,128 | 131,072 | 196,608 |
+| 8 | C++ std::deque | 69 | 0 | 69 | 210,408 | 70,016 | 70,016 |
+| 256 | Whitefoot / C controls | 6 | 0 | 6 | 9,438,096 | 3,146,032 | 3,146,032 |
+| 256 | Rust VecDeque | 9 | 6 | 3 | 22,020,096 | 4,194,304 | 6,291,456 |
+| 256 | C++ std::deque | 1,572 | 0 | 1,572 | 6,352,872 | 2,113,536 | 2,113,536 |
+
+Rust records one initial allocation and two reallocations per growth round.
+Its logical peak corresponds to storage for 16,384 elements for the required
+8,193, consistent with the native growth policy crossing that capacity.
+Whitefoot explicitly chooses 8,193 slots and holds the old 4,096-slot backing
+while rebasing. C++ growth makes substantially more requests for wide values,
+yet has a lower logical requested-byte peak than either contiguous-ring
+implementation in this cell. Request count, cumulative requested bytes and
+live peak answer different questions; none is an elapsed-cost or RSS result.
+Rust's possible-overlap column is an upper bound around realloc, so its
+relationship to Whitefoot's observed old/new overlap cannot establish a
+physical-memory ratio.
+
+## Historical source-composition evidence
+
+This explicit experiment bundles [`deque.wf`](../../../../lib/std/collections/deque/deque.wf).
 It is outside daily correctness CI. `make check` verifies the operation traces;
 `make measure` checks them first and writes interleaved timing samples under
 `.build/`. Retire this experiment when a maintained successor covers the same

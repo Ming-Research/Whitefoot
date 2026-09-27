@@ -20,6 +20,96 @@ consumer for the [same-source compiler comparison](#same-source-inactive-storage
 Keep this experiment while it owns these comparisons; remove it when a
 maintained successor preserves the same contracts and evidence.
 
+## Current Rust and C++ ecosystem comparison
+
+The explicit `ecosystem-*` targets implement the separate
+[ecosystem comparison contract](../ECOSYSTEM.md). Their sources are
+[the current Whitefoot fixture](map-library.wf), [Rust adapter](map-ecosystem.rs),
+[C++ adapters](map-ecosystem.cpp), and [driver](map-ecosystem.c).
+The driver and historical C controls share [the key-ID oracle](map-oracle.h).
+The ordinary direct sparse C control is rebuilt from [map-costs.c](map-costs.c)
+with two whole-trace exports, reusing its existing algorithm. Its rows are
+labelled `c-sparse-direct`: an attribution control with the supplied mix64
+protocol, not a native default-map member or a clone of Whitefoot's source.
+Construction and execution results are pending; the historical timings below
+are not measurements of these adapters or the current bundled standard library.
+
+The measured capacity/population pairs are 3/2, 64/56 and 4096/3584, each with
+an 8-byte scalar or a move-only 256-byte inline value. The application observes
+lookup hit/miss, the complete displaced value on replacement, remove/miss/put
+churn, in-place first-word editing, fill/free, and reserve for more entries.
+All final values contribute to an order-independent digest before cleanup.
+No reference escapes an operation, and neither reference stability nor
+iteration order is an application requirement. Inline width is not evidence
+about nested owning values.
+
+Native capacities, bucket counts, load limits and growth remain the libraries'
+ordinary policies. The capacity column is an application request, not a claim
+of equal bucket capacity. Rust uses `with_capacity_and_hasher` and reserves
+additional entries relative to length; C++ uses `reserve` with a total entry
+count. Whitefoot reserves an exact bucket count. Each wrapper enforces the
+same logical entry ceiling; replacement at that ceiling succeeds and only a
+missing insertion returns its offered value. Entry/`try_emplace` paths avoid
+a preliminary lookup below the ceiling. The untimed ceiling witness fixes
+capacity and population at three and consumes both replaced and refused
+values. Equal `u64` keys are indistinguishable, so native retention of the
+stored key matches this trace without establishing equivalence for distinct,
+comparator-equal owning keys.
+
+`native-default` uses Rust `RandomState`, `std::hash<u64>`, and Abseil's default
+hasher. Whitefoot's library requires a supplied protocol; its salted mix64
+protocol is explicitly labelled in both series. `aligned-hash` supplies that
+same mix64 calculation to every implementation, with native layouts and load
+policies still intact. Forced collisions occur only in aligned correctness
+checks. Rust has no portable same-capacity rehash API, so that historical path
+is excluded from this common ranking.
+
+Reserve measurements request more entry capacity and verify existing values;
+they do not insert the additional population or measure a growth pause.
+Untimed reserve witnesses observe the public capacity floor. Eight negative
+controls deliberately omit reserve for each implementation/payload at 3/2;
+each must fail, so prior overallocation cannot silently make this witness
+vacuous. A corrupted digest and a simulated live allocation must also fail
+their respective checks with the expected reason.
+The C attribution control participates in the seven ordinary paths and their
+oracle/accounting checks; its existing algorithm has no new ceiling or
+reserve-diagnostic entry path and is excluded from those added witnesses.
+
+Normal images use Clang `-O3`, Rust `opt-level=3`, ordinary allocation and a
+single C ABI call per complete trace. Operations have no forced helper
+barriers. Accounting uses separate images and reports requested allocations,
+requested bytes and peak live requested bytes, including native nodes and
+backings. Those peaks exclude allocator metadata and do not measure RSS.
+The default work count is 262144 item-rounds; reserve and fill/free distribute
+that count over complete traces. Each cell has two checked warmups and eleven
+rotating-order samples in each of two reversed cohorts. Short or unstable
+cells remain inconclusive under the shared measurement criteria.
+
+Set `ABSEIL_PREFIX` to the external pinned Abseil installation. Run build,
+correctness, accounting and measurement as separate guarded stages from the
+repository root:
+
+```sh
+perl .github/run-check.pl map-ecosystem-build make -C research/experiments/container-representation/map-library ecosystem-build ABSEIL_PREFIX="$ABSEIL_PREFIX"
+perl .github/run-check.pl map-ecosystem-check make -C research/experiments/container-representation/map-library ecosystem-check ABSEIL_PREFIX="$ABSEIL_PREFIX"
+perl .github/run-check.pl map-ecosystem-account make -C research/experiments/container-representation/map-library ecosystem-account ABSEIL_PREFIX="$ABSEIL_PREFIX"
+perl .github/run-check.pl map-ecosystem-measure make -C research/experiments/container-representation/map-library ecosystem-measure ABSEIL_PREFIX="$ABSEIL_PREFIX"
+```
+
+`WHITEFOOTC`, `ECO_WORK`, `ECO_BUILD`, `ECO_SAMPLE_FILE` and `ECO_ACCOUNT` are
+overridable. By default `.build/ecosystem/` owns configuration, ordinary and
+accounting images, separate cohort samples, combined `measurements.csv` and
+`accounting.csv`. None is part of canonical correctness CI.
+
+The older candidate bindings and traces now live in
+[map-candidates.wf](map-candidates.wf), included only by the historical
+representation targets. The actual library trace has one owner in
+`map-library.wf` and imports `std::collections::hash_map`. Historical patches,
+archives and measured source identities below remain unchanged; reproduce
+those results from their recorded revisions. This task does not migrate the
+older candidate libraries or retired `lib/containers` overlay controls to the
+current module and enum-constructor syntax.
+
 ## Contract fixed before measurement
 
 All candidates own inline keys and values. Put installs the offered

@@ -19,6 +19,7 @@ struct Record {
     Record(Record &&) noexcept = default;
     Record &operator=(Record &&) noexcept = default;
 };
+static_assert(sizeof(Record) == 256);
 
 void consume(std::uint64_t &digest, std::uint64_t value) {
     digest = digest * UINT64_C(131) + value;

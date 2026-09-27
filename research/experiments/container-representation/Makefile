@@ -2,6 +2,7 @@ ROOT := $(abspath ../../..)
 CARGO ?= cargo
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
+.DEFAULT_GOAL := x1-observe
 
 .PHONY: check measure compiler x1-observe slab-deque-check slab-deque-measure map-native-check map-check map-measure \
         ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
@@ -14,7 +15,11 @@ ECOSYSTEM_FAMILIES := vector-library deque-library map-library priority-library 
 ABSEIL_PREFIX ?=
 
 ecosystem-build ecosystem-check ecosystem-account ecosystem-measure:
-	@set -eu; for family in $(ECOSYSTEM_FAMILIES); do \
+	@set -eu; \
+	  if test '$(origin ECO_WORK)' != undefined; then \
+	    echo 'ECO_WORK has family-specific units; set it on a direct family command.' >&2; exit 2; \
+	  fi; \
+	  for family in $(ECOSYSTEM_FAMILIES); do \
 	  $(MAKE) -C $$family $@ WHITEFOOTC="$(WHITEFOOTC)" ABSEIL_PREFIX="$(ABSEIL_PREFIX)"; \
 	done
 

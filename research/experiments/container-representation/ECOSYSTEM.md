@@ -6,11 +6,12 @@ How does the current Whitefoot library perform against ordinary production
 Rust and C++ containers when they complete the same application task, and
 which observed differences deserve the next investigation?
 
-This experiment starts from main `0f22b026b`, after the complete container
-library delivery. It does not select a language amendment or change a library
-algorithm. Existing C controls remain attribution tools, not an asserted
-performance ceiling. The sources, commands, toolchain identities, raw samples,
-and qualifications below must travel with any reported ratio.
+The comparison was framed after the container delivery at `0f22b026b`; its
+implementation now incorporates main `ad51e05df`. No timings were published
+against the earlier baseline. It does not select a language amendment or
+change a library algorithm. Existing C controls remain attribution tools,
+not an asserted performance ceiling. The sources, commands, toolchain
+identities, raw samples, and qualifications below travel with any ratio.
 
 | Whitefoot family | Rust baseline | C++ baselines |
 |---|---|---|
@@ -91,7 +92,11 @@ table layouts and load policies remain visible in both series.
   peak is not process RSS or allocator-resident memory.
 - Use warmup and repeated paired samples with rotating implementation order,
   including a reverse-order cohort. Preserve all samples. A short or unstable
-  cell is inconclusive until a longer bounded run resolves it.
+  cell is inconclusive until a longer bounded run resolves it. Aim for at
+  least 1 ms per ranked sample; replay shorter cells with more work before
+  making a close ranking. Report a cohort discrepancy above 10% in the ratio
+  as unstable instead of merging the cohorts into one apparently precise
+  number.
 - Report each workload and payload independently. Use whole-trace elapsed
   time and per-operation normalization only where the denominator is defined;
   do not manufacture isolated lookup or growth latency by subtracting setup.
@@ -107,20 +112,54 @@ table layouts and load policies remain visible in both series.
 
 ## Reproduction and results
 
-Implementation and measurements are pending. Explicit experiment targets will
-be added to the existing container-representation Makefile; none will become
-a dependency of canonical correctness CI. The final record will link the
-family sources and raw samples, state validated coverage and limitations,
-and rank follow-up investigations without silently selecting optimizations.
+The explicit `ecosystem-build`, `ecosystem-check`, `ecosystem-account`, and
+`ecosystem-measure` targets run the five family drivers sequentially. Wrap
+them with the repository's `perl .github/run-check.pl <label> <command> ...`
+guard and supply the prepared `WHITEFOOTC` and `ABSEIL_PREFIX`. These targets
+neither rebuild the compiler nor download dependencies, and none is a
+dependency of canonical correctness CI. Executable validation and measurements
+are in progress; the final record will link the raw samples and rank follow-up
+investigations without silently selecting optimizations.
+
+### Current compiler integration
+
+Main moved the libraries into compiler-bundled `std::collections` modules.
+The five measured callers use record-local aliases and positional
+`--emit-llvm <fixture>.wf`; they no longer bundle the removed
+`lib/containers/*.wf` inputs. This retains all whole-trace scalar exports
+without adding a module graph that would select only one entry closure.
+Native runtime objects must come from the emitting compiler's revision.
+
+The collection algorithms and public function signatures remain the same,
+but module interfaces make representation fields readonly to clients. The
+priority storage-only control therefore consumes its raw slots directly,
+using the same reverse removal and cleanup operations as before, rather than
+constructing a queue through its now-private representation or adding heapify.
+Current enum constructors use `Enum<args>::Variant(...)`; match-arm labels
+keep their ordinary contextual spelling.
+
+Main also changed small aggregate results to register returns with internal
+destination-form bodies. Fresh measurements include that implementation.
+Scalar whole-trace C interfaces are unchanged. A retained-helper follow-up
+must select qualified public standard-library symbols and exclude generated
+`.body` definitions, or it would retain an extra implementation boundary.
+This first practical matrix does not add retained native variants.
+
+Frozen historical candidate measurements and their source identities remain
+historical. Their replay requires the recorded checkout/compiler; this work
+migrates the five current comparison callers rather than claiming that every
+old experimental candidate accepts the new specification.
 
 The prepared local toolchain is Apple M1 Pro, eight logical CPUs, 32 GiB,
 Darwin 25.6.0 arm64; Apple Clang 21.0.0 and Rust 1.98.1 (LLVM 22.1.8).
 Rust and Clang therefore do not share an LLVM version; their practical cost
 comparison cannot alone attribute a difference to the source language.
-The rebuilt gate compiler SHA-256 is
-`032e9279ada98be6ba036d9dafc3f325c1c7d40fbb1ca1fcd67d88ea9425586e`;
-the active specification SHA-256 is
-`87e1f3504fb0aef42bd45f6a126ccffadeb74bf574b45a4dc64d55b07fa934fb`.
+The rebuilt current gate compiler SHA-256 is
+`cb918e191bb344733347e0602171d2ec53bd1d201044fdbc5dd7666468eea0a0`;
+the specification SHA-256 is
+`59951ec5e42c0daa46947d88448be3fae9ca14276ad3600c03af03a54ef74d83`.
+Rebuilding the compiler after main integration took 69.28 s. The earlier
+prepared compiler is not a timing baseline.
 
 Abseil is pinned to release
 [`20260817.0`](https://github.com/abseil/abseil-cpp/releases/tag/20260817.0),
@@ -129,6 +168,6 @@ C++20, tests disabled and installation enabled. The downloaded official commit
 tarball SHA-256 is
 `db5de644b448f9c3de4c03fcf5ffc3da0dd0c15363d8af25463c25b2a5db8952`.
 The library remains an external experiment dependency, not vendored source or
-a new compiler/gate prerequisite. Preparation took 1.74 s to configure,
-52.72 s to build/install Abseil, and 50.16 s to rebuild the gate compiler;
-none of those durations is a container execution measurement.
+a new compiler/gate prerequisite. Preparation took 1.74 s to configure and
+52.72 s to build/install Abseil; neither duration is a container execution
+measurement.

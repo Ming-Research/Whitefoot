@@ -4,10 +4,98 @@ This experiment asks how the complete owning binary-heap library compares
 with matched native heaps for scalar and wide inline values. Its prospective
 matrix and selection criterion are recorded in the
 [PriorityQueue investigation](../../../investigations/containers-and-resources/X1-LIBRARY.md#reusable-priorityqueue-trial).
-The explicit Makefile consumes the maintained library and the two local
+The explicit Makefile consumes the maintained library and the local
 sources. It is not part of an ordinary correctness gate. This record owns
 the comparison; retire the replay sources and harness when a superseding
 experiment replaces every maintained claim depending on them.
+
+## Practical Rust and C++ comparison
+
+The opt-in `ecosystem-*` targets implement the contract and premeasurement
+criteria in [ECOSYSTEM.md](../ECOSYSTEM.md). The current compiler imports
+`std::collections::priority_queue` through aliases in `priority-library.wf`;
+the single source passed to `--emit-llvm` keeps the two complete-trace C ABI
+entry points. The historical data below is unchanged and is not a denominator
+for the new comparison. Current execution results are pending.
+
+```sh
+perl .github/run-check.pl priority-ecosystem-build \
+  make -C research/experiments/container-representation/priority-library ecosystem-build
+perl .github/run-check.pl priority-ecosystem-check \
+  make -C research/experiments/container-representation/priority-library ecosystem-check
+perl .github/run-check.pl priority-ecosystem-account \
+  make -C research/experiments/container-representation/priority-library ecosystem-account
+perl .github/run-check.pl priority-ecosystem-measure \
+  make -C research/experiments/container-representation/priority-library ecosystem-measure
+```
+
+Supply `WHITEFOOTC` to select a frozen compiler. Construction, checks,
+allocation observations and timing are separate commands; run both checks
+before timing. `ecosystem-check` checks the normal and accounting images
+against the existing independent sorted-sequence oracle. It also requires a
+deliberately corrupted checksum and a simulated unreleased allocation to exit
+with the corresponding diagnostic. These two commands never enter a sample.
+
+The practical queue ranking compares Whitefoot with Rust
+`BinaryHeap<Reverse<T>>` and C++ `std::vector<T>` using only standard
+`make_heap`, `push_heap` and `pop_heap`. Removed and replaced owners are
+returned and consumed. `std::priority_queue` cannot expose that move-only
+ownership outcome through its const `top()` and void `pop()`. C++ replacement
+therefore performs two standard heap repairs; Rust uses `peek_mut` and its
+ordinary repair on guard release. This is an API and algorithm difference,
+not a separate language cost. The existing swap and hole C heaps are labelled
+`c-control` and remain attribution controls.
+
+Each queue has the shared logical ceiling of 4096, with full-capacity refusal
+returning the offered value for retry. Native containers choose their ordinary
+capacity, growth and allocation behavior. The four queue paths are reserved
+pop/push, reserved replacement, growing fill/pop, and heapify/pop. They include
+construction, consumption and cleanup. No trace retains element references,
+requires stable addresses, or observes equal-priority stability. A borrowed
+minimum key contributes once to each reserved trace's checksum. Every word of
+every consumed wide record contributes to the sequence-dependent checksum.
+The 256-byte payload is noncopy inline storage with no per-element allocation;
+these timings do not establish nested-owner costs.
+
+The fifth path is labelled `storage-control` for every implementation and is
+outside the queue ranking. It fills a raw prefix and consumes reverse physical
+slots without building a heap. The old experiment constructed a queue from
+that prefix solely to invoke its physical cleanup. The current module makes
+the storage field read-only to callers, so this path now performs the same
+`take_back`/consume/`free_empty` loop directly on the raw `Box<Slots<T>>`.
+It preserves allocation, reverse consumption and the absence of heap
+comparisons without changing the production library or specification.
+
+Practical builds use Clang `-O3` and Rust `-C opt-level=3`; only complete traces
+cross language boundaries, and no public queue operation or callback is
+forced out of line. The timed WF IR keeps ordinary `malloc` and `free`, native
+C uses those calls directly, and Rust/C++ retain ordinary default allocators.
+The separate `ACCOUNT_ONLY` image redirects WF/C allocation and enables the
+shared native observers. `accounting.csv` reports one complete trace per cell,
+including requests, reallocations, deallocations, total requested bytes and
+peak live requested bytes. Rust `System::realloc` stays a realloc operation:
+its logical live-request peak and the possible old-plus-new overlap upper
+bound are separate columns. Neither column is RSS or allocator-resident
+memory. All observed live bytes must return to zero.
+
+Timing uses lengths 16, 256 and 4096, 8- and 256-byte payloads, seven sample
+seeds 101 through 107, one full warmup per implementation and cell, rotating
+implementation order, and a second cohort with that order reversed.
+`ECO_WORK` scales the original 16384-scalar/4096-wide work target, defaults to
+16, and accepts 1 through 64 for bounded follow-up runs. Reserved traces use
+that work as churn rounds; the other paths repeat complete traces, advancing
+the seed between repetitions. The `work_multiplier`, `rounds`, `traces` and
+`seed` columns make that denominator explicit. For per-item normalization use
+`count * (rounds == 0 ? traces : rounds)`, including the full setup and cleanup
+cost in the numerator. No setup subtraction estimates an isolated operation.
+
+Default outputs are `.build/ecosystem/measurements.csv` and
+`.build/ecosystem/accounting.csv`; `ECO_SAMPLE_FILE` and `ECO_ACCOUNT` override them.
+`configuration.txt` records compiler identities and construction flags beside
+those outputs. Retain every sample when reporting per-cell cohort medians;
+short or unstable cells need a longer bounded run before a ranking claim.
+
+## Historical matched C comparison
 
 Run from the repository root, with a built compiler or `WHITEFOOTC` override:
 

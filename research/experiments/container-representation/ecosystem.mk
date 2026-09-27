@@ -7,6 +7,15 @@ ECO_SHARED_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 ECO_SHARED_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 ECO_CALLER_DEFAULT := $(.DEFAULT_GOAL)
 ECO_BUILD ?= $(BUILD)/ecosystem
+ECO_SAMPLE_FILE ?= $(ECO_BUILD)/measurements.csv
+ECO_ACCOUNT ?= $(ECO_BUILD)/accounting.csv
+# Output paths resolve within each family directory. ECO_REPEATS is the numeric
+# vector/deque sample count; the other drivers fix their sample counts.
+# Work settings belong to direct family commands: vector/deque ECO_WORK budgets
+# element rounds (vector suffixes use removed elements), map ECO_WORK budgets
+# item rounds, and priority ECO_WORK multiplies its scalar/wide work targets.
+# Ordered-map ECO_SCALE multiplies complete traces. There is no common work unit
+# or aggregate ECO_WORK override.
 ECO_RUST_SOURCE ?= $(ECO_FAMILY)-ecosystem.rs
 ECO_CPP_SOURCE ?= $(ECO_FAMILY)-ecosystem.cpp
 RUSTC ?= rustc
@@ -37,6 +46,11 @@ ECO_PKG_CONFIG = PKG_CONFIG_PATH='$(ECO_PKG_CONFIG_PATH)' $(PKG_CONFIG)
 ifneq ($(strip $(ECO_ABSL_PACKAGES)),)
 ECO_ABSL_CPPFLAGS := $(shell $(ECO_PKG_CONFIG) --cflags $(ECO_ABSL_PACKAGES) 2>/dev/null)
 ECO_ABSL_LDFLAGS := $(shell $(ECO_PKG_CONFIG) --static --libs $(ECO_ABSL_PACKAGES) 2>/dev/null)
+ifeq ($(ECO_HOST_OS),Darwin)
+# Abseil 20260817.0's exported absl::time_zone CMake target requires this
+# framework on Darwin, but absl_time_zone.pc omits it from the static link.
+ECO_ABSL_LDFLAGS += -framework CoreFoundation
+endif
 else
 ECO_ABSL_CPPFLAGS :=
 ECO_ABSL_LDFLAGS :=
@@ -55,6 +69,7 @@ $(ECO_CONFIG): ecosystem-configuration-force $(ECO_SHARED_MAKEFILE) | $(ECO_BUIL
 	@set -eu; \
 	  if test -n '$(ECO_ABSL_PACKAGES)'; then $(ECO_PKG_CONFIG) --exists $(ECO_ABSL_PACKAGES); fi; \
 	  { printf '%s\n' '$(ECO_FAMILY)' '$(WHITEFOOTC)' '$(CLANG)' '$(CXX)' '$(RUSTC)' \
+	      '$(ECO_RUST_SOURCE)' '$(ECO_CPP_SOURCE)' \
 	      '$(ECO_CPPFLAGS)' '$(ECO_CFLAGS)' '$(ECO_CXXFLAGS)' '$(ECO_RUSTFLAGS)' \
 	      '$(ECO_LDFLAGS)' '$(ECO_RUST_LINK_FLAGS)' '$(ABSEIL_PREFIX)' \
 	      '$(ECO_ABSL_PACKAGES)' '$(ECO_ABSL_CPPFLAGS)' '$(ECO_ABSL_LDFLAGS)'; \

@@ -1,3 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPair = std::collections::hash_map::HashMapPair;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_reserve = std::collections::hash_map::hash_map_reserve;
+alias hash_map_rehash = std::collections::hash_map::hash_map_rehash;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+
 struct MapCostEnv {
   salt: u64;
   collide: Bool;
@@ -43,26 +59,6 @@ fn map_cost_hash(env: &MapCostEnv, key: &u64) -> result: u64 reads(env), reads(k
 
 fn map_cost_equal(env: &MapCostEnv, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
   return deref(left) == deref(right);
-}
-
-binding MapCostDenseKey : DenseKey<u64, MapCostEnv> {
-  hash = map_cost_hash;
-  equal = map_cost_equal;
-}
-
-binding MapCostSparseKey : SparseKey<u64, MapCostEnv> {
-  hash = map_cost_hash;
-  equal = map_cost_equal;
-}
-
-binding MapCostSlotKey : SlotKey<u64, MapCostEnv> {
-  hash = map_cost_hash;
-  equal = map_cost_equal;
-}
-
-binding MapCostStagedKey : StagedKey<u64, MapCostEnv> {
-  hash = map_cost_hash;
-  equal = map_cost_equal;
 }
 
 binding MapCostLibraryKey : HashMapKey<u64, MapCostEnv> {
@@ -195,642 +191,6 @@ fn map_cost_rebuild_result(result: Result<unit, unit>, digest: &MapCostDigest) -
   return unit;
 }
 
-fn map_cost_dense_trace<interface MapCostElement<T>>(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  let salt = ixor(seed, 11400714819323198485_u64);
-  let colliding = collide != 0_u64;
-  let env = MapCostEnv(salt: salt, collide: colliding);
-  let map = dense_map_new::<u64, T, 16384>(capacity: capacity);
-  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
-  for (index in 0_u64..count) {
-    let key = map_cost_key(index: index);
-    let next = seed +wrap index;
-    let value = MapCostElement::make(seed: next);
-    let inserted = dense_map_put::<MapCostDenseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-    match move inserted {
-      DenseInserted() => {
-        map_cost_ordered(env: &digest, value: 0_u64);
-      }
-      DenseReplaced(previous: pair) => {
-        map_cost_ordered(env: &digest, value: 1_u64);
-        let DensePair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-      DenseFull(offered: pair) => {
-        map_cost_ordered(env: &digest, value: 2_u64);
-        let DensePair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-    }
-  }
-  for (round in 0_u64..rounds) {
-    if path == 5_u64 {
-      let lower_half = count / 2_u64;
-      let removed_count = count - lower_half;
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let removed = dense_map_remove::<MapCostDenseKey, T, 16384>(map: &map, key: &key, env: &env);
-        match move removed {
-          Some(value: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let DensePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          None() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-        }
-        let absent = dense_map_lookup::<MapCostDenseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: absent, digest: &digest);
-      }
-      let rebuilt = dense_map_rehash::<MapCostDenseKey, T, 16384>(map: &map, env: &env);
-      map_cost_rebuild_result(result: rebuilt, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = dense_map_lookup::<MapCostDenseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let next_round = round +wrap 1_u64;
-        let shift = next_round *wrap count;
-        let base = seed +wrap shift;
-        let next = base +wrap index;
-        let value = MapCostElement::make(seed: next);
-        let inserted = dense_map_put::<MapCostDenseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-        match move inserted {
-          DenseInserted() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-          DenseReplaced(previous: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let DensePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          DenseFull(offered: pair) => {
-            map_cost_ordered(env: &digest, value: 2_u64);
-            let DensePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-        }
-      }
-    } else {
-      if path == 4_u64 {
-        let target = 1_u64;
-        if capacity != 0_u64 {
-          set target = capacity * 2_u64;
-        }
-        let grown = dense_map_reserve::<MapCostDenseKey, T, 16384>(map: &map, capacity: target, env: &env);
-        map_cost_rebuild_result(result: grown, digest: &digest);
-      }
-      for (index in 0_u64..count) {
-        let query_index = index;
-        if path == 1_u64 {
-          set query_index = count +wrap index;
-        }
-        let key = map_cost_key(index: query_index);
-        let hit_path = path == 0_u64;
-        let miss_path = path == 1_u64;
-        let grow_path = path == 4_u64;
-        let fixed_lookup = bor(hit_path, miss_path);
-        let lookup_path = bor(fixed_lookup, grow_path);
-        if lookup_path {
-          let found = dense_map_lookup::<MapCostDenseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-          map_cost_lookup_result(found: found, digest: &digest);
-        } else if path == 2_u64 {
-          let next_round = round +wrap 1_u64;
-          let shift = next_round *wrap count;
-          let base = seed +wrap shift;
-          let next = base +wrap index;
-          let value = MapCostElement::make(seed: next);
-          let replaced = dense_map_put::<MapCostDenseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-          match move replaced {
-            DenseInserted() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-            DenseReplaced(previous: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let DensePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            DenseFull(offered: pair) => {
-              map_cost_ordered(env: &digest, value: 2_u64);
-              let DensePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-          }
-        } else if path == 3_u64 {
-          let removed = dense_map_remove::<MapCostDenseKey, T, 16384>(map: &map, key: &key, env: &env);
-          match move removed {
-            Some(value: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let DensePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            None() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-          }
-          let absent = dense_map_lookup::<MapCostDenseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-          map_cost_lookup_result(found: absent, digest: &digest);
-          let next_round = round +wrap 1_u64;
-          let shift = next_round *wrap count;
-          let base = seed +wrap shift;
-          let next = base +wrap index;
-          let value = MapCostElement::make(seed: next);
-          let inserted = dense_map_put::<MapCostDenseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-          match move inserted {
-            DenseInserted() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-            DenseReplaced(previous: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let DensePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            DenseFull(offered: pair) => {
-              map_cost_ordered(env: &digest, value: 2_u64);
-              let DensePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-          }
-        } else if path == 7_u64 {
-          let edited = dense_map_edit::<MapCostDenseKey, T, MapCostDigest, u64, fn MapCostElement::edit, 16384>(map: &map, key: &key, key_env: &env, edit_env: &digest);
-          map_cost_lookup_result(found: edited, digest: &digest);
-        }
-      }
-    }
-  }
-  dense_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
-  return map_cost_finish(digest: digest);
-}
-
-fn map_cost_dense_word_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_dense_trace::<MapCostWord>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_dense_record_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_dense_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_sparse_trace<interface MapCostElement<T>>(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  let salt = ixor(seed, 11400714819323198485_u64);
-  let colliding = collide != 0_u64;
-  let env = MapCostEnv(salt: salt, collide: colliding);
-  let map = sparse_map_new::<u64, T, 16384>(capacity: capacity);
-  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
-  for (index in 0_u64..count) {
-    let key = map_cost_key(index: index);
-    let next = seed +wrap index;
-    let value = MapCostElement::make(seed: next);
-    let inserted = sparse_map_put::<MapCostSparseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-    match move inserted {
-      SparseInserted() => {
-        map_cost_ordered(env: &digest, value: 0_u64);
-      }
-      SparseReplaced(previous: pair) => {
-        map_cost_ordered(env: &digest, value: 1_u64);
-        let SparsePair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-      SparseFull(offered: pair) => {
-        map_cost_ordered(env: &digest, value: 2_u64);
-        let SparsePair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-    }
-  }
-  for (round in 0_u64..rounds) {
-    if path == 5_u64 {
-      let lower_half = count / 2_u64;
-      let removed_count = count - lower_half;
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let removed = sparse_map_remove::<MapCostSparseKey, T, 16384>(map: &map, key: &key, env: &env);
-        match move removed {
-          Some(value: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let SparsePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          None() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-        }
-        let absent = sparse_map_lookup::<MapCostSparseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: absent, digest: &digest);
-      }
-      let rebuilt = sparse_map_rehash::<MapCostSparseKey, T, 16384>(map: &map, env: &env);
-      map_cost_rebuild_result(result: rebuilt, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = sparse_map_lookup::<MapCostSparseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let next_round = round +wrap 1_u64;
-        let shift = next_round *wrap count;
-        let base = seed +wrap shift;
-        let next = base +wrap index;
-        let value = MapCostElement::make(seed: next);
-        let inserted = sparse_map_put::<MapCostSparseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-        match move inserted {
-          SparseInserted() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-          SparseReplaced(previous: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let SparsePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          SparseFull(offered: pair) => {
-            map_cost_ordered(env: &digest, value: 2_u64);
-            let SparsePair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-        }
-      }
-    } else {
-      if path == 4_u64 {
-        let target = 1_u64;
-        if capacity != 0_u64 {
-          set target = capacity * 2_u64;
-        }
-        let grown = sparse_map_reserve::<MapCostSparseKey, T, 16384>(map: &map, capacity: target, env: &env);
-        map_cost_rebuild_result(result: grown, digest: &digest);
-      }
-      for (index in 0_u64..count) {
-        let query_index = index;
-        if path == 1_u64 {
-          set query_index = count +wrap index;
-        }
-        let key = map_cost_key(index: query_index);
-        let hit_path = path == 0_u64;
-        let miss_path = path == 1_u64;
-        let grow_path = path == 4_u64;
-        let fixed_lookup = bor(hit_path, miss_path);
-        let lookup_path = bor(fixed_lookup, grow_path);
-        if lookup_path {
-          let found = sparse_map_lookup::<MapCostSparseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-          map_cost_lookup_result(found: found, digest: &digest);
-        } else if path == 2_u64 {
-          let next_round = round +wrap 1_u64;
-          let shift = next_round *wrap count;
-          let base = seed +wrap shift;
-          let next = base +wrap index;
-          let value = MapCostElement::make(seed: next);
-          let replaced = sparse_map_put::<MapCostSparseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-          match move replaced {
-            SparseInserted() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-            SparseReplaced(previous: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let SparsePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            SparseFull(offered: pair) => {
-              map_cost_ordered(env: &digest, value: 2_u64);
-              let SparsePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-          }
-        } else if path == 3_u64 {
-          let removed = sparse_map_remove::<MapCostSparseKey, T, 16384>(map: &map, key: &key, env: &env);
-          match move removed {
-            Some(value: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let SparsePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            None() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-          }
-          let absent = sparse_map_lookup::<MapCostSparseKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-          map_cost_lookup_result(found: absent, digest: &digest);
-          let next_round = round +wrap 1_u64;
-          let shift = next_round *wrap count;
-          let base = seed +wrap shift;
-          let next = base +wrap index;
-          let value = MapCostElement::make(seed: next);
-          let inserted = sparse_map_put::<MapCostSparseKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-          match move inserted {
-            SparseInserted() => {
-              map_cost_ordered(env: &digest, value: 0_u64);
-            }
-            SparseReplaced(previous: pair) => {
-              map_cost_ordered(env: &digest, value: 1_u64);
-              let SparsePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-            SparseFull(offered: pair) => {
-              map_cost_ordered(env: &digest, value: 2_u64);
-              let SparsePair(key: old_key, value: old_value) = move pair;
-              let content = MapCostElement::content(key: old_key, value: move old_value);
-              map_cost_ordered(env: &digest, value: content);
-            }
-          }
-        } else if path == 7_u64 {
-          let edited = sparse_map_edit::<MapCostSparseKey, T, MapCostDigest, u64, fn MapCostElement::edit, 16384>(map: &map, key: &key, key_env: &env, edit_env: &digest);
-          map_cost_lookup_result(found: edited, digest: &digest);
-        }
-      }
-    }
-  }
-  sparse_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
-  return map_cost_finish(digest: digest);
-}
-
-fn map_cost_sparse_word_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_sparse_trace::<MapCostWord>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_sparse_record_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_sparse_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_slot_trace<interface MapCostElement<T>>(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  let salt = ixor(seed, 11400714819323198485_u64);
-  let colliding = collide != 0_u64;
-  let env = MapCostEnv(salt: salt, collide: colliding);
-  let map = slot_map_new::<u64, T, 16384>(capacity: capacity);
-  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
-  for (index in 0_u64..count) {
-    let key = map_cost_key(index: index);
-    let next = seed +wrap index;
-    let value = MapCostElement::make(seed: next);
-    let inserted = slot_map_put::<MapCostSlotKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-    match move inserted {
-      SlotInserted() => {
-        map_cost_ordered(env: &digest, value: 0_u64);
-      }
-      SlotReplaced(previous: pair) => {
-        map_cost_ordered(env: &digest, value: 1_u64);
-        let SlotPair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-      SlotFull(offered: pair) => {
-        map_cost_ordered(env: &digest, value: 2_u64);
-        let SlotPair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-    }
-  }
-  for (round in 0_u64..rounds) {
-    if path == 5_u64 {
-      let lower_half = count / 2_u64;
-      let removed_count = count - lower_half;
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let removed = slot_map_remove::<MapCostSlotKey, T, 16384>(map: &map, key: &key, env: &env);
-        match move removed {
-          Some(value: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let SlotPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          None() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-        }
-        let absent = slot_map_lookup::<MapCostSlotKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: absent, digest: &digest);
-      }
-      let rebuilt = slot_map_rehash::<MapCostSlotKey, T, 16384>(map: &map, env: &env);
-      map_cost_rebuild_result(result: rebuilt, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = slot_map_lookup::<MapCostSlotKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let next_round = round +wrap 1_u64;
-        let shift = next_round *wrap count;
-        let base = seed +wrap shift;
-        let next = base +wrap index;
-        let value = MapCostElement::make(seed: next);
-        let inserted = slot_map_put::<MapCostSlotKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-        match move inserted {
-          SlotInserted() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-          SlotReplaced(previous: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let SlotPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          SlotFull(offered: pair) => {
-            map_cost_ordered(env: &digest, value: 2_u64);
-            let SlotPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-        }
-      }
-    } else if path == 4_u64 {
-      let target = 1_u64;
-      if capacity != 0_u64 {
-        set target = capacity * 2_u64;
-      }
-      let grown = slot_map_reserve::<MapCostSlotKey, T, 16384>(map: &map, capacity: target, env: &env);
-      map_cost_rebuild_result(result: grown, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = slot_map_lookup::<MapCostSlotKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-    }
-  }
-  slot_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
-  return map_cost_finish(digest: digest);
-}
-
-fn map_cost_slot_word_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_slot_trace::<MapCostWord>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_slot_record_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_slot_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_staged_trace<interface MapCostElement<T>>(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  let salt = ixor(seed, 11400714819323198485_u64);
-  let colliding = collide != 0_u64;
-  let env = MapCostEnv(salt: salt, collide: colliding);
-  let map = staged_map_new::<u64, T, 16384>(capacity: capacity);
-  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
-  for (index in 0_u64..count) {
-    let key = map_cost_key(index: index);
-    let next = seed +wrap index;
-    let value = MapCostElement::make(seed: next);
-    let inserted = staged_map_put::<MapCostStagedKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-    match move inserted {
-      StagedInserted() => {
-        map_cost_ordered(env: &digest, value: 0_u64);
-      }
-      StagedReplaced(previous: pair) => {
-        map_cost_ordered(env: &digest, value: 1_u64);
-        let StagedPair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-      StagedFull(offered: pair) => {
-        map_cost_ordered(env: &digest, value: 2_u64);
-        let StagedPair(key: old_key, value: old_value) = move pair;
-        let content = MapCostElement::content(key: old_key, value: move old_value);
-        map_cost_ordered(env: &digest, value: content);
-      }
-    }
-  }
-  for (round in 0_u64..rounds) {
-    if path == 5_u64 {
-      let lower_half = count / 2_u64;
-      let removed_count = count - lower_half;
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let removed = staged_map_remove::<MapCostStagedKey, T, 16384>(map: &map, key: &key, env: &env);
-        match move removed {
-          Some(value: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let StagedPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          None() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-        }
-        let absent = staged_map_lookup::<MapCostStagedKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: absent, digest: &digest);
-      }
-      let rebuilt = staged_map_rehash::<MapCostStagedKey, T, 16384>(map: &map, env: &env);
-      map_cost_rebuild_result(result: rebuilt, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = staged_map_lookup::<MapCostStagedKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-      for (removed_index in 0_u64..removed_count) {
-        let index = removed_index *wrap 2_u64;
-        let key = map_cost_key(index: index);
-        let next_round = round +wrap 1_u64;
-        let shift = next_round *wrap count;
-        let base = seed +wrap shift;
-        let next = base +wrap index;
-        let value = MapCostElement::make(seed: next);
-        let inserted = staged_map_put::<MapCostStagedKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
-        match move inserted {
-          StagedInserted() => {
-            map_cost_ordered(env: &digest, value: 0_u64);
-          }
-          StagedReplaced(previous: pair) => {
-            map_cost_ordered(env: &digest, value: 1_u64);
-            let StagedPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-          StagedFull(offered: pair) => {
-            map_cost_ordered(env: &digest, value: 2_u64);
-            let StagedPair(key: old_key, value: old_value) = move pair;
-            let content = MapCostElement::content(key: old_key, value: move old_value);
-            map_cost_ordered(env: &digest, value: content);
-          }
-        }
-      }
-    } else if path == 4_u64 {
-      let target = 1_u64;
-      if capacity != 0_u64 {
-        set target = capacity * 2_u64;
-      }
-      let grown = staged_map_reserve::<MapCostStagedKey, T, 16384>(map: &map, capacity: target, env: &env);
-      map_cost_rebuild_result(result: grown, digest: &digest);
-      for (index in 0_u64..count) {
-        let key = map_cost_key(index: index);
-        let found = staged_map_lookup::<MapCostStagedKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
-        map_cost_lookup_result(found: found, digest: &digest);
-      }
-    }
-  }
-  staged_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
-  return map_cost_finish(digest: digest);
-}
-
-fn map_cost_staged_word_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_staged_trace::<MapCostWord>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
-fn map_cost_staged_record_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
-  requires capacity <= 8192_u64;
-  requires count <= capacity;
-} {
-  return map_cost_staged_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
-}
-
 fn map_cost_library_trace<interface MapCostElement<T>>(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
   requires capacity <= 8192_u64;
   requires count <= capacity;
@@ -922,13 +282,30 @@ fn map_cost_library_trace<interface MapCostElement<T>>(capacity: u64, count: u64
         }
       }
     } else {
-      if path == 4_u64 {
+      let grow_requested = path == 4_u64;
+      let reserve_observed = path == 9_u64;
+      let reserve_omitted = path == 10_u64;
+      let reserve_check = bor(reserve_observed, reserve_omitted);
+      let reserve_path = bor(grow_requested, reserve_check);
+      if reserve_path {
         let target = 1_u64;
         if capacity != 0_u64 {
           set target = capacity * 2_u64;
         }
-        let grown = hash_map_reserve::<MapCostLibraryKey, T, 16384>(map: &map, capacity: target, env: &env);
-        map_cost_rebuild_result(result: grown, digest: &digest);
+        if path == 10_u64 {
+          map_cost_ordered(env: &digest, value: 1_u64);
+        } else {
+          let grown = hash_map_reserve::<MapCostLibraryKey, T, 16384>(map: &map, capacity: target, env: &env);
+          map_cost_rebuild_result(result: grown, digest: &digest);
+        }
+        if reserve_check {
+          let actual = hash_map_capacity::<u64, T, 16384>(map: &map);
+          if actual >= target {
+            map_cost_ordered(env: &digest, value: 1_u64);
+          } else {
+            map_cost_ordered(env: &digest, value: 0_u64);
+          }
+        }
       }
       for (index in 0_u64..count) {
         let query_index = index;
@@ -938,9 +315,8 @@ fn map_cost_library_trace<interface MapCostElement<T>>(capacity: u64, count: u64
         let key = map_cost_key(index: query_index);
         let hit_path = path == 0_u64;
         let miss_path = path == 1_u64;
-        let grow_path = path == 4_u64;
         let fixed_lookup = bor(hit_path, miss_path);
-        let lookup_path = bor(fixed_lookup, grow_path);
+        let lookup_path = bor(fixed_lookup, reserve_path);
         if lookup_path {
           let found = hash_map_lookup::<MapCostLibraryKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &map, key: &key, key_env: &env, visit_env: &digest);
           map_cost_lookup_result(found: found, digest: &digest);
@@ -1019,10 +395,60 @@ fn map_cost_library_trace<interface MapCostElement<T>>(capacity: u64, count: u64
   return map_cost_finish(digest: digest);
 }
 
+fn map_cost_library_policy_result<interface MapCostElement<T>>(outcome: HashMapPut<u64, T>, digest: &MapCostDigest) -> result: unit writes(digest) {
+  match move outcome {
+    HashMapInserted() => {
+      map_cost_ordered(env: digest, value: 0_u64);
+    }
+    HashMapReturned(reason: return_reason, pair: returned_pair) => {
+      match return_reason {
+        HashMapReplaced() => {
+          map_cost_ordered(env: digest, value: 1_u64);
+        }
+        HashMapFull() => {
+          map_cost_ordered(env: digest, value: 2_u64);
+        }
+      }
+      let HashMapPair(key: old_key, value: old_value) = move returned_pair;
+      let content = MapCostElement::content(key: old_key, value: move old_value);
+      map_cost_ordered(env: digest, value: content);
+    }
+  }
+  return unit;
+}
+
+fn map_cost_library_policy<interface MapCostElement<T>>(seed: u64, collide: u64) -> result: u64 pure {
+  let salt = ixor(seed, 11400714819323198485_u64);
+  let colliding = collide != 0_u64;
+  let env = MapCostEnv(salt: salt, collide: colliding);
+  let map = hash_map_new::<u64, T, 3>(capacity: 3_u64);
+  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  for (index in 0_u64..3_u64) {
+    let key = map_cost_key(index: index);
+    let next = seed +wrap index;
+    let value = MapCostElement::make(seed: next);
+    let outcome = hash_map_put::<MapCostLibraryKey, T, 3>(map: &map, key: key, value: move value, env: &env);
+    map_cost_library_policy_result::<MapCostElement<T>>(outcome: move outcome, digest: &digest);
+  }
+  let replacement_seed = seed +wrap 10_u64;
+  let replacement = MapCostElement::make(seed: replacement_seed);
+  let replaced = hash_map_put::<MapCostLibraryKey, T, 3>(map: &map, key: 1_u64, value: move replacement, env: &env);
+  map_cost_library_policy_result::<MapCostElement<T>>(outcome: move replaced, digest: &digest);
+  let offered_seed = seed +wrap 20_u64;
+  let offered = MapCostElement::make(seed: offered_seed);
+  let refused = hash_map_put::<MapCostLibraryKey, T, 3>(map: &map, key: 7_u64, value: move offered, env: &env);
+  map_cost_library_policy_result::<MapCostElement<T>>(outcome: move refused, digest: &digest);
+  hash_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 3>(map: move map, env: &digest);
+  return map_cost_finish(digest: digest);
+}
+
 fn map_cost_library_word_trace(capacity: u64, count: u64, rounds: u64, seed: u64, path: u64, collide: u64) -> result: u64 pure contract {
   requires capacity <= 8192_u64;
   requires count <= capacity;
 } {
+  if path == 8_u64 {
+    return map_cost_library_policy::<MapCostWord>(seed: seed, collide: collide);
+  }
   return map_cost_library_trace::<MapCostWord>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
 }
 
@@ -1030,19 +456,14 @@ fn map_cost_library_record_trace(capacity: u64, count: u64, rounds: u64, seed: u
   requires capacity <= 8192_u64;
   requires count <= capacity;
 } {
+  if path == 8_u64 {
+    return map_cost_library_policy::<MapCostWide>(seed: seed, collide: collide);
+  }
   return map_cost_library_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
 }
 
 fn main() -> status: ExitStatus pure {
-  let dense_word = map_cost_dense_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 5_u64, collide: 0_u64);
-  let dense_record = map_cost_dense_record_trace(capacity: 3_u64, count: 2_u64, rounds: 1_u64, seed: 17_u64, path: 4_u64, collide: 1_u64);
-  let sparse_word = map_cost_sparse_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 3_u64, collide: 1_u64);
-  let sparse_record = map_cost_sparse_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 2_u64, collide: 0_u64);
-  let slot_word = map_cost_slot_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 4_u64, collide: 0_u64);
-  let slot_record = map_cost_slot_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 5_u64, collide: 1_u64);
-  let staged_word = map_cost_staged_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 4_u64, collide: 0_u64);
-  let staged_record = map_cost_staged_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 5_u64, collide: 1_u64);
-  let library_word = map_cost_library_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 7_u64, collide: 0_u64);
-  let library_record = map_cost_library_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 5_u64, collide: 1_u64);
+  let word = map_cost_library_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 7_u64, collide: 0_u64);
+  let record = map_cost_library_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 3_u64, collide: 1_u64);
   return exit_status(code: 0_u8);
 }

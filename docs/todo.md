@@ -684,6 +684,21 @@ rarely insert at the same place.
   found into this stop; reopen when a writer report or a program meets the
   unlocated failure.
 
+- **Separate historical container-candidate replay from current-source targets.**
+  The [map comparison](../research/experiments/container-representation/map-library/RESULTS.md)
+  retains old representation and compact-result overlays whose explicit
+  research targets still name the removed `lib/containers` sources and older
+  constructor syntax. Their recorded measurements are reproducible at their
+  recorded revisions; the current `ecosystem-*` targets use bundled standard
+  modules and do not depend on those candidates. Impact: invoking a historical
+  target from the current checkout fails before testing its cost hypothesis.
+  When one of those hypotheses is reopened, port only the selected candidate
+  and its independent oracle to the current interface, or make the target's
+  historical-checkout requirement explicit at invocation. Require unchanged
+  outcomes and fresh same-revision controls; do not regenerate old evidence
+  merely to make a stale target pass. Defer that port because the practical
+  Rust/C++ comparison does not select a historical candidate.
+
 ## Parallel lowering and runtime
 
 - **Validate reuse of selected-target element layouts during emission.**

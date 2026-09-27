@@ -26,6 +26,8 @@ struct Record {
     words: [u64; 32],
 }
 
+const _: () = assert!(std::mem::size_of::<Record>() == 256);
+
 impl Element for Record {
     fn make(seed: u64) -> Self {
         Self {

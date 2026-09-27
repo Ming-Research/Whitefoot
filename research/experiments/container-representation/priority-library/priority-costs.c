@@ -407,6 +407,7 @@ static uint64_t refusal_oracle(bool wide) {
     for (size_t i = 0; i < CEILING; ++i) digest = oracle_accept(digest, values[i], wide);
     return digest;
 }
+#if !defined(ACCOUNT_ONLY)
 static uint64_t nanos(void) {
 #if defined(_WIN32)
     LARGE_INTEGER value, frequency;
@@ -417,12 +418,15 @@ static uint64_t nanos(void) {
     return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
 #endif
 }
+#endif
 static void check_accounting(unsigned variant, bool wide, uint64_t count, uint64_t path, uint64_t traces) {
 #if defined(ECOSYSTEM) && !defined(ACCOUNT_ONLY)
     (void)variant; (void)wide; (void)count; (void)path; (void)traces;
 #else
     size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
 #if defined(ECOSYSTEM)
+    require(releases + realloc_requests == requests,
+            "every observed backing request is released or reallocated");
     if (variant >= 3) {
         require(live_bytes == 0, "native complete backing cleanup");
         require(count == 0 || (requests >= traces && requested_bytes >= count * stride * traces && peak_bytes >= count * stride),
@@ -536,15 +540,131 @@ static void events(void) {
 }
 #endif
 #endif
+#if defined(ECOSYSTEM)
+static const char *series(unsigned variant, unsigned path) {
+    if (path == 4) return "storage-control";
+    return variant == 1 || variant == 2 ? "c-control" : "practical";
+}
+#if defined(ACCOUNT_ONLY)
+static void negative_accounting(void) {
+    reset_accounting();
+    uint64_t checksum = run(3, true, 16, 1, 101, 0);
+    require(checksum == oracle(true, 16, 1, 101, 0), "independent sorted-sequence checksum");
+    // A single simulated unreleased backing must fail the ordinary observer
+    // checks. This command is never used in an accounting or timing sample.
+    wf_ecosystem_note_alloc(8);
+    check_accounting(3, true, 16, 0, 1);
+}
+static void account(void) {
+    const uint64_t counts[] = {16, 256, 4096};
+    puts("series,element_bytes,path,count,variant,rounds,traces,checksum,allocation_requests,reallocation_requests,deallocations,requested_bytes,peak_live_requested_bytes,reallocation_peak_upper_bound_bytes,live_requested_bytes");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (unsigned path = 0; path < 5; ++path)
+            for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n) {
+                uint64_t rounds = path < 2 ? 1 : 0;
+                uint64_t expected = oracle(wide != 0, counts[n], rounds, 101, path);
+                for (unsigned variant = 0; variant < VARIANT_COUNT; ++variant) {
+                    reset_accounting();
+                    uint64_t checksum = run(variant, wide != 0, counts[n], rounds, 101, path);
+                    observed = checksum;
+                    require(checksum == expected, "accounted sorted-sequence checksum");
+                    check_accounting(variant, wide != 0, counts[n], path, 1);
+                    printf("%s,%zu,%s,%" PRIu64 ",%s,%" PRIu64 ",1,%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",
+                           series(variant, path), wide ? sizeof(Record) : sizeof(uint64_t), path_names[path], counts[n],
+                           variant_names[variant], rounds, checksum, requests, realloc_requests, releases,
+                           requested_bytes, peak_bytes, peak_overlap_upper_bytes, live_bytes);
+                }
+            }
+}
+#else
+static void negative_checksum(void) {
+    uint64_t checksum = run(3, true, 16, 1, 101, 0) ^ UINT64_C(1);
+    require(checksum == oracle(true, 16, 1, 101, 0), "independent sorted-sequence checksum");
+}
+static uint64_t run_repeated(unsigned variant, bool wide, uint64_t count, uint64_t rounds,
+                             uint64_t seed, uint64_t path, uint64_t traces) {
+    uint64_t checksum = 0;
+    for (uint64_t trace = 0; trace < traces; ++trace)
+        checksum = checksum * UINT64_C(257) + run(variant, wide, count, rounds, seed + trace, path);
+    return checksum;
+}
+static void measure(unsigned cohort, uint64_t multiplier) {
+    const uint64_t counts[] = {16, 256, 4096};
+    puts("contract,cohort,series,element_bytes,path,count,variant,sample,seed,rounds,traces,work_multiplier,elapsed_ns,checksum");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (unsigned path = 0; path < 5; ++path)
+            for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n) {
+                uint64_t count = counts[n];
+                uint64_t repetitions = multiplier * (wide ? UINT64_C(4096) : UINT64_C(16384)) / count;
+                uint64_t rounds = path < 2 ? repetitions : 0;
+                uint64_t traces = path < 2 ? 1 : repetitions;
+                for (unsigned sample = 0; sample < 7; ++sample) {
+                    uint64_t seed = 101 + sample, expected = 0;
+                    for (uint64_t trace = 0; trace < traces; ++trace)
+                        expected = expected * UINT64_C(257) + oracle(wide != 0, count, rounds, seed + trace, path);
+                    if (sample == 0)
+                        for (unsigned offset = 0; offset < VARIANT_COUNT; ++offset) {
+                            unsigned variant = cohort ? VARIANT_COUNT - 1 - offset : offset;
+                            uint64_t checksum = run_repeated(variant, wide != 0, count, rounds, seed, path, traces);
+                            observed = checksum;
+                            require(checksum == expected, "warmup sorted-sequence checksum");
+                        }
+                    for (unsigned offset = 0; offset < VARIANT_COUNT; ++offset) {
+                        unsigned position = (sample + offset) % VARIANT_COUNT;
+                        unsigned variant = cohort ? VARIANT_COUNT - 1 - position : position;
+                        uint64_t before = nanos();
+                        uint64_t checksum = run_repeated(variant, wide != 0, count, rounds, seed, path, traces);
+                        uint64_t elapsed = nanos() - before;
+                        observed = checksum;
+                        require(checksum == expected, "timed sorted-sequence checksum");
+                        printf("%s,%u,%s,%zu,%s,%" PRIu64 ",%s,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                               CONTRACT, cohort, series(variant, path), wide ? sizeof(Record) : sizeof(uint64_t),
+                               path_names[path], count, variant_names[variant], sample, seed, rounds, traces,
+                               multiplier, elapsed, checksum);
+                    }
+                }
+            }
+}
+#endif
+#endif
 int main(int argc, char **argv) {
-    require(argc >= 2, "usage: priority-costs check|measure COHORT|events");
+    require(argc >= 2, "usage: priority-costs check|measure COHORT [WORK_MULTIPLIER]|account|events");
     if (strcmp(argv[1], "check") == 0) { require(argc == 2, "check arguments"); check(); }
+#if defined(ECOSYSTEM) && defined(ACCOUNT_ONLY)
+    else if (strcmp(argv[1], "negative-accounting") == 0) {
+        require(argc == 2, "negative accounting arguments");
+        negative_accounting();
+    }
+    else {
+        require(argc == 2 && strcmp(argv[1], "account") == 0, "account arguments");
+        account();
+    }
+#else
+#if defined(ECOSYSTEM)
+    else if (strcmp(argv[1], "negative-checksum") == 0) {
+        require(argc == 2, "negative checksum arguments");
+        negative_checksum();
+    }
+#endif
 #if defined(AUDIT_EVENTS)
     else if (strcmp(argv[1], "events") == 0) { require(argc == 2, "events arguments"); events(); }
 #endif
     else {
+#if defined(ECOSYSTEM)
+        require((argc == 3 || argc == 4) && strcmp(argv[1], "measure") == 0 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0), "measure cohort 0 or 1 and optional work multiplier");
+        uint64_t multiplier = 16;
+        if (argc == 4) {
+            char *end = NULL;
+            multiplier = strtoull(argv[3], &end, 10);
+            require(*argv[3] >= '0' && *argv[3] <= '9' && *end == '\0' && multiplier >= 1 && multiplier <= 64,
+                    "work multiplier from 1 through 64");
+        }
+        measure((unsigned)(argv[2][0] - '0'), multiplier);
+#else
         require(argc == 3 && strcmp(argv[1], "measure") == 0 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0), "measure cohort 0 or 1");
         measure((unsigned)(argv[2][0] - '0'));
+#endif
     }
+#endif
     return 0;
 }

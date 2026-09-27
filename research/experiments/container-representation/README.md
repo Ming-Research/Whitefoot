@@ -1,7 +1,8 @@
 # Container representation experiments
 
-This bundle supplies executable evidence for the container architecture choice
-before production implementation or migration. The design question belongs to
+This bundle supplies executable evidence for container representation and
+performance choices, including historical designs and current library costs.
+The design question belongs to
 `research/investigations/containers-and-resources/`; this directory owns only the
 reproducible source probes, finite checker model, native controls, and measurements.
 Its parts answer different questions:

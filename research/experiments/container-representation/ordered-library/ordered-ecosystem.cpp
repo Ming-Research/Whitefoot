@@ -18,7 +18,23 @@ template <class T> using NativeAllocator = std::allocator<T>;
 
 namespace {
 constexpr std::size_t ceiling = 8192;
-using Record = std::array<std::uint64_t, 32>;
+// Match the movable inline owner without adding per-element heap storage.
+struct Record {
+    std::array<std::uint64_t, 32> words;
+    Record() = default;
+    Record(const Record &) = delete;
+    Record &operator=(const Record &) = delete;
+    Record(Record &&) noexcept = default;
+    Record &operator=(Record &&) noexcept = default;
+    constexpr std::size_t size() const { return words.size(); }
+    auto begin() { return words.begin(); }
+    auto end() { return words.end(); }
+    auto begin() const { return words.begin(); }
+    auto end() const { return words.end(); }
+    auto &operator[](std::size_t index) { return words[index]; }
+    bool operator==(const Record &) const = default;
+};
+static_assert(sizeof(Record) == 256);
 template <class V> using StandardMap = std::map<std::uint64_t, V,
     std::less<std::uint64_t>, NativeAllocator<std::pair<const std::uint64_t, V>>>;
 template <class V> using AbseilMap = absl::btree_map<std::uint64_t, V,
@@ -164,6 +180,7 @@ template <template <class> class Container, class V> void audit_values() {
     auto refused = put(map, 1000001, make_value<V>(37));
     require(refused.status == 2 && *refused.returned == make_value<V>(37), "full refusal owner");
     require(map.size() == ceiling, "logical ceiling");
+    require(map.find(1000001) == map.end(), "refusal preserves membership");
     Digest digest{0};
     range(map, 3, 3, digest); range(map, 9, 3, digest);
     require(digest.ordered == 0, "empty and inverted ranges");
