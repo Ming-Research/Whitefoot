@@ -1500,8 +1500,8 @@ each is resolved by a discussion and a tree change.
   explicit `move` at every consuming use of an existing noncopy owned place,
   including match and propagation, on 2026-09-27. The
   [same-operation comparison](../research/investigations/contract-surface/OWNERSHIP.md)
-  now compares `->` with postfix `.*` before reference-access spelling is
-  selected. The named-constant root omission is corrected in the tree and
+  compares `->` with postfix `.*`; a complete arrow proposal, including
+  standalone `p->` for the whole referent, awaits selection. The named-constant root omission is corrected in the tree and
   pending amendment. Reopen the coordinated specification/compiler/conformance
   implementation after access spelling is selected; the research PR does not
   implement the approved consumption rule. Validate copy and template-bound
@@ -2016,15 +2016,18 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **Archive verification can mistake integrated main history for a branch
-  amendment.** The root `spec-archives` target hard-codes local `main` as
-  its comparison ref. After a work branch integrates current `origin/main`,
-  an older local `main` can make `make static` report multiple new archives
-  even when the branch changes no specification bytes relative to the PR
-  base. Allow selecting the actual review base consistently with the other
-  review checks, and report the selected commit. Validate an older local
-  main, an integrated branch and a real branch amendment, retaining rejection
-  of modified archives and malformed version transitions. Reopen when
-  updating verification-base selection; this research refresh used the
-  unchanged archive checker with `origin/main` and recorded the default
-  entry's failure instead of changing its result or the local main worktree.
+- **Static verification uses inconsistent, mutable comparison refs.** The
+  root `spec-archives` target hard-codes local `main`; after a branch integrates
+  current upstream, an older local ref can report multiple new archives even
+  when the PR changes no specification. Local `design-lint` instead defaults
+  to the current `origin/main` tip: if it advances past the branch's merge
+  base, new upstream nodes can appear as branch deletions and trigger missing
+  approval-log coverage. Both were observed on the ownership-surface research
+  branch; explicit checks against its actual review base retain the intended
+  obligations. Select and report one pinned review base consistently with
+  `make review-scope` and hosted CI. Validate old local main, advancing remote
+  main, an integrated branch and a real branch amendment; retain archive
+  immutability, version-transition and changed-node coverage checks. Reopen
+  when updating verification-base selection. This research uses the existing
+  `DESIGN_REVIEW_BASE` override for the actual merge base and records default
+  failures; it does not change the checks or another worktree's main ref.

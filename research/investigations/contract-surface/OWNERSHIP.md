@@ -203,7 +203,8 @@ encouraging a style. The affected rules are OWN-1, OWN-13 and ERR-3, with
 FN-2's generic qualification retained; conformance and examples would migrate
 with the implementation. The owner approved this choice on 2026-09-27. It is recorded in
 [language/ownership](../../../design/language/ownership.md) as one added
-decision and one refused alternative. The approved rule replaces the
+decision and one refused alternative; the dependent result-propagation node's
+implicit-consumption decision is retired under the same ruling. The approved rule replaces the
 implicit-context choice in OWN-13 and ERR-3; the specification and compiler
 still implement those contexts. Their coordinated amendment with the selected
 reference-access spelling remains the implementation follow-up in
@@ -245,8 +246,9 @@ expected type would give bare `p` a referent-read meaning at value arguments
 while `let q = p;` still needs an alias default. That is a further contextual
 conversion, not an unavoidable ambiguity or a necessary part of shorter paths.
 
-The recommended proposal is the explicit postfix step `.*`, replacing
-`deref(place)` throughout ordinary and proof places:
+The initial, unapproved proposal was the explicit postfix step `.*`, replacing
+`deref(place)` throughout ordinary and proof places. These examples are the
+dot-star comparator for the arrow follow-up below:
 
 ```text
 Current                                  Proposed
@@ -283,13 +285,11 @@ below removes parsing ambiguity as an objection; it does not select the form
 by implementation convenience. Its selection ground is one explicit step
 usable identically for a projection and the whole referent, without wrapping
 the preceding path or making that step optional at selected sites.
-The complete tree revision is in
-[the reference-place amendment](../../../design/amendments/reference-place-spelling.md).
-Its first decision replaces the first decision of
-`language/ownership/reference-validity`, changing only the reference-step
-spelling; its second adds the spelling's selection ground. The node's remaining
-decisions and refused alternatives are unchanged. It is awaiting a ruling and
-is not implemented in this research PR.
+The pending [reference-place amendment](../../../design/amendments/reference-place-spelling.md)
+now carries the arrow recommendation below. Its first decision replaces the
+reference-validity node's first decision; its second adds the spelling's
+selection ground. The other decisions and refused alternatives are unchanged.
+No reference-access spelling has been approved or implemented in this PR.
 
 The owner approved the named-constant correction on 2026-09-27: the live
 reference-validity decision, its ancestor summary and the pending replacement
@@ -333,6 +333,108 @@ production replacements are fixed in that driver before measurement.
 perl .github/run-check.pl reference-access-build rustc --edition=2024 research/experiments/reference-access-grammar/main.rs -o /tmp/whitefoot-reference-access-grammar
 perl .github/run-check.pl reference-access-grammar /tmp/whitefoot-reference-access-grammar spec/kernel-spec.md
 ```
+
+### Observations and comparison
+
+On v0.75 at `126d201d6`, using the driver fixed in `6afb02738`, the baseline,
+dot-star, literal arrow step, arrow members, arrow selectors and total arrow
+grammars all generated strong-LL(2) tables. The deliberately conflicting
+`pbase` alternatives rejected with GRAM-1 on `Identifier Dot`; the driver
+requires that specific failure, and the complete command exited 0. The full
+grammar includes signature arrows, qualified names and module forms. These
+are grammar-generation observations, not accepted programs on a modified
+compiler. No parsing or compiler timing comparison was performed.
+
+The candidate names below are the driver's arguments. In the table, `p` is a
+reference to the selected value, `part` a range reference, and `node` a reference
+to a Box; all examples are hypothetical candidate syntax.
+
+| Operation | Dot-star | Arrow members | Arrow selectors | Total arrow |
+|---|---|---|---|---|
+| Whole referent | `p.*` | `deref(p)` | `deref(p)` | `p->` |
+| Field or measure | `p.*.field` | `p->field` | `p->field` | `p->field` |
+| Box payload field | `node.*.inner.value` | `node->inner.value` | `node->inner.value` | `node->inner.value` |
+| Variant payload | `p.*.Some.value` | `p->Some.value` | `p->Some.value` | `p->Some.value` |
+| Indexed referent | `part.*[i]` | `deref(part)[i]` | `part->[i]` | `part->[i]` |
+| Re-slice | `&part.*[lo..hi]` | `&deref(part)[lo..hi]` | `&part->[lo..hi]` | `&part->[lo..hi]` |
+| Entry proof path | `entry(node).*.inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` | `entry(node)->inner.len` |
+| Rebind holder | `set p = &next;` | `set p = &next;` | `set p = &next;` | `set p = &next;` |
+| Write referent | `set p.* = value;` | `set deref(p) = value;` | `set deref(p) = value;` | `set p-> = value;` |
+
+The literal `arrow-step` candidate also passes, but writes `p->.field`:
+mechanically changing the `.*` step into `->` does not produce `p->field`.
+It gives the arrow a standalone dereference meaning while keeping the ordinary
+dot, retaining uniform composition at the cost of an unfamiliar `->.` join.
+That is not the member-access readability improvement the owner requested.
+
+`arrow-members` keeps the familiar member selector, but whole referents and
+index/range access retain prefix wrapping. `arrow-selectors` extends the arrow
+to index/range access as well, retaining `deref(p)` only for the whole referent.
+Both are complete alternatives, without implicit reads or type-directed
+spelling. Their grammar prevents a projection immediately after `deref(p)`
+when the arrow form owns that projection, so they do not keep two spellings
+for the same path. Neither removes the repeated prefix access from the
+owned-link atomic replacement example.
+
+`arrow-total` uses the arrow both with a following selector and alone. It
+covers the original postfix proposal's complete scope and eliminates prefix
+wrapping, including `set cursor-> = f(head: move cursor->);`. Its decisive
+cost is the standalone form: `match cursor-> { ... }`, `consume(value: p->);`
+and `return p->;` can look like unfinished member accesses to a reader used to
+C-like syntax. That cost is visible in the examples; no writer trial has
+measured its frequency or severity. A second arrow does not traverse a Box:
+`node->inner.value` selects its owned content, and `node->inner->value` would
+still fail the reference-kind check. No candidate relaxes field visibility,
+reference validity, write effects, bounds proofs or the permitted move sites.
+
+The [C++ draft's built-in member-access rule](https://eel.is/c++draft/expr.ref#2)
+relates `p->member` to member selection on the pointed-to object. That is the
+useful semantic analogy: an explicit indirection followed by a member
+selection. Whitefoot applies it to a checked path reference rather than a C++
+pointer, provides no pointer arithmetic or overloaded arrow, and keeps Box
+content separate. Standalone `p->`, `p->[i]` and variant/measure selections
+are Whitefoot extensions; C++ member syntax does not supply them. In particular,
+familiarity of `p->member` is not evidence that the whole proposal is familiar.
+
+All arrow variants need FORM-2 to distinguish a compact path arrow from the
+spaced signature arrow. Total arrow additionally distinguishes a selector
+arrow's compact right join from the standalone step: `p->field`, `p->[i]`,
+`set p-> = value;`, `match p-> {`, `p-> > limit`, and `fn f() -> result: T`.
+Those roles are grammar-selected, as the current format already distinguishes
+comparison `<` from a type-argument `<`; no type inference or later use is
+needed. Adding `->` to both global attachment sets would format these cases
+incorrectly. `.*` also needs its closing punctuation joins checked, but
+already gets its internal dot/star join from the existing dot attachment.
+
+### Recommendation awaiting ruling
+
+Recommend replacing the unapproved dot-star proposal with `arrow-total`:
+`p->field`, `p->[i]` and standalone `p->` in ordinary and proof places. It
+keeps an explicit reference boundary for both projection and whole-object
+access, composes paths in reading order, and gives member selection the
+arrow spelling the owner prefers. The exact factored productions are:
+
+```text
+place          := pbase psuffix* ("->" (IDENT | TYPEID "." IDENT | "[" atom range_tail? "]") psuffix*)* "->"?
+pbase          := IDENT | "entry" "(" IDENT ")"
+psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]"
+```
+
+This grammar admits `p->field` but not `p->.field`; old `deref(p)` access and
+`.*` are not parallel aliases. A selector arrow records an explicit reference
+step and that selector directly from the derivation, without an intermediate
+source rewrite. Effect selectors retain their parameter-rooted grammar, such
+as `writes(values.inner)`. The lexer already has the `->` terminal; all
+variants keep finite deterministic syntax and the same proof obligations.
+That supports feasibility, not a measured compile-time or runtime advantage.
+
+The recommendation is provisional, with confidence 3/5: completeness and
+strong LL(2) are supported, while standalone-arrow readability is a judgment.
+If the owner finds `p->` misleading, prefer the complete `arrow-selectors`
+alternative (`p->field`, `p->[i]`, `deref(p)`) over an undocumented exception
+or allowing multiple spellings. The pending amendment states the full total-
+arrow choice so approving a member example cannot silently approve the whole-
+referent form. The owner has approved neither arrow variant nor dot-star.
 
 ## Validation and remaining uncertainty
 
@@ -410,7 +512,8 @@ the latter's module and qualified-call productions. Compile the driver with
 `rustc --edition=2024` under the ordinary command guard. This uses the native
 generator, not another parser or a revised language implementation.
 
-Neither candidate has a lexer/parser/checker/formatter implementation yet.
+The approved consumption rule and the pending access candidates have no
+lexer/parser/checker/formatter implementation in this PR yet.
 Adoption must check old-form refusal and new-form acceptance, copy and generic
 controls, whole-owner partial consumption, linear residuals, borrowed matches,
 entry projections, effect overlap and reference invalidation. The source
