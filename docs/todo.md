@@ -444,6 +444,22 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+  A separate implementation possibility is a checked-IR rewrite of the
+  complete take/swap permutation into forward owned consumption, with ordinary
+  lowering for unmatched regions. EFF-5 callback separation and STOR-7
+  relocation support that question but do not prove the rewrite: an extra
+  backing read or partial-progress return can observe the displaced rear
+  owner and must prevent selection. Preserve callback, release and divergence
+  order, prefix/capacity, arbitrary linear elements and target qualification.
+  Validate a fixed permutation-equivalence argument, structural positive and
+  negative witnesses, owning cleanup and same-source timing before adopting a
+  recognizer. No semantic impossibility or new primitive follows from the
+  current native gap. Keep the general transformation deferred until a
+  same-source forward-consumption probe establishes a complete-trace benefit;
+  removing relocation can also change inlining and add callback costs. Reopen
+  implementation when that measured tradeoff justifies the recognizer and its
+  full equivalence/fallback obligations.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn

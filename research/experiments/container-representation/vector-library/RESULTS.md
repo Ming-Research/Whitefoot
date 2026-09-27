@@ -1,5 +1,9 @@
 # Growable vector library costs
 
+Current production retains [source discriminator F](#f-paired-timing-useful-improvements-without-a-separated-regression).
+The [H1/H2 realloc probes](#h-realloc-for-runtime-slots-growth) are rejected;
+later diagnostic results describe experiments, not the current implementation.
+
 ## Current standard-container comparison
 
 The opt-in `ecosystem-*` targets implement the question and criteria in
@@ -1599,6 +1603,525 @@ suffix-one/odd-suffix work while preserving the demonstrated absence of
 payload relocation. The initial proof join and the revised native failure
 must both be addressed; neither a source-only operation count nor a rerun of
 this image supplies new grounds.
+
+### H: realloc for runtime Slots growth
+
+H1 is rejected without timing: unconditional realloc restores an empty
+allocation that F's optimizer had eliminated. H2 restricts realloc to full,
+nonempty storage and passes its construction, ownership and native-code
+criteria, but its subsequent full-matrix comparison has three separated
+regressions. Neither is selected for production. These are raw-LLVM causal
+probes on the pinned [F source](https://github.com/mbbill/Whitefoot/tree/3347fcb4b705990b5b3a9d66887a30ca9e632374),
+using F's compiler and inputs identified above; no compiler, library,
+specification or live design-tree change implements either policy.
+
+Both transforms change exactly two of the 62 raw function bodies:
+`wf_grow$instance$e194368921a477a7` and
+`wf_grow$instance$04ee659886c12146`, for scalar and wide storage, plus a plain
+nullable `realloc(ptr,i64)` declaration. H1 replaces malloc, initialized-prefix
+memmove and old free with realloc. H2 selects that route only when
+`old_len == old_cap && old_len > 0`; its other branch retains the original
+malloc, `old_len * complete_stride` memmove and free. The selector runs only
+inside grow, including equal-capacity growth, and adds no spare-append check.
+Ring, every other raw body, WF source, native controls and runtime objects
+remain unchanged. Neither patch adds an alias, nonnull or no-wrap promise.
+
+H1's prerecorded native criterion requires growth to eliminate explicit
+copy/free without stale old-pointer use, compensating payload traffic or a
+new consumer call, while retaining F's single-allocation empty setup. Sparse
+occupancies were a proposed adverse timing control for H1, not a promise
+that unconditional realloc preserves length-only copying. H2 separately
+requires its empty/sparse fallback to copy only initialized bytes.
+Captured length and requested capacity are written through the returned
+pointer before owner publication;
+null reaches the existing heap resource floor with the old owner unchanged.
+The 16-byte descriptor keeps requests positive even for zero-byte elements.
+OP-10 already permits relocation by grow, and STOR-7 permits complete owning
+representations to move. These observations introduce no language rule.
+
+Only passing code and correctness observations admit timing. The timing
+criterion retains every original useful cell and rejects a repeatable
+regression; a growth gain cannot excuse a suffix, reuse or smaller-population
+loss. H2 was preregistered separately after H1's rejection, without changing
+H1's verdict or deleting its adverse empty/sparse cases.
+
+### H construction, allocation and failure observations
+
+Each trial's four core images passed 1,260 configurations and 8,820 executions
+apiece. Both accounting arms use the same prefix-aware observer: it passes
+the prefix base to libc realloc, captures old byte counts before the call,
+updates the returned prefix on success, and never touches the superseded
+pointer afterward. Timed images contain ordinary malloc/realloc/free and no
+observer. A successful resize retires one allocation lifetime, so the exact
+identity is `requests == releases + realloc_requests`; failed attempts add
+no successful request. Logical requested peaks and possible old-plus-new
+overlap bounds do not measure physical copying, in-place frequency or RSS.
+
+Every accounting CSV contains 294 rows. Rebuilt controls are byte-identical
+to frozen F. H1 changes all 42 WF rows; H2 changes only the six growth rows,
+leaving 36 other WF rows and all 252 native rows identical. Successful request
+counts, requested bytes, checksums and overlap upper bounds match control.
+For H2's three-round growth observations, populations 16/256/4096 make
+21/33/45 requests, 15/27/39 successful resizes and six explicit releases.
+The wide n=4096 row requests 12,582,864 bytes, with a 2,097,168-byte logical
+peak and 3,145,760-byte overlap upper bound. The formula retains the larger
+of the first empty-growth overlap and final extent for tiny counts.
+
+The independent ordinary-source direct witness covers empty 0→0 and 0→1,
+full equal-capacity 1→1 and growth 1→2, and wide capacity 4096→8192 with
+lengths 0/1/4096. It checks length, capacity and every initialized word.
+Two padded 24-byte Tickets each own one distinct box; the witness checks both
+identities through full 2→5 growth and exactly-once consumption. Huge
+zero-byte storage grows through `2^63 + 1` to `u64::MAX` without a huge loop. H2 additionally
+checks full zero-byte capacity 1, length 1→capacity 2, since the huge sparse
+case does not exercise its realloc predicate.
+
+Real allocation, forced movement and forced in-place execution each produce:
+
+| Direct witness | Successful requests | Resizes | Explicit releases |
+| --- | ---: | ---: | ---: |
+| H1 control | 21 | 0 | 21 |
+| H1 | 21 | 10 | 11 |
+| H2 control, including full zero-byte case | 23 | 0 | 23 |
+| H2 | 23 | 5 | 18 |
+
+The exact extent multiset is also checked: H1 has byte extents
+`8×2, 16×6, 24×4, 32×1, 64×1, 136×1, 1048592×3, 2097168×3`;
+H2 changes only the 16-byte multiplicity to eight. Forced movement poisons
+and quarantines the old identity. Forced in-place execution preserves one
+physical address while changing logical generations; equal pointer bits
+alone cannot identify stale provenance, so the forced-move and native
+post-realloc-use checks remain separate obligations.
+
+Each trial records all 26 direct process outcomes: eight successful
+real/move/in-place/publication processes, four empty/live allocation failures,
+six shared release faults and eight candidate-specific faults. Both arms'
+empty and nonempty failures preserve owner, contents and successful ledger,
+then print the witness line and exactly `{"resource":"heap"}` plus newline
+before Darwin SIGABRT (subprocess status −6). H2's empty failure uses the
+malloc fallback; its full nonempty failure uses realloc. All deliberate
+faults exit 1 with these first distinguishing diagnostics, prefixed by
+`H direct grow:` or `H2 direct grow:`:
+
+| Fault | Diagnostic |
+| --- | --- |
+| Double release, or duplicate the second owning Ticket over the first | `allocation released twice` |
+| Foreign release | `operation on foreign allocation` |
+| Missing release | `terminal lifecycle balance` |
+| Reclassify one resize as an explicit free | `successful resize count` |
+| Omit fresh owner publication | `fresh owner publication` |
+| Omit capacity publication | `published capacity` |
+| Publish zero instead of captured length one | `published length` |
+| Free the superseded backing after successful resize | `release of resized allocation` |
+| Publish null before the failure witness | `failure preserved owner cell` |
+| Return after the failure witness instead of reaching the floor | `resize failure returned`, after the preserved-owner witness |
+
+The existing benchmark checksum and cleanup faults also fail, and a resize
+misclassification that preserves the broad balance equation fails the
+independent geometric lifecycle check. These are one-off validation
+observations, not newly maintained regression coverage.
+
+| Completed command phase | H1 seconds | H2 seconds |
+| --- | ---: | ---: |
+| Accepted direct-source preflight | 0.045 | 0.048 |
+| Core native construction | 2.004 | 2.128 |
+| Direct LLVM emission and native construction | 1.123 | 1.192 |
+| Four core correctness images and observer faults | 3.224 | 3.227 |
+| Accounting execution | 0.087 | 0.088 |
+| Direct positive/fault execution | 1.926 | 1.865 |
+
+All listed commands exited 0. Two preceding H1 preflights exited 2 in
+0.397/0.031 s: FORM-2 required canonical formatting, then OWN-1 rejected
+moving a copyable box field. Formatting and an ordinary box-consuming reader
+repaired those fixture errors while retaining every predicate and consumption
+order. No Rust compiler rebuild occurred. H2's guarded construction/check
+command took 8.62 s; the table separates construction from execution and
+does not describe correctness commands as isolated kernel timings.
+
+### H native verdicts and reproducible evidence
+
+H1's actual scalar/wide reuse and suffix constructors execute calloc plus
+realloc where F executes one malloc: one extra allocator call and null check
+per trace. This fails the recorded no-new-setup-work condition before timing,
+despite smaller grow helpers. It is an adverse code result, not a measured
+regression. H2 restores the single malloc and null check. Its full branch
+uses only the returned owner after realloc; the fallback retains length-only
+copying. The direct wide image confirms dispatch for lengths 0/1/4096.
+
+| Native body | Control instructions / frame bytes | H1 | H2 |
+| --- | ---: | ---: | ---: |
+| grow, either width | 27 / 64 | 19 / 48 | 37 / 64 |
+| grow_full, either width | 52 / 64 | 41 / 48 | 73 / 64 |
+| scalar trace | 246 / 160 | 238 / 144 | 200 / 128 |
+| wide trace | 190 / 352 | 198 / 352 | 190 / 352 |
+
+The frozen H1 audit incorrectly described its grow frames as unchanged at
+48 bytes; the table corrects them to **64→48**, while preserving the frozen
+record and rejection. H2's generic grow retains cmp/ccmp/branch selection;
+grow_full still compares length with capacity on nonempty routes. Scalar
+trace growth becomes a grow_full call on its existing full-capacity edge,
+changing outer control flow and register allocation. Scalar suffix's steady
+spare path retains backing, digest and loop state in registers, removing
+F's extra stack reloads before consumption (`0x10000bd28`–`0x10000bd38`).
+Its exchange/take loops remain 12/7 instructions per iteration, at
+`0x10000bc88`–`0x10000bcb4` and `0x10000bcc0`–`0x10000bcd8` in H2;
+the consumption algorithm still executes. Wide trace is normalized-identical
+to control. Both widths of append, tail_work, work, round, truncate, insert,
+remove and swap_remove remain normalized-identical. There is no new payload
+snapshot or consumer call. Later timings therefore include guard, inlining,
+register and placement differences; they do not isolate libc realloc cost.
+
+Native inspection uses LLVM 22.1.8
+`llvm-objdump --macho --disassemble --no-show-raw-insn` on linked images,
+with branch destinations and symbols normalized. For H2 scalar grow,
+realloc at `0x10000de7c` publishes its returned address at `0x10000de8c`;
+the wide pair is `0x10000df40`/`0x10000df50`. No old backing is read or
+freed on the successful resize route. Shared native/runtime objects were
+hash-checked, rather than exhaustively re-audited as changed code.
+
+Frozen local evidence lives under `/private/tmp/whitefoot-vector-realloc-H`
+and `/private/tmp/whitefoot-vector-realloc-H2`. H1's `frozen-H1.json`
+SHA-256 is `3914a55a6f88d1a3c9ea4d75fefb30a8cee511ee3fb24c474f094ca683dd80d5`;
+all 87 listed files were reverified. H2's construction `manifest.json` at the
+pre-timing freeze had hash
+`a3ab903db7184a2119c8410d404a59d8406546212876eed361a45c06b0bef82e`,
+and its 113-input `pre-timing-manifest.json` is
+`082c11a29ce5fdb17683bf11dac00c5a245ec851d2473e25e2444e2aabda14fb`.
+After the pair's successful before/after checks, README.md and manifest.json
+were updated with the results; the other 111 recorded paths still match.
+The original two documents were reconstructed into distinct
+`README.pre-timing.md` and `manifest.pre-timing.json` snapshots and verified
+against their pre-recorded hashes. `post-timing-document-audit.json` records
+that later documentation change; it is not a change to source, IR or images
+during the pair.
+These identify local validation records, not dependencies of a fresh checkout.
+
+The exact small replay transformations are preserved here:
+
+| Patch | SHA-256 |
+| --- | --- |
+| [H1 grow](realloc-h1-grow.patch) | `cb6e1801cdb21e759b88fc341b60b8525ed0d8052450a577a4c3ec2375d16ec3` |
+| [H2 grow](realloc-h2-grow.patch) | `360f14b4b2a6c5e35d95665700cd9da8046740660302f24a48762e2b7bb55155` |
+| [H1 observer](realloc-h1-observer.patch) | `cbcf24325700c2156d8438b96c38264e5a0a05a1e5b9ec764012fd048e421916` |
+| [H2 observer](realloc-h2-observer.patch) | `1da50d90b82b2ecad39cec3f32d8fa88ab633beb86c437642a79203af333ca7a` |
+
+Keep these four patches available outside an isolated F checkout, then use
+the F construction recipe above to recreate
+the native inputs and timed LLVM. Its required SHA-256 is
+`63038feb712920a11bb212eb06f858929186445eac6b2703afea392a9d74aa24`.
+Copy that file separately for control/H1/H2 and apply each grow patch to its
+candidate copy with `patch -F 0 candidate.ll < realloc-hN-grow.patch`. These
+archived grow patches use zero-context unified diffs, regenerated from the
+exact pinned input to the unchanged candidates; verify the input hash first.
+The resulting H1/H2 LLVM hashes must be
+`1017fc5e0976c02f7d40da9305e8f6384a8aa0597b8987fc3f10595408bc6356` and
+`6667a036ad1a9873f09faa7ce14e941da29c74e95b4b3723b956aa14a9c0b137`.
+Compile each with `clang -O3 -Wno-override-module -x ir -c candidate.ll -o candidate.o`
+and reuse the family Makefile's frozen timed driver, C++/Rust and runtime link
+inputs with `clang++ -O3 -pthread -lm -liconv -lSystem -lc`. The constructed
+fresh control, H1 and H2 image identities are respectively
+`e0d7a7bc8b1f53864a50b2a47e995074c1f3ecf3b04f873cf628da6590169bfe`,
+`eb6d38c2a774bd0386a0770c34e437311ad133f1810e1f00750a17e281e75845` and
+`32f9985f72b079b9ac59c2b8c3e3dedfbe3e011737436191c0cdbe41c10f1589`.
+The rebuilt control object is byte-identical to frozen F's object; linked
+image identity also includes naming and placement.
+
+For accounting, apply the corresponding observer patch to separate copies
+of F's `vector-costs.c`. Compile the shared patched observer in both arms
+with `-DECOSYSTEM -DACCOUNT_ONLY`; add `-DWF_GROW_REALLOC` for H1 or
+`-DWF_GROW_FULL_REALLOC` for H2 only. Rename LLVM malloc/free/realloc symbols
+to `wf_cost_allocate`/`wf_cost_release`/`wf_cost_reallocate`, without adding
+attributes; realloc remains nullable. Link the frozen accounting native
+controls and run each image's `check` and `account` commands. Run the existing
+`fail-checksum`/`fail-cleanup` commands and each candidate's
+`fail-realloc-account`, requiring exit 1 and the exact recorded diagnostics.
+The two observer patches deliberately retain different independently derived
+lifecycle formulas. They are not interchangeable.
+
+All construction/check commands belong under the shared verification guard.
+The one-off direct source, identity adapters and mutated images are described
+above but are not imported as a maintained harness; this replay does not
+claim to recreate those 26 processes from committed files. A future selected
+growth policy would move the useful observations into the existing growth,
+owning-growth, container-allocation and exhaustion test homes. The current
+five target records have compatible 64-bit allocation parameters, but these
+executions qualify only Darwin. Linux/Windows execution and failure evidence
+remain required; the current Windows corpus selection does not run the
+container group. The existing malloc/memmove/free storage decision remains
+in force, with no specification amendment from this rejected probe.
+
+### H2 paired timing: gains and three disqualifying regressions
+
+One guarded control/H2 pair invoked each frozen image with
+`measure 1048576 7`, taking 81.401/80.585 s, both exit 0. The outer command
+took 162.25 s with no busy retry. All 113 frozen paths matched immediately
+before and after execution, before the documentation updates described above.
+No construction is included in these timing costs, and
+there was no replay. The [fresh control](ecosystem-realloc-control-samples.csv)
+and [H2 samples](ecosystem-realloc-h2-samples.csv) each contain all 4,116 rows,
+with hashes `27b33972f54cc1a4a31c90b81bd65a6b6a52fb5d220e0859463ef8fe34b90ffc`
+and `7d39be9ec7ab55b89831e82db8e68e9295c07b909c3a3276cb2be6162fa663e2`.
+All keys, work, rounds, traces and checksums match, with seven samples in
+each of 588 groups. Both files pass `summarize-ecosystem.pl --complete` and
+`--complete --targets`.
+
+Ratios below are H2/control, spanning the two cohort medians. G/L mean
+strictly separated gain/loss in both cohorts using unrounded sample ranges;
+O means overlap in at least one. These are finite observed ranges, not
+confidence intervals. Every useful cell appears; suffix-zero remains an
+unranked control.
+
+| Bytes | Path | n=16 | n=256 | n=4096 |
+| ---: | --- | ---: | ---: | ---: |
+| 8 | reserved | 0.996–1.006 O | 1.003–1.006 O | 1.004–1.015 O |
+| 8 | growth | 1.327–1.354 L | 1.114–1.146 L | 0.927–0.950 O |
+| 8 | reuse | 0.984–1.021 O | 0.973–0.990 O | 0.978–0.980 O |
+| 8 | suffix-1 | 0.643–0.660 G | 0.665–0.672 G | 0.659–0.672 G |
+| 8 | suffix-2 | 0.704–0.707 G | 0.649–0.690 G | 0.664–0.685 G |
+| 8 | suffix-3 | 0.765–0.787 G | 0.775–0.780 G | 0.782–0.789 G |
+| 256 | reserved | 0.992–1.001 O | 0.981–0.997 O | 0.984–0.998 O |
+| 256 | growth | 1.096–1.109 L | 0.831–0.832 G | 0.870–0.871 G |
+| 256 | reuse | 0.997–1.000 O | 0.994–1.007 O | 0.997–1.004 O |
+| 256 | suffix-1 | 0.993–1.005 O | 0.978–0.999 O | 0.987–0.990 O |
+| 256 | suffix-2 | 0.987–0.991 O | 0.968–0.992 O | 0.999–1.044 O |
+| 256 | suffix-3 | 0.985–1.005 O | 0.985–1.010 O | 0.994–1.001 O |
+
+There are 11 separated gains, three separated losses and 22 overlaps.
+Median directions alone give 21 lower, five higher and ten mixed cells.
+The three losses are scalar growth at 16 and 256, and wide growth at 16;
+their candidate-minimum/control-maximum ratios in the two cohorts are
+1.307642/1.294199, 1.088481/1.059981 and 1.075105/1.064567. They fail the
+prerecorded no-useful-regression criterion. The nine scalar suffix gains
+execute no full nonempty resize, so they cannot be credited to faster
+realloc calls; their scalar caller/code-placement changes remain part of
+the intervention. Wide growth gains at 256/4096 likewise do not isolate
+allocator copying from the surviving guard and caller changes.
+
+The independent per-cell native target improves from control's
+12 passes / 8 deficits / 16 inconclusive to H2's 19 / 5 / 12, each retaining
+six unranked controls. This does not override the three regressions or
+establish every requested target. Every useful WF comparison meets the
+duration and cohort qualifications: minimum samples are 1.520/1.502 ms,
+and maximum H2/control cohort-ratio spread is 6.4504%. All 136 control and
+187 H2 sub-millisecond rows belong to suffix-zero.
+
+Native-control drift is nonuniform: H2/control median ratios range
+0.743876–1.029120 for Rust and 0.939024–1.032593 for C++ over useful cells.
+Scalar n=16 reserved Rust shifts to 0.743876/0.759454 while its C++ control
+stays at 0.986813/0.986854; no adjustment or sample deletion compensates for
+that observation. In the three loss cells, Rust ratios span 0.955–1.000 and
+C++ 0.949–1.009, so a common slowdown of all implementations does not explain
+the WF losses. All four standard-library trace bodies and their relative
+control flow are normalized-identical, but their entries and loop addresses
+shift by +240 bytes. For example, Rust's scalar reserved loop moves from
+`0x10001164c` to `0x10001173c`; inspected Rust/C++ scalar work helpers also
+retain their instructions. This does not establish placement as the cause
+of Rust's roughly 25% small-reserved drift. Allocator history in the rotated
+same-process harness and other run-level variation remain unseparated.
+Attribution comparisons that fail cohort stability remain
+unranked: control scalar suffix-2 n=256 direct C (29.3132%), H2 scalar reuse
+n=16 take/swap C (12.5351%), and H2 wide suffix-zero n=16 take/swap C
+(23.7699%). Every original sample and outlier remains in the files.
+
+Supplemental sparse/full timing was preregistered but not constructed or
+run. Direct sparse/full correctness and native dispatch evidence do not
+substitute for that missing performance observation. H1 remains untimed;
+H2's recorded full-matrix failure is sufficient to reject this tested policy
+without running another arm or silently introducing a capacity cutoff.
+
+## Same-source forward-consumption diagnostic K — failed gates, mixed timing
+
+K is not selected. It first **failed its preregistered native admission
+criterion** because wide consumption gained one retained callback call per
+owner. A separately recorded, post-native but pre-timing exploratory stage
+then measured that tradeoff without changing the images or treating the
+original gate as passed. The full pair has 10 strict useful gains, 13 strict
+useful regressions and 13 overlaps, so it also fails the no-useful-regression
+condition. Every gain is scalar and every regression is wide. No production
+compiler, library, source rule or live-tree decision changes from this probe.
+
+The question was whether an equivalent lowering of the existing ordered
+consumption region can reduce its take/swap movement and controller cost.
+Source F remains `3347fcb4b705990b5b3a9d66887a30ca9e632374`. The experiment
+replaces only the scalar and 256-byte-record truncate **bodies** in its raw
+LLVM, preserving signatures, attributes, callbacks and every other byte.
+The candidate captures the backing and entry length, consumes each original
+suffix owner in increasing index order through the existing callback ABI,
+then stores the retained length. It allocates nothing, preserves the prefix
+and capacity, and adds no inline hint, arithmetic flag, assumption or alias
+metadata. The accounting module receives the same two replacements.
+
+This is a manually qualified lowering diagnostic, not a by-name production
+optimizer or evidence of a source-language gap. Its semantic boundary requires
+a stable contiguous backing, the original callback/cleanup order, disjoint
+callback effects, no intermediate backing observation and no partial normal
+exit. EFF-5/OWN-9 disjointness and STOR-7 relocation support that reasoning;
+`noalias` alone does not. A private ownership-state relation must account for
+consumed slots until the final descriptor store. For example, after consuming
+A from [A,B,C,D], the source algorithm leaves [D,B,C]. An intervening read or
+partial return could observe D, whereas a naive forward traversal leaves stale
+A. A future general recognizer must retain the original lowering or materialize
+that state for such regions. This probe does not implement those fallback tests.
+
+The original pre-generation criterion required no replacement owner copies or
+new hot call, ordinary O3 natural inlining, complete correctness/accounting and
+a full-matrix no-regression comparison. Its note has SHA-256
+`b36b26ac2873909e35cadd3f8f386c7d42e4a77f286da26e8ea442cd29701fad`.
+After native inspection and an independent method review, stage 2 explicitly
+retained that failure and asked about the unknown net cost of removed movement
+and controller work versus the new callback boundary. Its prospective note,
+SHA-256 `47090e090ad6f626f60f6628788307da37aa0653490f64e4b0ffea9012e8c0bc`,
+required exactly one complete paired run, all cells/cohorts/outliers and the
+existing duration, stability and no-regression rules. No extra optimizer pass,
+re-link, callback edit or inlining experiment intervened.
+
+### Construction, independent observations and native code
+
+Both arms were compiled once from raw LLVM with ordinary `clang -O3` and linked
+in the same order against frozen F driver, Rust, C++ and runtime objects. The
+rebuilt control is byte-identical to the original F executable. Relevant
+SHA-256 identities are:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| frozen F compiler | `fe856a7b9ab2827bb30515547a82bc01132b65e4e3110dd0371cdf0cfc88b3eb` |
+| F timed LLVM | `63038feb712920a11bb212eb06f858929186445eac6b2703afea392a9d74aa24` |
+| K timed LLVM | `257167a7dd5605a204e403af98170d6ca03a4d7d46076b9b3628bab8702e1b6c` |
+| F control executable | `44660c2de9532af3392c3c5fefea363b1915abd03bc9b79f4ba39812425c05f2` |
+| K executable | `2fefebb0e52792d7cdf71f230b24118a7e4f40c11da42ba42b63e0680ce4e939` |
+| both complete accounting CSVs | `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7` |
+
+All four timed/accounting images passed the unchanged 1,260-configuration,
+8,820-execution matrix, and all 294 accounting rows are byte-identical to F.
+Checksum and cleanup negative controls exited 1 with their exact independent
+oracle diagnostics. Timed images contain no allocation-observer hooks.
+The unchanged formal Vector fixture passed with 25 allocations released once
+in both lowering modes, each using ordinary free and the dirty/quarantined
+observer, for both LLVM arms. A separate scratch caller added the six-Ticket
+witness preserved in [terminal-pair.patch](terminal-pair.patch), compiled with
+F's unchanged library: it consumes IDs 3,4,5,6, preserves 1,2, then drains them,
+checking independent fixed order, prefix, capacity and count observations.
+That caller passed with 33 allocations in the same four arm/mode combinations
+and both release routes. Reversing only that owning truncate's callback order
+returned 26; omitting the owning callback's release preserved the digest but
+failed the ledger with exit 1 and `every allocation is released exactly once`.
+The observer's concurrent success and double/foreign/missing-release failures
+also retained their required outcomes.
+
+The formal substitutions cover scalar, affine Box and nodrop Ticket instances,
+all with positive eight-byte element stride; the timed record has stride 256.
+They do not prove arbitrary linear callbacks. A general transform still needs
+a parametric ownership/permutation argument and witnesses for moving owners
+into disjoint environment storage, padded/nested owners, zero-sized elements,
+intermediate observations/partial exits, and effect-prefix preservation when
+a callback diverges. Zero stride must not erase logical callbacks or truncate
+large logical counts. No such untested generality is selected here.
+
+Final native inspection finds the scalar consumer inlined with a four-instruction
+forward loop and no callback call, relocation or per-element length store.
+The actual scalar trace frame nevertheless grows 160 to 176 bytes and the
+positive-suffix entry reloads the backing and five scalar stack slots. Wide
+truncate also inlines, but the record callback remains out of line: it reads
+backing directly using 16 paired loads and 32 digest `madd` instructions, with
+one environment load/store and no payload staging or stack frame. Actual wide
+tail/work/trace frames remain 288/688/352 bytes. Suffix-2/3 now execute two/three
+callback calls instead of one truncate call; suffix-1 retains one call boundary.
+The final full drain similarly calls once per retained owner. These caller
+observations explain the original code-gate failure without establishing an
+elapsed-time cost for any one instruction, transfer or boundary.
+
+All four final Rust/C++ scalar/wide trace bodies retain normalized instruction
+identity, and their object inputs are byte-identical. Other public Vector
+helpers remain unchanged after branch/constant-reference normalization, but
+locations and inlined copies inside changed callers differ. This is a complete
+lowering/optimizer/layout comparison, not an isolated measurement of copying.
+
+The guarded construction/check run took 18.18 s with no queue wait: native
+construction 5.777 s, formal emission 0.855 s, correctness execution 8.845 s
+and native inspection 2.259 s, with the remainder in orchestration. Every phase
+status was retained; no timing was run until the separate stage-2 criterion.
+
+### Complete exploratory timing
+
+The frozen images each ran `measure 1048576 7` once in the same guard: control
+80.750 s, K 81.452 s, both exit 0; the paired wrapper took 163.271 s with no
+queue wait. All 332 frozen artifact hashes were rechecked afterward. Fresh
+[F control samples](ecosystem-forward-control-samples.csv) and
+[K samples](ecosystem-forward-k-samples.csv) each contain 4,116 rows and have
+SHA-256 `36961e1f99c0a9cdc701d7e16c105715cd4d30e567c3d5031e523d7d80870f80`
+and `398ae392862735819a2fb014f097461606ad2b6b122f9d3aabb768d515c12d7a`.
+Keys, sample IDs 0–6, work, rounds, traces and checksums match exactly; reducer
+self-tests, complete reductions and standard-target reductions pass. Earlier F
+samples are not pooled into this pair.
+
+The table covers all 36 useful cells; each range spans the two cohort medians.
+Ratios compare whole traces. The last column is descriptive and does not itself
+establish a qualified target pass.
+
+| Bytes | Path | K / F at 16 | at 256 | at 4096 | K ms at 4096 | K / slower standard at 4096 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 0.896–0.916 | 0.962–0.994 | 0.986–0.989 | 1.664–1.665 | 0.786–0.790 |
+| 8 | growth | 0.973–0.991 | 0.972–0.997 | 0.981–0.991 | 2.056–2.067 | 0.844–0.859 |
+| 8 | reuse | 0.779–0.808 | 0.974–0.987 | 0.981–0.993 | 1.632–1.644 | 0.791–0.806 |
+| 8 | suffix-1 | 0.918–0.927 | 0.954–0.958 | 0.932–0.952 | 2.769–2.787 | 0.932–0.946 |
+| 8 | suffix-2 | 0.614–0.615 | 0.584–0.586 | 0.581–0.595 | 1.419–1.424 | 0.854–0.865 |
+| 8 | suffix-3 | 0.680–0.712 | 0.662–0.667 | 0.663–0.671 | 1.314–1.322 | 0.750–0.754 |
+| 256 | reserved | 1.031–1.034 | 1.045–1.065 | 1.050–1.064 | 43.193–43.633 | 0.979–0.984 |
+| 256 | growth | 1.010–1.022 | 1.033–1.033 | 1.028–1.030 | 54.816–54.822 | 1.037–1.040 |
+| 256 | reuse | 1.025–1.029 | 1.049–1.057 | 1.054–1.055 | 43.119–43.210 | 0.983–0.987 |
+| 256 | suffix-1 | 0.842–0.856 | 0.850–0.935 | 0.837–0.911 | 19.209–20.980 | 1.147–1.252 |
+| 256 | suffix-2 | 1.436–1.453 | 1.432–1.437 | 1.424–1.457 | 33.713–33.716 | 1.531–1.532 |
+| 256 | suffix-3 | 1.267–1.276 | 1.266–1.273 | 1.269–1.274 | 33.814–33.843 | 1.279–1.286 |
+
+Strict gains require K's maximum sample below F's minimum in both cohorts;
+strict regressions require the converse. The 10 gains are scalar reserved/reuse
+at 16, suffix-1 at 16/4096 and suffix-2/3 at every population. The 13 losses are
+wide reserved/reuse at every population, growth at 256 and suffix-2/3 at every
+population. All remaining useful cells overlap in at least one cohort. For
+example, wide suffix-2 at 4096 has observed K/F envelopes 1.411–1.491 and
+1.408–1.511, while scalar suffix-2 there has 0.557–0.613 and 0.580–0.618.
+Wide suffix-1 medians are lower, but its complete K ranges span 18.947–29.817 ms
+across cells/cohorts and overlap F; none is a strict improvement.
+
+The fresh standard-target reduction is F 14 passes / 11 deficits / 11
+inconclusive versus K 16 / 9 / 11, with six unranked controls each. K's scalar
+counts are 15 / 1 / 2 and wide counts 1 / 8 / 9; total passes cannot hide the
+wide regressions. The minimum useful WF sample is 1.171 ms. All sub-millisecond
+observations are suffix-zero controls. No K/F paired cohort ratio exceeds 10%,
+and F's native comparisons have no unstable ratios. K wide suffix-1 at 256 is
+unstable against C++, Rust, direct C, reverse C and swap/take C; the selected
+standard ratio has 10.889% cohort spread and is inconclusive. Every outlier is
+retained. The three wide suffix-zero controls strictly improve (median K/F
+0.827–0.842); all three scalar suffix-zero controls overlap and remain unranked.
+
+Across useful cells/cohorts, unchanged Rust controls drift 0.960–1.020 and C++
+0.971–1.028; direct C spans 0.895–1.132, so it is not a universal fixed clock.
+For the large wide suffix-2/3 losses, Rust/C++ drift stays within approximately
+0.998–1.013, far smaller than K's 1.266–1.457 ratios. This supports a real
+image-level regression, not a causal percentage assigned to the callback call.
+The result supports further investigation of the scalar lowering opportunity,
+but neither an all-type forward transform nor a generic recognizer is selected.
+Reopening the wide case needs a separately controlled way to address the new
+callback boundary and other caller changes; repeating this pair until it wins
+would not supply that evidence.
+
+### Exact body reproduction
+
+[forward-consumption-k.patch](forward-consumption-k.patch), SHA-256
+`7e456010a80d4fa2874e3401473ffa25cd1fe4b4f23aa848cb567d8e98a3cfa4`, preserves
+both exact replacements. In an isolated F checkout, build the normal ecosystem
+inputs with the documented O3 configuration. Copy each pinned timed/accounting
+LLVM input separately to `whitefoot.ll` and apply the patch with
+`patch -p0 --batch -i forward-consumption-k.patch`; the patch reproduces both
+candidate modules byte-for-byte. The F accounting input hash is
+`2ee32650b03a6e1a42f3ef2fe55bc569066e150c86024dd3f6a64a479a0f6518`, and the K
+accounting result is `be11dd6b21b42e3175a94df87ba58303a19278528780675e7516d1ab6eee20da`.
+Compile original and patched raw modules once using
+`clang -O3 -Wno-override-module -x ir -c`, link against the same frozen objects
+in the existing Makefile's order, and run complete checks/accounting before the
+paired measurement. The separately emitted optimized LLVM is for inspection;
+it is never linked as a second O3 pass. The raw patch is research evidence only
+and is not wired into the compiler, fixture, default target or canonical gate.
 
 ## Historical source-composition evidence
 

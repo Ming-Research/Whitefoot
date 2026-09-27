@@ -1,0 +1,22 @@
+--- F/whitefoot-timed.ll
++++ H1/whitefoot-timed.ll
+@@ -51,0 +52 @@
++declare ptr @realloc(ptr, i64)
+@@ -2441 +2442 @@
+-  %t5 = call ptr @malloc(i64 %t4)
++  %t5 = call ptr @realloc(ptr %t0, i64 %t4)
+@@ -2452,5 +2452,0 @@
+-  %t9 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %t0, i64 0, i32 2, i64 0
+-  %t10 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %t5, i64 0, i32 2, i64 0
+-  %t11 = mul nuw i64 %t2, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  call void @llvm.memmove.p0.p0.i64(ptr %t10, ptr %t9, i64 %t11, i1 false)
+-  call void @free(ptr %t0)
+@@ -2495 +2491 @@
+-  %t5 = call ptr @malloc(i64 %t4)
++  %t5 = call ptr @realloc(ptr %t0, i64 %t4)
+@@ -2506,5 +2501,0 @@
+-  %t9 = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %t0, i64 0, i32 2, i64 0
+-  %t10 = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %t5, i64 0, i32 2, i64 0
+-  %t11 = mul nuw i64 %t2, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  call void @llvm.memmove.p0.p0.i64(ptr %t10, ptr %t9, i64 %t11, i1 false)
+-  call void @free(ptr %t0)

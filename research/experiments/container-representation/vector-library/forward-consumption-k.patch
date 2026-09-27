@@ -1,0 +1,300 @@
+--- whitefoot.ll
++++ whitefoot.ll
+@@ -1849,129 +1849,24 @@
+
+ define i8 @wf_std.collections.vector.grow_vector_truncate$instance$0bdfc07e3035b4cc(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, ptr noalias nonnull captures(none) dereferenceable(8) %v2) #0 {
+ entry:
+-  %v30 = alloca i64, align 8
+-  %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+-  %v3 = getelementptr i8, ptr %t0, i64 0
+-  %t1 = load ptr, ptr %v3
+-  %v4 = getelementptr i8, ptr %t1, i64 0
+-  %t3 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %v4, i32 0, i32 0
+-  %t2 = load i64, ptr %t3
+-  %v5 = add i64 %t2, 0
+-  %v6 = sub nuw i64 %v5, %v1
+-  %v7 = select i1 true, i64 2, i64 2
+-  %v8 = udiv i64 %v6, %v7
+-  %v9 = select i1 true, i64 0, i64 0
+-  br label %bb1
+-bb1:
+-  %v10 = phi ptr [ %v0, %entry ], [ %v37, %bb5 ]
+-  %v11 = phi i64 [ %v1, %entry ], [ %v38, %bb5 ]
+-  %v12 = phi ptr [ %v2, %entry ], [ %v39, %bb5 ]
+-  %v13 = phi i64 [ %v5, %entry ], [ %v40, %bb5 ]
+-  %v14 = phi i64 [ %v6, %entry ], [ %v41, %bb5 ]
+-  %v15 = phi i64 [ %v8, %entry ], [ %v42, %bb5 ]
+-  %v16 = phi i64 [ %v9, %entry ], [ %v43, %bb5 ]
+-  %v17 = phi i64 [ %v8, %entry ], [ %v44, %bb5 ]
+-  %v18 = phi i64 [ %v9, %entry ], [ %v47, %bb5 ]
+-  %v25 = icmp ult i64 %v18, %v17
+-  switch i1 %v25, label %invalid.tag.b1 [
+-    i1 1, label %bb2
+-    i1 0, label %bb3
+-  ]
+-invalid.tag.b1:
+-  call void @abort()
+-  unreachable
+-bb2:
+-  %v26 = add nuw i64 %v11, %v18
+-  %t4 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v10, i32 0, i32 0
+-  %v27 = getelementptr i8, ptr %t4, i64 0
+-  %t5 = load ptr, ptr %v27
+-  %v28 = getelementptr i8, ptr %t5, i64 0
+-  %v29 = call i64 @wf_take_back$instance$b128cca62ef74569(ptr %v28)
+-  store i64 %v29, ptr %v30
+-  %t6 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v10, i32 0, i32 0
+-  %v31 = getelementptr i8, ptr %t6, i64 0
+-  %t7 = load ptr, ptr %v31
+-  %v32 = getelementptr i8, ptr %t7, i64 0
+-  %t8.nonnegative = icmp sge i64 %v26, 0
+-  call void @llvm.assume(i1 %t8.nonnegative)
+-  %t8 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %v32, i64 0, i32 2, i64 %v26
+-  %v33 = getelementptr i8, ptr %t8, i64 0
+-  %v34 = call i8 @wf_swap$instance$e194368921a477a7(ptr %v33, ptr %v30)
+-  %v35 = load i64, ptr %v30
+-  %v36 = call i8 @wf_vector_word_accept(ptr %v12, i64 %v35)
+-  br label %bb5
+-bb3:
+-  br label %bb4
+-bb4:
+-  %v19 = phi ptr [ %v10, %bb3 ]
+-  %v20 = phi i64 [ %v11, %bb3 ]
+-  %v21 = phi ptr [ %v12, %bb3 ]
+-  %v22 = phi i64 [ %v13, %bb3 ]
+-  %v23 = phi i64 [ %v14, %bb3 ]
+-  %v24 = phi i64 [ %v15, %bb3 ]
+-  br label %bb6
+-bb5:
+-  %v37 = phi ptr [ %v10, %bb2 ]
+-  %v38 = phi i64 [ %v11, %bb2 ]
+-  %v39 = phi ptr [ %v12, %bb2 ]
+-  %v40 = phi i64 [ %v13, %bb2 ]
+-  %v41 = phi i64 [ %v14, %bb2 ]
+-  %v42 = phi i64 [ %v15, %bb2 ]
+-  %v43 = phi i64 [ %v16, %bb2 ]
+-  %v44 = phi i64 [ %v17, %bb2 ]
+-  %v45 = phi i64 [ %v18, %bb2 ]
+-  %v46 = select i1 true, i64 1, i64 1
+-  %v47 = add i64 %v45, %v46
+-  br label %bb1
+-bb6:
+-  %v48 = phi ptr [ %v19, %bb4 ], [ %v64, %bb8 ]
+-  %v49 = phi i64 [ %v20, %bb4 ], [ %v65, %bb8 ]
+-  %v50 = phi ptr [ %v21, %bb4 ], [ %v66, %bb8 ]
+-  %v51 = phi i64 [ %v22, %bb4 ], [ %v67, %bb8 ]
+-  %v52 = phi i64 [ %v23, %bb4 ], [ %v68, %bb8 ]
+-  %v53 = phi i64 [ %v24, %bb4 ], [ %v69, %bb8 ]
+-  %t9 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v48, i32 0, i32 0
+-  %v60 = getelementptr i8, ptr %t9, i64 0
+-  %t10 = load ptr, ptr %v60
+-  %v61 = getelementptr i8, ptr %t10, i64 0
+-  %t12 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %v61, i32 0, i32 0
+-  %t11 = load i64, ptr %t12
+-  %v62 = add i64 %t11, 0
+-  %v63 = icmp ule i64 %v62, %v49
+-  switch i1 %v63, label %invalid.tag.b6 [
+-    i1 1, label %bb9
+-    i1 0, label %bb10
+-  ]
+-invalid.tag.b6:
+-  call void @abort()
+-  unreachable
+-bb7:
+-  %v54 = phi ptr [ %v48, %bb9 ]
+-  %v55 = phi i64 [ %v49, %bb9 ]
+-  %v56 = phi ptr [ %v50, %bb9 ]
+-  %v57 = phi i64 [ %v51, %bb9 ]
+-  %v58 = phi i64 [ %v52, %bb9 ]
+-  %v59 = phi i64 [ %v53, %bb9 ]
+-  %v74 = select i1 true, i8 0, i8 0
+-  ret i8 %v74
+-bb8:
+-  %v64 = phi ptr [ %v48, %bb10 ]
+-  %v65 = phi i64 [ %v49, %bb10 ]
+-  %v66 = phi ptr [ %v50, %bb10 ]
+-  %v67 = phi i64 [ %v51, %bb10 ]
+-  %v68 = phi i64 [ %v52, %bb10 ]
+-  %v69 = phi i64 [ %v53, %bb10 ]
+-  %t13 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v64, i32 0, i32 0
+-  %v70 = getelementptr i8, ptr %t13, i64 0
+-  %t14 = load ptr, ptr %v70
+-  %v71 = getelementptr i8, ptr %t14, i64 0
+-  %v72 = call i64 @wf_take_back$instance$b128cca62ef74569(ptr %v71)
+-  %v73 = call i8 @wf_vector_word_accept(ptr %v66, i64 %v72)
+-  br label %bb6
+-bb9:
+-  br label %bb7
+-bb10:
+-  br label %bb8
++  %k.owner = getelementptr %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
++  %k.backing = load ptr, ptr %k.owner
++  %k.length.pointer = getelementptr { i64, i64, [0 x i64] }, ptr %k.backing, i32 0, i32 0
++  %k.length = load i64, ptr %k.length.pointer
++  br label %k.head
++k.head:
++  %k.index = phi i64 [ %v1, %entry ], [ %k.next, %k.body ]
++  %k.more = icmp ult i64 %k.index, %k.length
++  br i1 %k.more, label %k.body, label %k.done
++k.body:
++  %k.item = getelementptr { i64, i64, [0 x i64] }, ptr %k.backing, i64 0, i32 2, i64 %k.index
++  %k.value = load i64, ptr %k.item
++  %k.accepted = call i8 @wf_vector_word_accept(ptr %v2, i64 %k.value)
++  %k.next = add i64 %k.index, 1
++  br label %k.head
++k.done:
++  store i64 %v1, ptr %k.length.pointer
++  ret i8 0
+ }
+
+ define i64 @wf_std.collections.vector.grow_vector_insert$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, i64 %v2) #0 {
+@@ -2097,132 +1992,23 @@
+
+ define i8 @wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, ptr noalias nonnull captures(none) dereferenceable(8) %v2) #0 {
+ entry:
+-  %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+-  %wf.slot.1 = alloca %wf.t.ac26c585c4167c7a, align 8
+-  %wf.slot.2 = alloca %wf.t.ac26c585c4167c7a, align 8
+-  %v30 = alloca %wf.t.ac26c585c4167c7a, align 8
+-  %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+-  %v3 = getelementptr i8, ptr %t0, i64 0
+-  %t1 = load ptr, ptr %v3
+-  %v4 = getelementptr i8, ptr %t1, i64 0
+-  %t3 = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %v4, i32 0, i32 0
+-  %t2 = load i64, ptr %t3
+-  %v5 = add i64 %t2, 0
+-  %v6 = sub nuw i64 %v5, %v1
+-  %v7 = select i1 true, i64 2, i64 2
+-  %v8 = udiv i64 %v6, %v7
+-  %v9 = select i1 true, i64 0, i64 0
+-  br label %bb1
+-bb1:
+-  %v10 = phi ptr [ %v0, %entry ], [ %v37, %bb5 ]
+-  %v11 = phi i64 [ %v1, %entry ], [ %v38, %bb5 ]
+-  %v12 = phi ptr [ %v2, %entry ], [ %v39, %bb5 ]
+-  %v13 = phi i64 [ %v5, %entry ], [ %v40, %bb5 ]
+-  %v14 = phi i64 [ %v6, %entry ], [ %v41, %bb5 ]
+-  %v15 = phi i64 [ %v8, %entry ], [ %v42, %bb5 ]
+-  %v16 = phi i64 [ %v9, %entry ], [ %v43, %bb5 ]
+-  %v17 = phi i64 [ %v8, %entry ], [ %v44, %bb5 ]
+-  %v18 = phi i64 [ %v9, %entry ], [ %v47, %bb5 ]
+-  %v25 = icmp ult i64 %v18, %v17
+-  switch i1 %v25, label %invalid.tag.b1 [
+-    i1 1, label %bb2
+-    i1 0, label %bb3
+-  ]
+-invalid.tag.b1:
+-  call void @abort()
+-  unreachable
+-bb2:
+-  %v26 = add nuw i64 %v11, %v18
+-  %t4 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v10, i32 0, i32 0
+-  %v27 = getelementptr i8, ptr %t4, i64 0
+-  %t5 = load ptr, ptr %v27
+-  %v28 = getelementptr i8, ptr %t5, i64 0
+-  call void @wf_take_back$instance$ab2ec825a6b3a294(ptr %wf.slot.0, ptr %v28)
+-  call void @llvm.memmove.p0.p0.i64(ptr %v30, ptr %wf.slot.0, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+-  %t6 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v10, i32 0, i32 0
+-  %v31 = getelementptr i8, ptr %t6, i64 0
+-  %t7 = load ptr, ptr %v31
+-  %v32 = getelementptr i8, ptr %t7, i64 0
+-  %t8.nonnegative = icmp sge i64 %v26, 0
+-  call void @llvm.assume(i1 %t8.nonnegative)
+-  %t8 = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %v32, i64 0, i32 2, i64 %v26
+-  %v33 = getelementptr i8, ptr %t8, i64 0
+-  %v34 = call i8 @wf_swap$instance$04ee659886c12146(ptr %v33, ptr %v30)
+-  call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.1, ptr %v30, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+-  %v36 = call i8 @wf_vector_record_accept(ptr %v12, ptr %wf.slot.1)
+-  br label %bb5
+-bb3:
+-  br label %bb4
+-bb4:
+-  %v19 = phi ptr [ %v10, %bb3 ]
+-  %v20 = phi i64 [ %v11, %bb3 ]
+-  %v21 = phi ptr [ %v12, %bb3 ]
+-  %v22 = phi i64 [ %v13, %bb3 ]
+-  %v23 = phi i64 [ %v14, %bb3 ]
+-  %v24 = phi i64 [ %v15, %bb3 ]
+-  br label %bb6
+-bb5:
+-  %v37 = phi ptr [ %v10, %bb2 ]
+-  %v38 = phi i64 [ %v11, %bb2 ]
+-  %v39 = phi ptr [ %v12, %bb2 ]
+-  %v40 = phi i64 [ %v13, %bb2 ]
+-  %v41 = phi i64 [ %v14, %bb2 ]
+-  %v42 = phi i64 [ %v15, %bb2 ]
+-  %v43 = phi i64 [ %v16, %bb2 ]
+-  %v44 = phi i64 [ %v17, %bb2 ]
+-  %v45 = phi i64 [ %v18, %bb2 ]
+-  %v46 = select i1 true, i64 1, i64 1
+-  %v47 = add i64 %v45, %v46
+-  br label %bb1
+-bb6:
+-  %v48 = phi ptr [ %v19, %bb4 ], [ %v64, %bb8 ]
+-  %v49 = phi i64 [ %v20, %bb4 ], [ %v65, %bb8 ]
+-  %v50 = phi ptr [ %v21, %bb4 ], [ %v66, %bb8 ]
+-  %v51 = phi i64 [ %v22, %bb4 ], [ %v67, %bb8 ]
+-  %v52 = phi i64 [ %v23, %bb4 ], [ %v68, %bb8 ]
+-  %v53 = phi i64 [ %v24, %bb4 ], [ %v69, %bb8 ]
+-  %t9 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v48, i32 0, i32 0
+-  %v60 = getelementptr i8, ptr %t9, i64 0
+-  %t10 = load ptr, ptr %v60
+-  %v61 = getelementptr i8, ptr %t10, i64 0
+-  %t12 = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %v61, i32 0, i32 0
+-  %t11 = load i64, ptr %t12
+-  %v62 = add i64 %t11, 0
+-  %v63 = icmp ule i64 %v62, %v49
+-  switch i1 %v63, label %invalid.tag.b6 [
+-    i1 1, label %bb9
+-    i1 0, label %bb10
+-  ]
+-invalid.tag.b6:
+-  call void @abort()
+-  unreachable
+-bb7:
+-  %v54 = phi ptr [ %v48, %bb9 ]
+-  %v55 = phi i64 [ %v49, %bb9 ]
+-  %v56 = phi ptr [ %v50, %bb9 ]
+-  %v57 = phi i64 [ %v51, %bb9 ]
+-  %v58 = phi i64 [ %v52, %bb9 ]
+-  %v59 = phi i64 [ %v53, %bb9 ]
+-  %v74 = select i1 true, i8 0, i8 0
+-  ret i8 %v74
+-bb8:
+-  %v64 = phi ptr [ %v48, %bb10 ]
+-  %v65 = phi i64 [ %v49, %bb10 ]
+-  %v66 = phi ptr [ %v50, %bb10 ]
+-  %v67 = phi i64 [ %v51, %bb10 ]
+-  %v68 = phi i64 [ %v52, %bb10 ]
+-  %v69 = phi i64 [ %v53, %bb10 ]
+-  %t13 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v64, i32 0, i32 0
+-  %v70 = getelementptr i8, ptr %t13, i64 0
+-  %t14 = load ptr, ptr %v70
+-  %v71 = getelementptr i8, ptr %t14, i64 0
+-  call void @wf_take_back$instance$ab2ec825a6b3a294(ptr %wf.slot.2, ptr %v71)
+-  %v73 = call i8 @wf_vector_record_accept(ptr %v66, ptr %wf.slot.2)
+-  br label %bb6
+-bb9:
+-  br label %bb7
+-bb10:
+-  br label %bb8
++  %k.owner = getelementptr %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
++  %k.backing = load ptr, ptr %k.owner
++  %k.length.pointer = getelementptr { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %k.backing, i32 0, i32 0
++  %k.length = load i64, ptr %k.length.pointer
++  br label %k.head
++k.head:
++  %k.index = phi i64 [ %v1, %entry ], [ %k.next, %k.body ]
++  %k.more = icmp ult i64 %k.index, %k.length
++  br i1 %k.more, label %k.body, label %k.done
++k.body:
++  %k.item = getelementptr { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %k.backing, i64 0, i32 2, i64 %k.index
++  %k.accepted = call i8 @wf_vector_record_accept(ptr %v2, ptr %k.item)
++  %k.next = add i64 %k.index, 1
++  br label %k.head
++k.done:
++  store i64 %v1, ptr %k.length.pointer
++  ret i8 0
+ }
+
+ define i64 @wf_std.collections.vector.grow_vector_insert$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, ptr %wf.arg.v2) #0 {

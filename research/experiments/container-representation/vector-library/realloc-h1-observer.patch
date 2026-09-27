@@ -1,0 +1,86 @@
+--- a/vector-costs.c
++++ b/vector-costs.c
+@@ -96,6 +96,26 @@
+ #endif
+     return header + 1;
+ }
++#if defined(ECOSYSTEM) && defined(ACCOUNT_ONLY)
++// The logical WF pointer follows this observer's private prefix. Only the
++// prefix base may be passed to libc realloc. Save all old metadata first:
++// successful realloc ends the old allocation even when the address is equal.
++NOINLINE void *wf_cost_reallocate(void *pointer, uint64_t bytes) {
++    require(pointer != NULL, "realloc owner");
++    require(bytes != 0 && bytes <= SIZE_MAX - sizeof(AllocationHeader),
++            "realloc allocation extent");
++    AllocationHeader *old = (AllocationHeader *)pointer - 1;
++    require(old->value.magic == UINT64_C(0x766563746f726c69), "realloc allocation identity");
++    const size_t old_bytes = old->value.bytes;
++    require(bytes >= old_bytes, "grow allocation extent does not shrink");
++    AllocationHeader *fresh = realloc(old, sizeof *fresh + (size_t)bytes);
++    if (fresh == NULL) return NULL; // Original allocation and ledger survive.
++    fresh->value.bytes = (size_t)bytes;
++    fresh->value.magic = UINT64_C(0x766563746f726c69);
++    wf_ecosystem_note_realloc(old_bytes, bytes);
++    return fresh + 1;
++}
++#endif
+ NOINLINE void wf_cost_release(void *pointer) {
+     if (pointer == NULL) return;
+     AllocationHeader *header = (AllocationHeader *)pointer - 1;
+@@ -489,23 +509,37 @@
+     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+     size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
+     size_t per_peak = per_bytes;
++    size_t final_bytes = 16 + (count + 1) * stride;
+     if (path == 1) {
+         per_requests = 1; per_bytes = 16; per_peak = 16;
+         size_t old_bytes = 16;
+         for (uint64_t capacity = 1;;) {
+             size_t bytes = 16 + capacity * stride;
+             ++per_requests; per_bytes += bytes; per_peak = old_bytes + bytes;
++            final_bytes = bytes;
+             if (capacity >= count + 1) break;
+             old_bytes = bytes;
+             capacity = capacity > CEILING / 2 ? CEILING : capacity * 2;
+         }
+     }
++    const size_t per_overlap = per_peak;
++    size_t per_reallocs = 0, per_releases = per_requests;
++#if defined(WF_GROW_REALLOC)
++    if (variant == WHITEFOOT) {
++        per_reallocs = per_requests - 1;
++        per_releases = 1;
++        per_peak = final_bytes;
++    }
++#else
++    (void)final_bytes;
++#endif
+     size_t traces = path < 2 ? rounds : 1;
+     require(requests == per_requests * traces && requested_bytes == per_bytes * traces
+             && peak_bytes == (traces ? per_peak : 0),
+             "independent allocation count, byte and peak formula");
+-    require(realloc_requests == 0 && peak_overlap_upper_bytes == peak_bytes,
+-            "fresh-backing allocation lifecycle");
++    require(realloc_requests == per_reallocs * traces && releases == per_releases * traces
++            && peak_overlap_upper_bytes == (traces ? per_overlap : 0),
++            "independent grow allocation lifecycle");
+ #else
+     (void)variant; (void)wide; (void)count; (void)rounds; (void)path;
+ #endif
+@@ -615,6 +649,16 @@
+         (void)wf_cost_allocate(1);
+         check_accounting(WHITEFOOT, true, 3, 1, 1);
+     }
++#if defined(WF_GROW_REALLOC)
++    else if (strcmp(argv[1], "fail-realloc-account") == 0) {
++        (void)checked_run(WHITEFOOT, true, 3, 1, 17, 1);
++        require(realloc_requests != 0, "resize control reached grow");
++        // Misclassify one successful resize as an explicit free. The broad
++        // lifecycle balance still holds; the independent geometry must fail.
++        --realloc_requests; ++releases;
++        check_accounting(WHITEFOOT, true, 3, 1, 1);
++    }
++#endif
+ #else
+     else if (strcmp(argv[1], "measure") == 0) {
+         require(argc == 4, "measure requires work and samples");

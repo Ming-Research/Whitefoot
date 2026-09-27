@@ -1,0 +1,50 @@
+--- F/whitefoot-timed.ll
++++ H2/whitefoot-timed.ll
+@@ -51,0 +52 @@
++declare ptr @realloc(ptr, i64)
+@@ -2438,0 +2440,5 @@
++  %h2_cap_ptr = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %t0, i32 0, i32 1
++  %h2_cap = load i64, ptr %h2_cap_ptr
++  %h2_full = icmp eq i64 %t2, %h2_cap
++  %h2_nonempty = icmp ne i64 %t2, 0
++  %h2_resize = and i1 %h2_full, %h2_nonempty
+@@ -2440,0 +2447,13 @@
++  br i1 %h2_resize, label %h2.resize, label %h2.copy
++h2.resize:
++  %h2_fresh = call ptr @realloc(ptr %t0, i64 %t4)
++  %h2_ok = icmp ne ptr %h2_fresh, null
++  br i1 %h2_ok, label %h2.resize.ready, label %window.block.oom.v2
++h2.resize.ready:
++  %h2_len_ptr = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %h2_fresh, i32 0, i32 0
++  store i64 %t2, ptr %h2_len_ptr
++  %h2_new_cap_ptr = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %h2_fresh, i32 0, i32 1
++  store i64 %v1, ptr %h2_new_cap_ptr
++  store ptr %h2_fresh, ptr %v0
++  br label %h2.done
++h2.copy:
+@@ -2457,0 +2477,2 @@
++  br label %h2.done
++h2.done:
+@@ -2492,0 +2514,5 @@
++  %h2_cap_ptr = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %t0, i32 0, i32 1
++  %h2_cap = load i64, ptr %h2_cap_ptr
++  %h2_full = icmp eq i64 %t2, %h2_cap
++  %h2_nonempty = icmp ne i64 %t2, 0
++  %h2_resize = and i1 %h2_full, %h2_nonempty
+@@ -2494,0 +2521,13 @@
++  br i1 %h2_resize, label %h2.resize, label %h2.copy
++h2.resize:
++  %h2_fresh = call ptr @realloc(ptr %t0, i64 %t4)
++  %h2_ok = icmp ne ptr %h2_fresh, null
++  br i1 %h2_ok, label %h2.resize.ready, label %window.block.oom.v2
++h2.resize.ready:
++  %h2_len_ptr = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %h2_fresh, i32 0, i32 0
++  store i64 %t2, ptr %h2_len_ptr
++  %h2_new_cap_ptr = getelementptr inbounds { i64, i64, [0 x %wf.t.ac26c585c4167c7a] }, ptr %h2_fresh, i32 0, i32 1
++  store i64 %v1, ptr %h2_new_cap_ptr
++  store ptr %h2_fresh, ptr %v0
++  br label %h2.done
++h2.copy:
+@@ -2511,0 +2551,2 @@
++  br label %h2.done
++h2.done:
