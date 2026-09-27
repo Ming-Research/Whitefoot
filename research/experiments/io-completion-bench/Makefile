@@ -536,7 +536,9 @@ chain: $(BUILD)/chain $(BUILD)/gen
 NET_OUT := $(WORK)/net
 NET_ROUNDS ?= 5
 NET_WARMUP ?= 1
-WF_ECHO_SOURCE := $(wildcard programs/tcp_echo_server.wf)
+# The Whitefoot line is the maintained context server, one context per
+# connection [PAR-4]; the bundle's earlier echo program is kept as evidence.
+WF_ECHO_SOURCE := $(ROOT)/tests/programs/tcp_contexts.wf
 
 net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload $(BUILD)/waiting_echo
 
@@ -572,12 +574,11 @@ $(BUILD)/netload: netload.c | prepare
 $(BUILD)/waiting_echo: waiting_echo.c | prepare
 	$(CLANG) $(CFLAGS) -pthread $< -o $@
 
-$(BUILD)/wf_echo: programs/tcp_echo_server.wf $(WFC) Makefile | prepare
-	$(WFC) --par -o $@ $<
+$(BUILD)/wf_echo: $(WF_ECHO_SOURCE) $(WFC) Makefile | prepare
+	$(WFC) -o $@ $<
 
-# The Whitefoot line joins this check when its program is in the bundle; the
-# two references are always in it.
-net-verify: net-tools $(if $(WF_ECHO_SOURCE),$(BUILD)/wf_echo)
+# Every line, the Whitefoot one included, answers the load generator first.
+net-verify: net-tools $(BUILD)/wf_echo
 	@env ROOT=$(ROOT) OUT=$(BUILD) sh linux-net-bench.sh verify
 
 linux-net:

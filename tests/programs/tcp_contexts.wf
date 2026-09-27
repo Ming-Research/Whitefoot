@@ -89,15 +89,15 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
 
 fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure waits {
   doc "Returns every byte one peer sends until the peer stops sending, then closes both halves. It runs in a context of its own [PAR-4], so a peer that is silent holds only this context, and the chunk it echoes through is an inline window of this context's own frame.";
-  let chunk = slots_new::<u8, 16384>();
+  let chunk = slots_new::<u8, 65536>();
   for @fill_chunk (
-    at in 0_u64..16384_u64,
+    at in 0_u64..65536_u64,
     invariant grown_chunk: chunk.len == at
   ) {
     place_back(window: &chunk, value: 0_u8);
   }
-  let held = 16384_u64;
-  let sink = &chunk[0_u64..16384_u64];
+  let held = 65536_u64;
+  let sink = &chunk[0_u64..65536_u64];
   loop @chunks {
     let available = 0_u64;
     let ended = 0_u8;

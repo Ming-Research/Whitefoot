@@ -230,12 +230,14 @@ time.
   straight-line receive-then-send code on its own small stack, pinned to a
   driver thread that owns one ring and one `SO_REUSEPORT` listener.
   `research/investigations/io-model/WAITS.md` states the question it answers,
-  its criterion and its result. It is removed when compiled `waits` programs
-  replace it in this protocol.
-- **`wf_echo`**: `programs/tcp_echo_server.wf` built with `--par`, the
-  Whitefoot line. It runs with `WF_STACKS=1100` and otherwise the shipped
-  defaults, because a parked callee holds a pool stack for as long as its
-  connection lives and the widest case here holds 1024 connections at once.
+  its criterion and its result. Experiment 2 there judges the compiled server
+  against it at one driver thread; it is removed once no experiment compares
+  the compiled runtime with the hand-written shape.
+- **`wf_echo`**: `tests/programs/tcp_contexts.wf`, the maintained context
+  server, built with the default flags: the entry accepts and each connection
+  is served by a context of its own [PAR-4]. Every context runs on the entry's
+  thread, so the line has one driver where the C servers default to one thread
+  per CPU; their `--threads 1` runs are the matching comparison.
 
 What the io_uring reference does that a portable server cannot, which is what
 the ratio is against:

@@ -834,10 +834,14 @@ static void wf_bridge_require(void) {
 
 /* Publish exactly once, then notify using only permanent engine storage.
  * The waiter may reclaim its frame as soon as it observes DONE. */
+static void wf_context_record_published(const wf_completion_record *record);
+
 void wf_completion_record_complete(wf_completion_record *record) {
     if (!wf_bridge_ensure_wake()) wf_bridge_fail("completion wake initialization failed");
     atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
     wf_completion_record_publish(record);
+    /* The address only: the waiter may reclaim the record from here on. */
+    wf_context_record_published(record);
     wf_completion_notify_target(&wf_bridge_runtime);
 }
 
@@ -967,6 +971,8 @@ struct wf_context {
      * readiness waits on, and zero events otherwise. */
     int poll_descriptor;
     unsigned poll_events;
+    /* The chain of parked contexts whose records hash alike. */
+    wf_context *record_next;
 };
 
 /* The group an activation keeps in its frame: two words the emitted code
@@ -985,6 +991,17 @@ static wf_file_readiness wf_context_polls[WF_FILE_READINESS_BATCH];
 static wf_context *wf_context_polled[WF_FILE_READINESS_BATCH];
 /* Started and not finished; the root is not counted. */
 static uint64_t wf_context_live;
+/* Parked contexts by the address of their record. A record published on the
+ * thread that runs the contexts wakes its context here at once; one another
+ * thread publishes is found by a pass over the parked contexts, which runs
+ * only after such a publication. */
+#define WF_CONTEXT_RECORD_BUCKETS 4096u
+static wf_context *wf_context_by_record[WF_CONTEXT_RECORD_BUCKETS];
+static _Thread_local int wf_context_driver;
+/* Publications made on any other thread, counted after each one is
+ * published, and the count the last pass over the parked contexts saw. */
+static _Atomic uint64_t wf_context_foreign_publications;
+static uint64_t wf_context_foreign_seen;
 /* A finished context, released by the next one to run on another stack. */
 static wf_context *wf_context_finished;
 
@@ -1033,11 +1050,28 @@ static void wf_context_unlink(wf_context **list, wf_context *context) {
     context->previous = NULL;
 }
 
+static size_t wf_context_record_bucket(const wf_completion_record *record) {
+    uint64_t key = (uint64_t)(uintptr_t)record;
+    key = (key >> 3) * UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(key >> 52) % WF_CONTEXT_RECORD_BUCKETS;
+}
+
 static void wf_context_park(wf_context *context) {
+    size_t bucket = wf_context_record_bucket(context->record);
     wf_context_link(&wf_context_parked, context);
+    context->record_next = wf_context_by_record[bucket];
+    wf_context_by_record[bucket] = context;
 }
 
 static void wf_context_unpark(wf_context *context) {
+    wf_context **link = &wf_context_by_record[wf_context_record_bucket(context->record)];
+    while (*link != NULL && *link != context) {
+        link = &(*link)->record_next;
+    }
+    if (*link == context) {
+        *link = context->record_next;
+    }
+    context->record_next = NULL;
     wf_context_unlink(&wf_context_parked, context);
 }
 
@@ -1082,11 +1116,39 @@ static int wf_context_poll(int timeout_ms) {
     return answered > 0;
 }
 
-/* Moves every parked context whose record is done to the ready queue.
- * Returns nonzero when it moved one. */
+/* Wakes the context parked on a record this thread just published. */
+static void wf_context_record_published(const wf_completion_record *record) {
+    wf_context *context;
+    if (!wf_context_driver) {
+        atomic_fetch_add_explicit(&wf_context_foreign_publications, 1, memory_order_release);
+        return;
+    }
+    context = wf_context_by_record[wf_context_record_bucket(record)];
+    while (context != NULL && context->record != record) {
+        context = context->record_next;
+    }
+    if (context != NULL) {
+        wf_context_unpark(context);
+        context->record = NULL;
+        wf_context_ready(context);
+    }
+}
+
+/* Moves every parked context whose record is done to the ready queue, once
+ * another thread has published since the last pass; records this thread
+ * publishes wake their contexts as they are published. Returns nonzero when
+ * it moved one. */
 static int wf_context_harvest(void) {
     int moved = 0;
     wf_context *context = wf_context_parked;
+    uint64_t foreign = atomic_load_explicit(
+        &wf_context_foreign_publications,
+        memory_order_acquire
+    );
+    if (foreign == wf_context_foreign_seen) {
+        return 0;
+    }
+    wf_context_foreign_seen = foreign;
     while (context != NULL) {
         wf_context *next = context->next;
         if (wf_bridge_record_state(context->record) == WF_COMPLETION_DONE) {
@@ -1157,6 +1219,7 @@ static void wf_context_adopt_root(void) {
     if (wf_context_current == NULL) {
         wf_context_root.machine = wf__floor_context_thread();
         wf_context_current = &wf_context_root;
+        wf_context_driver = 1;
     }
 }
 
@@ -1353,14 +1416,16 @@ static void wf_bridge_join(wf_completion_record *record) {
     }
     for (;;) {
         if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) return;
-        if (wf_bridge_run_own(record) || wf_bridge_progress()) continue;
         /* Another context can use this thread while this record is pending
-         * [WAIT-2]; the spin and the park below are for a thread with nothing
-         * else to run. */
+         * [WAIT-2]. The context parks at once, and the scheduler flushes the
+         * ring and reaps it only when no context is ready, so one kernel
+         * entry carries every operation the ready contexts staged, as the
+         * hand-written shape does (`WAITS.md`, Experiment 2). */
         if (wf_context_live != 0u) {
             wf_context_wait_for(record);
             continue;
         }
+        if (wf_bridge_run_own(record) || wf_bridge_progress()) continue;
         /* Capture before checking DONE: publication either precedes this
          * epoch (and its acquire orders the result), or advances the epoch
          * and prevents sleep. The wait implementation registers/rechecks
@@ -1897,7 +1962,13 @@ void wf__completion_socket_receive_submit(
     held->request.operation.receive.descriptor = descriptor;
     held->request.operation.receive.buffer = buffer;
     held->request.operation.receive.count = (size_t)count;
-    if (wf_bridge_transfer_now(held)) {
+    /* With other contexts live and a ring to wait in, the receive goes to the
+     * ring at once: the scheduler submits it with every other staged
+     * operation in one entry, where a first attempt here costs a system call
+     * of its own and, when the peer has not answered yet, gains nothing
+     * (`WAITS.md`, Experiment 2). */
+    if (!(wf_context_live != 0u && wf_bridge_ring_ready())
+        && wf_bridge_transfer_now(held)) {
         return;
     }
     wf_bridge_dispatch(held);

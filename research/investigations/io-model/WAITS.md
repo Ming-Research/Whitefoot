@@ -133,8 +133,9 @@ What this does not establish:
 
 `tests/programs/tcp_contexts.wf` is the Whitefoot server this design makes
 possible: the entry accepts, and each accepted connection is served by
-`mustpar serve(...)` in a context of its own, which receives into a 16 KiB
-inline window and sends back what it received until its peer finishes. It is
+`mustpar serve(...)` in a context of its own, which receives into an inline
+window and sends back what it received until its peer finishes; the first run
+used 16 KiB and every later one 64 KiB, the size `waiting_echo` uses. It is
 compiled by the ordinary compiler with no flag, and it runs every context on
 the entry's one thread with one ring (`design/amendments/compiler-waiting-contexts.md`).
 
@@ -156,6 +157,82 @@ compiled server has.
   what the single driver costs. It decides nothing here; it is the number the
   `docs/todo.md` entry on one driver thread reopens on.
 - One connection is reported but not judged, as in Experiment 1.
+
+### Result
+
+Measured 2026-09-27 on the same host as Experiment 1 with
+`linux-net-bench.sh measure`, `ROUNDS=5 WARMUP=1`. The one-driver runs put
+wrappers named after the three references in `$OUT` that start each with
+`--threads 1`; the default runs use the references as built. Each number is
+the median of five recorded passes; the ratio is the compiled server's rate
+over `waiting_echo`'s in the same run.
+
+The first run found the compiled server well below the bar, and each cost was
+removed only after it was attributed:
+
+| Compiled server | 64 conns | 1024 conns | 64 KiB, bytes/s |
+|---|---:|---:|---:|
+| First build, 16 KiB echo window | 0.64 | 0.59 | 0.47 |
+| 64 KiB window, a join parks without entering the ring | 0.81 | 0.68 | 1.21 |
+| and a record published on the context thread wakes its context by address | 0.94 | 1.12 | 1.14 |
+
+Those three rows are two-line runs (`waiting wf`, three recorded passes).
+The window size is the program's, not the runtime's: `waiting_echo` receives
+into 64 KiB, and the compiled server now does too. The third row's
+`waiting_echo` medians were the lowest of any run, and the full four-line
+protocol then placed the same build at 0.77 and 0.85 at 64 connections.
+
+A strace count of 64,000 round trips at 64 connections showed the one
+remaining difference in system calls: the compiled server tried every receive
+once without waiting before it went to the ring, 64,064 `recvfrom` calls
+against none, while `waiting_echo` receives only through the ring. One run
+measured both builds of the compiled server beside `waiting_echo`:
+
+| Compiled server | 64 conns | 1024 conns | 64 KiB, bytes/s |
+|---|---:|---:|---:|
+| receive tried once without waiting | 0.80 | 0.86 | 0.95 |
+| receive straight to the ring with other contexts live | 0.90 | 0.94 | 1.00 |
+
+The final build, two runs of the full protocol at one driver each:
+
+| Case | Run | uring rt/s | epoll rt/s | waiting rt/s | compiled rt/s | compiled / waiting |
+|---|---|---:|---:|---:|---:|---:|
+| 1 conn, 64 B | 1 | 32,874 | 32,291 | 30,979 | 29,994 | 0.97 |
+| 1 conn, 64 B | 2 | 31,084 | 31,552 | 31,973 | 29,705 | 0.93 |
+| 64 conns, 64 B | 1 | 120,421 | 115,674 | 170,487 | 150,163 | 0.88 |
+| 64 conns, 64 B | 2 | 123,315 | 115,755 | 179,425 | 157,872 | 0.88 |
+| 1024 conns, 64 B | 1 | 130,264 | 110,721 | 115,424 | 121,578 | 1.05 |
+| 1024 conns, 64 B | 2 | 127,325 | 117,721 | 130,842 | 105,127 | 0.80 |
+| 64 conns, 64 KiB | 1 | 28,858 | 41,595 | 42,153 | 35,864 | 0.85 |
+| 64 conns, 64 KiB | 2 | 28,196 | 43,434 | 34,639 | 38,087 | 1.10 |
+
+The 64 KiB rows are round trips per second; bytes per second are the same
+ratios. The criterion is not met cleanly. At 64 connections the compiled
+server holds 0.88 of `waiting_echo` in both runs, and the remaining 12
+percent is not attributed; the candidates are the park path, which waits in
+`epoll_wait` and then enters the ring where the hand-written driver makes one
+entry, the locks the ring's submit and reap take on every pass, and the
+emitted receive and send path. At 1024 connections and with 64 KiB messages
+the reference itself moved by 13 and 22 percent between the two runs, so
+those two ratios bracket the bar rather than settle it. At one thread each,
+the compiled server is ahead of the `uring_echo` and `epoll_echo` references at
+64 connections and between 0.83 and 1.10 of them at 1024.
+
+At the references' default of one thread per CPU (four here), one run:
+
+| Case | uring rt/s | epoll rt/s | waiting rt/s | compiled rt/s | compiled / best |
+|---|---:|---:|---:|---:|---:|
+| 64 conns, 64 B | 333,925 | 325,766 | 315,439 | 169,909 | 0.51 |
+| 1024 conns, 64 B | 367,117 | 346,668 | 346,348 | 110,468 | 0.30 |
+| 64 conns, 64 KiB | 76,782 | 96,340 | 87,311 | 39,450 | 0.41 |
+
+That is the cost of the single driver thread, which the `docs/todo.md` entry
+"Every waiting context runs on the one thread that runs the entry" now names.
+
+What this does not establish:
+- that the unattributed 12 percent at 64 connections is gone;
+- anything on the helper route or on another host;
+- anything about a context that computes between waits.
 
 ## Design
 

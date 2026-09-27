@@ -54,10 +54,8 @@ k64.64k 64 200 65536"
 # lines it holds.
 NET_LINES=${NET_LINES:-}
 
-# The Whitefoot line's environment. A parked callee holds a pool stack for as
-# long as its connection lives, so 1024 connections need 1024 of them at once;
-# everything else is the shipped default.
-WF_ENVIRONMENT="WF_STACKS=1100"
+# The Whitefoot line's environment: the shipped defaults.
+WF_ENVIRONMENT=""
 
 # --- the pieces a run is made of ----------------------------------------
 
@@ -215,10 +213,8 @@ if [ "$MODE" = bench ]; then
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread netload.c -o "$OUT/netload"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread waiting_echo.c -o "$OUT/waiting_echo"
 
-    if [ -f "$BUNDLE/programs/tcp_echo_server.wf" ]; then
-        cd "$BUNDLE/programs"
-        "$WFC" --par -o "$OUT/wf_echo" tcp_echo_server.wf
-    fi
+    # The maintained context server: one context per connection [PAR-4].
+    "$WFC" -o "$OUT/wf_echo" "$ROOT/tests/programs/tcp_contexts.wf"
 fi
 
 if [ ! -x "$OUT/netload" ]; then
