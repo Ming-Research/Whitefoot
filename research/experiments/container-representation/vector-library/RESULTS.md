@@ -2123,6 +2123,96 @@ paired measurement. The separately emitted optimized LLVM is for inspection;
 it is never linked as a second O3 pass. The raw patch is research evidence only
 and is not wired into the compiler, fixture, default target or canonical gate.
 
+### Explicit artifact exports: smaller code, native admission fails
+
+The 2026-09-27 linkage discriminator is rejected before timing. Frozen F and K
+each received broad/export-limited arms in both timed and accounting form.
+Exactly 53 of 62 definition headers gained `internal`; all bodies, order,
+signatures, attributes, globals and declarations stayed byte-identical.
+The native demand inventory includes every object and Rust archive member.
+It retains `wf_vector_library_word_trace`, `wf_vector_library_record_trace`
+and `wf__main_body`, plus the existing weak `wf__floor_run` interposition.
+This explicit artifact contract limits foreign calls/name lookup to those
+roots; it changes neither WF source visibility nor the default source-bundle ABI.
+
+Reproduce from the pinned F inputs and [exact K body patch](#exact-body-reproduction)
+above, preserving broad copies. In export copies, add only the linkage token
+to ordinary external definitions outside that four-root set; retain existing
+private/internal/weak linkage. Removing those 53 added tokens must recover
+each original module exactly. Compile each raw module once with
+`clang -O3 -Wno-override-module -x ir -c`, then link the same frozen
+driver/C++/Rust/runtime inputs in the family Makefile's order. There is no
+additional optimizer pass, LTO, attribute hint or allocator change.
+The export-limited timed LLVM hashes for F and K are respectively
+`b538d6c2b80dcd9b983091facafc34570b36025694072984b2d26e853008af12` and
+`b885181b2091ca66ef72cc86ded79304da33fb06fcb9708ab3c6c80e002def86`.
+
+All four rebuilt broad objects and four broad images match frozen references
+byte-for-byte. All eight full checks pass 1,260 configurations / 8,820 executions
+each; four accounting outputs exactly match F's 294 rows. Checksum and cleanup
+faults exit 1 with their original diagnostics. The independent scope verifier
+rejects wrong root/helper linkage, altered body/attributes/declarations,
+changed weak linkage and reordered definitions.
+The phase ledger records 14.789 s total: compilation 1.253 s, linking 0.692 s,
+full checks 6.617 s, with the remainder in identity/scope checks, accounting,
+negative controls and inspection. The construction execution reported 14.99 s
+outer elapsed. These costs are not program performance measurements.
+
+| Timed arm | WF object `__text` bytes | Linked `__text` bytes |
+| --- | ---: | ---: |
+| F broad | 11,428 | 691,132 |
+| F exports | 6,452 | 686,156 |
+| K broad | 10,424 | 690,128 |
+| K exports | 5,868 | 685,572 |
+
+Admission required removal of K's per-owner acceptance boundaries throughout
+the executed suffix, mixed-work and final-drain paths, without replacement
+calls or payload staging. Linked K/exports improves its positive wide suffix
+loop at `0x10000bfc4–0x10000c08c`: 51 instructions, 16 paired backing loads,
+32 digest madds, no call or payload write. However, final drain still calls
+`record_accept` at `0x10000c114`, and mixed work at
+`0x10000cad0/0x10000caf8`, once per owner. The 52-instruction callback reads
+the original backing and loads/stores its digest environment; no owner snapshot
+replaces it. These surviving executed calls fail the complete criterion.
+
+Both export arms also introduce hot `make_room` calls during prefix fill and
+mixed append, even with spare capacity; broad arms called `grow_full` only
+on the full edge. That helper has 48 instructions and a 48-byte total frame,
+with 14 vector construction constants reloaded around calls. Repeated suffix
+append retains its call-free spare path. Wide trace total frames grow
+352→384 bytes for F and 352→400 for K as tail work moves into the caller;
+wide mixed work remains 688 bytes. Saved constants are distinct from owner
+payload, and disappearing standalone symbols do not mean disappearing work.
+Three native standard-container traces normalize identically; C++ wide changes
+15 constant-load addresses while the loaded bytes remain equal. Their entries
+shift −4,976 bytes for F and −4,556 for K. Code/constant placement and caller
+changes prevent an isolated callback-cost claim. No timing was run and no
+production policy is selected; K's earlier failed gate and mixed timing stand.
+
+Local evidence is `/private/tmp/whitefoot-vector-artifact-exports/construction-1`
+(`phases.json`, saved checks, symbols, sizes and linked disassembly).
+The adjacent final `native-audit.md` has SHA-256
+`34bc17ccc5b9f2c2d850ae71c1b2003062730676fc5f9f9e7855782820b4d6ea`.
+The input recipe above is portable; scratch tooling is not a checkout dependency.
+
+### Fresh main integration: identical executable inputs, no retiming
+
+At `f945eceecb3aacac20e76864c73edf8b7c87902b`, a fresh gate compiler
+(`e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`)
+built in 56.551 s. The complete guarded validation included that build, all five
+families' build/check/account commands and five maintained owning fixtures:
+123.798 s execution plus 12.166 s queued, every command exit 0.
+Fresh `.build/main-6bb-f` raw LLVM, WF objects,
+driver/C++/Rust inputs and 12 runtime objects per family match the appropriate
+previous builds: Vector F, Map `.build/geometry`, and the other baselines.
+Accounting remains exactly 294/120/420/150/210 rows for
+Vector/Deque/Map/Priority/Ordered; Map's comparison uses its published accounting.
+Vector's linked file differs, but all 15 sections' contents, addresses and layout
+are identical. Differences are debug-object paths, related linkedit/string data,
+UUID and code signature. The records and section comparison are under
+`/private/tmp/whitefoot-main-6bb-f-validation`; these are construction,
+correctness and identity observations. No performance timing was repeated.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
