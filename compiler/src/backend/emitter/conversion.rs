@@ -29,7 +29,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 return Err(BackendFailure::InvalidIr);
             }
             if matches!(mode, IrConversionMode::Exact | IrConversionMode::Wrap) {
-                let ty = llvm_type(self.program, source_type)?;
+                let ty = self.output.type_name(self.program, source_type)?;
                 // `select` is a representation copy. Floating arithmetic here
                 // could quiet a signaling NaN or change a signed zero.
                 return writeln!(
@@ -176,9 +176,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         valid: &str,
     ) -> Result<(), BackendFailure> {
         let error_type = self.checked_result_error_type(result_type, destination_type, &[0])?;
-        let result_ty = llvm_type(self.program, result_type)?;
-        let destination_ty = llvm_type(self.program, destination_type)?;
-        let error_ty = llvm_type(self.program, error_type)?;
+        let result_ty = self.output.type_name(self.program, result_type)?;
+        let destination_ty = self.output.type_name(self.program, destination_type)?;
+        let error_ty = self.output.type_name(self.program, error_type)?;
         let ok_tag = self.next_temporary()?;
         let ok_value = self.next_temporary()?;
         let error_tag = self.next_temporary()?;

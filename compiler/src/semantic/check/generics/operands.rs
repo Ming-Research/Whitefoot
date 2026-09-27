@@ -15,17 +15,19 @@
 //! `value` argument never selects the instance and is checked against the
 //! element type the shape already fixed.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::{DeclarationInventory, TypeContext};
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationClass, DeclarationId, FixedTerminal, LexicalUseRole, Production, ResolvedTarget,
+    DeclarationClass, DeclarationId, LexicalUseRole, Production, ResolvedTarget,
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
 use super::super::super::model::{CheckedMode, CheckedNominalKind, CheckedType, WindowShape};
 use super::super::types::SelectedPlaceType;
-use super::super::{CheckStop, Checker, FunctionTemplate, LocalBinding};
+use super::super::{CheckStop, FunctionTemplate, LocalBinding};
 use super::{GenericArgument, GenericSubstitution};
 
 /// Which part of one operand's selected type a type parameter takes.
@@ -192,7 +194,7 @@ const OPERAND_ROWS: &[OperandRow] = &[
     },
 ];
 
-impl<'unit> Checker<'unit> {
+impl<'unit> DeclarationInventory<'unit> {
     /// Whether this template is one of the eleven rows whose type parameters
     /// an operand supplies [OP-10, OP-11, OP-14].
     ///
@@ -216,83 +218,6 @@ impl<'unit> Checker<'unit> {
         }
         Ok(Some(index))
     }
-
-    /// Whether this instance is of the one row whose undischarged requirement
-    /// is reported under [OP-14] "at the complete `call`", where every other
-    /// callee's is an [FN-8] report.
-    pub(in crate::semantic::check) fn empties_run(
-        &self,
-        function: super::super::super::model::FunctionId,
-    ) -> Result<bool, CheckStop> {
-        let signature = self
-            .signatures
-            .get(function.0 as usize)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let Some(&template_index) = self.templates_by_declaration.get(&signature.declaration)
-        else {
-            return Ok(false);
-        };
-        let template = self
-            .function_templates
-            .get(template_index)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        Ok(self
-            .operand_directed_row_index(template)?
-            .and_then(|index| OPERAND_ROWS.get(index))
-            .is_some_and(|row| row.rule == SemanticRule::Op14))
-    }
-
-    /// The substitution one call to an operand-directed row selects [OP-10].
-    ///
-    /// The operand is read as a written place, which is what every admitted
-    /// spelling of these arguments is: a `borrow_expr` over a place, a bare
-    /// reference variable naming a path [REF-1], or `move p` for the one row
-    /// that consumes its operand [OP-14]. Nothing else can carry a window, so
-    /// an argument of any other form is an operand outside the row's admitted
-    /// set.
-    pub(in crate::semantic::check) fn operand_directed_substitution(
-        &self,
-        call: NodeId,
-        template: &FunctionTemplate,
-        row_index: usize,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<GenericSubstitution, CheckStop> {
-        let row = OPERAND_ROWS
-            .get(row_index)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        // [OP-10] no argument list is written at these calls at all; one that
-        // is written is the writer asking for an instance the operand already
-        // fixes.
-        if self.tree.argument_list(call)?.is_some() {
-            return self.issue_node(
-                row.rule,
-                call,
-                SemanticIssueKind::type_mismatch(
-                    "no written generic argument, the operand supplying every type parameter",
-                    "an explicit argument list",
-                ),
-            );
-        }
-        if template.generic_parameters.len() != row.parameters.len() {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
-        let mut bindings_out = Vec::with_capacity(row.parameters.len());
-        for (parameter, source) in template.generic_parameters.iter().zip(row.parameters) {
-            let operand = self.operand_selected_type(call, source.ordinal, bindings)?;
-            let Some(operand) = operand else {
-                return self.refuse_operand(row, call);
-            };
-            if !self.operand_shape_admitted(row.admitted, operand)? {
-                return self.refuse_operand(row, call);
-            }
-            let Some(value) = self.project_operand_type(source.projection, operand)? else {
-                return self.refuse_operand(row, call);
-            };
-            bindings_out.push((parameter.key(), GenericArgument::Type(value)));
-        }
-        Ok(GenericSubstitution::from_bindings(bindings_out)?)
-    }
-
     fn refuse_operand<T>(&self, row: &OperandRow, call: NodeId) -> Result<T, CheckStop> {
         self.issue_node(
             row.rule,
@@ -311,7 +236,9 @@ impl<'unit> Checker<'unit> {
             },
         )
     }
+}
 
+impl<'unit> TypeContext<'unit> {
     fn operand_shape_admitted(
         &self,
         admitted: AdmittedShapes,
@@ -344,7 +271,6 @@ impl<'unit> Checker<'unit> {
             }
         })
     }
-
     /// The content of a [TYPE-9] `Box`, for an operand that is one.
     pub(in crate::semantic::check) fn box_content(
         &self,
@@ -358,7 +284,6 @@ impl<'unit> Checker<'unit> {
             _ => None,
         })
     }
-
     fn project_operand_type(
         &self,
         projection: OperandProjection,
@@ -380,7 +305,83 @@ impl<'unit> Checker<'unit> {
             }
         }
     }
-
+    /// Whether this instance is of the one row whose undischarged requirement
+    /// is reported under [OP-14] "at the complete `call`", where every other
+    /// callee's is an [FN-8] report.
+    pub(in crate::semantic::check) fn empties_run(
+        &self,
+        function: super::super::super::model::FunctionId,
+    ) -> Result<bool, CheckStop> {
+        let signature = self
+            .signatures
+            .get(function.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(&template_index) = self.templates_by_declaration.get(&signature.declaration)
+        else {
+            return Ok(false);
+        };
+        let template = self
+            .function_templates
+            .get(template_index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(self
+            .declarations
+            .operand_directed_row_index(template)?
+            .and_then(|index| OPERAND_ROWS.get(index))
+            .is_some_and(|row| row.rule == SemanticRule::Op14))
+    }
+    /// The substitution one call to an operand-directed row selects [OP-10].
+    ///
+    /// The operand is read as a written place, which is what every admitted
+    /// spelling of these arguments is: a `borrow_expr` over a place, a bare
+    /// reference variable naming a path [REF-1], or `move p` for the one row
+    /// that consumes its operand [OP-14]. Nothing else can carry a window, so
+    /// an argument of any other form is an operand outside the row's admitted
+    /// set.
+    pub(in crate::semantic::check) fn operand_directed_substitution(
+        &self,
+        check_context: &CheckContext<'_>,
+        call: NodeId,
+        template: &FunctionTemplate,
+        row_index: usize,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<GenericSubstitution, CheckStop> {
+        let row = OPERAND_ROWS
+            .get(row_index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        // [OP-10] no argument list is written at these calls at all; one that
+        // is written is the writer asking for an instance the operand already
+        // fixes.
+        if self.declarations.tree.argument_list(call)?.is_some() {
+            return self.declarations.issue_node(
+                row.rule,
+                call,
+                SemanticIssueKind::type_mismatch(
+                    "no written generic argument, the operand supplying every type parameter",
+                    "an explicit argument list",
+                ),
+            );
+        }
+        if template.generic_parameters.len() != row.parameters.len() {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        let mut bindings_out = Vec::with_capacity(row.parameters.len());
+        for (parameter, source) in template.generic_parameters.iter().zip(row.parameters) {
+            let operand =
+                self.operand_selected_type(check_context, call, source.ordinal, bindings)?;
+            let Some(operand) = operand else {
+                return self.declarations.refuse_operand(row, call);
+            };
+            if !self.operand_shape_admitted(row.admitted, operand)? {
+                return self.declarations.refuse_operand(row, call);
+            }
+            let Some(value) = self.project_operand_type(source.projection, operand)? else {
+                return self.declarations.refuse_operand(row, call);
+            };
+            bindings_out.push((parameter.key(), GenericArgument::Type(value)));
+        }
+        Ok(GenericSubstitution::from_bindings(bindings_out)?)
+    }
     /// The selected type of the argument at `ordinal`, where that argument is
     /// a written place [GRAM-5].
     ///
@@ -389,41 +390,61 @@ impl<'unit> Checker<'unit> {
     /// refusal so the diagnostic names the operation rather than the walk.
     fn operand_selected_type(
         &self,
+        check_context: &CheckContext<'_>,
         call: NodeId,
         ordinal: usize,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<CheckedType>, CheckStop> {
         let Some(list) = self
+            .declarations
             .tree
             .first_child_with(call, Production::FieldinitList)?
         else {
             return Ok(None);
         };
-        let fields = self.tree.children_with(list, Production::Fieldinit)?;
+        let fields = self
+            .declarations
+            .tree
+            .children_with(list, Production::Fieldinit)?;
         let Some(field) = fields.get(ordinal).copied() else {
             return Ok(None);
         };
-        let Some(atom) = self.tree.first_child_with(field, Production::Atom)? else {
+        let Some(atom) = self
+            .declarations
+            .tree
+            .first_child_with(field, Production::Atom)?
+        else {
             return Ok(None);
         };
-        let place = match self.tree.first_child_with(atom, Production::Place)? {
+        let place = match self
+            .declarations
+            .tree
+            .first_child_with(atom, Production::Place)?
+        {
             Some(place) => place,
             None => {
-                let Some(borrow) = self.tree.first_child_with(atom, Production::BorrowExpr)? else {
+                let Some(borrow) = self
+                    .declarations
+                    .tree
+                    .first_child_with(atom, Production::BorrowExpr)?
+                else {
                     // `atom := literal | "move" place | place | borrow_expr`
                     // [GRAM-5], so what is left here is a literal, which
                     // carries no window at all.
                     return Ok(None);
                 };
-                let Some(place) = self.tree.first_child_with(borrow, Production::Place)? else {
+                let Some(place) = self
+                    .declarations
+                    .tree
+                    .first_child_with(borrow, Production::Place)?
+                else {
                     return Ok(None);
                 };
                 place
             }
         };
-        self.place_selected_type(place, bindings)
+        self.place_selected_type(check_context, place, bindings)
     }
-
     /// The type one written `place` selects, read without checking the use.
     ///
     /// This is a type oracle and not a second place judgment: it reads the
@@ -434,17 +455,17 @@ impl<'unit> Checker<'unit> {
     /// check against the instance this oracle selects.
     pub(in crate::semantic::check) fn place_selected_type(
         &self,
+        check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<CheckedType>, CheckStop> {
         Ok(self
-            .place_selected_kind(place, bindings)?
+            .place_selected_kind(check_context, place, bindings)?
             .and_then(|selected| match selected {
                 SelectedPlaceType::Value(ty) | SelectedPlaceType::Range(ty) => Some(ty),
                 SelectedPlaceType::UnresolvedWindowElement => None,
             }))
     }
-
     /// The value or range kind selected by one written `place`.
     ///
     /// A range binding stores its element in `LocalBinding::ty`, so retaining
@@ -452,31 +473,38 @@ impl<'unit> Checker<'unit> {
     /// a second time.
     pub(in crate::semantic::check) fn place_selected_kind(
         &self,
+        check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<SelectedPlaceType>, CheckStop> {
         let pbase = self
+            .declarations
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         // [TYPE-7] `deref` names the referent of a reference, whose selected
         // type is the type the reference binding already carries [REF-1].
-        let mut ty = if self.has_fixed(pbase, FixedTerminal::Deref)? {
+        let mut ty = if self.declarations.tree.place_base(pbase)?.is_dereference() {
             let inner = self
+                .declarations
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            match self.place_selected_kind(inner, bindings)? {
+            match self.place_selected_kind(check_context, inner, bindings)? {
                 Some(selected) => selected,
                 None => return Ok(None),
             }
         } else {
             // `entry(IDENT)` is a contract-only `pbase` [GRAM-5, MSR-3] and
             // names no operand in a body.
-            if !self.tree.children(pbase)?.is_empty() {
-                return self.unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
+            if !self.declarations.tree.children(pbase)?.is_empty() {
+                return self
+                    .declarations
+                    .unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
             }
-            let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
+            let usage =
+                self.declarations
+                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
             match usage.target() {
                 ResolvedTarget::Source {
                     declaration,
@@ -498,11 +526,16 @@ impl<'unit> Checker<'unit> {
                 _ => return Ok(None),
             }
         };
-        for suffix in self.tree.children_with(place, Production::Psuffix)? {
-            if self.subscript_offset(suffix)?.is_some() {
+        for suffix in self
+            .declarations
+            .tree
+            .children_with(place, Production::Psuffix)?
+        {
+            if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [REF-4] a range step selects a `&[T]`, which is a reference
                 // kind and not a type [TYPE-8]; no row here admits one.
                 if self
+                    .declarations
                     .tree
                     .first_child_with(suffix, Production::RangeTail)?
                     .is_some()
@@ -533,13 +566,17 @@ impl<'unit> Checker<'unit> {
             // reached through a payload is a capability limit here and never
             // a source verdict.
             if self
+                .declarations
                 .tree
                 .direct_token_with(suffix, crate::TerminalPredicate::TypeIdentifier)?
                 .is_some()
             {
-                return self.unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
+                return self
+                    .declarations
+                    .unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
             }
             let name = self
+                .declarations
                 .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
                 .spelling()
                 .to_owned();

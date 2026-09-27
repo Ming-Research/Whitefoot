@@ -171,7 +171,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let Some(_) = RunShape::of(ty) else {
             return Err(BackendFailure::InvalidIr);
         };
-        let run_type = llvm_type(self.program, ty)?;
+        let run_type = self.output.type_name(self.program, ty)?;
         let destination = self.value_place(result)?;
         writeln!(
             self.output,
@@ -293,7 +293,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let head = self.window_origin(shape, run_type, run)?;
         let length = self.run_word(run_type, run, shape.length_field())?;
         let pointer = self.element_pointer(result, shape, run_type, run, &head)?;
-        let descriptor_type = llvm_type(self.program, ty)?;
+        let descriptor_type = self.output.type_name(self.program, ty)?;
         let partial = self.next_temporary()?;
         writeln!(
             self.output,
@@ -525,7 +525,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run: IrValueId,
         field: u32,
     ) -> Result<String, BackendFailure> {
-        let llvm = llvm_type(self.program, run_type)?;
+        let llvm = self.output.type_name(self.program, run_type)?;
         let word = self.next_temporary()?;
         if let Some(address) = self.run_storage(run)? {
             let pointer = self.aggregate_field_pointer(run_type, &address, field as usize)?;
@@ -587,7 +587,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         physical: &str,
     ) -> Result<String, BackendFailure> {
         let physical = self.element_address_index(shape.element_type(self.program)?, physical)?;
-        let llvm = llvm_type(self.program, run_type)?;
+        let llvm = self.output.type_name(self.program, run_type)?;
         let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let pointer = self.next_temporary()?;
         if self.window_address_facts == WindowAddressFacts::Emit {
@@ -600,6 +600,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // extent, this states that the payload offset cannot reach back
             // into the header. It does not constrain logical Ring wrap sums.
             self.intrinsics.insert(IntrinsicDeclaration::Assume);
+            self.output.symbol("llvm.assume");
             writeln!(
                 self.output,
                 "  %{pointer}.nonnegative = icmp sge i64 {physical}, 0\n  call void @llvm.assume(i1 %{pointer}.nonnegative)"
@@ -662,8 +663,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// The byte size of one element of this window, as the target's own
     /// layout of it. Target qualification proved it no larger than the
     /// source ceiling [OP-9, STOR-6].
-    fn window_element_size(&self, shape: RunShape) -> Result<String, BackendFailure> {
-        let element = llvm_type(self.program, shape.element_type(self.program)?)?;
+    fn window_element_size(&mut self, shape: RunShape) -> Result<String, BackendFailure> {
+        let element = self
+            .output
+            .type_name(self.program, shape.element_type(self.program)?)?;
         Ok(format!(
             "ptrtoint (ptr getelementptr ({element}, ptr null, i64 1) to i64)"
         ))
@@ -673,11 +676,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// header-first layout puts ahead of the elements
     /// (compiler/storage-representation).
     fn window_header_size(
-        &self,
+        &mut self,
         shape: RunShape,
         run_type: IrType,
     ) -> Result<String, BackendFailure> {
-        let block = llvm_type(self.program, run_type)?;
+        let block = self.output.type_name(self.program, run_type)?;
         Ok(format!(
             "ptrtoint (ptr getelementptr ({block}, ptr null, i64 0, i32 {}) to i64)",
             shape.slots_field()
@@ -730,8 +733,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let head_label = run_shift_head_label(result);
         let body = run_shift_body_label(result);
         let done = run_shift_done_label(result);
-        writeln!(self.output, "  br label %{pre}\n{pre}:")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(pre.to_string());
+        };
         let length = self.run_word(run_type, run, shape.length_field())?;
         let origin = self.window_origin(shape, run_type, run)?;
         // A closing shift stops one slot below the window's last.
@@ -748,11 +753,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let more = self.next_temporary()?;
         let start = if open { length.clone() } else { index.clone() };
         let comparison = if open { "ugt" } else { "ult" };
-        writeln!(
-            self.output,
-            "  br label %{head_label}\n{head_label}:\n  %{counter} = phi i64 [ {start}, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp {comparison} i64 %{counter}, {limit}\n  br i1 %{more}, label %{body}, label %{done}\n{body}:"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            writeln!(self.output, "  br label %{head_label}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(head_label.to_string());
+            write!(self.output, "  %{counter} = phi i64 [ {start}, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp {comparison} i64 %{counter}, {limit}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(body.to_string());
+        };
         writeln!(
             self.output,
             "  %{stepped} = {} i64 %{counter}, 1",
@@ -770,8 +777,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.wrap_offset(shape, run_type, run, &origin, &format!("%{stepped}"))?;
         let source = self.element_pointer(result, shape, run_type, run, &source_offset)?;
         self.copy_between_slots(element, &format!("%{source}"), &format!("%{destination}"))?;
-        writeln!(self.output, "  br label %{head_label}\n{done}:")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            writeln!(self.output, "  br label %{head_label}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(done.to_string());
+        };
         // The boundary move the shift opened or closed.
         let moved = self.next_temporary()?;
         writeln!(
@@ -848,8 +858,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let head_label = run_transfer_head_label(result);
         let body = run_transfer_body_label(result);
         let done = run_transfer_done_label(result);
-        writeln!(self.output, "  br label %{pre}\n{pre}:")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(pre.to_string());
+        };
         let source_length = self.run_word(source_type, source, source_shape.length_field())?;
         let destination_length = self.run_word(
             destination_type,
@@ -863,11 +875,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let counter = self.next_temporary()?;
         let stepped = self.next_temporary()?;
         let more = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{count} = sub i64 {source_length}, {index}\n  br label %{head_label}\n{head_label}:\n  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{done}\n{body}:\n  %{stepped} = add i64 %{counter}, 1"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            write!(
+                self.output,
+                "  %{count} = sub i64 {source_length}, {index}\n  br label %{head_label}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(head_label.to_string());
+            write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(body.to_string());
+            writeln!(self.output, "  %{stepped} = add i64 %{counter}, 1")
+                .map_err(|_| BackendFailure::TextEmission)?;
+        };
         let source_logical = self.next_temporary()?;
         let destination_logical = self.next_temporary()?;
         writeln!(
@@ -903,8 +922,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             &format!("%{source_slot}"),
             &format!("%{destination_slot}"),
         )?;
-        writeln!(self.output, "  br label %{head_label}\n{done}:")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            writeln!(self.output, "  br label %{head_label}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(done.to_string());
+        };
         let grown = self.next_temporary()?;
         writeln!(
             self.output,
@@ -974,20 +996,34 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let element_size = self.window_element_size(shape)?;
         let header_size = self.window_header_size(shape, block_type)?;
-        let block = llvm_type(self.program, block_type)?;
+        let block = self.output.type_name(self.program, block_type)?;
         let slots_bytes = self.next_temporary()?;
         let bytes = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
-        writeln!(
-            self.output,
-            "  %{slots_bytes} = mul nuw i64 {}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  {} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n{oom}:\n  call void @wf_resource_abort()\n  unreachable\n{ready}:",
-            self.value_name(capacity),
-            self.value_name(result),
-            self.value_name(result),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = self.value_name(capacity);
+            let emission_argument_1 = self.value_name(result);
+            let emission_argument_2 = self.value_name(result);
+
+            {
+                self.output.symbol("malloc");
+                write!(
+                    self.output,
+                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  {emission_argument_1} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {emission_argument_2}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                )
+            }?;
+            self.output.open_block(oom.to_string());
+            {
+                self.output.symbol("wf_resource_abort");
+                write!(
+                    self.output,
+                    "  call void @wf_resource_abort()\n  unreachable\n"
+                )
+            }?;
+            self.output.open_block(ready.to_string());
+        };
         let block_address = self.value_name(result);
         let length_address = self.aggregate_field_pointer(
             block_type,
@@ -1068,12 +1104,26 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
-        writeln!(
-            self.output,
-            "  %{slots_bytes} = mul nuw i64 {}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n{oom}:\n  call void @wf_resource_abort()\n  unreachable\n{ready}:",
-            self.value_name(capacity),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        {
+            let emission_argument_0 = self.value_name(capacity);
+
+            {
+                self.output.symbol("malloc");
+                write!(
+                    self.output,
+                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                )
+            }?;
+            self.output.open_block(oom.to_string());
+            {
+                self.output.symbol("wf_resource_abort");
+                write!(
+                    self.output,
+                    "  call void @wf_resource_abort()\n  unreachable\n"
+                )
+            }?;
+            self.output.open_block(ready.to_string());
+        };
         let fresh_block = format!("%{fresh}");
         let fresh_length_address =
             self.aggregate_field_pointer(block_type, &fresh_block, shape.length_field() as usize)?;
@@ -1097,7 +1147,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let old_slots = self.next_temporary()?;
         let fresh_slots = self.next_temporary()?;
         let moved = self.next_temporary()?;
-        let block = llvm_type(self.program, block_type)?;
+        let block = self.output.type_name(self.program, block_type)?;
         writeln!(
             self.output,
             "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 %{length}, {element_size}",
@@ -1105,6 +1155,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+        self.output.symbol("llvm.memmove.p0.p0.i64");
+        self.output.symbol("free");
         writeln!(
             self.output,
             "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
@@ -1127,11 +1179,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
-        writeln!(
-            self.output,
-            "  call void @free(ptr {})",
-            self.value_name(value)
-        )
+        {
+            self.output.symbol("free");
+            writeln!(
+                self.output,
+                "  call void @free(ptr {})",
+                self.value_name(value)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }

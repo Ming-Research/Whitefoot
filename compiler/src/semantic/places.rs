@@ -467,7 +467,10 @@ impl ResolvedPlace {
             position = position
                 .checked_add(1)
                 .ok_or(crate::SemanticCompilerFailure::CounterOverflow)?;
-            Ok(CapturedValue::new(capture, CapturedTerm::Opaque))
+            Ok::<_, crate::SemanticCompilerFailure>(CapturedValue::new(
+                capture,
+                CapturedTerm::Opaque,
+            ))
         };
         for step in &mut carried.path {
             match step {

@@ -768,8 +768,13 @@ fn main() -> status: std::process::ExitStatus pure {
                 "nominal window fields must use earlier lengths and completed enum layouts: {outcome:?}"
             );
         };
-        let super::super::model::CheckedNominalKind::Struct { fields } =
-            &checked.data.nominals[1].kind
+        let super::super::model::CheckedNominalKind::Struct { fields } = &checked
+            .data
+            .nominals
+            .iter()
+            .find(|nominal| nominal.name == "Holder")
+            .expect("the source Holder")
+            .kind
         else {
             panic!("Holder must remain a struct");
         };
@@ -784,7 +789,15 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(capacity, Some(CheckedConst::Value(2)));
         assert_eq!(
             checked.element_type(element),
-            Some(CheckedType::Nominal(checked.data.nominals[0].id))
+            Some(CheckedType::Nominal(
+                checked
+                    .data
+                    .nominals
+                    .iter()
+                    .find(|nominal| nominal.name == "Flag")
+                    .expect("the source Flag")
+                    .id
+            ))
         );
     });
 

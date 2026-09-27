@@ -39,7 +39,7 @@ impl FunctionEmitter<'_, '_> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let llvm_ty = llvm_type(self.program, operand_type)?;
+        let llvm_ty = self.output.type_name(self.program, operand_type)?;
         let rendered_arguments = arguments
             .iter()
             .map(|argument| self.value_name(*argument))
@@ -118,12 +118,15 @@ impl FunctionEmitter<'_, '_> {
                     name: name.clone(),
                     ty: llvm_ty.clone(),
                 });
-                writeln!(
-                    self.output,
-                    "  {} = call {llvm_ty} @{name}({llvm_ty} {})",
-                    self.value_name(result),
-                    rendered_arguments[0]
-                )
+                {
+                    self.output.symbol(name.to_string());
+                    writeln!(
+                        self.output,
+                        "  {} = call {llvm_ty} @{name}({llvm_ty} {})",
+                        self.value_name(result),
+                        rendered_arguments[0]
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)
             }
             IrFloatOperation::CopySign | IrFloatOperation::Minimum | IrFloatOperation::Maximum => {
@@ -138,13 +141,16 @@ impl FunctionEmitter<'_, '_> {
                     name: name.clone(),
                     ty: llvm_ty.clone(),
                 });
-                writeln!(
-                    self.output,
-                    "  {} = call {llvm_ty} @{name}({llvm_ty} {}, {llvm_ty} {})",
-                    self.value_name(result),
-                    rendered_arguments[0],
-                    rendered_arguments[1]
-                )
+                {
+                    self.output.symbol(name.to_string());
+                    writeln!(
+                        self.output,
+                        "  {} = call {llvm_ty} @{name}({llvm_ty} {}, {llvm_ty} {})",
+                        self.value_name(result),
+                        rendered_arguments[0],
+                        rendered_arguments[1]
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)
             }
             IrFloatOperation::FusedMultiplyAddStrict => {
@@ -153,14 +159,17 @@ impl FunctionEmitter<'_, '_> {
                     name: name.clone(),
                     ty: llvm_ty.clone(),
                 });
-                writeln!(
-                    self.output,
-                    "  {} = call {llvm_ty} @{name}({llvm_ty} {}, {llvm_ty} {}, {llvm_ty} {})",
-                    self.value_name(result),
-                    rendered_arguments[0],
-                    rendered_arguments[1],
-                    rendered_arguments[2]
-                )
+                {
+                    self.output.symbol(name.to_string());
+                    writeln!(
+                        self.output,
+                        "  {} = call {llvm_ty} @{name}({llvm_ty} {}, {llvm_ty} {}, {llvm_ty} {})",
+                        self.value_name(result),
+                        rendered_arguments[0],
+                        rendered_arguments[1],
+                        rendered_arguments[2]
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)
             }
             IrFloatOperation::Infinity | IrFloatOperation::Nan => {

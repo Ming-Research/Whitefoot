@@ -21,7 +21,7 @@ mod specialize;
 /// has already been checked; only its storage reclamation remains in the IR.
 #[derive(Clone, Copy)]
 struct TypeLowering<'a> {
-    nominals: &'a [IrNominalId],
+    nominals: &'a [Option<IrNominalId>],
     elements: &'a [Option<IrElement>],
 }
 
@@ -49,12 +49,16 @@ pub(crate) const fn lower_release_class(
 
 /// One nominal's lowered identity: instances of one physical family share an
 /// IR nominal when their complete reclamation graphs agree.
-fn erased_nominal(erasure: TypeLowering<'_>, id: crate::NominalId) -> IrNominalId {
+fn erased_nominal(
+    erasure: TypeLowering<'_>,
+    id: crate::NominalId,
+) -> Result<IrNominalId, LoweringFailure> {
     erasure
         .nominals
         .get(id.0 as usize)
         .copied()
-        .unwrap_or(IrNominalId(id.0))
+        .flatten()
+        .ok_or(LoweringFailure::InvalidCheckedProgram)
 }
 
 fn lower_element(
@@ -83,7 +87,7 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        CheckedType::Nominal(id) => IrType::Nominal(erased_nominal(erasure, id)),
+        CheckedType::Nominal(id) => IrType::Nominal(erased_nominal(erasure, id)?),
         CheckedType::Array { element, length } => IrType::Array {
             element: lower_element(erasure, element)?,
             length: length
@@ -126,11 +130,14 @@ const fn lower_numeric_type(value: CheckedNumericType) -> Result<IrType, Lowerin
     })
 }
 
-fn lower_enum_type(erasure: TypeLowering<'_>, value: CheckedEnumType) -> IrEnumType {
-    match value {
+fn lower_enum_type(
+    erasure: TypeLowering<'_>,
+    value: CheckedEnumType,
+) -> Result<IrEnumType, LoweringFailure> {
+    Ok(match value {
         CheckedEnumType::Bool => IrEnumType::Bool,
-        CheckedEnumType::Nominal(id) => IrEnumType::Nominal(erased_nominal(erasure, id)),
-    }
+        CheckedEnumType::Nominal(id) => IrEnumType::Nominal(erased_nominal(erasure, id)?),
+    })
 }
 
 impl From<CheckedIntegerOperation> for IrIntegerOperation {

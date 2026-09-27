@@ -22,13 +22,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if element != buffer_element {
             return Err(BackendFailure::InvalidIr);
         }
-        let block_type = llvm_type(
+        let block_type = self.output.type_name(
             self.program,
             IrType::Buffer {
                 element: buffer_element,
             },
         )?;
-        let descriptor_type = llvm_type(self.program, ty)?;
+        let descriptor_type = self.output.type_name(self.program, ty)?;
         let address = self.value_name(buffer);
         let pointer = self.next_temporary()?;
         let length_address = self.next_temporary()?;
@@ -63,8 +63,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let descriptor_type = llvm_type(self.program, ty)?;
-        let element_type = llvm_type(
+        let descriptor_type = self.output.type_name(self.program, ty)?;
+        let element_type = self.output.type_name(
             self.program,
             self.program
                 .element(element)
@@ -110,18 +110,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        writeln!(
-            self.output,
-            "  {} = extractvalue {} {}, 1",
-            self.value_name(result),
-            llvm_type(
+        {
+            let emitted_type_1 = self.output.type_name(
                 self.program,
                 self.function
                     .value_type(slice)
-                    .ok_or(BackendFailure::InvalidIr)?
-            )?,
-            self.value_name(slice),
-        )
+                    .ok_or(BackendFailure::InvalidIr)?,
+            )?;
+            writeln!(
+                self.output,
+                "  {} = extractvalue {} {}, 1",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(slice)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -151,8 +154,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let descriptor_type = llvm_type(self.program, slice_type)?;
-        let element_type = llvm_type(self.program, ty)?;
+        let descriptor_type = self.output.type_name(self.program, slice_type)?;
+        let element_type = self.output.type_name(self.program, ty)?;
         let pointer = self.next_temporary()?;
         let element_pointer = self.next_temporary()?;
         writeln!(
@@ -187,8 +190,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let descriptor_type = llvm_type(self.program, slice_type)?;
-        let element_type = llvm_type(
+        let descriptor_type = self.output.type_name(self.program, slice_type)?;
+        let element_type = self.output.type_name(
             self.program,
             self.program
                 .element(element)
@@ -216,7 +219,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         pointer: &str,
         length: u64,
     ) -> Result<(), BackendFailure> {
-        let descriptor_type = llvm_type(self.program, ty)?;
+        let descriptor_type = self.output.type_name(self.program, ty)?;
         let partial = self.next_temporary()?;
         writeln!(
             self.output,
@@ -256,8 +259,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let descriptor_type = llvm_type(self.program, slice_type)?;
-        let llvm_element_type = llvm_type(self.program, element_type)?;
+        let descriptor_type = self.output.type_name(self.program, slice_type)?;
+        let llvm_element_type = self.output.type_name(self.program, element_type)?;
         let pointer = self.next_temporary()?;
         writeln!(
             self.output,

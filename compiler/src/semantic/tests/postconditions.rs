@@ -3452,8 +3452,7 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let instances = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.name == "identity")
             .collect::<Vec<_>>();
         assert_eq!(instances.len(), 2);

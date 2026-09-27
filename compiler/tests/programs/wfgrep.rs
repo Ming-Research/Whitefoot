@@ -49,8 +49,8 @@ const FORMER_ENTRY_CAP: usize = 64;
 /// Entailment over the nested walk and matcher is still the dominant compile
 /// cost, so the module is produced once and every case reads it. Isolation
 /// lives in each run's own fixture directory, never in the artifact.
-fn wfgrep_module() -> &'static str {
-    static MODULE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn wfgrep_module() -> &'static whitefoot::LlvmModule {
+    static MODULE: std::sync::OnceLock<whitefoot::LlvmModule> = std::sync::OnceLock::new();
     MODULE.get_or_init(|| compile_program("wfgrep.wf"))
 }
 

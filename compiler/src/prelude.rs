@@ -303,8 +303,7 @@ mod tests {
         };
         let signatures = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.body.is_none())
             .count();
         // [PRE-1] keeps no host record: the host signatures are the standard
@@ -312,15 +311,14 @@ mod tests {
         // compiler-owned rows — the nine construction functions [OP-13], the
         // nine window operations [OP-10], `swap` [OP-11] and `free_empty`
         // [OP-14] — are every one of them generic, so [FN-2] gives them a
-        // checked function only per concrete instance and this unit, which
+        // ordinary checked function only per concrete instance and this unit, which
         // calls none of them, has no instance of any.
         assert_eq!(signatures, 0);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert!(
                 !checked
                     .data
-                    .functions
-                    .iter()
+                    .executable_functions()
                     .any(|function| function.name == row),
                 "{row} is generic and this unit instantiates it nowhere"
             );
@@ -328,14 +326,12 @@ mod tests {
         assert!(
             !checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .any(|function| function.name == "main")
         );
         let transferred = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "transfer")
             .expect("ordinary source function");
         assert!(transferred.body.is_some());

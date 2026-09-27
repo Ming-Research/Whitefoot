@@ -25,7 +25,7 @@ pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
 pub use diagnostic::{DiagnosticFormat, render_driver_failure};
 
-use crate::backend::emitter::emit_llvm_with_layout;
+use crate::backend::emitter::{LlvmModule, emit_llvm_with_layout};
 use crate::target::TargetLayout;
 use crate::{
     ACTIVE_KERNEL_SPEC_HASH, BackendFailure, CanonicalLimits, CanonicalOutcome,
@@ -440,7 +440,7 @@ impl std::error::Error for CompilationFailure {}
 pub fn compile(
     inputs: &[SourceInput<'_>],
     limits: CompilerLimits,
-) -> Result<String, CompilationFailure> {
+) -> Result<LlvmModule, CompilationFailure> {
     compile_with_overlap(inputs, limits, crate::OverlapLowering::Off)
 }
 
@@ -466,7 +466,7 @@ pub fn compile_with_overlap(
     inputs: &[SourceInput<'_>],
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
-) -> Result<String, CompilationFailure> {
+) -> Result<LlvmModule, CompilationFailure> {
     compile_reporting(inputs, limits, overlap).map(|reported| reported.module)
 }
 
@@ -499,7 +499,7 @@ pub fn compile_with_cache(
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
     cache: &BuildCache,
-) -> Result<String, CompilationFailure> {
+) -> Result<LlvmModule, CompilationFailure> {
     compile_selected(
         inputs,
         None,
@@ -541,7 +541,7 @@ pub fn compile_with_permission_ledger(
     inputs: &[SourceInput<'_>],
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
-) -> Result<(String, Vec<String>), CompilationFailure> {
+) -> Result<(LlvmModule, Vec<String>), CompilationFailure> {
     compile_reporting(inputs, limits, overlap).map(|reported| (reported.module, reported.ledger))
 }
 
@@ -2179,7 +2179,7 @@ pub fn compile_module_program(
     entry: ModuleEntry<'_>,
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
-) -> Result<String, CompilationFailure> {
+) -> Result<LlvmModule, CompilationFailure> {
     build_module_entry(graph, inputs, entry, limits, overlap, None).map(|(module, _)| module)
 }
 
@@ -2198,7 +2198,7 @@ pub fn build_module_entry(
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
     cache: Option<&BuildCache>,
-) -> Result<(String, bool), CompilationFailure> {
+) -> Result<(LlvmModule, bool), CompilationFailure> {
     let inputs = &with_library_records(graph, inputs);
     let selection = entry_selection(graph, entry)?;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
@@ -2214,7 +2214,7 @@ pub fn build_module_entry(
     // that every module verdict of its closure held for these inputs.
     if let Some(module) = cache
         .and_then(|cache| cache.load(ENTRY_MODULES, &material))
-        .and_then(|payload| String::from_utf8(payload).ok())
+        .and_then(|payload| LlvmModule::decode(&payload))
     {
         return Ok((module, true));
     }
@@ -2230,14 +2230,14 @@ pub fn build_module_entry(
     .module;
     if let Some(cache) = cache {
         // A failed publication costs only a later rebuild.
-        let _ = cache.store(ENTRY_MODULES, &material, module.as_bytes());
+        let _ = cache.store(ENTRY_MODULES, &material, &module.encode());
     }
     Ok((module, false))
 }
 
 /// One compilation's module and the developer-channel text it produced.
 struct Reported {
-    module: String,
+    module: LlvmModule,
     ledger: Vec<String>,
 }
 
@@ -2755,24 +2755,22 @@ fn lower_selected(
         .collect();
     ledger.extend_from_slice(ir.actualization_ledger());
     emit_llvm_with_layout(&ir, target)
-        .and_then(|module| {
+        .and_then(|mut module| {
             // Emission decides which recursive components carry a runtime
             // budget after their clone families are known.
             let mut ledger = ledger;
-            ledger.extend_from_slice(module.actualization_ledger());
-            let launch = if launcher_contract_ready {
-                launcher::render(&ir, selected)?
-            } else {
-                String::new()
-            };
-            Ok(Reported {
-                module: module.into_string()
-                    + &launch
-                    + &caller_failure.map_or_else(String::new, |failure| {
-                        format!("\n; Executable caller was not admitted: {failure}\n")
-                    }),
-                ledger,
-            })
+            ledger.extend(module.take_actualization_ledger());
+            if launcher_contract_ready {
+                module.append(launcher::render(&ir, selected)?);
+            }
+            if let Some(failure) = caller_failure {
+                let mut comment = crate::backend::emission::Module::default();
+                comment.text(format!(
+                    "\n; Executable caller was not admitted: {failure}\n"
+                ));
+                module.append(comment);
+            }
+            Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
             let (stage, kind) = match failure {

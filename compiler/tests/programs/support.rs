@@ -167,12 +167,12 @@ pub fn nominal_type(spelling: &str) -> String {
     format!("%wf.t.{hex}")
 }
 
-pub fn compile_program(name: &str) -> String {
+pub fn compile_program(name: &str) -> whitefoot::LlvmModule {
     compile_programs(&[name])
 }
 
 /// Compiles the explicit sequential lowering used by paired corpus controls.
-pub fn compile_program_without_overlap(name: &str) -> String {
+pub fn compile_program_without_overlap(name: &str) -> whitefoot::LlvmModule {
     let source = read_program(name);
     compile_with_overlap(
         &[SourceInput::new(name, &source)],
@@ -182,7 +182,7 @@ pub fn compile_program_without_overlap(name: &str) -> String {
     .expect("sequential program corpus source must compile")
 }
 
-pub fn compile_programs(names: &[&str]) -> String {
+pub fn compile_programs(names: &[&str]) -> whitefoot::LlvmModule {
     let sources = names
         .iter()
         .map(|name| read_program(name))
@@ -200,14 +200,16 @@ pub fn compile_programs(names: &[&str]) -> String {
 /// [`compile_programs_with_overlap`] returning a compilation failure to the
 /// caller. Multi-file program cases report the compiler failure at their
 /// own functional boundary.
-pub fn try_compile_programs_with_overlap(names: &[&str]) -> Result<String, CompilationFailure> {
+pub fn try_compile_programs_with_overlap(
+    names: &[&str],
+) -> Result<whitefoot::LlvmModule, CompilationFailure> {
     try_compile_programs_with_overlap_mode(names, OverlapLowering::On)
 }
 
 fn try_compile_programs_with_overlap_mode(
     names: &[&str],
     overlap: OverlapLowering,
-) -> Result<String, CompilationFailure> {
+) -> Result<whitefoot::LlvmModule, CompilationFailure> {
     let sources = names
         .iter()
         .map(|name| read_program(name))
@@ -229,7 +231,7 @@ fn try_compile_programs_with_overlap_mode(
 /// about actualization has to name this entry. The two differ in the emitted
 /// lowering only: the judgment, the accepted program, and the ledger are the
 /// same either way.
-pub fn compile_program_with_overlap(name: &str) -> String {
+pub fn compile_program_with_overlap(name: &str) -> whitefoot::LlvmModule {
     compile_programs_with_overlap(&[name])
 }
 
@@ -239,7 +241,7 @@ pub fn compile_program_with_overlap(name: &str) -> String {
 /// time, so a case that asks what the whole corpus compiles to under `--par`
 /// needs the same multi-source entry [`compile_programs`] gives the default
 /// lowering.
-pub fn compile_programs_with_overlap(names: &[&str]) -> String {
+pub fn compile_programs_with_overlap(names: &[&str]) -> whitefoot::LlvmModule {
     try_compile_programs_with_overlap(names).expect("program corpus source must compile")
 }
 
@@ -248,7 +250,9 @@ pub fn compile_programs_with_overlap(names: &[&str]) -> String {
 /// The CLI suppresses eligible scalar leaves of at most 16 operations, unlike
 /// [`compile_programs_with_overlap`], which intentionally actualizes every
 /// eligible group for tests of the general lowering path.
-pub fn compile_sources_with_cli_parallel_defaults(sources: &[(&str, &[u8])]) -> String {
+pub fn compile_sources_with_cli_parallel_defaults(
+    sources: &[(&str, &[u8])],
+) -> whitefoot::LlvmModule {
     let inputs = sources
         .iter()
         .map(|(name, source)| SourceInput::new(name, source))
@@ -281,7 +285,7 @@ pub fn program_permission_ledger(name: &str) -> Vec<String> {
     ledger
 }
 
-pub fn compile_sources(sources: &[(&str, &[u8])]) -> String {
+pub fn compile_sources(sources: &[(&str, &[u8])]) -> whitefoot::LlvmModule {
     let inputs = sources
         .iter()
         .map(|(name, source)| SourceInput::new(name, source))
@@ -374,7 +378,7 @@ pub fn build_program_with_driver_arguments(
 /// time optimization, so a case observes exactly what the split's
 /// declarations, ownership and linkage make of it.
 pub fn build_program_from_fragments(
-    llvm: &str,
+    llvm: &whitefoot::LlvmModule,
     granularity: FragmentGranularity,
 ) -> CompiledProgram {
     let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);

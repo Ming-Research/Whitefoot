@@ -6,6 +6,8 @@
 //! module hands work out, and the floor joins it always. Every program can run
 //! out of stack, so every program carries the unit that reports it.
 
+use super::BackendFailure;
+use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, Signature};
 /// The floor runtime's source, carried inside the compiler.
 ///
 /// Its bytes travel in the compiler binary and are written beside the module
@@ -46,7 +48,27 @@ pub const FLOOR_STACK_BYTES: u64 = 1024 * 1024 * 1024;
 /// answer is to run the entry on the thread the host started: the program
 /// still runs and still means the same thing, with the ceiling and the bare
 /// host signal it had before the floor existed.
-pub(crate) const FLOOR_RUNTIME_FALLBACK: &str = "define weak i32 @wf__floor_run(i32 %argc, ptr %argv) {\nentry:\n  %status = call i32 @wf__main_body(i32 %argc, ptr %argv) noinline\n  ret i32 %status\n}\n\n";
+pub(super) fn floor_runtime_fallback() -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    let mut signature = Signature::new(
+        "wf__floor_run",
+        "i32",
+        vec![
+            Parameter::named("i32", "%argc"),
+            Parameter::named("ptr", "%argv"),
+        ],
+    );
+    signature.linkage = Linkage::Weak;
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions(
+        "  %status = call i32 @wf__main_body(i32 %argc, ptr %argv) noinline\n  ret i32 %status\n",
+        &["wf__main_body"],
+    );
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
+}
 
 #[cfg(test)]
 mod tests {
