@@ -2,12 +2,14 @@
 
 This investigation compares the remaining ownership surface after signature
 `own` was removed. The first comparison used specification v0.69 at
-`0f22b026b`; its source-probe refresh uses v0.74 at `ad51e05df`. The arrow comparison
-uses the v0.75 grammar at `126d201d6`; the earlier source measurements retain
+`0f22b026b`; its source-probe refresh uses v0.74 at `ad51e05df`. The arrow and caret comparisons
+use the v0.75 grammar at `126d201d6`; the earlier source measurements retain
 their recorded baseline. The concrete consumers
 are the maintained HashMap and Deque libraries and the owned-link cursor
 program. The active specification remains the language authority; candidate
-spellings below are not accepted syntax.
+spellings below are not accepted syntax. The owner selected postfix `^`;
+see [the settled spelling](#selected-postfix-caret) for the grammar and
+implementation boundary.
 
 ## Requirements and comparison criterion
 
@@ -285,18 +287,11 @@ below removes parsing ambiguity as an objection; it does not select the form
 by implementation convenience. Its selection ground is one explicit step
 usable identically for a projection and the whole referent, without wrapping
 the preceding path or making that step optional at selected sites.
-The pending [reference-place amendment](../../../design/amendments/reference-place-spelling.md)
-currently carries the compact prefix-star candidate below. Its raw-lexical
-conflict remains unresolved; it is not an adoptable complete revision. Its first decision replaces the
-reference-validity node's first decision; its second adds the spelling's
-selection ground. Four dependent nodes also need synchronized source-spelling
-clauses; see the dependency section below. The amendment does not yet include those dependent revisions. No
-reference-access spelling has been approved or implemented in this PR.
-
-The owner approved the named-constant correction on 2026-09-27: the live
-reference-validity decision, its ancestor summary and the pending replacement
-now include named constants as REF-1 already does. This changes no language
-permission. The spelling proposal remains pending while arrow forms are compared.
+The owner later selected postfix `^`, retaining this path-composition model
+with a different token. The [selected form](#selected-postfix-caret) supersedes
+the dot-star and arrow proposals. The named-constant root correction is also
+approved: the live reference-validity decision and its ancestor include named
+constants as REF-1 already does, without changing language permissions.
 
 ## Arrow comparison
 
@@ -471,68 +466,34 @@ that consults expression position would change GRAM-1's context-independent
 formation, while renaming the arithmetic forms would expand the change to
 operation spelling. Neither follows from a preference for arrow projection.
 A complete compact-prefix proposal would need an explicit lexical rule and
-controls for all mode-word identifiers and existing infix uses. No such rule
-is selected here. The pending compact-prefix amendment therefore remains
-unresolved; a token-grammar pass is not source feasibility.
+controls for all mode-word identifiers and existing infix uses. The selected
+caret form avoids that lexical revision; the compact-prefix proposal is
+superseded. A token-grammar pass is not source feasibility.
 
-### Recommended owner response
+### Superseded arrow recommendation
 
-Recommend arrow selection with the existing whole-referent form
-(`arrow-selectors`): `p->field`, `p->[i]`, and `deref(p)` in ordinary and proof
-places. The field and indexed paths become direct, and whole-object access
-retains an explicit form without a dangling arrow or a lexical change to
-arithmetic. Its cost is the retained prefix wrapping for whole-object reads,
-matches and atomic replacement, and two related forms rather than one postfix
-step. This does not establish a safety, productivity or performance gain.
-
-The complete token productions already tested for this option are:
-
-```text
-place          := pbase psuffix* | "deref" "(" place ")"
-pbase          := IDENT | "entry" "(" IDENT ")"
-psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "->" (IDENT | TYPEID "." IDENT | "[" atom range_tail? "]")
-```
-
-`deref(p)` cannot be followed by a projection in this grammar: the projected
-form is `p->field` or `p->[i]`, without a redundant `deref(p).field` alias.
-The selector arrow records an explicit reference step and its selector directly
-from the derivation. Box content stays `.inner`, and effect selectors keep
-their parameter-rooted grammar. Dot-star remains the more uniform postfix
-design. Total arrow (`p->field`, `p->[i]`, standalone `p->`) is also a complete
-option if the owner prefers uniformity over the trailing arrow's unfamiliarity.
-Spaced `* p` changes the compact-prefix proposal's canonical source; `*(p)`
-changes its grammar and retains parentheses. Neither is silently selected.
-
-Confidence in recommending arrow selectors plus `deref` is 3/5: the grammar
-and raw token boundaries support feasibility, but there is no parser/checker/
-formatter implementation or writer trial. The lexical finding changes the
-pending proposal's source form or lexical rules, so the proposed response is
-presented for owner direction rather than silently rewriting the amendment.
-That amendment still describes the compact prefix candidate and needs the
-chosen resolution, plus the dependent tree revisions below, before adoption.
-The owner has approved no reference-access spelling.
+The lexical finding led to recommending arrow selectors with retained
+`deref(p)` for whole access. It shortened field and index paths without
+changing arithmetic tokenization, but retained prefix wrapping for reads,
+matches and atomic replacement and required two related access forms.
+The owner instead selected `^` for one explicit postfix step in every place.
+Total arrow remained viable but made standalone access look unfinished;
+dot-star retained uniformity with a longer punctuation sequence. These are
+source-form judgments, not measured writer error rates or performance gains.
 
 ### Dependent source-spelling decisions
 
-Replacing the reference-validity spelling alone leaves four current
-decisions naming `deref`: the referent-form decision
-in [borrow-lexicon](../../../design/language/surface-form/borrow-lexicon.md),
+The same caret ruling updates the referent form in
+[borrow-lexicon](../../../design/language/surface-form/borrow-lexicon.md),
 the reference-to-Box example in [data-model](../../../design/language/data-model.md),
-the source-rendering clause in [checker-facts](../../../design/compiler/checker-facts.md),
+the rendering clause in [checker-facts](../../../design/compiler/checker-facts.md),
 and the reference-parameter rendering clause in
-[rejection-payloads](../../../design/compiler/rejection-payloads.md).
-These are dependencies of the same source-spelling choice; their semantic
-grounds do not change with that spelling.
-
-Recommend updating these current source-spelling clauses with the selected
-access form in the same ruling, preserving the reference/Box distinction,
-typed root-and-step representation and single canonical diagnostic renderer.
-Historical refused examples may remain historical. The pending amendment
-currently covers only reference-validity; it must gain those dependent
-revisions before it is described as the complete adoptable tree change.
-The grouped ownership-surface TODO records this dependency and its reopening
-condition. These four live nodes have not been revised for an unapproved
-access spelling.
+[rejection-payloads](../../../design/compiler/rejection-payloads.md), alongside
+[reference-validity](../../../design/language/ownership/reference-validity.md).
+Their reference/Box distinction, typed root-and-step representation and single
+canonical diagnostic renderer remain unchanged. Historical rejected examples
+retain the old spelling. The resolved access amendment is removed; the
+coordinated source implementation remains in the grouped ownership-surface TODO.
 
 ## Selected postfix caret
 
@@ -544,6 +505,53 @@ place   := pbase psuffix*
 pbase   := IDENT | "entry" "(" IDENT ")"
 psuffix := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "^"
 ```
+
+The chosen forms extend a path from left to right:
+
+| Operation | Selected spelling |
+|---|---|
+| Whole referent | `p^` |
+| Field or measure | `p^.field`, `part^.len` |
+| Box payload field | `node^.inner.value` |
+| Variant payload | `p^.Some.value` |
+| Indexed referent | `part^[i]` |
+| Re-slice | `&part^[lo..hi]` |
+| Entry proof path | `entry(node)^.inner.len` |
+| Rebind holder | `set p = &next;` |
+| Write referent | `set p^ = value;` |
+| Atomic replacement | `set cursor^ = f(head: move cursor^);` |
+
+`^` admits only a reference-kind operand. Bare names still forward or alias;
+Box content remains `.inner`, and effect selectors remain parameter-rooted
+without a dereference marker. Bounds, captured indices, refinements, validity,
+move permissions and exactly-once target evaluation retain their rules.
+Ordinary and proof paths share the same suffix. Retire the prefix-access
+production and its `deref` terminal; that word becomes an ordinary IDENT under
+FORM-3. No arrow, prefix-star, dot-star or implicit-projection alias is selected.
+
+Canonical formatting attaches `^` to the preceding place. Existing suffixes
+join as in `p^.field` and `p^[i]`; operators and assignment remain spaced,
+including `p^ + q^`, `p^ > limit` and `set p^ = value;`, and delimiters give
+`f(value: p^);` and `match p^ { ... }`. This adds a place suffix without
+introducing expression precedence or a type-directed omission.
+
+The selection ground is one explicit step for both whole access and selectors,
+with one punctuation byte rather than dot-star's two. A C-like family is
+feasible if its lexical and automatic-indexing rules are changed, but needs
+separate whole, member and indexed forms. A high-binding prefix star would
+also reverse [C's precedence](https://www.gnu.org/software/c-intro-and-ref/manual/html_node/Binary-Operator-Grammar.html)
+relative to field and index selection; a fresh
+prefix dollar avoids the star collision but still needs that binding rule.
+Postfix dollar is structurally equivalent to caret; its unfamiliar symbol
+offers no compositional advantage over caret. None of these comparisons establishes a productivity or
+compilation-speed advantage.
+
+[Pascal's postfix caret](https://www.freepascal.org/docs-html/ref/refse15.html)
+also denotes indirection to the referent. Whitefoot borrows that narrow
+notation, not Pascal's pointer value model or pointer arithmetic: a WF
+reference remains a checked captured path, not stored data, and `^` never
+traverses Box content or supplies a missing proof. Familiarity is a provisional
+readability ground; a writer trial could overturn it.
 
 Before measuring the caret grammar, require the full v0.75 grammar to retain
 strong LL(2), and a deliberately overlapping caret suffix to fail at
@@ -568,6 +576,17 @@ punctuation. No existing word, numeric, operator or compound-punctuation form
 contains that byte, so it needs no context-sensitive splitting or change to
 arithmetic mode tokens. The current scanner rejects `^`; token-grammar
 success must not be reported as implemented syntax.
+
+### Caret grammar observation
+
+The criteria and driver were fixed at `4a36a39aa6418f60379da8b467c5ffca20bdb7b3`
+before measurement. On the unchanged v0.75 specification integrated from
+`126d201d6003256d0f40452d082860cdbc449c67`, the guarded Rust build and both
+commands above exited 0. The caret candidate generated a nonempty strong-LL(2)
+table containing its `Deref` surrogate predicate. The negative control failed
+with GRAM-1 at `psuffix`, reporting `Deref Dot`; the driver checks the rule and
+production, not that exact diagnostic word. No source lexer, canonical
+formatter or semantic implementation was tested by this observation.
 
 ## Validation and remaining uncertainty
 
@@ -645,7 +664,7 @@ the latter's module and qualified-call productions. Compile the driver with
 `rustc --edition=2024` under the ordinary command guard. This uses the native
 generator, not another parser or a revised language implementation.
 
-The approved consumption rule and the pending access candidates have no
+The approved consumption rule and selected caret access have no
 lexer/parser/checker/formatter implementation in this PR yet.
 Adoption must check old-form refusal and new-form acceptance, copy and generic
 controls, whole-owner partial consumption, linear residuals, borrowed matches,

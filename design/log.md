@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-27 Use postfix caret for explicit reference access
+
+Nodes: language/ownership/reference-validity, language/surface-form/borrow-lexicon, language/data-model, compiler/checker-facts, compiler/rejection-payloads, language/ownership, language/surface-form/result-propagation
+
+Owner-approved: The owner selected the complete postfix `^` proposal for PR #107 ("use ^", written in Chinese), including whole access and field/index composition, after the C-like, prefix and postfix comparison.
+
+Summary: Replace the pending prefix-star/arrow proposal with the approved `p^`, `p^.field` and `p^[i]` family, and synchronize the four dependent spelling clauses while preserving Box `.inner`, reference validity and the typed place renderer. Remove the resolved amendment. The [caret comparison](../research/investigations/contract-surface/OWNERSHIP.md#selected-postfix-caret) records the one-step composition ground, alternatives and token-grammar limits. The node list also covers the earlier consumption and named-constant rulings on this branch. Coordinated specification/compiler/conformance implementation remains the follow-up in docs/todo.md; this research PR changes no accepted source syntax and this ruling authorizes no merge.
+
 ## 2026-09-27 Mark consuming owned places explicitly and include named constant roots
 
 Nodes: language/ownership, language/ownership/reference-validity, language/surface-form/result-propagation

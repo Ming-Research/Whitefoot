@@ -135,7 +135,10 @@ fn main() {
             let table = result.unwrap_or_else(|error| std::panic::resume_unwind(error));
             assert!(!table.is_empty(), "empty generated grammar");
             if name == "caret" {
-                assert!(table.contains("FixedTerminal::Deref"), "missing caret surrogate");
+                assert!(
+                    table.contains("FixedTerminal::Deref"),
+                    "missing caret surrogate"
+                );
                 println!("caret: strong LL(2), using Deref as the fresh ^ predicate");
             } else {
                 println!("{name}: strong LL(2)");
