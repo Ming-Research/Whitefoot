@@ -493,6 +493,19 @@ rarely insert at the same place.
   requested-byte peak. Preserve those distinctions; this is neither an
   isolated growth-latency result nor a physical-memory measurement.
 
+  The 2026-09-27 emitter fix
+  [`5ae2cdd40793e617dbbe88d3fc38681db983166f`](../research/experiments/container-representation/deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot)
+  carries a `place_front` Ring's already computed physical slot into its
+  descriptor update. The raw body no longer reloads head/capacity or repeats
+  the predecessor calculation; its focused backend test and the complete
+  ownership/checksum matrix pass. A matched seven-sample, two-cohort run
+  reduces scalar reverse churn from about 1.39--1.41 times C++ to
+  0.49--0.50 times, without a useful regression elsewhere. The remaining
+  scalar growth deficits concern rebase's per-element transfer and are not
+  explained by this fix. Reopen the growth path with a same-source bulk
+  transfer discriminator, preserving the allocation policy and logical-order
+  oracle, before changing the Ring API or selecting a new operation.
+
 - **Slab aggregate results retain extra transfers and layout overhead.**
   The [Slab comparison](../research/experiments/container-representation/slab-library/RESULTS.md)
   separates the one-slot cell's extra word from its helper boundary: retained

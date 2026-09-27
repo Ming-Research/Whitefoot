@@ -1238,3 +1238,46 @@ prelude row and changes the witness call shape. The patch is therefore kept as
 research evidence and restored from the worktree. A production choice would
 need either an owner-selected compound deque operation or a general checked
 fusion rule; neither is silently selected here.
+
+### Production lowering: reuse a front-placement slot
+
+The source-level `place_front` operation already computes the physical slot it
+stores. Before commit `5ae2cdd40793e617dbbe88d3fc38681db983166f`, the emitter
+called `boundary_slot` a second time while updating the Ring header. That
+second call reloaded `head` and `cap`, repeated the zero-head select and
+predecessor subtraction, and then stored the same slot as the new `head`.
+The production lowering now carries the first slot through
+`move_run_boundary`; the take and back-placement paths keep their old code.
+This is a spec-neutral lowering change and does not add a source operation.
+
+The backend regression
+`front_placement_reuses_the_written_ring_slot_for_the_new_head` checks the
+raw emitted `place_front` body: after the payload store only the length is
+loaded, exactly two descriptor stores remain, and the head store uses the
+payload GEP's physical index. The focused gate test passed. The unchanged
+source/accounting images each passed 576 configurations and 2,592 executions,
+including checksum and cleanup refusals; their 294 accounting rows are byte
+for byte identical. The retained source checks still passed 432
+configurations and 1,296 executions per image.
+
+The matched practical A/B used the same compiler revision except for this
+commit, the same work (`1048576`), seeds, seven samples, two cohorts and native
+controls. The fresh reducer classified baseline as 16 pass, 5 deficit and 3
+inconclusive cells; the candidate as 18 pass, 2 deficit and 4 inconclusive.
+The three scalar 8-byte reverse-churn cells moved from WF/C++
+`1.411/1.411`, `1.405/1.399` and `1.386/1.384` (cohorts 0/1) to
+`0.499/0.498`, `0.497/0.503` and `0.494/0.493`. Candidate/baseline paired
+medians for those cells were `0.353`, `0.355` and `0.355`. Forward, growth,
+wide and setup cells changed by at most about 2.1%, within the recorded
+sample variation; the two scalar growth deficits at counts 256 and 4096
+remain. The durable samples are
+`ecosystem-boundary-reuse-baseline-samples.csv`
+(`f488a5386dbdbc0b5bc5f928dbdaa7382084d44b32d4e783c2c520d44a20d784`) and
+`ecosystem-boundary-reuse-candidate-samples.csv`
+(`1786cf4bc907a01b20e805f34920a63a62e7d8e061d0664988bdea6378ed6f2e`);
+both accounting files have SHA-256
+`0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`.
+
+This closes the previously measured duplicate descriptor work in the
+front-placement lowering. Rebase's per-element transfer and the remaining
+scalar growth gap are separate questions and remain open.
