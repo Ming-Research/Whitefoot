@@ -2587,7 +2587,12 @@ replacement is a frozen LLVM witness that removes a public capacity check; it
 is therefore causal evidence about the helper boundary and the carried
 spare-capacity fact, not a selected API or unchecked lowering. An earlier
 tail-only run lacked the wide truncate attribute and is retained only as
-historical evidence, not as a current composite comparison.
+historical evidence, not as a current composite comparison. For the remaining
+growth-at-16 row, WF/direct-C is `1.018–1.024`, compared with WF/C++
+`1.085–1.107` and WF/Rust `1.152–1.154`. Direct C uses the same header-first
+representation, so most of the standard-library gap is the empty-header and
+first-growth contract; the residual roughly two percent against direct C is a
+lowering question. This attribution does not relax the Rust/C++ target.
 
 Two target choices address the demonstrated extra temporary copies. A complete
 take captures the old physical slot, updates the window descriptor, then

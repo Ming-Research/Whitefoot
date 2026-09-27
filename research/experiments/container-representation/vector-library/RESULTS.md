@@ -2644,6 +2644,15 @@ qualified ranges still overlap. The direct candidate remains a diagnostic
 upper bound and is rejected as a production change because it removes a
 public append check by hand.
 
+For the remaining scalar growth-at-16 row, the same candidate's WF/direct-C
+ratios are `1.018–1.024`, while WF/C++ is `1.085–1.107` and WF/Rust is
+`1.152–1.154`. Direct C uses the matching header-first representation and is
+therefore a closer source-shaped upper bound. This separates most of the
+standard-library gap as the empty-header/first-growth representation and
+algorithm contract; it does not make direct C a replacement for the Rust/C++
+target, and the residual 2–3% against that control remains a compiler/lowering
+question.
+
 The earlier tail-only pair is retained as historical evidence under
 [`tail-only control`](ecosystem-scalar-reserved-append-tail-only-control-samples.csv),
 [`tail-only candidate`](ecosystem-scalar-reserved-append-tail-only-candidate-samples.csv),
