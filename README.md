@@ -356,8 +356,8 @@ start from the examples above:
    it to the workers.
 3. [Proofs without a solver, by hand](docs/articles/proofs-by-hand.md) —
    difference bounds, closure and loop invariants, worked on paper.
-4. What a rejection tells you — diagnostics written for the agent that fixes
-   the code.
+4. [What a rejection tells you](docs/articles/what-a-rejection-tells-you.md) —
+   diagnostics written for the agent that fixes the code.
 5. Integers — every operation states its meaning.
 6. One build — no panic, no debug/release split, a fixed record on resource
    exhaustion.
