@@ -334,14 +334,27 @@ perl .github/run-check.pl reference-access-build rustc --edition=2024 research/e
 perl .github/run-check.pl reference-access-grammar /tmp/whitefoot-reference-access-grammar spec/kernel-spec.md
 ```
 
+A follow-up candidate pairs arrow selection with prefix `*p` for the whole
+referent, instead of assuming a choice between retained `deref` and a trailing
+arrow. Before running it, add `arrow-prefix` to the same driver with
+`place := pbase psuffix* | "*" place`, the postfix base, and the arrow-selectors
+suffix. Require the full grammar, including multiplication and affine proof
+terms, to remain strong LL(2). The prefix takes a complete place, so
+`*p->field` denotes access through the selected field, not a second spelling
+of `p->field`; parentheses around an arbitrary place are not added. Ordinary
+reference-kind checks remain required. Compare the conventional whole-access
+pairing against the total-arrow candidate's single postfix family.
+
 ### Observations and comparison
 
 On v0.75 at `126d201d6`, using the driver fixed in `6afb02738`, the baseline,
 dot-star, literal arrow step, arrow members, arrow selectors and total arrow
 grammars all generated strong-LL(2) tables. The deliberately conflicting
 `pbase` alternatives rejected with GRAM-1 on `Identifier Dot`; the driver
-requires that specific failure, and the complete command exited 0. The full
-grammar includes signature arrows, qualified names and module forms. These
+requires GRAM-1 specifically in `pbase`, and the complete command exited 0.
+The reported token pair is the observed diagnostic, not another assertion in
+the driver. The full grammar includes signature arrows, qualified names and
+module forms. These
 are grammar-generation observations, not accepted programs on a modified
 compiler. No parsing or compiler timing comparison was performed.
 

@@ -48,11 +48,15 @@ fn candidate(source: &str, name: &str) -> String {
                 &format!("{SUFFIX} | \"->\" (IDENT | TYPEID \".\" IDENT)"),
             )
         }
-        "arrow-selectors" => {
+        "arrow-selectors" | "arrow-prefix" => {
             let source = replace_once(
                 source,
                 PLACE,
-                "place          := pbase psuffix* | \"deref\" \"(\" place \")\"",
+                if name == "arrow-prefix" {
+                    "place          := pbase psuffix* | \"*\" place"
+                } else {
+                    "place          := pbase psuffix* | \"deref\" \"(\" place \")\""
+                },
             );
             replace_once(
                 source,
@@ -85,6 +89,7 @@ fn main() {
         "arrow-step",
         "arrow-members",
         "arrow-selectors",
+        "arrow-prefix",
         "arrow-total",
         "conflict-control",
     ];
