@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
         assert_eq!(PRELUDE_DECLARATIONS.len(), 24);
-        assert_eq!(OPERATION_FAMILIES.len(), 88);
+        assert_eq!(OPERATION_FAMILIES.len(), 89);
         assert_eq!(
             OPERATION_FAMILIES
                 .iter()
