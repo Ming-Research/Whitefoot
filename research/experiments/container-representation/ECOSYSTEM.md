@@ -614,10 +614,10 @@ caller growth without changing that verdict. The roots are Vector's
 `wf_map_trace` and `main`; and records' `wf_bench_records` and
 `wf_bench_records_release`. Follow all named references in optimized IR,
 including function addresses and globals, from those roots. Every native
-defined-function relocation edge agrees with that reference graph. Measure
-the records closure with its address-taken
+defined-function relocation edge agrees with that reference graph. The records
+closure includes its address-taken
 `wf__par_thunk__par_split_summarize_records.0.0` callback and the
-`wf__par_split_summarize_records.0` body it invokes included. Measure
+`wf__par_split_summarize_records.0` body it invokes. Measure
 each native symbol from its start to the next function, or the end of
 `__text`; these extents include alignment and are not packed linked bytes.
 

@@ -207,7 +207,11 @@ fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
         "containers/grow-vector-program.wf",
         include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
     )];
-    execute_container_program("grow-vector", &sources, 25, true);
+    // The original 25 allocations remain: the zero-capacity linear chain
+    // now enters the capacity constructor directly. Its added capacity-3
+    // repeat uses one backing and five payloads; the empty ceiling-0 Ticket
+    // uses one backing and needs no fabricated linear element.
+    execute_container_program("grow-vector", &sources, 32, true);
 }
 
 #[test]

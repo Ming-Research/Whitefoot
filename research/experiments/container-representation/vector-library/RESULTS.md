@@ -1035,6 +1035,148 @@ is not an insertion benefit. F retains the same allocation policy and the
 same 294 accounting rows; the separate known-capacity-construction proposal
 is not part of this comparison.
 
+### Source discriminator G: direct known-capacity construction
+
+G adds the ordinary `grow_vector_with_capacity` API and uses it only where
+the existing caller already knows its reservation. It constructs one empty
+Slots backing at that capacity; its named returned owner publishes length
+zero and the exact capacity through CALL-4. The existing zero-capacity
+`grow_vector_new`, incremental growth policy, F append/insert, consumption
+order and unconstrained linear-element support remain unchanged. This is an
+additive library interface under the existing OP-9/STOR-6 allocation bounds
+and total STOR-8 allocation, with no new language primitive or representation.
+
+Before compilation, freeze F's compiler lowering, native implementations,
+input streams, complete trace definitions and flags. Only known-capacity
+WF construction and the accounting formulas change. The optimized F image
+already removes its empty allocation/free on reuse and suffix paths. The
+concrete native prediction is therefore narrower than the source accounting:
+the reserved branch of the actual round should lose its surviving 16-byte
+empty allocation/free and reach one requested-capacity allocation. Growth
+must retain its empty backing and incremental policy. Reuse and suffixes
+must gain no construction or hot-loop work. Inspect actual work, tail and
+truncate bodies, helper calls, frames, spills and placement; report any
+folding due to the stronger result contract separately. Symbol movement alone
+neither passes nor fails the criterion. An unchanged reserved allocation
+path, displaced allocation or new hot-path work falsifies the code prediction.
+
+Require both complete ecosystem correctness images, the formal Vector
+program in both lowering modes, and the historical ordinary/retained O2
+checks. Formal coverage includes capacity zero, positive requested capacity,
+zero ceiling, and must-consume owners without a fabricated element. In the
+294-row accounting matrix, exactly 36 known-capacity WF rows must lose the
+specified empty-header events, six WF growth rows and all 252 native rows
+must remain unchanged, and every trace must finish with zero live allocations.
+Reserved loses one request/release and 16 requested bytes per constructed
+vector; reuse/suffix lose one such pair per trace. The source-level peak
+loses 16 bytes. A balanced extra-header allocation/free must be rejected by
+the independent formula even though cleanup succeeds. Existing checksum and
+unreleased-owner controls remain. Observer-preserved source events must not
+be described as physical timed allocations when ordinary optimization has
+already removed them.
+
+Only a passing code/correctness discriminator permits a separately authorized
+full F/G timing pair. Retain all useful scalar/wide cells at 16, 256 and
+4096, all six unranked suffix-zero controls, both cohorts and existing
+duration/stability qualifications. Require a useful reserved improvement
+without a repeatable useful-cell regression, and report every cell against
+F as well as the slower standard comparator. No result is selected by an
+aggregate or by accounting counts alone. This criterion is recorded before
+G compilation; there is no measured benefit yet.
+
+### G construction and correctness
+
+The G library SHA-256 is
+`a794890d707ed494aab3cc51e2cbc9a77e37d38c39ff0cf7880bd785751fe0de`,
+and its public module record is
+`0abae00637fc124e50289e1114fe0944ada28d3b978e67f739ed2d93feffba52`.
+The rebuilt compiler, timed image and timed LLVM are respectively
+`08eee3a508d22fcf7bb824b1bd47402b9caffe7d16f4d048dd8b3c239fbad899`,
+`6ca34687d0efa797d6fa5a458777d6bbb9f29ebfa32e69788d16a027adf8f744` and
+`69c8fa27687991d438808cbf9f5ddc833e0ed2dfa971fd2764838076b3375dd4`.
+`BUILD=.build/capacity-g` preserves every earlier candidate. The compiler
+implementation remains byte-identical to F; its executable changes because
+it embeds the library. This is an API/caller comparison, not a same-source
+compiler-lowering experiment. No specification rule or representation changes.
+
+Compiler construction used the gate profile with `--locked --offline -j 2`
+and took 7.707 s. The first CLI preflight failed in 0.551 s at a trailing
+semicolon after the new value-if: GRAM-4 ends that initializer at its final
+brace. Removing the fixture's semicolon repaired its spelling; no parser,
+contract or proof requirement changed. The repaired preflight passed in
+0.135 s without rebuilding the unchanged embedded library. Fresh ecosystem
+construction took 4.163 s, correctness 1.837 s and accounting 0.145 s.
+Formal corpus construction took 0.712 s and execution 3.325 s. Historical
+O2 construction took 1.331 s and checks 1.105 s. The two enclosing guards
+took 8.41 s for the first construction/preflight and 12.87 s for the repaired
+preflight and remaining checks, with no queue wait or busy retry. These
+costs exclude measurement.
+
+Both ecosystem images pass 1,260 configurations / 8,820 executions. The
+historical ordinary and retained O2 images each pass 1,260 configurations /
+6,300 executions with the exact known-capacity WF-to-C accounting difference.
+The formal program passes both lowering modes with 32 exact-once allocation
+releases: the existing 25 events remain, the capacity-three linear-owner
+chain adds one backing and five payloads, and the empty ceiling-zero Ticket
+adds one backing. Its capacity-zero and capacity-three chains retain all
+content, callback-order and cleanup observations. The existing checksum and
+unreleased-allocation controls remain effective. The new balanced extra
+16-byte allocation/free exits 1 at `independent allocation count, byte and
+peak formula`, after passing cleanup and lifecycle balance.
+
+Bounded scratch variants falsified the new formal observations without
+changing the repository verdict. The unmodified source exits 0. Expecting
+capacity one from the capacity-zero chain exits 22; expecting two from the
+capacity-three chain exits 26. Expecting length one or capacity one from the
+empty Ticket exits 27 or 28. All four variants compile successfully before
+those native failures. The first scratch conditional used a nested else/if
+and was rejected by GRAM-6; it was flattened to the required else-if form,
+not counted as an observation failure. The corrected guarded command took
+3.15 s: emission 0.983 s, native linking 0.793 s and five executions 1.268 s,
+with no queue wait. The initial control and malformed variant took a separate
+1.28 s guard. Both one-shot runners were removed after preserving their logs
+and artifact identities.
+
+The [G accounting matrix](ecosystem-capacity-g-accounting.csv) has 294 rows,
+SHA-256 `66d7c100dcb96dff2f43a8eb0146852ef9f840e0afaae156cbb9f4f83ffa37cc`.
+Exactly 36 known-capacity WF rows change by the prerecorded formula; all
+six WF growth rows and all 252 native rows are identical to F. Every checksum,
+round count and trace count is unchanged. Reserved removes one request and
+release plus 16 requested bytes per round; reuse and each suffix remove one
+pair and 16 requested bytes per trace. The peak and requested-overlap upper
+bound each decrease by 16 bytes. G still owns a 16-byte backing header:
+
+| Reserved, three rounds | WF requests | WF requested bytes | WF peak bytes | Rust/C++ requested / peak bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Scalar, 16 | 3 | 456 | 152 | 408 / 136 |
+| Wide, 16 | 3 | 13,104 | 4,368 | 13,056 / 4,352 |
+| Scalar, 4096 | 3 | 98,376 | 32,792 | 98,328 / 32,776 |
+| Wide, 4096 | 3 | 3,146,544 | 1,048,848 | 3,146,496 / 1,048,832 |
+
+These are observer-preserved source events, not RSS or a count of optimized
+timed allocations. The timed C driver, C++ object and Rust archive remain
+byte-identical to F, as do the runtime objects.
+
+### G final-code discriminator
+
+The recorded native construction discriminator passes. Each scalar/wide
+round wrapper shrinks from 41 to 33 instructions and from an 80-byte to a
+64-byte frame. The reserved branch reaches one requested-capacity `malloc`
+without the previous empty `calloc` and `free`; its wrapper path falls from
+40 to 28 instructions, excluding called bodies. The growth branch still
+allocates the 16-byte empty backing and follows the unchanged incremental
+policy, while the shared wrapper's own path shrinks from 29 to 25 instructions.
+This wrapper change is separate from removing an allocation on reserved.
+
+Reuse and suffix already had only one timed construction in F and retain it
+in G. The actual mutation and consumption paths gain no hot-loop work.
+Initial-length guards were already absent from F's optimized code, so there
+is no additional runtime-check removal to credit to the new ensures clauses.
+Code placement changes remain: both trace entries move +168 bytes; scalar
+work/tail +64; wide work/tail/truncate -72; scalar truncate -104; and the
+growth helpers -40. These observations precede full-matrix timing and do
+not themselves establish a runtime improvement or a saving per suffix cycle.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)

@@ -8,9 +8,9 @@ alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
 alias grow_vector_insert = std::collections::vector::grow_vector_insert;
 alias grow_vector_new = std::collections::vector::grow_vector_new;
 alias grow_vector_remove = std::collections::vector::grow_vector_remove;
-alias grow_vector_reserve = std::collections::vector::grow_vector_reserve;
 alias grow_vector_swap_remove = std::collections::vector::grow_vector_swap_remove;
 alias grow_vector_truncate = std::collections::vector::grow_vector_truncate;
+alias grow_vector_with_capacity = std::collections::vector::grow_vector_with_capacity;
 
 struct VectorDigest {
   value: u64;
@@ -96,14 +96,17 @@ fn vector_library_work<interface VectorElement<T>>(values: &GrowVector<T, 8193>,
 fn vector_library_round<interface VectorElement<T>>(count: u64, seed: u64, reserve_first: Bool) -> result: u64 pure contract {
   requires count <= 8192_u64;
 } {
-  let values = grow_vector_new::<T, 8193>();
+  let values = if reserve_first {
+    let requested = count + 1_u64;
+    let reserved = grow_vector_with_capacity::<T, 8193>(capacity: requested);
+    give move reserved;
+  } else {
+    let unreserved = grow_vector_new::<T, 8193>();
+    give move unreserved;
+  }
   let initial = values.storage.inner.len;
   if initial != 0_u64 {
     return 18446744073709551615_u64;
-  }
-  if reserve_first {
-    let requested = count + 1_u64;
-    let reserved = grow_vector_reserve::<T, 8193>(values: &values, total: requested);
   }
   let digest = VectorDigest(value: seed);
   vector_library_work::<VectorElement<T>>(values: &values, count: count, seed: seed, digest: &digest);
@@ -143,13 +146,12 @@ fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, see
     let retained = count - removed;
     invariant prefix_bound: retained <= 8192_u64;
     invariant suffix_bound: retained + removed <= 8192_u64;
-    let values = grow_vector_new::<T, 8193>();
+    let requested = count + 1_u64;
+    let values = grow_vector_with_capacity::<T, 8193>(capacity: requested);
     let initial = values.storage.inner.len;
     if initial != 0_u64 {
       return 18446744073709551615_u64;
     }
-    let requested = count + 1_u64;
-    let reserved = grow_vector_reserve::<T, 8193>(values: &values, total: requested);
     for @prefix (
       index in 0_u64..retained,
       invariant length_lo: values.storage.inner.len >= index,
@@ -176,13 +178,12 @@ fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, see
     return prefix +wrap final.value;
   }
   if path == 2_u64 {
-    let values = grow_vector_new::<T, 8193>();
+    let requested = count + 1_u64;
+    let values = grow_vector_with_capacity::<T, 8193>(capacity: requested);
     let initial = values.storage.inner.len;
     if initial != 0_u64 {
       return 18446744073709551615_u64;
     }
-    let requested = count + 1_u64;
-    let reserved = grow_vector_reserve::<T, 8193>(values: &values, total: requested);
     for @reuse (
       round in 0_u64..rounds,
       invariant empty: values.storage.inner.len == 0_u64

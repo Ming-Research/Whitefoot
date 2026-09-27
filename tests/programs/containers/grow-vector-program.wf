@@ -10,6 +10,7 @@ alias grow_vector_remove = std::collections::vector::grow_vector_remove;
 alias grow_vector_reserve = std::collections::vector::grow_vector_reserve;
 alias grow_vector_swap_remove = std::collections::vector::grow_vector_swap_remove;
 alias grow_vector_truncate = std::collections::vector::grow_vector_truncate;
+alias grow_vector_with_capacity = std::collections::vector::grow_vector_with_capacity;
 
 struct Sum {
   total: u64;
@@ -156,10 +157,15 @@ fn scalar_consumption() -> code: u64 pure {
   return 0_u64;
 }
 
-fn linear_consumption() -> code: u64 pure {
-  let values = grow_vector_new::<Ticket, 4>();
+fn linear_consumption(capacity: u64) -> code: u64 pure contract {
+  requires capacity <= 4_u64;
+} {
+  let values = grow_vector_with_capacity::<Ticket, 4>(capacity: capacity);
   let seen = Sum(total: 0_u64, sequence: 0_u64, count: 0_u64);
   let failures = 0_u64;
+  if values.storage.inner.cap != capacity {
+    set failures = failures +wrap 1_u64;
+  }
   let initial = values.storage.inner.len;
   if initial == 0_u64 {
     let one = ticket_new(id: 1_u64);
@@ -346,9 +352,23 @@ fn main() -> status: ExitStatus pure {
   if scalar_code != 0_u64 {
     return exit_status(code: 21_u8);
   }
-  let linear_code = linear_consumption();
+  let linear_code = linear_consumption(capacity: 0_u64);
   if linear_code != 0_u64 {
     return exit_status(code: 22_u8);
+  }
+  let capacity_code = linear_consumption(capacity: 3_u64);
+  if capacity_code != 0_u64 {
+    return exit_status(code: 26_u8);
+  }
+  let empty_ticket = grow_vector_with_capacity::<Ticket, 0>(capacity: 0_u64);
+  let ticket_length = empty_ticket.storage.inner.len;
+  let ticket_capacity = empty_ticket.storage.inner.cap;
+  grow_vector_free_empty::<Ticket, 0>(values: move empty_ticket);
+  if ticket_length != 0_u64 {
+    return exit_status(code: 27_u8);
+  }
+  if ticket_capacity != 0_u64 {
+    return exit_status(code: 28_u8);
   }
   return exit_status(code: 0_u8);
 }

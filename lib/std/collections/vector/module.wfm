@@ -8,6 +8,12 @@ public interface VectorDrain<T, E> {
 
 public fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure doc "One empty vector over a zero-capacity backing window. The caller-selected ceiling is the static capacity domain later reserve, append, and insert calls must prove; zero therefore constructs a useful empty value whose growth operations are unavailable. A runtime-capacity window exists only as the content of a cell [TYPE-9], and allocation is total in the source [STOR-8], so the construction has no refusal arm and hands back no Result.";
 
+public fn grow_vector_with_capacity<T, const ceiling: u64>(capacity: u64) -> made: GrowVector<T, ceiling> pure contract {
+  requires capacity <= ceiling;
+  ensures made.storage.inner.len == 0_u64;
+  ensures made.storage.inner.cap == capacity;
+} doc "Constructs one empty backing with exactly the requested capacity, avoiding a separate zero-capacity backing when the caller already knows its reservation. The caller-selected ceiling bounds this construction's OP-9 obligation; complete selected-target layout still qualifies under STOR-6. Zero capacity is valid and still constructs a backing. Allocation is total under STOR-8 and no element value is needed, including for must-consume elements.";
+
 public fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, total: u64) -> capacity: u64 writes(values.storage) contract {
   requires total <= ceiling;
   ensures capacity == deref(values).storage.inner.cap;
