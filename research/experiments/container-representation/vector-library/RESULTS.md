@@ -2729,18 +2729,16 @@ posthash, full paired-cell and native-drift reductions. This combined experiment
 establishes no separate latency share for hints, traversal or the empty-edge
 change, and its adverse result does not select a production performance policy.
 
-### Next discriminator: wide counted consumer with the actual empty guard
+### Counted consumer with the actual empty guard: completed and rejected
 
-Before construction, freeze the actual `9efd6c624` inputs and replace only its
-wide truncate LLVM body with raw K+hint's counted loop plus an explicit nonempty
-guard/empty return. Rebuilt actual control must reproduce the frozen code exactly;
-the candidate must retain a distinct counted loop, no per-owner callback or owner
-staging, and the actual empty bypass. Disclose every code/placement change and
-stop before timing if those criteria fail. A passing native/correctness result
-permits one complete 4,116-row-per-arm Vector pair with the existing matrix and
-qualifications, never selective replay. An improvement would implicate the
-consumer-and-placement package, not isolate one instruction or alignment effect.
-This is a prospective discriminator, with no construction or timing result here.
+The prospective experiment above was completed using the frozen `9efd6c624`
+inputs. Its rebuilt control was byte-identical, the candidate retained the
+distinct counted loop and actual empty bypass, and the native/correctness
+criteria passed. The complete pair and its qualified result are recorded in
+the [consumer-counter diagnostic](#consumer-counter-diagnostic-the-wide-suffix-one-gap-is-real-but-incomplete).
+That result implicates the loop-controller/placement package but still leaves
+the wide suffix-one target at `1.143–1.202` times the slower standard peer, so
+it does not select a production lowering or close the Vector phase.
 
 ## Historical source-composition evidence
 
