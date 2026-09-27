@@ -569,7 +569,9 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
    them, or earlier if parallel work stalls on the current structure.
 5. P5.1 and P5.2 whenever a harness or entry point changes next.
 
-P2.3, P3.4, P4.1 and P4.2 each need an amendment, and none is written yet.
+P2.3, P3.4 and P4.2 have pending amendments in `design/amendments/`,
+described in [Pending architectural decisions](#pending-architectural-decisions).
+P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
 Every restructuring step changes no behavior. It is validated by `make
@@ -591,6 +593,101 @@ built with the `gate` profile:
 A check forms proof receipts only with `--cache`, which this comparison does
 not pass, so a change to receipts is tested by the driver tests that build
 with a cache.
+
+## Pending architectural decisions
+
+These proposals change compiler structure, not language rules. They are
+submitted before implementation at the owner's request. P2.2 proceeds while
+they await a ruling; a ruling on these proposals does not claim their
+implementation or validation is complete.
+
+### P2.3: one inventory without rollback
+
+Replace the first decision of `design/compiler/generic-validation-scope.md`
+and its refusal of reusing nongeneric validation analyses. The other
+decisions remain unchanged. The current refusal is justified by discarded
+function and nominal identities; keeping identities invalidates that ground,
+but does not by itself establish that an analysis can be reused.
+
+Use structurally keyed, grow-only type and function inventories within one
+check. Symbolic validation, selector preflight and concrete checking select
+views of this inventory. Symbolic validation still judges every canonical
+generic body and its reachable callees, including declarations never called
+by an executable. Concrete instances written in generic bodies retain their
+ordinary required checks. Executable reachability selects what is lowered,
+not what source declarations are checked. Symbolic and concrete contexts,
+template spelling authority and per-site target obligations remain distinct.
+Reuse a checked body or analysis only when its substitution, checking context
+and consumed callee claims agree; sharing an id alone is insufficient.
+
+This removes `nominal_checkpoint` restoration, the `Stable*` bridge and the
+separate preflight inventory. It permits eliminating duplicate structural
+checks where those inputs agree, without assuming that every current second
+check is redundant. The structural benefit follows from retaining identities;
+the compile-time benefit is unmeasured. Cost and risk are high: the current
+rollback also separates symbolic-only metadata from executable types, and
+the replacement must retain that distinction explicitly.
+
+Keeping rollback is viable but preserves the mirrored representation and
+replay. Reusing every same-id result is refused because equal identity does
+not imply equal symbolic context or available postconditions. Revisit the
+reuse boundary if a concrete consumer needs a context not expressible by the
+proposed views. Validation must compare the corpus and module graphs as in
+Order, cover uncalled generic bodies, schema-written concrete instances,
+symbolic publication and cached/uncached agreement, and demonstrate that
+symbolic-only inventory growth does not reach executable output.
+
+### P3.4: typed syntax access
+
+Add `design/compiler/typed-syntax-access.md` under the compiler root. The
+current `semantic/tree.rs` already offers some grammar-aware helpers, but
+resolution and other consumers still decode the same alternatives locally;
+the if/else split in `resolution/scopes.rs` and `semantic/tree.rs` is one
+concrete example. Move that responsibility into shared typed syntax views,
+preserving the parser's node identities, source extents and owned storage.
+Resolution, semantic checking, module-graph reading and driver reads migrate
+one form at a time; raw topology remains an implementation detail of syntax.
+Views normalize grammar alternatives but do not resolve names, infer types
+or change diagnostic authority. Parser tables still derive from the active
+specification under `compiler/build-inputs`.
+
+The benefit is one grammar interpretation for every migrated form. Cost is
+large across consumers; the risk is losing distinctions or source positions
+that a judgment needs. A second owned AST offers stronger representation
+separation but adds identity mapping and storage with no current consumer.
+The proposal therefore uses views, and can be reconsidered if a consumer
+needs independent syntax lifetime or mutation. Validate each migration with
+identical diagnostics, verdicts and LLVM on Order's corpus and graph probe;
+grammar alternatives and source locations must retain their existing tests.
+
+### P4.2: structured emission
+
+Add `design/compiler/structured-emission.md` under the compiler root. The
+current emitter and `backend/fragments.rs` reconstruct structure from text:
+alloca insertion uses byte offsets, attributes rewrite definition lines,
+phi predecessors rely on a separately maintained exit-label classification,
+and fragment construction parses emitted headers and references. A shared
+emission model records these facts as they are constructed, then renders
+either the whole module or selected fragments.
+
+The model owns headers, blocks and their actual final labels, entry allocas,
+attributes, definitions and symbol references. Instruction text can remain
+text where no consumer needs its structure; this is not another optimizer.
+The fragment ownership and dependency algorithm, linkage transformations,
+native ABI and target qualification keep their current contracts. Internal
+interfaces may evolve in this private crate. This does not select P4.1's
+parallel IR pass or change the two-worlds graph-transfer decision.
+
+Cost is medium to large, spanning every helper that opens a block and every
+definition that can be split into a fragment. The benefit is removal of
+independent reconstruction, not a measured runtime improvement. Maintaining
+the present patching with more substring tests is cheaper initially but
+leaves duplicated facts. An LLVM binding is unnecessary for this boundary.
+Revisit the model's granularity if a real target consumer needs structured
+instructions. Require byte-identical whole-module and per-fragment output,
+plain and parallel, alongside Order's checks and the existing native backend
+and incremental fragment tests; fragment comparison is needed in addition
+to whole-module equality.
 
 ## Relation to recorded decisions
 

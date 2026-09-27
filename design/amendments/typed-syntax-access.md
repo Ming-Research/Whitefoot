@@ -1,0 +1,7 @@
+Node: design/compiler/typed-syntax-access.md
+
+Decision: Resolution, checking, module-graph reading and the driver consume shared typed views of the parser's owned syntax, with each production alternative decoded once beside syntax and source node identities and extents retained, because the [duplicated grammar interpretation](../../research/investigations/compiler-architecture/DESIGN.md#p34-typed-syntax-access) makes a grammar change reach semantic consumers and lets their readings disagree, instead of each stage probing raw children and terminal offsets or copying syntax into a second owned tree. The views describe written form; resolution and semantic judgments remain in their owning stages.
+
+Rejected:
+- A separately allocated normalized syntax tree: rejected because the existing owned syntax already supplies identity and source locations, while another tree would require identity translation and duplicate storage without a current consumer.
+- Moving semantic judgments into the syntax views: rejected because grammar alternatives describe written form and cannot decide rules that depend on resolved declarations, checked types or proof facts.
