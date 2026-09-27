@@ -552,18 +552,45 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 
 1. Now, with no tree change: P1.1, P1.2, P3.1, P4.3, P4.4 and P5.3. These
    restore recorded decisions, remove defects or dead code, and are small or
-   medium.
-2. With amendments ruled: P6, P1.3 and P2.1, then P2.2.
+   medium. Done in [PR #128](https://github.com/mbbill/Whitefoot/pull/128),
+   P1.1 in part; the rest of P1.1 is an acceptance question in
+   `docs/todo.md`.
+2. With amendments ruled: P6, P1.3 and P2.1, then P2.2. P6 is done in
+   [PR #128](https://github.com/mbbill/Whitefoot/pull/128), P1.3 and P2.1 in
+   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 is not
+   started.
 3. Identity and ownership, P3.2 and P3.3, before the prelude and
    standard-library work, which needs formed interfaces that outlive one
-   check. P3.4 follows as the checker is migrated.
+   check. Done in [PR #146](https://github.com/mbbill/Whitefoot/pull/146);
+   module build units follow them
+   ([Relation to recorded decisions](#relation-to-recorded-decisions)).
+   P3.4 follows as the checker is migrated.
 4. P4.1 and P4.2 when the next parallel-lowering or backend experiment needs
    them, or earlier if parallel work stalls on the current structure.
 5. P5.1 and P5.2 whenever a harness or entry point changes next.
 
+P2.3, P3.4, P4.1 and P4.2 each need an amendment, and none is written yet.
+`docs/todo.md` tracks every remaining proposal under its topic.
+
 Every restructuring step changes no behavior. It is validated by `make
 check`, identical verdicts and diagnostics on the conformance corpus and
 test programs, and, for lowering and the backend, byte-identical LLVM.
+Each commit of a step is compared with the compiler built from main, both
+built with the `gate` profile:
+
+- Every `.wf` source under `tests/programs`, `tests/conformance/cases` and
+  `tests/codegen` is compiled with `--emit-llvm`, once plain and once with
+  `--par`.
+- Every module graph under `tests` is checked with `--check-modules` when it
+  names no entry, and is otherwise built with `--emit-llvm --entry` for each
+  entry, plain and with `--par`.
+- The LLVM, the standard output and error, and the exit code of each run are
+  compared byte for byte. At `e52b9a6f` this is 1,594 sources and 177 graph
+  runs.
+
+A check forms proof receipts only with `--cache`, which this comparison does
+not pass, so a change to receipts is tested by the driver tests that build
+with a cache.
 
 ## Relation to recorded decisions
 

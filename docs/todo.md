@@ -1343,9 +1343,13 @@ rarely insert at the same place.
   or limit that shows it: the later stage of the
   [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
   persistent formation, lookup, instance, summary and lowering queries inside
-  a composition through module build units, instance units and fact-based
-  entry checks, selected when edit-build measurements show the composition's
-  rerun to limit a current experiment (a build of an edited entry now forms,
+  a composition, where module build units follow the owned representation
+  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
+  (`design/compiler/incremental-compilation.md`, since the standard library
+  on modules needs a library module checked once and reused by every program
+  that names it), and instance units and fact-based entry checks wait until
+  edit-build measurements show the composition's rerun to limit a current
+  experiment or a consumer needs them (a build of an edited entry now forms,
   resolves and type-checks the whole closure and reuses only its proof
   analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
   build of a 32-module chain, growing with the program); a cold build without
@@ -1459,18 +1463,38 @@ rarely insert at the same place.
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker reads raw syntax.** The checker makes 522 `self.tree` calls
-  and 443 `Production::` matches, learning which alternative was written by
-  probing children; the if/else split is decoded from brace offsets in both
-  `compiler/src/resolution/scopes.rs` and `compiler/src/semantic/tree.rs`; and
-  the checker joins resolution records by linear scans comparing
-  `(role, NodePath)` (`compiler/src/semantic/check/support.rs`). Per-node
-  indexes published by resolution (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1) remove
-  the scans without test changes; a typed syntax access layer (P3.4, a design
-  amendment) confines each grammar amendment to one place. Validate with
-  identical verdicts, timing resolution and checking before and after the
-  indexes. Reopen with the next grammar amendment.
+- **The checker restarts and rolls back instead of growing.** A body that
+  needs a nominal instance the checker has not interned stops with
+  `CheckStop::DeferredNominal`, and `compiler/src/semantic/check.rs` interns
+  the pending instances and checks the whole function again. Generic
+  validation replays bodies in a scratch nominal suffix that it rolls back
+  (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`),
+  carrying what must survive the rollback in a `Stable*` mirror of the
+  checked types. 22 of the `Checker`'s 51 fields are `Cell` or `RefCell`,
+  mutated through shared references. A type context that interns during body
+  checks, a read-only declaration inventory and a per-attempt body checker
+  with explicit context parameters (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries)'s
+  P2.2, no tree change) remove the restarts and the cells. Grow-only
+  interning with the executable set chosen by reachability (P2.3) removes the
+  rollback and the mirror, but it removes the ground of a refusal in
+  `design/compiler/generic-validation-scope.md`, so it needs an amendment and
+  the owner's ruling. Validate each with identical verdicts, diagnostics and
+  LLVM on the corpus and the module graphs. Reopen when a checker change is
+  blocked by the restarts or the cells; close when both are done or declined.
+
+- **The checker reads raw syntax.** The checker's non-test sources make 507
+  `self.tree` calls and 449 `Production::` matches, learning which
+  alternative was written by probing children, and the if/else split is
+  decoded from brace offsets in both `compiler/src/resolution/scopes.rs` and
+  `compiler/src/semantic/tree.rs`. The checker no longer scans resolution
+  records: resolution indexes them by owner node and the checker reads them
+  by node (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1).
+  A typed syntax access layer (P3.4, a design amendment) confines each
+  grammar amendment to one place. Validate with identical verdicts,
+  diagnostics and LLVM on the corpus and the module graphs. Reopen with the
+  next grammar amendment.
 
 ## Open language questions
 
