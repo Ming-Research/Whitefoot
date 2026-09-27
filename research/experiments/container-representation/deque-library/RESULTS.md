@@ -1187,3 +1187,24 @@ type:
 This is a generic effect-row typing restriction, not a timing result. The
 scratch prelude, wrapper and module changes were restored; no candidate binary,
 matrix or production change was retained.
+
+### Follow-up discriminator: fused back-to-front rotation (scratch only)
+
+The reverse churn trace always consumes the back element and immediately
+places that same owner at the front. A scratch-only compiler-owned helper will
+lower that exact pair as one `RunRotateBackFront` operation, with no new source
+language syntax or public library row. Its checked source witness remains the
+ordinary `take_back` followed by `place_front`; the candidate is a lowering
+comparison, not a change to the container contract. The fused body must read
+the old back slot, write the new front slot, and update length/head with the
+same modulo semantics and checksum/cleanup ledger as the pair.
+
+Before timing, the candidate must pass all Deque correctness, allocation,
+checksum and cleanup images. Its optimized scalar reverse loop must remove the
+duplicate descriptor loads and boundary arithmetic attributable to the pair,
+with no new call, spill, frame growth or payload transfer. Forward, wide,
+rebase and cleanup bodies must be unchanged except for symbol identity. If the
+code criterion passes, the full qualified ecosystem matrix must show no useful
+cell regression; otherwise the fused lowering is rejected and all scratch
+compiler/source changes are restored. This experiment does not select a new
+prelude operation or amend the specification.
