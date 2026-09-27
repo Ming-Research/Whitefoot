@@ -356,8 +356,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             argument_nodes.push(self.tree.path(atom)?.clone());
             actual_paths.push(paths);
             actual_captures.push(
-                Self::captured_of(atom, &argument.expression)
-                    .unwrap_or_else(CapturedValue::unknown),
+                self.note_capture(
+                    Self::captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown),
+                    bindings,
+                ),
             );
             actual_modes.push(parameter.mode);
             effects = effects.union(argument.effects);

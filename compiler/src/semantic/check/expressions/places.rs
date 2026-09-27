@@ -1177,7 +1177,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     None => "?".to_owned(),
                 }
             }
-            CapturedTerm::Opaque => "?".to_owned(),
+            // The binding's spelling names a later value than the one this
+            // index read, and no source spelling names that one.
+            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
         })
     }
 

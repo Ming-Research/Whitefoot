@@ -543,6 +543,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             compiler_updated: false,
                             reference,
                             refinement_witnesses: Vec::new(),
+                            call_value: false,
                         },
                     )
                     .is_some()
@@ -632,6 +633,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: false,
                     reference,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()

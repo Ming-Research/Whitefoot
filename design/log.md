@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-26 Name a captured offset by its binding only until a write of the binding reaches the reference
+
+Nodes: compiler/checker-facts, language/ownership, language/ownership/range-reference
+
+Owner-approved: The owner agreed to decision card 3 on PR #145 ("all agreed", written in Chinese), 2026-09-26.
+
+Summary: The completion review of PR #141 found a requirement stated through a reference instantiated with its offset binding's current value: after `let wr = &rows[k];` and `set k = 1_u64;`, facts about `rows[1_u64]` discharged a call's requirement through `wr` while `wr` still named `rows[0_u64]`, and the review's program read an unfilled slot of a one-element row and segfaulted. compiler/checker-facts's decision on measure terms and goals gave terms over named offsets canonical current-place identity but did not say when an offset a reference captured from a binding stops being named by it. The decision now adds that such an offset is named by the binding only until a write of that binding reaches the reference, on any path including a loop's backedge; from then on it retains its occurrence identity and depends on no binding, and a call passing the reference still instantiates at its resolved referent, because the binding's spelling then names another value while the reference still selects the storage it captured (REF-1). Instantiating that call at the reference holder, the pull request's first fix, is a rejected alternative: FN-8 and ENT-2 instantiate a reference formal at its resolved referent, and a guard written through the holder would prove the call's requirement only after the index binding was written, while the same guard stays refused when it is not. No specification rule changes. `Nodes:` also names language/ownership and language/ownership/range-reference, which the entries below change for PR #141, on which this pull request is stacked, because the newest entry names every node changed against main. Remove the accepted amendment and the amendment directory. This ruling does not authorize a merge.
+
 ## 2026-09-26 Word the last-slot rule as the separations it keeps
 
 Nodes: language/ownership, language/ownership/range-reference

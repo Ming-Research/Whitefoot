@@ -1973,17 +1973,24 @@ condition under which it is taken up.
   required source work from removable lowering cost. Defer a broad repeat of all
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
-- **A requirement through a reference is checked against its offset's
-  current value.** After `let wr = &rows[k];` and `set k = 1_u64;`, a
-  requirement a call states through `wr`, such as `requires i <
-  deref(x).len` for `get(x: wr, i: 2_u64)`, is instantiated as
-  `2 < rows[k].len` with the new `k`, so facts about `rows[1_u64]` discharge
-  it while `wr` still names `rows[0_u64]`. A program that proves
-  `3 <= rows[k].len` after the assignment reads index 2 of a one-element
-  row and segfaults; the v0.73 and v0.74 checkers both accept it. The
-  requirement must read the reference's target as captured at formation
-  [REF-1], as a range's captured endpoints are [OWN-7]. Validate with that
-  program refused, the same program with `wr` formed after the assignment
-  accepted, and a reference whose offset is never reassigned unchanged.
-  Found by the completion review of PR #141; the fix is planned as its own
-  PR.
+- **A write refused for a written index parameter does not name that
+  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  under `writes(window[index])` is refused with SET-1's "a reference whose
+  declared row does not write this path", and a call passing `index` with
+  EFF-2's repair `writes(window)`. Neither names the earlier write of
+  `index` that moved the access off the row's position, which a writer who
+  declared `writes(window[index])` needs to see. Name the write, and offer
+  the repair that keeps the row: read `index` into a new binding before
+  writing it. Validate with a pinned pair for each of the two rejections.
+  Found while fixing the EFF-2 attribution after a parameter write.
+- **A goal over an index no spelling names offers routes that cannot
+  establish it.** After `let wr = &rows[k];` and `set k = 1_u64;`, a call's
+  requirement through `wr` reads `rows[?].len`, and FN-8's repair offers an
+  `invariant` whose `use` steps name the facts implying it, or a guard whose
+  condition establishes it. No fact or condition names that row, so
+  neither can succeed, while binding the index first, `let k0 = k;` and
+  `let wr = &rows[k0];`, does. An index a loop-rebound holder carries, also
+  rendered `?`, gets the same two routes, and there forming the reference
+  after the rebinding is what works. Select the route from what the `?`
+  stands for, and pin each pair with a repaired source that is accepted.
+  Found while fixing the completion review of PR #145.

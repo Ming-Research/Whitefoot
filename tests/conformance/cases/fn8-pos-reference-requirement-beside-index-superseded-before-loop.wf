@@ -1,0 +1,50 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn get(x: &Slots<u64, 4>, i: u64) -> result: u64 reads(x) contract {
+  requires i < deref(x).len;
+} {
+  doc "Reads element i of the window x names.";
+  let v = deref(x)[i];
+  return v;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-1, FN-8: set k = 1_u64 supersedes the index of r2 = &rows[k] before the loop, and r1 = &rows[k] is formed after it. The loop writes no k, so no write reaches its backedge: r1's index is still named by k in every iteration, and 3 <= rows[k].len proves the requirement 2 < deref(r1).len of a call passing r1.";
+  let rows = slots_new::<Slots<u64, 4>, 4>();
+  let a = slots_new::<u64, 4>();
+  let b = slots_new::<u64, 4>();
+  place_back(window: &a, value: 1_u64);
+  place_back(window: &b, value: 1_u64);
+  place_back(window: &b, value: 2_u64);
+  place_back(window: &b, value: 3_u64);
+  place_back(window: &rows, value: move a);
+  place_back(window: &rows, value: move b);
+  let k = 0_u64;
+  let n = 0_u64;
+  if 2_u64 <= rows.len {
+    let r2 = &rows[k];
+    set k = 1_u64;
+    let r1 = &rows[k];
+    loop {
+      if 2_u64 <= n {
+        break;
+      }
+      set n = n +wrap 1_u64;
+      if k < rows.len {
+        if 3_u64 <= rows[k].len {
+          let d = get(x: r1, i: 2_u64);
+          if d != 3_u64 {
+            return exit_status(code: 4_u8);
+          }
+        }
+      }
+    }
+    let e = deref(r2).len;
+    if e == 1_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 5_u8);
+  }
+  return exit_status(code: 2_u8);
+}
