@@ -16,46 +16,9 @@ use super::super::model::{
     CheckedSetTarget, CheckedStatement, FunctionId,
 };
 use super::super::obligations::{ObligationRecord, ObligationSubject};
-use super::{CheckStop, CheckedFunctionInventory, Checker};
+use super::{CheckStop, CheckedFunctionInventory};
+use crate::semantic::check::TypeContext;
 use crate::{NodePath, SemanticCompilerFailure, SemanticRule};
-
-impl Checker<'_> {
-    /// Forms the records of every function in `functions`, once its call
-    /// requirements are installed and before any of them is analyzed.
-    pub(super) fn form_obligation_records(
-        &self,
-        functions: &mut [CheckedFunctionInventory],
-    ) -> Result<(), CheckStop> {
-        let empties_run = self.release_rows()?;
-        for checked in functions {
-            checked.function.obligations = obligation_records(&checked.function, &empties_run);
-        }
-        Ok(())
-    }
-
-    /// Forms the records of one function checked on its own, such as a
-    /// formal's hypothetical body entry [ENT-2, FN-8].
-    pub(super) fn form_function_obligation_records(
-        &self,
-        function: &mut CheckedFunction,
-    ) -> Result<(), CheckStop> {
-        let empties_run = self.release_rows()?;
-        function.obligations = obligation_records(function, &empties_run);
-        Ok(())
-    }
-
-    /// Whether each signature built so far is the [OP-14] row.
-    fn release_rows(&self) -> Result<impl Fn(FunctionId) -> bool, CheckStop> {
-        let rows = (0..self.signatures.len())
-            .map(|index| {
-                let index = u32::try_from(index)
-                    .map_err(|_| CheckStop::from(SemanticCompilerFailure::CounterOverflow))?;
-                self.empties_run(FunctionId(index))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(move |function: FunctionId| rows.get(function.0 as usize).copied().unwrap_or(false))
-    }
-}
 
 /// Forms the record of every mandatory obligation `function` carries, in the
 /// order its requirements, body and submitted separations admit them.
@@ -439,5 +402,41 @@ impl Records<'_> {
                 CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => {}
             }
         }
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// Forms the records of every function in `functions`, once its call
+    /// requirements are installed and before any of them is analyzed.
+    pub(super) fn form_obligation_records(
+        &self,
+        functions: &mut [CheckedFunctionInventory],
+    ) -> Result<(), CheckStop> {
+        let empties_run = self.release_rows()?;
+        for checked in functions {
+            checked.function.obligations = obligation_records(&checked.function, &empties_run);
+        }
+        Ok(())
+    }
+    /// Forms the records of one function checked on its own, such as a
+    /// formal's hypothetical body entry [ENT-2, FN-8].
+    pub(super) fn form_function_obligation_records(
+        &self,
+        function: &mut CheckedFunction,
+    ) -> Result<(), CheckStop> {
+        let empties_run = self.release_rows()?;
+        function.obligations = obligation_records(function, &empties_run);
+        Ok(())
+    }
+    /// Whether each signature built so far is the [OP-14] row.
+    fn release_rows(&self) -> Result<impl Fn(FunctionId) -> bool, CheckStop> {
+        let rows = (0..self.signatures.len())
+            .map(|index| {
+                let index = u32::try_from(index)
+                    .map_err(|_| CheckStop::from(SemanticCompilerFailure::CounterOverflow))?;
+                self.empties_run(FunctionId(index))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(move |function: FunctionId| rows.get(function.0 as usize).copied().unwrap_or(false))
     }
 }

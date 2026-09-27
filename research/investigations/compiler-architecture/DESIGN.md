@@ -402,6 +402,28 @@ and applied (`design/log.md`, 2026-09-25).
    consume judgments. Cost: large. Validation: identical verdicts; no semantic
    test constructs a `Checker`. Tree: none, unless the generic change below
    is taken with it.
+
+   The component stage is implemented on this branch. `DeclarationInventory`
+   owns the read-only syntax and resolution access shared by preflight and
+   body checking. `TypeContext` owns type and callable formation and interns
+   a requested instance at its use, removing `DeferredNominal` and its
+   whole-body retry. `BodyChecker` owns one attempt's scratch; only loop
+   reference summaries and superseded-binding summaries survive the existing
+   finite loop retry. `AnalysisState` owns the cross-function products.
+   `Checker` borrows those components for a judgment; the component methods
+   moved in this stage receive their owner directly. Immutable `CheckContext` and
+   `FunctionContext` values replace the module, template-authority and
+   postcondition scope cells. These are implementation boundaries within the
+   existing checker-facts and generic-validation decisions: preflight still
+   gets its own type inventory, generic validation still rolls back, and the
+   `Stable*` bridge remains. They do not implement P2.3 or P3.4.
+
+   Shared place elaboration is the remaining P2.2 step. The current ordinary,
+   dereferenced and indexed paths still select their read, measure, borrow,
+   set and consume judgments separately. Their diagnostic ordering, captured
+   operands and dead-whole-binding assignment behavior must survive the
+   consolidation. The existing corpus and module-graph differential comparison
+   remains the criterion; no language-rule change is selected here.
 3. **Generic validation without rollback.** Grow-only interning keyed by
    structure, the executable set chosen by reachability, and validation and
    preflight as views over one inventory. This removes the table rollback,
@@ -557,8 +579,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
    `docs/todo.md`.
 2. With amendments ruled: P6, P1.3 and P2.1, then P2.2. P6 is done in
    [PR #128](https://github.com/mbbill/Whitefoot/pull/128), P1.3 and P2.1 in
-   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 is not
-   started.
+   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 has its component stage implemented on this branch; shared place
+   elaboration remains.
 3. Identity and ownership, P3.2 and P3.3, before the prelude and
    standard-library work, which needs formed interfaces that outlive one
    check. Done in [PR #146](https://github.com/mbbill/Whitefoot/pull/146);

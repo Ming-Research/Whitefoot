@@ -1417,7 +1417,7 @@ rarely insert at the same place.
   machinery STOR-8 retired, though every value it produces is empty:
   `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
   function and nominal templates (always created empty), the
-  `elided_store_brand` cell, `CheckedNominalKind::Box`'s `region` field, a
+  `CheckedNominalKind::Box`'s `region` field, a
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
@@ -1446,29 +1446,33 @@ rarely insert at the same place.
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker restarts and rolls back instead of growing.** A body that
-  needs a nominal instance the checker has not interned stops with
-  `CheckStop::DeferredNominal`, and `compiler/src/semantic/check.rs` interns
-  the pending instances and checks the whole function again. Generic
-  validation replays bodies in a scratch nominal suffix that it rolls back
-  (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`),
-  carrying what must survive the rollback in a `Stable*` mirror of the
-  checked types. 24 of the `Checker`'s 53 fields are `Cell` or `RefCell`,
-  mutated through shared references. A type context that interns during body
-  checks, a read-only declaration inventory and a per-attempt body checker
-  with explicit context parameters (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries)'s
-  P2.2, no tree change) remove the restarts and the cells. Grow-only
-  interning with the executable set chosen by reachability (P2.3) removes the
-  rollback and the mirror, but it removes the ground of a refusal in
-  `design/compiler/generic-validation-scope.md`, so it needs an amendment and
-  the owner's ruling. Validate each with identical verdicts, diagnostics and
-  LLVM on the corpus and the module graphs. Reopen when a checker change is
-  blocked by the restarts or the cells; close when both are done or declined.
+- **The checker still has separate place paths and generic rollback.**
+  The component stage of P2.2 now interns types and callables directly, uses
+  explicit lexical contexts and gives each function attempt its own scratch;
+  `CheckStop::DeferredNominal` and the unread `elided_store_brand` cell are
+  removed. Ordinary, dereferenced and indexed places still have separate
+  elaboration paths for read, measure, borrow, set and consume, which makes
+  changes to a shared place rule span several walkers. Finish P2.2 by
+  sharing elaboration while retaining those distinct judgments, their
+  diagnostic ordering and captured operands. The composition entry point
+  `compiler/src/semantic/check.rs` also exceeds 4,000 lines after its component
+  split; move component-owned formation and judgment methods to their existing
+  modules as the next step touches them, so the entry point holds composition
+  rather than a second implementation home.
+  Generic validation still replays bodies in a scratch nominal suffix
+  (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`), carrying
+  what must survive rollback in a `Stable*` mirror. P2.3's grow-only inventory
+  and validation views remove that rollback and mirror, but require the
+  pending `generic-validation-scope` amendment's ruling. See the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries).
+  Validate each step with identical verdicts, diagnostics and LLVM on the
+  corpus and module graphs plus `make check`. Reopen for the next P2.2 step
+  or the P2.3 ruling; close when both are done or declined and the composition
+  entry point is under 4,000 lines.
 
-- **The checker reads raw syntax.** The checker's non-test sources make 508
-  `self.tree` calls and 449 `Production::` matches, learning which
-  alternative was written by probing children, and the if/else split is
+- **The checker reads raw syntax.** The checker components still inspect
+  `TreeView` children and match `Production` to learn which alternative was
+  written, and the if/else split is
   decoded from brace offsets in both `compiler/src/resolution/scopes.rs` and
   `compiler/src/semantic/tree.rs`. The checker no longer scans resolution
   records: resolution indexes them by owner node and the checker reads them
