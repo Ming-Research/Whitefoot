@@ -2614,6 +2614,35 @@ regression rejects the diagnostic. This measures the cost of carrying a
 proven spare-capacity fact across the helper boundary; it does not authorize
 an unchecked public operation or a production policy by itself.
 
+### Scalar reserved append: completed, causal but not a production policy
+
+The candidate passed the pre-registered code criterion: only the scalar tail's
+reserved append changed. Its capacity/grow-full call and branch became a direct
+backing-slot store followed by a length increment; the scalar frame fell to
+`0x0`. Wide bodies and their `0x250` frame, the account image and all other
+normalized bodies retained their identities. The exact paired LLVM diff is
+[`scalar-reserved-append.patch`](scalar-reserved-append.patch), with timed
+samples in [`control`](ecosystem-scalar-reserved-append-control-samples.csv)
+and [`candidate`](ecosystem-scalar-reserved-append-candidate-samples.csv).
+
+Both images passed 1,260 configurations and 8,820 executions, and the
+accounting CSV remained byte-identical to the retained ledger (SHA-256
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`). The
+guarded timed children took `79.89 s` and `80.06 s`; the complete sample files
+have SHA-256 `e250ac9170aa3edcf8e6b6dc1c48e6cc99b1c94cd6bc41fc1b21f1219fb1a68`
+and `619943279f6026b421133d875b1e6457185445dc0a4be3a8ec782376fa2d9c80`.
+
+The target summary changed from 17 passes, 6 deficits and 13 inconclusive
+cells to 19 passes, 4 deficits and 13 inconclusive cells. Scalar suffix-two
+cells at 8-byte payloads moved from `1.065–1.107` times the slower standard
+peer to `0.523–0.529`; scalar suffix-one cells also became sub-parity. The
+remaining strict deficits are the three wide 256-byte suffix-one cells and
+the 8-byte growth-at-16 cell. This is evidence that a known spare-capacity
+fact and the helper boundary account for a substantial scalar cost. It is a
+diagnostic upper bound: the candidate removes a public append check by hand,
+so it is rejected as a production change until the language/compiler can carry
+that fact with an ordinary, checked interface.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
