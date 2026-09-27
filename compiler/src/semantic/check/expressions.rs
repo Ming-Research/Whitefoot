@@ -2,6 +2,10 @@ pub(in crate::semantic::check) mod calls;
 pub(in crate::semantic::check) mod flat_storage;
 mod places;
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::DeclarationInventory;
+use crate::semantic::check::FunctionContext;
+use crate::semantic::check::TypeContext;
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
@@ -112,7 +116,7 @@ pub(in crate::semantic::check) struct MutationTarget {
     pub(in crate::semantic::check) unsupported: Option<UnsupportedSemanticFeature>,
 }
 
-impl Checker<'_> {
+impl Checker<'_, '_> {
     /// Re-establish writability at the commit [SET-1, LIV-1].
     ///
     /// The loan state this re-read v0.59 is gone with the loans. What [SET-1]
@@ -120,7 +124,7 @@ impl Checker<'_> {
     /// right-hand side can destroy: a target reached through a reference
     /// needs that reference still valid at the commit [REF-2].
     pub(super) fn revalidate_mutation_access(
-        &self,
+        &mut self,
         through_reference: Option<DeclarationId>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         node: NodeId,
@@ -148,42 +152,15 @@ pub(in crate::semantic::check) const WIN3_LINEAR_TARGET: &str =
 const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below deref of a reference whose \
      row declares that write";
 
-impl<'unit> Checker<'unit> {
+impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_set_target(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
-        self.check_mutation_target(function, node, bindings, loop_depth)
-    }
-
-    /// The source declaration a written place is rooted at, when its base is a
-    /// bare name.
-    ///
-    /// A `deref` base is rooted in a holder rather than in the storage the
-    /// place selects, so it answers `None`: the storage that place selects is
-    /// the referent's, not the holder's. [SET-1] reads this to decide the one
-    /// target shape it reinitializes from dead, the complete binding.
-    pub(in crate::semantic::check) fn complete_binding_target(
-        &self,
-        place: NodeId,
-    ) -> Result<Option<DeclarationId>, CheckStop> {
-        let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
-            return Ok(None);
-        };
-        if self.has_fixed(pbase, FixedTerminal::Deref)? || !self.tree.children(pbase)?.is_empty() {
-            return Ok(None);
-        }
-        let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
-        Ok(match usage.target() {
-            ResolvedTarget::Source {
-                declaration,
-                class: DeclarationClass::Value,
-            } => Some(declaration),
-            _ => None,
-        })
+        self.check_mutation_target(context, node, bindings, loop_depth)
     }
 
     /// One [SET-1] target: the writability relation the rule states.
@@ -194,18 +171,31 @@ impl<'unit> Checker<'unit> {
     /// or when `p` is a local reference variable whose named path is itself
     /// writable [SET-1, EFF-1, EFF-5].
     fn check_mutation_target(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
         let pbase = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.has_fixed(pbase, FixedTerminal::Deref)? && self.tree.children(pbase)?.is_empty() {
-            let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
+        if !self
+            .types
+            .declarations
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
+            && self.types.declarations.tree.children(pbase)?.is_empty()
+        {
+            let usage =
+                self.types
+                    .declarations
+                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
             if matches!(
                 usage.target(),
                 ResolvedTarget::Source {
@@ -213,7 +203,7 @@ impl<'unit> Checker<'unit> {
                     ..
                 }
             ) {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Const2,
                     node,
                     SemanticIssueKind::ImmutableSetTarget,
@@ -227,7 +217,7 @@ impl<'unit> Checker<'unit> {
                     .get(&declaration)
                     .is_some_and(|local| local.compiler_updated)
             {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Set1,
                     node,
                     SemanticIssueKind::InvalidSetTarget {
@@ -237,32 +227,47 @@ impl<'unit> Checker<'unit> {
                 );
             }
         }
-        let suffixes = self.tree.children_with(node, Production::Psuffix)?;
-        if let Some(subscript) = self.indexing_subscript(node, &suffixes, bindings)? {
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        if let Some(subscript) =
+            self.indexing_subscript(check_context, node, &suffixes, bindings)?
+        {
             return self.check_indexed_set_target(
-                function, node, &suffixes, subscript, bindings, loop_depth,
+                context, node, &suffixes, subscript, bindings, loop_depth,
             );
         }
-        if self.has_fixed(pbase, FixedTerminal::Deref)? {
-            return self.check_dereferenced_set_target(function, node, bindings);
+        if self
+            .types
+            .declarations
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
+        {
+            return self.check_dereferenced_set_target(context, node, bindings);
         }
-        if !self.tree.children(pbase)?.is_empty() {
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
 
-        let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
+        let usage =
+            self.types
+                .declarations
+                .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
         let ResolvedTarget::Source { declaration, class } = usage.target() else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
         if class == DeclarationClass::NamedConst {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Const2,
                 node,
                 SemanticIssueKind::ImmutableSetTarget,
             );
         }
         if class != DeclarationClass::Value {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Set1,
                 node,
                 SemanticIssueKind::InvalidSetTarget {
@@ -283,7 +288,7 @@ impl<'unit> Checker<'unit> {
         // formation with a bare reference target means the right-hand side is
         // a value, which [TYPE-7] refuses with `deref(.)`.
         if local.reference.is_some() && suffixes.is_empty() {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
@@ -297,7 +302,7 @@ impl<'unit> Checker<'unit> {
         // stays [OWN-1]'s rejection, because reinitializing one component of a
         // dead root would leave the rest uninitialized.
         if !local.live && !suffixes.is_empty() {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
                 SemanticIssueKind::UseAfterMove {
@@ -312,17 +317,28 @@ impl<'unit> Checker<'unit> {
         // each suffix follows: x1 reserves neither vocabulary from a
         // declaration, so a source struct's own field spelled `len` or `next`
         // is an ordinary target.
-        self.reject_reserved_write_members(node, &suffixes, local.ty)?;
-        // [TYPE-9] a target below a `Box`'s member `inner` writes the box
-        // content, which is a dereference step the field walk cannot take;
-        // the explicit-place target resolver takes it for a bare IDENT base
-        // exactly as it does for a written `deref` chain.
-        if self.place_path_reaches_box_content(&suffixes, local.ty)? {
-            return self.check_dereferenced_set_target(function, node, bindings);
-        }
-        let (fields, ty) = self.resolve_struct_path(&suffixes, local.ty)?;
+        self.types
+            .reject_reserved_write_members(check_context, node, &suffixes, local.ty)?;
+        let (fields, ty) = if local.mode == CheckedMode::Own {
+            let place = self.elaborate_local_place(check_context, node, &suffixes, &local)?;
+            let Some(fields) = place.plain_fields() else {
+                return self.check_elaborated_set_target(context, node, bindings, place);
+            };
+            (fields, place.ty)
+        } else {
+            // This is an invalid value assignment through a bare reference.
+            // Preserve its field-error priority before SET-1's mode judgment.
+            if self
+                .types
+                .place_path_reaches_box_content(check_context, &suffixes, local.ty)?
+            {
+                return self.check_dereferenced_set_target(context, node, bindings);
+            }
+            self.types
+                .resolve_struct_path(check_context, &suffixes, local.ty)?
+        };
         if local.mode != CheckedMode::Own {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Set1,
                 node,
                 SemanticIssueKind::InvalidSetTarget {
@@ -336,7 +352,8 @@ impl<'unit> Checker<'unit> {
             false,
             fields.clone(),
         );
-        self.check_mutation_target_class(node, ty)?;
+        self.types
+            .check_mutation_target_class(check_context, node, ty)?;
         let mut effects = EffectSet::NONE;
         for path in self.effect_paths_for_place(node, &resolved, bindings)? {
             effects.add_write(path);
@@ -359,62 +376,12 @@ impl<'unit> Checker<'unit> {
         })
     }
 
-    /// [WIN-3] the final selected type's class judgment at a `set` target.
-    ///
-    /// Assigning over any owned place releases the old value when it is
-    /// affine and is a hard error when it is linear: a linear value has no
-    /// release, so the writer takes it out and consumes it first. v0.59's
-    /// copy-only demand and its region-free companion were [SET-2]'s and went
-    /// with `replace`.
-    fn check_mutation_target_class(&self, node: NodeId, ty: CheckedType) -> Result<(), CheckStop> {
-        if matches!(
-            self.linearity_class(ty)?,
-            super::linearity::LinearityClass::Linear
-        ) {
-            return self.issue_node(
-                SemanticRule::Win3,
-                node,
-                SemanticIssueKind::LinearAssignmentTarget {
-                    target_type: self.checked_type_name(ty)?,
-                    mechanical_fix: WIN3_LINEAR_TARGET,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    /// One value's exact semantic mode and type, as `own u64`, `&Counter`,
-    /// or `&[u8]`, using [GRAM-3]'s mode/type notation for diagnostics.
-    pub(in crate::semantic::check) fn checked_value_name(
-        &self,
-        mode: CheckedMode,
-        ty: CheckedType,
-    ) -> Result<String, CheckStop> {
-        // [TYPE-8, REF-4] `&[T]` is one reference kind written around its
-        // element type, not a reference to one element: what the checked
-        // value carries is the element type, so rendering the mode and the
-        // type apart would name `&T` where the source wrote the range.
-        if mode == CheckedMode::Range {
-            return Ok(format!("&[{}]", self.checked_type_name(ty)?));
-        }
-        let mode = self.checked_mode_name(mode)?;
-        let ty = self.checked_type_name(ty)?;
-        // [FORM-2] attaches `&` to what follows it, so the rendering must not
-        // insert a separator the written form does not have.
-        Ok(if mode.ends_with('&') {
-            format!("{mode}{ty}")
-        } else {
-            format!("{mode} {ty}")
-        })
-    }
-
     /// One checked mode's diagnostic label [GRAM-3].
     ///
     /// `own` names value mode without being a source annotation. Both
     /// reference kinds use `&`; `checked_value_name` renders the range
     /// brackets together with its element type [REF-1, REF-4].
     pub(in crate::semantic::check) fn checked_mode_name(
-        &self,
         mode: CheckedMode,
     ) -> Result<String, CheckStop> {
         Ok(match mode {
@@ -423,316 +390,15 @@ impl<'unit> Checker<'unit> {
         })
     }
 
-    /// One region as the source spells it, or its dense identity when the
-    /// declaration is not reachable.
-    ///
-    /// A rendering is presentation: a region a diagnostic cannot name must not
-    /// turn a source rejection into a compiler failure. A region the grammar
-    /// leaves unwritten has no source spelling at all: resolution mints it
-    /// under a name no source token can form, and rendering that name would
-    /// name a region the writer cannot write. It renders as the empty string,
-    /// which is exactly how the source spells it, and every caller that
-    /// splices a region into a longer form drops the separator with it.
-    pub(in crate::semantic::check) fn region_spelling(&self, region: DeclarationId) -> String {
-        let spelling = self
-            .declaration_spelling(region)
-            .unwrap_or_else(|_| format!("'region#{}", region.index()));
-        if spelling.starts_with("'0_") {
-            return String::new();
-        }
-        spelling
-    }
-
-    pub(super) fn checked_type_name(&self, ty: CheckedType) -> Result<String, CheckStop> {
-        Ok(match ty {
-            CheckedType::Unit => "unit".to_owned(),
-            CheckedType::Bool => "Bool".to_owned(),
-            CheckedType::Integer(integer) => match integer {
-                IntegerType::I8 => "i8",
-                IntegerType::I16 => "i16",
-                IntegerType::I32 => "i32",
-                IntegerType::I64 => "i64",
-                IntegerType::U8 => "u8",
-                IntegerType::U16 => "u16",
-                IntegerType::U32 => "u32",
-                IntegerType::U64 => "u64",
-            }
-            .to_owned(),
-            CheckedType::Float(float) => match float {
-                FloatType::F32 => "f32",
-                FloatType::F64 => "f64",
-            }
-            .to_owned(),
-            // [FN-2] a type parameter is written by its own name, whatever
-            // its bound.
-            CheckedType::Generic(declaration)
-            | CheckedType::GenericInt(declaration)
-            | CheckedType::GenericFloat(declaration) => self.declaration_spelling(declaration)?,
-            // An instance of a generic declaration writes its type and const
-            // arguments after the declared name [GRAM-3, FN-2], and a `Box`
-            // its content type [TYPE-9]; the interned nominal name keys the
-            // instance and is not a source spelling. [S20] a nominal's region
-            // arguments are components of its type name [TYPE-2] and lead
-            // that list, so the two sides of a [TYPE-5] mismatch between
-            // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
-            CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
-                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
-                }
-                let written = match self.source_nominal_instance_entry(id)? {
-                    Some((template, substitution)) if substitution.len() > 0 => {
-                        match self.nominal_templates.get(template) {
-                            Some(template) => self
-                                .generic_argument_spellings(
-                                    &template.generic_parameters,
-                                    substitution,
-                                )?
-                                .map(|arguments| (template.name.clone(), arguments)),
-                            None => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let (name, mut arguments) = match written {
-                    Some(written) => written,
-                    None => (self.nominal(id)?.name.clone(), Vec::new()),
-                };
-                if let Some(axis) = self.nominal_region_axis(id)? {
-                    let regions = axis
-                        .iter()
-                        .map(|(_, actual)| self.region_spelling(*actual))
-                        .filter(|spelling| !spelling.is_empty());
-                    arguments = regions.chain(arguments).collect();
-                }
-                if arguments.is_empty() {
-                    name
-                } else {
-                    format!("{name}<{}>", arguments.join(", "))
-                }
-            }
-            // [TYPE-9]'s own spellings: the constant-capacity placement
-            // writes its capacity and the runtime-capacity one writes only
-            // its element.
-            CheckedType::Array { element, length } => {
-                let length = self.checked_const_name(length)?;
-                format!(
-                    "Array<{}, {length}>",
-                    self.checked_type_name(self.element_type(element)?)?
-                )
-            }
-            CheckedType::Buffer { element } => {
-                format!(
-                    "Array<{}>",
-                    self.checked_type_name(self.element_type(element)?)?
-                )
-            }
-            CheckedType::Window {
-                shape,
-                element,
-                capacity,
-            } => {
-                let element = self.checked_type_name(self.element_type(element)?)?;
-                let shape = shape.spelling();
-                match capacity {
-                    Some(capacity) => {
-                        let capacity = self.checked_const_name(capacity)?;
-                        format!("{shape}<{element}, {capacity}>")
-                    }
-                    None => format!("{shape}<{element}>"),
-                }
-            }
-        })
-    }
-
-    pub(super) fn checked_const_name(&self, value: CheckedConst) -> Result<String, CheckStop> {
-        Ok(match value {
-            CheckedConst::Value(value) => value.to_string(),
-            CheckedConst::Parameter(declaration) => self.declaration_spelling(declaration)?,
-            CheckedConst::Derived(id) => {
-                let derived = self.derived_const(id)?;
-                format!(
-                    "{} {} {}",
-                    self.checked_const_name(derived.left)?,
-                    derived.operation.spelling(),
-                    self.checked_const_name(derived.right)?
-                )
-            }
-        })
-    }
-
-    /// One generic instance's written `targ` list [GRAM-3]: each parameter's
-    /// argument in declaration order, a type and a const in their canonical
-    /// spelling and a function argument as `fn` and the instance it names.
-    /// `None` when the substitution does not bind every parameter, which the
-    /// caller renders by the declared name alone.
-    fn generic_argument_spellings(
-        &self,
-        parameters: &[super::generics::GenericParameter],
-        substitution: &super::generics::GenericSubstitution,
-    ) -> Result<Option<Vec<String>>, CheckStop> {
-        let mut spellings = Vec::with_capacity(parameters.len());
-        for parameter in parameters {
-            let key = parameter.key();
-            let Some((_, argument)) = substitution
-                .entries()
-                .iter()
-                .find(|(candidate, _)| *candidate == key)
-            else {
-                return Ok(None);
-            };
-            spellings.push(match *argument {
-                super::generics::GenericArgument::Type(ty) => self.checked_type_name(ty)?,
-                super::generics::GenericArgument::Const(value) => self.checked_const_name(value)?,
-                super::generics::GenericArgument::Function(function) => {
-                    format!("fn {}", self.function_argument_spelling(function)?)
-                }
-            });
-        }
-        Ok(Some(spellings))
-    }
-
-    /// The callee one function argument names [GRAM-2 `function_arg`]: the
-    /// instance it selects when one exists, and otherwise the declaration
-    /// or formal parameter it names.
-    fn function_argument_spelling(
-        &self,
-        function: super::behavior::FunctionArgument,
-    ) -> Result<String, CheckStop> {
-        if let Some(signature) = self
-            .function_argument_instance(function)
-            .ok()
-            .and_then(|instance| self.signatures.get(instance.0 as usize))
-        {
-            return self.render_function_instance(signature);
-        }
-        let declaration = match function {
-            super::behavior::FunctionArgument::Source { reference, .. } => {
-                self.function_reference(reference)?.declaration
-            }
-            super::behavior::FunctionArgument::Parameter(parameter) => match parameter {
-                super::generics::GenericParameterKey::Source(declaration)
-                | super::generics::GenericParameterKey::Member {
-                    member: declaration,
-                    ..
-                } => declaration,
-            },
-        };
-        self.declaration_spelling(declaration)
-    }
-
-    /// One function instance in the spelling a call writes to select it
-    /// [FN-2, GRAM-3]: the declared name, then `::` and the `targ` list of
-    /// its substitution. A nongeneric function is its name alone, and so is
-    /// an operand-directed [PRE-1] row, whose operand supplies its arguments
-    /// and whose call writes none [OP-10]. The instance's internal symbol
-    /// keys lowering and is not a source spelling.
-    pub(in crate::semantic::check) fn render_function_instance(
-        &self,
-        signature: &FunctionSignature,
-    ) -> Result<String, CheckStop> {
-        let Some(template) = self
-            .templates_by_declaration
-            .get(&signature.declaration)
-            .and_then(|index| self.function_templates.get(*index))
-        else {
-            return Ok(signature.name.clone());
-        };
-        if template.generic_parameters.is_empty()
-            || signature.substitution.len() == 0
-            || self.operand_directed_row_index(template)?.is_some()
-        {
-            return Ok(signature.name.clone());
-        }
-        Ok(
-            match self
-                .generic_argument_spellings(&template.generic_parameters, &signature.substitution)?
-            {
-                Some(arguments) => format!("{}::<{}>", signature.name, arguments.join(", ")),
-                None => signature.name.clone(),
-            },
-        )
-    }
-
-    /// Resolves a run of field-selection suffixes over one starting type.
-    /// Callers pass the suffix chain to walk — every suffix for a whole
-    /// place, or the chain before a subscript for that subscript's base. A
-    /// subscript suffix inside the walked run selects through a composite
-    /// element value, which this version does not implement.
-    pub(super) fn resolve_struct_path(
-        &self,
-        suffixes: &[NodeId],
-        mut ty: CheckedType,
-    ) -> Result<(Vec<u32>, CheckedType), CheckStop> {
-        let mut fields = Vec::new();
-        for &suffix in suffixes {
-            if self.subscript_offset(suffix)?.is_some() {
-                return self.unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
-            }
-            let name = self
-                .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
-                .spelling()
-                .to_owned();
-            // [TYPE-10] a window part is effect-row vocabulary and never a
-            // place, so a part spelling following a measured place is that
-            // rule's refusal rather than a struct missing a declared field.
-            // x1 decides it by the type of the place the suffix follows: on
-            // any other type the same spelling is an ordinary field.
-            self.reject_window_part(suffix, &name, ty, false)?;
-            let name = name.as_str();
-            let CheckedType::Nominal(nominal_id) = ty else {
-                return self.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.checked_type_name(ty)?,
-                    ),
-                );
-            };
-            let CheckedNominalKind::Struct {
-                fields: declared_fields,
-            } = &self.nominal(nominal_id)?.kind
-            else {
-                return self.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.checked_type_name(ty)?,
-                    ),
-                );
-            };
-            let Some((index, field)) = declared_fields
-                .iter()
-                .enumerate()
-                .find(|(_, field)| field.name == name)
-            else {
-                return self.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        format!("a declared field of {}", self.checked_type_name(ty)?),
-                        format!("the field name `{name}`, which that struct does not declare"),
-                    ),
-                );
-            };
-            self.reject_inaccessible_field(nominal_id, None, index, name, suffix)?;
-            fields
-                .push(u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?);
-            ty = field.ty;
-        }
-        Ok((fields, ty))
-    }
-
     pub(super) fn check_expression(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_expression_in_context(
-            function,
+            context,
             node,
             bindings,
             loop_depth,
@@ -741,14 +407,14 @@ impl<'unit> Checker<'unit> {
     }
 
     pub(super) fn check_consuming_expression(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_expression_in_context(
-            function,
+            context,
             node,
             bindings,
             loop_depth,
@@ -757,8 +423,8 @@ impl<'unit> Checker<'unit> {
     }
 
     fn check_expression_in_context(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
@@ -769,9 +435,9 @@ impl<'unit> Checker<'unit> {
         // same three written forms an `expr` selects between, so the two
         // shapes share every judgment below and differ only in where the
         // operator and the second operand hang.
-        if self.tree.production(node)? == Production::ClauseExpr {
+        if self.types.declarations.tree.production(node)? == Production::ClauseExpr {
             return self.check_clause_expression(
-                function,
+                context,
                 node,
                 bindings,
                 loop_depth,
@@ -780,11 +446,16 @@ impl<'unit> Checker<'unit> {
         }
         // [GRAM-5] `expr := atom infix_tail? | call | construct`, so the only
         // shape with more than one child is the infix one.
-        if let Some(tail) = self.tree.first_child_with(node, Production::InfixTail)? {
-            return self.check_infix(function, node, tail, bindings, loop_depth);
+        if let Some(tail) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::InfixTail)?
+        {
+            return self.check_infix(context, node, tail, bindings, loop_depth);
         }
-        let child = self.tree.only_child(node)?;
-        self.check_written_operand(function, child, bindings, loop_depth, place_context)
+        let child = self.types.declarations.tree.only_child(node)?;
+        self.check_written_operand(context, child, bindings, loop_depth, place_context)
     }
 
     /// [GRAM-5] one `clause_expr`: one `affine_expr`, or two around one
@@ -793,25 +464,28 @@ impl<'unit> Checker<'unit> {
     /// displaced by an affine expression on either side of the operator
     /// [MSR-5].
     fn check_clause_expression(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         place_context: PlaceUseContext,
     ) -> Result<TypedExpression, CheckStop> {
-        match self.tree.children(node)? {
+        match self.types.declarations.tree.children(node)? {
             [side] => {
                 let side = *side;
-                self.check_clause_affine(function, side, None, bindings, loop_depth, place_context)
+                self.check_clause_affine(context, side, None, bindings, loop_depth, place_context)
             }
             [left, operator, right] => {
                 let (left, operator, right) = (*left, *operator, *right);
-                let operation = self.infix_operation(self.clause_operator_node(operator)?)?;
+                let operation = self
+                    .types
+                    .declarations
+                    .infix_operation(self.types.declarations.clause_operator_node(operator)?)?;
                 let left = (
                     left,
                     self.check_clause_affine(
-                        function,
+                        context,
                         left,
                         None,
                         bindings,
@@ -822,7 +496,7 @@ impl<'unit> Checker<'unit> {
                 let right = (
                     right,
                     self.check_clause_affine(
-                        function,
+                        context,
                         right,
                         None,
                         bindings,
@@ -830,20 +504,11 @@ impl<'unit> Checker<'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.check_integer_operation_operands(node, operation, vec![left, right])
+                self.types
+                    .check_integer_operation_operands(node, operation, vec![left, right])
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
-    }
-
-    /// The operator token's owning node inside one `clause_op` [GRAM-5]: the
-    /// `compare_op` node it selected, or the `clause_op` itself when the
-    /// operator is one of the five infix `defined` domain queries.
-    pub(super) fn clause_operator_node(&self, operator: NodeId) -> Result<NodeId, CheckStop> {
-        Ok(self
-            .tree
-            .first_child_with(operator, Production::CompareOp)?
-            .unwrap_or(operator))
     }
 
     /// One `affine_expr`, `affine_term`, or `affine_factor` of a contract
@@ -856,17 +521,17 @@ impl<'unit> Checker<'unit> {
     /// here are the exact ones, which carry no domain obligation of their own
     /// because a clause is never evaluated.
     fn check_clause_affine(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         terms: Option<usize>,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         place_context: PlaceUseContext,
     ) -> Result<TypedExpression, CheckStop> {
-        match self.tree.production(node)? {
+        match self.types.declarations.tree.production(node)? {
             Production::AffineExpr => {
-                let children = self.tree.children(node)?.to_vec();
+                let children = self.types.declarations.tree.children(node)?.to_vec();
                 let count = terms.unwrap_or_else(|| children.len().div_ceil(2));
                 let last = count
                     .checked_mul(2)
@@ -875,7 +540,7 @@ impl<'unit> Checker<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 if count == 1 {
                     return self.check_clause_affine(
-                        function,
+                        context,
                         last,
                         None,
                         bindings,
@@ -892,11 +557,11 @@ impl<'unit> Checker<'unit> {
                     )
                     .copied()
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                let operation = self.affine_add_operation(operator)?;
+                let operation = self.types.declarations.affine_add_operation(operator)?;
                 let left = (
                     node,
                     self.check_clause_affine(
-                        function,
+                        context,
                         node,
                         Some(count - 1),
                         bindings,
@@ -907,7 +572,7 @@ impl<'unit> Checker<'unit> {
                 let right = (
                     last,
                     self.check_clause_affine(
-                        function,
+                        context,
                         last,
                         None,
                         bindings,
@@ -915,13 +580,18 @@ impl<'unit> Checker<'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.check_integer_operation_operands(node, operation, vec![left, right])
+                self.types
+                    .check_integer_operation_operands(node, operation, vec![left, right])
             }
             Production::AffineTerm => {
-                let factors = self.tree.children_with(node, Production::AffineFactor)?;
+                let factors = self
+                    .types
+                    .declarations
+                    .tree
+                    .children_with(node, Production::AffineFactor)?;
                 match factors.as_slice() {
                     [factor] => self.check_clause_affine(
-                        function,
+                        context,
                         *factor,
                         None,
                         bindings,
@@ -932,7 +602,7 @@ impl<'unit> Checker<'unit> {
                         let left = (
                             *left_node,
                             self.check_clause_affine(
-                                function,
+                                context,
                                 *left_node,
                                 None,
                                 bindings,
@@ -943,7 +613,7 @@ impl<'unit> Checker<'unit> {
                         let right = (
                             *right_node,
                             self.check_clause_affine(
-                                function,
+                                context,
                                 *right_node,
                                 None,
                                 bindings,
@@ -951,7 +621,7 @@ impl<'unit> Checker<'unit> {
                                 PlaceUseContext::Ordinary,
                             )?,
                         );
-                        self.check_integer_operation_operands(
+                        self.types.check_integer_operation_operands(
                             node,
                             CheckedIntegerOperation::MultiplyExact,
                             vec![left, right],
@@ -961,43 +631,31 @@ impl<'unit> Checker<'unit> {
                 }
             }
             Production::AffineFactor => {
-                let child = self.tree.only_child(node)?;
-                self.check_clause_affine(function, child, None, bindings, loop_depth, place_context)
+                let child = self.types.declarations.tree.only_child(node)?;
+                self.check_clause_affine(context, child, None, bindings, loop_depth, place_context)
             }
-            _ => self.check_written_operand(function, node, bindings, loop_depth, place_context),
+            _ => self.check_written_operand(context, node, bindings, loop_depth, place_context),
         }
-    }
-
-    /// The [OP-1] row one `affine_add_op` names [GRAM-4].
-    fn affine_add_operation(&self, operator: NodeId) -> Result<CheckedIntegerOperation, CheckStop> {
-        let [terminal] = self.tree.direct_token_indices(operator)? else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        Ok(match self.tree.token_bytes(*terminal)? {
-            b"+" => CheckedIntegerOperation::AddExact,
-            b"-" => CheckedIntegerOperation::SubtractExact,
-            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
-        })
     }
 
     /// One written operand of an `expr` or a `clause_expr` [GRAM-5]: the
     /// `atom`, `call`, or `construct` the grammar selected.
     pub(in crate::semantic::check) fn check_written_operand(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         place_context: PlaceUseContext,
     ) -> Result<TypedExpression, CheckStop> {
-        match self.tree.production(node)? {
+        match self.types.declarations.tree.production(node)? {
             Production::Atom => {
-                self.check_atom_in_context(function, node, bindings, loop_depth, place_context)
+                self.check_atom_in_context(context, node, bindings, loop_depth, place_context)
             }
-            Production::Call if self.tree.is_constructor_call(node)? => {
-                self.check_construct(function, node, bindings, loop_depth)
+            Production::Call if self.types.declarations.tree.is_constructor_call(node)? => {
+                self.check_construct(context, node, bindings, loop_depth)
             }
-            Production::Call => self.check_call(function, node, bindings, loop_depth),
+            Production::Call => self.check_call(context, node, bindings, loop_depth),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
     }
@@ -1009,98 +667,46 @@ impl<'unit> Checker<'unit> {
     /// the right is the tail's. The row then takes the same judgment the
     /// named spelling takes.
     fn check_infix(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         tail: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         let left = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::Atom)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let operator = self.infix_operator_node(tail)?;
+        let operator = self.types.declarations.infix_operator_node(tail)?;
         let right = self
+            .types
+            .declarations
             .tree
             .first_child_with(tail, Production::Atom)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let operation = self.infix_operation(operator)?;
+        let operation = self.types.declarations.infix_operation(operator)?;
         self.check_integer_operation_row(
+            context,
             node,
             operation,
             &[left, right],
-            function,
             bindings,
             loop_depth,
         )
     }
 
-    /// The operator child of an `infix_tail`: its `infix_op` or its
-    /// `compare_op` node, whichever the tail selected [GRAM-5].
-    pub(super) fn infix_operator_node(&self, tail: NodeId) -> Result<NodeId, CheckStop> {
-        if let Some(operator) = self.tree.first_child_with(tail, Production::InfixOp)? {
-            return Ok(operator);
-        }
-        self.tree
-            .first_child_with(tail, Production::CompareOp)?
-            .ok_or_else(|| SemanticCompilerFailure::InvalidCanonicalTree.into())
-    }
-
-    /// [OP-1] the exact operator token, and the row it spells.
-    ///
-    /// Bare `+ - * / %` are proof-required exact rows; `defined` names their
-    /// total Bool domain queries. The remaining suffixes keep their existing
-    /// value-result policies. The six `compare_op` spellings are the total
-    /// integer comparison rows.
-    pub(super) fn infix_operation(
-        &self,
-        operator: NodeId,
-    ) -> Result<CheckedIntegerOperation, CheckStop> {
-        let [terminal] = self.tree.direct_token_indices(operator)? else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        Ok(match self.tree.token_bytes(*terminal)? {
-            b"+" => CheckedIntegerOperation::AddExact,
-            b"+defined" => CheckedIntegerOperation::AddDefined,
-            b"+wrap" => CheckedIntegerOperation::AddWrap,
-            b"+checked" => CheckedIntegerOperation::AddChecked,
-            b"+sat" => CheckedIntegerOperation::AddSaturating,
-            b"-" => CheckedIntegerOperation::SubtractExact,
-            b"-defined" => CheckedIntegerOperation::SubtractDefined,
-            b"-wrap" => CheckedIntegerOperation::SubtractWrap,
-            b"-checked" => CheckedIntegerOperation::SubtractChecked,
-            b"-sat" => CheckedIntegerOperation::SubtractSaturating,
-            b"*" => CheckedIntegerOperation::MultiplyExact,
-            b"*defined" => CheckedIntegerOperation::MultiplyDefined,
-            b"*wrap" => CheckedIntegerOperation::MultiplyWrap,
-            b"*checked" => CheckedIntegerOperation::MultiplyChecked,
-            b"*sat" => CheckedIntegerOperation::MultiplySaturating,
-            b"/" => CheckedIntegerOperation::DivideExact,
-            b"/defined" => CheckedIntegerOperation::DivideDefined,
-            b"/checked" => CheckedIntegerOperation::DivideChecked,
-            b"%" => CheckedIntegerOperation::RemainderExact,
-            b"%defined" => CheckedIntegerOperation::RemainderDefined,
-            b"%checked" => CheckedIntegerOperation::RemainderChecked,
-            b"==" => CheckedIntegerOperation::Equal,
-            b"!=" => CheckedIntegerOperation::NotEqual,
-            b"<" => CheckedIntegerOperation::Less,
-            b"<=" => CheckedIntegerOperation::LessEqual,
-            b">" => CheckedIntegerOperation::Greater,
-            b">=" => CheckedIntegerOperation::GreaterEqual,
-            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
-        })
-    }
-
     pub(super) fn check_atom(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_atom_in_context(
-            function,
+            context,
             node,
             bindings,
             loop_depth,
@@ -1113,14 +719,14 @@ impl<'unit> Checker<'unit> {
     /// rejection long enough for an earlier TYPE-7 implicit-read judgment to
     /// take exclusive ownership of a holder used for its referent.
     pub(super) fn check_consuming_atom(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_atom_in_context(
-            function,
+            context,
             node,
             bindings,
             loop_depth,
@@ -1129,14 +735,14 @@ impl<'unit> Checker<'unit> {
     }
 
     pub(super) fn check_call_argument_atom(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_atom_in_context(
-            function,
+            context,
             node,
             bindings,
             loop_depth,
@@ -1145,148 +751,122 @@ impl<'unit> Checker<'unit> {
     }
 
     fn check_atom_in_context(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         place_context: PlaceUseContext,
     ) -> Result<TypedExpression, CheckStop> {
-        if let Some(value) = self.postcondition_result_placeholder(node)? {
+        let FunctionContext { check_context, .. } = context;
+        if let Some(value) = self
+            .types
+            .declarations
+            .postcondition_result_placeholder(check_context, node)?
+        {
             return Ok(TypedExpression::owned(
                 CheckedExpression::Constant(value),
                 EffectSet::NONE,
             ));
         }
         if let Some(literal) = self
+            .types
+            .declarations
             .tree
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
-            let bytes = self.tree.token_bytes(literal)?;
+            let bytes = self.types.declarations.tree.token_bytes(literal)?;
             if matches!(bytes, b"0_T" | b"1_T") {
-                return self.check_generic_numeric_identity(function, node, bytes == b"1_T");
+                return self
+                    .types
+                    .check_generic_numeric_identity(context, node, bytes == b"1_T");
             }
             return Ok(TypedExpression::owned(
-                CheckedExpression::Constant(self.parse_literal(node, bytes)?),
+                CheckedExpression::Constant(self.types.declarations.parse_literal(node, bytes)?),
                 EffectSet::NONE,
             ));
         }
-        if let Some(place) = self.tree.first_child_with(node, Production::Place)? {
+        if let Some(place) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Place)?
+        {
             let value = self.check_place_use(
-                function,
+                context,
                 node,
                 place,
                 bindings,
                 PlaceUseOptions {
-                    explicit_move: self.has_fixed(node, FixedTerminal::Move)?,
+                    explicit_move: self
+                        .types
+                        .declarations
+                        .tree
+                        .has_fixed(node, FixedTerminal::Move)?,
                     context: place_context,
                     loop_depth,
                 },
             )?;
             return Ok(value);
         }
-        if let Some(borrow) = self.tree.first_child_with(node, Production::BorrowExpr)? {
-            return self.check_borrow(borrow, function, bindings, loop_depth);
+        if let Some(borrow) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::BorrowExpr)?
+        {
+            return self.check_borrow(context, borrow, bindings, loop_depth);
         }
         Err(SemanticCompilerFailure::InvalidCanonicalTree.into())
     }
 
-    /// The `borrow_expr` that is the complete written content of `expression`,
-    /// if any: the position [OWN-14] names for the returned reborrow.
-    ///
-    /// An infix expression is a fresh operation result rather than a written
-    /// borrow, so it answers `None` like any other non-borrow shape.
-    pub(super) fn complete_borrow_expression(
-        &self,
-        expression: NodeId,
-    ) -> Result<Option<NodeId>, CheckStop> {
-        let Some(child) = self.tree.sole_expression_child(expression)? else {
-            return Ok(None);
-        };
-        if self.tree.production(child)? != Production::Atom {
-            return Ok(None);
-        }
-        Ok(self.tree.first_child_with(child, Production::BorrowExpr)?)
-    }
-
-    fn check_generic_numeric_identity(
-        &self,
-        function: &FunctionSignature,
-        node: NodeId,
-        one: bool,
-    ) -> Result<TypedExpression, CheckStop> {
-        let usage = self.use_at(node, LexicalUseRole::GenericNumericSuffix)?;
-        let ResolvedTarget::Source {
-            declaration,
-            class: DeclarationClass::GenericType,
-        } = usage.target()
-        else {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        };
-        let ty = function
-            .substitution
-            .type_argument(declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let value = match ty {
-            CheckedType::Integer(ty) => CheckedValue::Integer {
-                ty,
-                bits: u64::from(one),
-            },
-            CheckedType::Float(FloatType::F32) => CheckedValue::Float {
-                ty: FloatType::F32,
-                bits: if one { 0x3f80_0000 } else { 0 },
-            },
-            CheckedType::Float(FloatType::F64) => CheckedValue::Float {
-                ty: FloatType::F64,
-                bits: if one { 0x3ff0_0000_0000_0000 } else { 0 },
-            },
-            CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
-                CheckedValue::NumericIdentity { ty, one }
-            }
-            _ => {
-                return self.issue_node(
-                    SemanticRule::Form5,
-                    node,
-                    SemanticIssueKind::type_mismatch(
-                        "an integer or float type, whose 0 and 1 this form names",
-                        self.checked_type_name(ty)?,
-                    ),
-                );
-            }
-        };
-        Ok(TypedExpression::owned(
-            CheckedExpression::Constant(value),
-            EffectSet::NONE,
-        ))
-    }
-
     fn check_place_use(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         use_node: NodeId,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         let pbase = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let suffixes = self.tree.children_with(node, Production::Psuffix)?;
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
         if !suffixes.is_empty()
-            && !self.has_fixed(pbase, FixedTerminal::Deref)?
-            && self.tree.children(pbase)?.is_empty()
+            && !self
+                .types
+                .declarations
+                .tree
+                .place_base(pbase)?
+                .is_dereference()
+            && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {
                 declaration,
                 class: DeclarationClass::NamedConst,
-            } = self.use_at(pbase, LexicalUseRole::PlaceBase)?.target()
+            } = self
+                .types
+                .declarations
+                .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?
+                .target()
         {
             let constant = *self
+                .types
                 .constants
                 .get(&declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             return self.check_constant_storage_read(
-                use_node, constant, &suffixes, bindings, function, options,
+                context, use_node, constant, &suffixes, bindings, options,
             );
         }
         // [OP-15, MSR-1] a measure is read over the place written before it,
@@ -1294,17 +874,23 @@ impl<'unit> Checker<'unit> {
         // field selections: `rows[0_u64].len` is the measure of the element
         // the subscript selects and never a field of it. The subscript inside
         // the place keeps its ordinary [OP-4] obligation.
-        if let Some(measure) = self.trailing_measure_member(&suffixes)?
-            && let Some(subscript) =
-                self.indexing_subscript(node, &suffixes[..suffixes.len() - 1], bindings)?
+        if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)?
+            && let Some(subscript) = self.indexing_subscript(
+                check_context,
+                node,
+                &suffixes[..suffixes.len() - 1],
+                bindings,
+            )?
         {
             return self.check_indexed_measure_use(
-                function, use_node, node, &suffixes, subscript, measure, bindings, options,
+                context, use_node, node, &suffixes, subscript, measure, bindings, options,
             );
         }
-        if let Some(subscript) = self.indexing_subscript(node, &suffixes, bindings)? {
+        if let Some(subscript) =
+            self.indexing_subscript(check_context, node, &suffixes, bindings)?
+        {
             return self.check_index_use(
-                function, use_node, node, &suffixes, subscript, bindings, options,
+                context, use_node, node, &suffixes, subscript, bindings, options,
             );
         }
         // [OP-15] a measure is read as a member of the measured place, so
@@ -1313,15 +899,34 @@ impl<'unit> Checker<'unit> {
         // IDENT base exactly as it resolves a `deref` chain, so routing every
         // measure member there keeps one implementation of [MSR-1]'s rows,
         // [MSR-2]'s descriptor-only support and [EFF-2]'s attribution.
-        if self.has_fixed(pbase, FixedTerminal::Deref)?
-            || self.trailing_measure_member(&suffixes)?.is_some()
+        if self
+            .types
+            .declarations
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
+            || self
+                .types
+                .declarations
+                .trailing_measure_member(&suffixes)?
+                .is_some()
         {
-            return self.check_dereferenced_place_use(use_node, node, pbase, bindings, options);
+            return self.check_dereferenced_place_use(
+                check_context,
+                use_node,
+                node,
+                pbase,
+                bindings,
+                options,
+            );
         }
-        if !self.tree.children(pbase)?.is_empty() {
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
-        let usage = self.use_at(pbase, LexicalUseRole::PlaceBase)?;
+        let usage =
+            self.types
+                .declarations
+                .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
         let ResolvedTarget::Source { declaration, class } = usage.target() else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
@@ -1332,7 +937,7 @@ impl<'unit> Checker<'unit> {
                     .cloned()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 if !local.live {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::UseAfterMove {
@@ -1348,7 +953,7 @@ impl<'unit> Checker<'unit> {
                 // no storage, so `move p` on one is [OWN-1]'s copy spelling.
                 if local.mode.is_reference() {
                     if !suffixes.is_empty() {
-                        return self.issue_node(
+                        return self.types.declarations.issue_node(
                             SemanticRule::Type7,
                             use_node,
                             SemanticIssueKind::MissingDereference {
@@ -1357,7 +962,7 @@ impl<'unit> Checker<'unit> {
                         );
                     }
                     if options.explicit_move {
-                        return self.issue_node(
+                        return self.types.declarations.issue_node(
                             SemanticRule::Own1,
                             use_node,
                             SemanticIssueKind::MoveOfCopy {
@@ -1368,7 +973,7 @@ impl<'unit> Checker<'unit> {
                     self.check_reference_valid(&local, use_node)?;
                     return Ok(TypedExpression {
                         expression: CheckedExpression::Binding {
-                            carrier: self.tree.path(use_node)?.clone(),
+                            carrier: self.types.declarations.tree.path(use_node)?.clone(),
                             binding: local.binding,
                             ty: local.ty,
                             consume_root: false,
@@ -1382,21 +987,23 @@ impl<'unit> Checker<'unit> {
                         accesses: Vec::new(),
                     });
                 }
-                // [TYPE-9] a `Box`'s content is its member `inner`, reached
-                // by the ordinary member step and never by `deref`. The step
-                // below that member is a dereference, which the field walk
-                // has no step for, so the explicit-place walker resolves the
-                // whole place; it takes a bare IDENT base exactly as it takes
-                // a `deref` chain, which keeps one implementation of the box
-                // content step for both spellings.
-                if self.place_path_reaches_box_content(&suffixes, local.ty)? {
-                    return self
-                        .check_dereferenced_place_use(use_node, node, pbase, bindings, options);
-                }
-                let (fields, ty) = self.resolve_struct_path(&suffixes, local.ty)?;
-                let copy = self.is_copy_type(ty)?;
-                if options.explicit_move && copy && self.judges_class_spelling() {
-                    return self.issue_node(
+                let place =
+                    self.elaborate_local_place(check_context, use_node, &suffixes, &local)?;
+                let Some(fields) = place.plain_fields() else {
+                    return self.check_elaborated_place_use(
+                        check_context,
+                        use_node,
+                        node,
+                        pbase,
+                        bindings,
+                        options,
+                        place,
+                    );
+                };
+                let ty = place.ty;
+                let copy = self.types.is_copy_type(check_context, ty)?;
+                if options.explicit_move && copy && Checker::judges_class_spelling(check_context) {
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
@@ -1408,7 +1015,7 @@ impl<'unit> Checker<'unit> {
                     && !options.explicit_move
                     && matches!(options.context, PlaceUseContext::Ordinary)
                 {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
@@ -1429,7 +1036,7 @@ impl<'unit> Checker<'unit> {
                 )?;
                 let read_out = !copy
                     && options.explicit_move
-                    && self.take_commit_read_out(&ResolvedPlace::fields(
+                    && self.body.take_commit_read_out(&ResolvedPlace::fields(
                         local.binding,
                         fields.clone(),
                     ));
@@ -1451,12 +1058,19 @@ impl<'unit> Checker<'unit> {
                 // [PROV-6] a whole-owner consume may leave only droppable
                 // residual parts; the selected field is moved, not released.
                 if !copy && !read_out && !fields.is_empty() {
-                    self.reject_partial_consume(local.ty, &fields, use_node)?;
+                    self.types.reject_partial_consume(
+                        check_context,
+                        local.ty,
+                        &fields,
+                        use_node,
+                    )?;
                 }
                 let residual_drops = if copy || read_out || fields.is_empty() {
                     Vec::new()
                 } else {
-                    let paths = self.residual_drop_paths(local.ty, &fields)?;
+                    let paths = self
+                        .types
+                        .residual_drop_paths(check_context, local.ty, &fields)?;
                     paths
                         .into_iter()
                         .map(|(fields, ty)| CheckedProjectedDrop { fields, ty })
@@ -1480,7 +1094,7 @@ impl<'unit> Checker<'unit> {
                 // prefix names storage the move has carried away, and
                 // [REF-2] says a move never re-roots an existing reference.
                 if !copy && !read_out {
-                    self.invalidate_references(
+                    self.types.invalidate_references(
                         bindings,
                         &ResolvedPlace::fields(local.binding, fields.clone()),
                         &super::references::InvalidationEvent::PrefixMoved,
@@ -1507,7 +1121,7 @@ impl<'unit> Checker<'unit> {
                 if fields.is_empty() {
                     Ok(TypedExpression::owned_with_access(
                         CheckedExpression::Binding {
-                            carrier: self.tree.path(use_node)?.clone(),
+                            carrier: self.types.declarations.tree.path(use_node)?.clone(),
                             binding: local.binding,
                             ty,
                             consume_root: !copy,
@@ -1518,7 +1132,7 @@ impl<'unit> Checker<'unit> {
                 } else {
                     Ok(TypedExpression::owned_with_access(
                         CheckedExpression::Project {
-                            carrier: self.tree.path(use_node)?.clone(),
+                            carrier: self.types.declarations.tree.path(use_node)?.clone(),
                             binding: local.binding,
                             fields,
                             ty,
@@ -1536,7 +1150,7 @@ impl<'unit> Checker<'unit> {
             // it performs no operation and has the empty effect row.
             DeclarationClass::ConstGeneric => {
                 if options.explicit_move {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
@@ -1545,7 +1159,7 @@ impl<'unit> Checker<'unit> {
                     );
                 }
                 if !suffixes.is_empty() {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         use_node,
                         SemanticIssueKind::type_mismatch(
@@ -1554,7 +1168,7 @@ impl<'unit> Checker<'unit> {
                         ),
                     );
                 }
-                let ty = self.const_generic_type(declaration)?;
+                let ty = self.types.const_generic_type(declaration)?;
                 let value = match function.substitution.const_argument(declaration) {
                     Some(CheckedConst::Value(value)) => CheckedValue::Integer { ty, bits: value },
                     // [FN-2, MSR-6] a const parameter this instance's caller
@@ -1578,7 +1192,7 @@ impl<'unit> Checker<'unit> {
             }
             DeclarationClass::NamedConst => {
                 if options.explicit_move {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
@@ -1587,18 +1201,19 @@ impl<'unit> Checker<'unit> {
                     );
                 }
                 let constant = self
+                    .types
                     .constants
                     .get(&declaration)
                     .copied()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let constant = self.constant(constant)?;
+                let constant = self.types.constant(constant)?;
                 if matches!(
                     constant.ty,
                     CheckedType::Array { .. }
                         | CheckedType::Buffer { .. }
                         | CheckedType::Window { .. }
                 ) {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
@@ -1607,7 +1222,7 @@ impl<'unit> Checker<'unit> {
                     );
                 }
                 if matches!(constant.value, CheckedValue::Struct { .. }) {
-                    return self.issue_node(
+                    return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
@@ -1636,26 +1251,41 @@ impl<'unit> Checker<'unit> {
     /// `Box` included, whose content is its field `inner` — is [TYPE-7]'s
     /// rejection, raised by the place resolver.
     fn check_dereferenced_set_target(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<MutationTarget, CheckStop> {
-        let place = self.resolve_explicit_place(node, node, bindings)?;
+        let place = self.elaborate_value_place(context.check_context, node, node, bindings)?;
+        self.check_elaborated_set_target(context, node, bindings, place)
+    }
+
+    fn check_elaborated_set_target(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        place: places::ElaboratedPlace,
+    ) -> Result<MutationTarget, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         if place
             .resolved
             .members
             .iter()
             .any(|member| matches!(member.root, crate::semantic::places::PlaceRoot::Constant(_)))
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Const2,
                 node,
                 SemanticIssueKind::ImmutableSetTarget,
             );
         }
         for member in &place.resolved.members {
-            self.reject_readonly_resolved_write(node, member, bindings)?;
+            self.types
+                .reject_readonly_resolved_write(check_context, node, member, bindings)?;
         }
         let local = bindings
             .get(&place.declaration)
@@ -1666,7 +1296,7 @@ impl<'unit> Checker<'unit> {
             writable &= self.reference_row_writes(function, member, bindings)?;
         }
         if !writable {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Set1,
                 node,
                 SemanticIssueKind::InvalidSetTarget {
@@ -1676,14 +1306,18 @@ impl<'unit> Checker<'unit> {
                 },
             );
         }
-        self.check_mutation_target_class(node, place.ty)?;
+        self.types
+            .check_mutation_target_class(check_context, node, place.ty)?;
         let mut effects = EffectSet::NONE;
         for member in &place.resolved.members {
             for path in self.effect_paths_for_place(node, member, bindings)? {
                 effects.add_write(path);
             }
         }
-        let (binding, path) = self.explicit_container_path(&place.expression, node)?;
+        let (binding, path) = self
+            .types
+            .declarations
+            .explicit_container_path(&place.expression, node)?;
         Ok(MutationTarget {
             declaration: place.declaration,
             place: place.resolved,
@@ -1740,21 +1374,21 @@ impl<'unit> Checker<'unit> {
     }
 
     pub(super) fn check_match_expression(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
-        self.check_consuming_expression(function, node, bindings, loop_depth)
+        self.check_consuming_expression(context, node, bindings, loop_depth)
     }
 
     /// [PROV-6] the operand of a `dispose` statement or of a destructuring
     /// consume: an ordinary consuming place use, judged by [OWN-1] exactly as
     /// every other consuming position is.
     pub(super) fn check_consumed_place(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         use_node: NodeId,
         place: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
@@ -1762,7 +1396,7 @@ impl<'unit> Checker<'unit> {
         explicit_move: bool,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_place_use(
-            function,
+            context,
             use_node,
             place,
             bindings,
@@ -1792,23 +1426,33 @@ impl<'unit> Checker<'unit> {
     /// [TYPE-5] equality, so a second operand naming a second store is a
     /// mismatch and not a second binding [PROV-1].
     fn check_instanced_construct(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         site: &super::ConstructorSite,
         constructor_name: String,
     ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
         let written_fields = match self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::FieldinitList)?
         {
-            Some(list) => self.tree.children_with(list, Production::Fieldinit)?,
+            Some(list) => self
+                .types
+                .declarations
+                .tree
+                .children_with(list, Production::Fieldinit)?,
             None => Vec::new(),
         };
         if written_fields.len() != site.shape.fields.len() {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Gram8,
                 node,
                 SemanticIssueKind::InvalidConstructionFields {
@@ -1822,11 +1466,13 @@ impl<'unit> Checker<'unit> {
         let mut effects = EffectSet::NONE;
         for (written, declared) in written_fields.into_iter().zip(&site.shape.fields) {
             if self
+                .types
+                .declarations
                 .deferred_use_at(written, DeferredUseRole::FieldInitializer)?
                 .spelling()
                 != *declared
             {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Gram8,
                     written,
                     SemanticIssueKind::InvalidConstructionFields {
@@ -1836,16 +1482,19 @@ impl<'unit> Checker<'unit> {
                 );
             }
             let atom = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(written, Production::Atom)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let value = self.check_atom(function, atom, bindings, loop_depth)?;
+            let value = self.check_atom(context, atom, bindings, loop_depth)?;
             effects = effects.union(value.effects.clone());
             atoms.push(atom);
             operands.push(value);
         }
-        let nominal = self.constructed_nominal(node, site, &[], &function.substitution)?;
-        let declared_fields = match (&self.nominal(nominal)?.kind, site.variant) {
+        let nominal =
+            self.constructed_nominal(check_context, node, site, &[], &function.substitution)?;
+        let declared_fields = match (&self.types.nominal(nominal)?.kind, site.variant) {
             (CheckedNominalKind::Struct { fields }, None) => fields.clone(),
             (CheckedNominalKind::Enum { variants }, Some(variant)) => variants
                 .get(variant as usize)
@@ -1857,17 +1506,17 @@ impl<'unit> Checker<'unit> {
         let mut fields = Vec::with_capacity(operands.len());
         for ((value, atom), declared) in operands.into_iter().zip(atoms).zip(&declared_fields) {
             if value.expression.ty() != declared.ty {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type5,
                     atom,
                     SemanticIssueKind::type_mismatch(
-                        self.checked_type_name(declared.ty)?,
-                        self.checked_type_name(value.expression.ty())?,
+                        self.types.checked_type_name(declared.ty)?,
+                        self.types.checked_type_name(value.expression.ty())?,
                     ),
                 );
             }
             if value.mode != CheckedMode::Own {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
@@ -1877,7 +1526,7 @@ impl<'unit> Checker<'unit> {
             }
             fields.push(value.expression);
         }
-        let carrier = self.tree.path(node)?.clone();
+        let carrier = self.types.declarations.tree.path(node)?.clone();
         let expression = match site.variant {
             None => CheckedExpression::ConstructStruct {
                 carrier,
@@ -1895,13 +1544,20 @@ impl<'unit> Checker<'unit> {
     }
 
     pub(super) fn check_construct(
-        &self,
-        function: &FunctionSignature,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
-        let usage = self.use_at(node, LexicalUseRole::Construct)?;
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
+        let usage =
+            self.types
+                .declarations
+                .use_at(check_context, node, LexicalUseRole::Construct)?;
         let constructor_name = usage.spelling().to_owned();
         // x1 [TYPE-2]: the three storage shapes and the cell are all the
         // prelude's opaque structs, and an opaque struct's constructor entry
@@ -1912,7 +1568,7 @@ impl<'unit> Checker<'unit> {
         if let ResolvedTarget::Container(id) = usage.target() {
             let _ =
                 crate::container_nominal(id).ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type2,
                 node,
                 SemanticIssueKind::ContainerConstruction {
@@ -1926,11 +1582,13 @@ impl<'unit> Checker<'unit> {
         // one call node. Constructors still write nominal arguments directly
         // after the TYPEID, and every field remains named [TYPE-5, GRAM-8].
         if self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::Targs)?
             .is_some()
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type5,
                 node,
                 SemanticIssueKind::type_mismatch(
@@ -1940,11 +1598,13 @@ impl<'unit> Checker<'unit> {
             );
         }
         if self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::AtomList)?
             .is_some()
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Gram8,
                 node,
                 SemanticIssueKind::type_mismatch(
@@ -1954,9 +1614,9 @@ impl<'unit> Checker<'unit> {
             );
         }
         if matches!(usage.target(), ResolvedTarget::Prelude(id) if !matches!(id, crate::BuiltinPreludeId::NONE | crate::BuiltinPreludeId::SOME | crate::BuiltinPreludeId::OK | crate::BuiltinPreludeId::ERR))
-            && self.tree.argument_list(node)?.is_some()
+            && self.types.declarations.tree.argument_list(node)?.is_some()
         {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Type5,
                 node,
                 SemanticIssueKind::type_mismatch(
@@ -1977,11 +1637,13 @@ impl<'unit> Checker<'unit> {
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             };
             if self
+                .types
+                .declarations
                 .tree
                 .first_child_with(node, Production::FieldinitList)?
                 .is_some()
             {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Gram8,
                     node,
                     SemanticIssueKind::InvalidConstructionFields {
@@ -2001,14 +1663,14 @@ impl<'unit> Checker<'unit> {
                 // constructor: the entry its declaration contributes exists
                 // to be refused, and the refusal is sited at the complete
                 // `call`.
-                if self.is_opaque_struct_declaration(declaration)? {
-                    return self.issue_node(
+                if self.types.is_opaque_struct_declaration(declaration)? {
+                    return self.types.declarations.issue_node(
                         SemanticRule::Type2,
                         node,
                         SemanticIssueKind::ContainerConstruction {
                             nominal: constructor_name,
                             mechanical_fix: super::repairs::opaque_struct_constructed(
-                                self.opaque_struct_kind(declaration)?,
+                                self.types.opaque_struct_kind(declaration)?,
                             )
                             .to_owned(),
                         },
@@ -2017,9 +1679,9 @@ impl<'unit> Checker<'unit> {
                 // [FORM-8] a nominal carrying `region_params` has its region
                 // arguments determined by its field operands, so its
                 // instance is formed after they are checked and not before.
-                if let Some(site) = self.constructor_shape(declaration)? {
+                if let Some(site) = self.types.constructor_shape(declaration)? {
                     return self.check_instanced_construct(
-                        function,
+                        context,
                         node,
                         bindings,
                         loop_depth,
@@ -2027,7 +1689,7 @@ impl<'unit> Checker<'unit> {
                         constructor_name,
                     );
                 }
-                self.source_constructor(node, declaration, &function.substitution)?
+                self.source_constructor(check_context, node, declaration, &function.substitution)?
             }
             ResolvedTarget::Prelude(id) => match id {
                 // [TYPE-5] the prelude generic nominals are constructed
@@ -2039,47 +1701,62 @@ impl<'unit> Checker<'unit> {
                 // `generic_substitution` reads a source generic's, so both
                 // classes cite TYPE-5 at the complete `construct`.
                 crate::BuiltinPreludeId::NONE | crate::BuiltinPreludeId::SOME => {
-                    let value = self.option_type_argument_with(node, &function.substitution)?;
+                    let value = self.option_type_argument_with(
+                        check_context,
+                        node,
+                        &function.substitution,
+                    )?;
                     Constructor::Enum {
-                        nominal: self.prelude_nominal(super::PreludeType::Option(value))?,
+                        nominal: self
+                            .types
+                            .prelude_nominal(super::PreludeType::Option(value))?,
                         variant: u32::from(id == crate::BuiltinPreludeId::SOME),
                     }
                 }
                 crate::BuiltinPreludeId::OK | crate::BuiltinPreludeId::ERR => {
-                    let (ok, error) =
-                        self.result_type_arguments_with(node, &function.substitution)?;
+                    let (ok, error) = self.result_type_arguments_with(
+                        check_context,
+                        node,
+                        &function.substitution,
+                    )?;
                     Constructor::Enum {
-                        nominal: self.prelude_nominal(super::PreludeType::Result(ok, error))?,
+                        nominal: self
+                            .types
+                            .prelude_nominal(super::PreludeType::Result(ok, error))?,
                         variant: u32::from(id == crate::BuiltinPreludeId::ERR),
                     }
                 }
                 crate::BuiltinPreludeId::OVERFLOW => Constructor::Enum {
-                    nominal: self.prelude_nominal(super::PreludeType::Overflow)?,
+                    nominal: self.types.prelude_nominal(super::PreludeType::Overflow)?,
                     variant: 0,
                 },
                 crate::BuiltinPreludeId::DIVIDE_BY_ZERO | crate::BuiltinPreludeId::DIV_OVERFLOW => {
                     Constructor::Enum {
-                        nominal: self.prelude_nominal(super::PreludeType::DivError)?,
+                        nominal: self.types.prelude_nominal(super::PreludeType::DivError)?,
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
                 crate::BuiltinPreludeId::NARROW_ERROR => Constructor::Enum {
-                    nominal: self.prelude_nominal(super::PreludeType::NarrowError)?,
+                    nominal: self
+                        .types
+                        .prelude_nominal(super::PreludeType::NarrowError)?,
                     variant: 0,
                 },
                 _ => {
                     return self
+                        .types
+                        .declarations
                         .unsupported(UnsupportedSemanticFeature::PreludeNominalValues, node);
                 }
             },
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
         let declared_fields = match constructor {
-            Constructor::Struct(nominal) => match &self.nominal(nominal)?.kind {
+            Constructor::Struct(nominal) => match &self.types.nominal(nominal)?.kind {
                 CheckedNominalKind::Struct { fields } => fields.clone(),
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             },
-            Constructor::Enum { nominal, variant } => match &self.nominal(nominal)?.kind {
+            Constructor::Enum { nominal, variant } => match &self.types.nominal(nominal)?.kind {
                 CheckedNominalKind::Enum { variants } => variants
                     .get(variant as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?
@@ -2096,9 +1773,20 @@ impl<'unit> Checker<'unit> {
             Constructor::Enum { nominal, variant } => (nominal, Some(variant as usize)),
         };
         for (index, field) in declared_fields.iter().enumerate() {
-            self.reject_inaccessible_field(owner, variant, index, &field.name, node)?;
-            if field.readonly && self.field_withholds_writes(owner, field) {
-                return self.issue_node(
+            self.types.reject_inaccessible_field(
+                check_context,
+                owner,
+                variant,
+                index,
+                &field.name,
+                node,
+            )?;
+            if field.readonly
+                && self
+                    .types
+                    .field_withholds_writes(check_context, owner, field)
+            {
+                return self.types.declarations.issue_node(
                     SemanticRule::Mod5,
                     node,
                     SemanticIssueKind::InaccessibleField {
@@ -2109,10 +1797,15 @@ impl<'unit> Checker<'unit> {
             }
         }
         let written_fields = if let Some(list) = self
+            .types
+            .declarations
             .tree
             .first_child_with(node, Production::FieldinitList)?
         {
-            self.tree.children_with(list, Production::Fieldinit)?
+            self.types
+                .declarations
+                .tree
+                .children_with(list, Production::Fieldinit)?
         } else {
             Vec::new()
         };
@@ -2121,7 +1814,7 @@ impl<'unit> Checker<'unit> {
             .map(|field| field.name.clone())
             .collect::<Vec<_>>();
         if written_fields.len() != declared_fields.len() {
-            return self.issue_node(
+            return self.types.declarations.issue_node(
                 SemanticRule::Gram8,
                 node,
                 SemanticIssueKind::InvalidConstructionFields {
@@ -2134,11 +1827,13 @@ impl<'unit> Checker<'unit> {
         let mut effects = EffectSet::NONE;
         for (written, declared) in written_fields.into_iter().zip(&declared_fields) {
             if self
+                .types
+                .declarations
                 .deferred_use_at(written, DeferredUseRole::FieldInitializer)?
                 .spelling()
                 != declared.name
             {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Gram8,
                     written,
                     SemanticIssueKind::InvalidConstructionFields {
@@ -2148,22 +1843,24 @@ impl<'unit> Checker<'unit> {
                 );
             }
             let atom = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(written, Production::Atom)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let value = self.check_atom(function, atom, bindings, loop_depth)?;
+            let value = self.check_atom(context, atom, bindings, loop_depth)?;
             if value.expression.ty() != declared.ty {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type5,
                     atom,
                     SemanticIssueKind::type_mismatch(
-                        self.checked_type_name(declared.ty)?,
-                        self.checked_type_name(value.expression.ty())?,
+                        self.types.checked_type_name(declared.ty)?,
+                        self.types.checked_type_name(value.expression.ty())?,
                     ),
                 );
             }
             if value.mode != CheckedMode::Own {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type7,
                     atom,
                     SemanticIssueKind::MissingDereference {
@@ -2176,17 +1873,507 @@ impl<'unit> Checker<'unit> {
         }
         let expression = match constructor {
             Constructor::Struct(nominal) => CheckedExpression::ConstructStruct {
-                carrier: self.tree.path(node)?.clone(),
+                carrier: self.types.declarations.tree.path(node)?.clone(),
                 nominal,
                 fields,
             },
             Constructor::Enum { nominal, variant } => CheckedExpression::ConstructEnum {
-                carrier: self.tree.path(node)?.clone(),
+                carrier: self.types.declarations.tree.path(node)?.clone(),
                 nominal,
                 variant,
                 fields,
             },
         };
         Ok(TypedExpression::owned(expression, effects))
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    /// The source declaration a written place is rooted at, when its base is a
+    /// bare name.
+    ///
+    /// A `deref` base is rooted in a holder rather than in the storage the
+    /// place selects, so it answers `None`: the storage that place selects is
+    /// the referent's, not the holder's. [SET-1] reads this to decide the one
+    /// target shape it reinitializes from dead, the complete binding.
+    pub(in crate::semantic::check) fn complete_binding_target(
+        &self,
+        check_context: &CheckContext<'_>,
+        place: NodeId,
+    ) -> Result<Option<DeclarationId>, CheckStop> {
+        let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
+            return Ok(None);
+        };
+        if self.tree.place_base(pbase)?.is_dereference() || !self.tree.children(pbase)?.is_empty() {
+            return Ok(None);
+        }
+        let usage = self.use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+        Ok(match usage.target() {
+            ResolvedTarget::Source {
+                declaration,
+                class: DeclarationClass::Value,
+            } => Some(declaration),
+            _ => None,
+        })
+    }
+    /// One region as the source spells it, or its dense identity when the
+    /// declaration is not reachable.
+    ///
+    /// A rendering is presentation: a region a diagnostic cannot name must not
+    /// turn a source rejection into a compiler failure. A region the grammar
+    /// leaves unwritten has no source spelling at all: resolution mints it
+    /// under a name no source token can form, and rendering that name would
+    /// name a region the writer cannot write. It renders as the empty string,
+    /// which is exactly how the source spells it, and every caller that
+    /// splices a region into a longer form drops the separator with it.
+    pub(in crate::semantic::check) fn region_spelling(&self, region: DeclarationId) -> String {
+        let spelling = self
+            .declaration_spelling(region)
+            .unwrap_or_else(|_| format!("'region#{}", region.index()));
+        if spelling.starts_with("'0_") {
+            return String::new();
+        }
+        spelling
+    }
+    /// The operator token's owning node inside one `clause_op` [GRAM-5]: the
+    /// `compare_op` node it selected, or the `clause_op` itself when the
+    /// operator is one of the five infix `defined` domain queries.
+    pub(super) fn clause_operator_node(&self, operator: NodeId) -> Result<NodeId, CheckStop> {
+        Ok(self
+            .tree
+            .first_child_with(operator, Production::CompareOp)?
+            .unwrap_or(operator))
+    }
+    /// The [OP-1] row one `affine_add_op` names [GRAM-4].
+    fn affine_add_operation(&self, operator: NodeId) -> Result<CheckedIntegerOperation, CheckStop> {
+        let [terminal] = self.tree.direct_token_indices(operator)? else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        Ok(match self.tree.token_bytes(*terminal)? {
+            b"+" => CheckedIntegerOperation::AddExact,
+            b"-" => CheckedIntegerOperation::SubtractExact,
+            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+        })
+    }
+    /// The operator child of an `infix_tail`: its `infix_op` or its
+    /// `compare_op` node, whichever the tail selected [GRAM-5].
+    pub(super) fn infix_operator_node(&self, tail: NodeId) -> Result<NodeId, CheckStop> {
+        if let Some(operator) = self.tree.first_child_with(tail, Production::InfixOp)? {
+            return Ok(operator);
+        }
+        self.tree
+            .first_child_with(tail, Production::CompareOp)?
+            .ok_or_else(|| SemanticCompilerFailure::InvalidCanonicalTree.into())
+    }
+    /// [OP-1] the exact operator token, and the row it spells.
+    ///
+    /// Bare `+ - * / %` are proof-required exact rows; `defined` names their
+    /// total Bool domain queries. The remaining suffixes keep their existing
+    /// value-result policies. The six `compare_op` spellings are the total
+    /// integer comparison rows.
+    pub(super) fn infix_operation(
+        &self,
+        operator: NodeId,
+    ) -> Result<CheckedIntegerOperation, CheckStop> {
+        let [terminal] = self.tree.direct_token_indices(operator)? else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        Ok(match self.tree.token_bytes(*terminal)? {
+            b"+" => CheckedIntegerOperation::AddExact,
+            b"+defined" => CheckedIntegerOperation::AddDefined,
+            b"+wrap" => CheckedIntegerOperation::AddWrap,
+            b"+checked" => CheckedIntegerOperation::AddChecked,
+            b"+sat" => CheckedIntegerOperation::AddSaturating,
+            b"-" => CheckedIntegerOperation::SubtractExact,
+            b"-defined" => CheckedIntegerOperation::SubtractDefined,
+            b"-wrap" => CheckedIntegerOperation::SubtractWrap,
+            b"-checked" => CheckedIntegerOperation::SubtractChecked,
+            b"-sat" => CheckedIntegerOperation::SubtractSaturating,
+            b"*" => CheckedIntegerOperation::MultiplyExact,
+            b"*defined" => CheckedIntegerOperation::MultiplyDefined,
+            b"*wrap" => CheckedIntegerOperation::MultiplyWrap,
+            b"*checked" => CheckedIntegerOperation::MultiplyChecked,
+            b"*sat" => CheckedIntegerOperation::MultiplySaturating,
+            b"/" => CheckedIntegerOperation::DivideExact,
+            b"/defined" => CheckedIntegerOperation::DivideDefined,
+            b"/checked" => CheckedIntegerOperation::DivideChecked,
+            b"%" => CheckedIntegerOperation::RemainderExact,
+            b"%defined" => CheckedIntegerOperation::RemainderDefined,
+            b"%checked" => CheckedIntegerOperation::RemainderChecked,
+            b"==" => CheckedIntegerOperation::Equal,
+            b"!=" => CheckedIntegerOperation::NotEqual,
+            b"<" => CheckedIntegerOperation::Less,
+            b"<=" => CheckedIntegerOperation::LessEqual,
+            b">" => CheckedIntegerOperation::Greater,
+            b">=" => CheckedIntegerOperation::GreaterEqual,
+            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+        })
+    }
+    /// The `borrow_expr` that is the complete written content of `expression`,
+    /// if any: the position [OWN-14] names for the returned reborrow.
+    ///
+    /// An infix expression is a fresh operation result rather than a written
+    /// borrow, so it answers `None` like any other non-borrow shape.
+    pub(super) fn complete_borrow_expression(
+        &self,
+        expression: NodeId,
+    ) -> Result<Option<NodeId>, CheckStop> {
+        let Some(child) = self.tree.sole_expression_child(expression)? else {
+            return Ok(None);
+        };
+        if self.tree.production(child)? != Production::Atom {
+            return Ok(None);
+        }
+        Ok(self.tree.first_child_with(child, Production::BorrowExpr)?)
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// [WIN-3] the final selected type's class judgment at a `set` target.
+    ///
+    /// Assigning over any owned place releases the old value when it is
+    /// affine and is a hard error when it is linear: a linear value has no
+    /// release, so the writer takes it out and consumes it first. v0.59's
+    /// copy-only demand and its region-free companion were [SET-2]'s and went
+    /// with `replace`.
+    fn check_mutation_target_class(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        ty: CheckedType,
+    ) -> Result<(), CheckStop> {
+        if matches!(
+            self.linearity_class(check_context, ty)?,
+            super::linearity::LinearityClass::Linear
+        ) {
+            return self.declarations.issue_node(
+                SemanticRule::Win3,
+                node,
+                SemanticIssueKind::LinearAssignmentTarget {
+                    target_type: self.checked_type_name(ty)?,
+                    mechanical_fix: WIN3_LINEAR_TARGET,
+                },
+            );
+        }
+        Ok(())
+    }
+    /// One value's exact semantic mode and type, as `own u64`, `&Counter`,
+    /// or `&[u8]`, using [GRAM-3]'s mode/type notation for diagnostics.
+    pub(in crate::semantic::check) fn checked_value_name(
+        &self,
+        mode: CheckedMode,
+        ty: CheckedType,
+    ) -> Result<String, CheckStop> {
+        // [TYPE-8, REF-4] `&[T]` is one reference kind written around its
+        // element type, not a reference to one element: what the checked
+        // value carries is the element type, so rendering the mode and the
+        // type apart would name `&T` where the source wrote the range.
+        if mode == CheckedMode::Range {
+            return Ok(format!("&[{}]", self.checked_type_name(ty)?));
+        }
+        let mode = Checker::checked_mode_name(mode)?;
+        let ty = self.checked_type_name(ty)?;
+        // [FORM-2] attaches `&` to what follows it, so the rendering must not
+        // insert a separator the written form does not have.
+        Ok(if mode.ends_with('&') {
+            format!("{mode}{ty}")
+        } else {
+            format!("{mode} {ty}")
+        })
+    }
+    pub(super) fn checked_type_name(&self, ty: CheckedType) -> Result<String, CheckStop> {
+        Ok(match ty {
+            CheckedType::Unit => "unit".to_owned(),
+            CheckedType::Bool => "Bool".to_owned(),
+            CheckedType::Integer(integer) => match integer {
+                IntegerType::I8 => "i8",
+                IntegerType::I16 => "i16",
+                IntegerType::I32 => "i32",
+                IntegerType::I64 => "i64",
+                IntegerType::U8 => "u8",
+                IntegerType::U16 => "u16",
+                IntegerType::U32 => "u32",
+                IntegerType::U64 => "u64",
+            }
+            .to_owned(),
+            CheckedType::Float(float) => match float {
+                FloatType::F32 => "f32",
+                FloatType::F64 => "f64",
+            }
+            .to_owned(),
+            // [FN-2] a type parameter is written by its own name, whatever
+            // its bound.
+            CheckedType::Generic(declaration)
+            | CheckedType::GenericInt(declaration)
+            | CheckedType::GenericFloat(declaration) => {
+                self.declarations.declaration_spelling(declaration)?
+            }
+            // An instance of a generic declaration writes its type and const
+            // arguments after the declared name [GRAM-3, FN-2], and a `Box`
+            // its content type [TYPE-9]; the interned nominal name keys the
+            // instance and is not a source spelling. [S20] a nominal's region
+            // arguments are components of its type name [TYPE-2] and lead
+            // that list, so the two sides of a [TYPE-5] mismatch between
+            // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
+            CheckedType::Nominal(id) => {
+                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
+                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
+                }
+                let written = match self.source_nominal_instance_entry(id)? {
+                    Some((template, substitution)) if substitution.len() > 0 => {
+                        match self.nominal_templates.get(template) {
+                            Some(template) => self
+                                .generic_argument_spellings(
+                                    &template.generic_parameters,
+                                    substitution,
+                                )?
+                                .map(|arguments| (template.name.clone(), arguments)),
+                            None => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let (name, mut arguments) = match written {
+                    Some(written) => written,
+                    None => (self.nominal(id)?.name.clone(), Vec::new()),
+                };
+                if let Some(axis) = self.nominal_region_axis(id)? {
+                    let regions = axis
+                        .iter()
+                        .map(|(_, actual)| self.declarations.region_spelling(*actual))
+                        .filter(|spelling| !spelling.is_empty());
+                    arguments = regions.chain(arguments).collect();
+                }
+                if arguments.is_empty() {
+                    name
+                } else {
+                    format!("{name}<{}>", arguments.join(", "))
+                }
+            }
+            // [TYPE-9]'s own spellings: the constant-capacity placement
+            // writes its capacity and the runtime-capacity one writes only
+            // its element.
+            CheckedType::Array { element, length } => {
+                let length = self.checked_const_name(length)?;
+                format!(
+                    "Array<{}, {length}>",
+                    self.checked_type_name(self.element_type(element)?)?
+                )
+            }
+            CheckedType::Buffer { element } => {
+                format!(
+                    "Array<{}>",
+                    self.checked_type_name(self.element_type(element)?)?
+                )
+            }
+            CheckedType::Window {
+                shape,
+                element,
+                capacity,
+            } => {
+                let element = self.checked_type_name(self.element_type(element)?)?;
+                let shape = shape.spelling();
+                match capacity {
+                    Some(capacity) => {
+                        let capacity = self.checked_const_name(capacity)?;
+                        format!("{shape}<{element}, {capacity}>")
+                    }
+                    None => format!("{shape}<{element}>"),
+                }
+            }
+        })
+    }
+    pub(super) fn checked_const_name(&self, value: CheckedConst) -> Result<String, CheckStop> {
+        Ok(match value {
+            CheckedConst::Value(value) => value.to_string(),
+            CheckedConst::Parameter(declaration) => {
+                self.declarations.declaration_spelling(declaration)?
+            }
+            CheckedConst::Derived(id) => {
+                let derived = self.derived_const(id)?;
+                format!(
+                    "{} {} {}",
+                    self.checked_const_name(derived.left)?,
+                    derived.operation.spelling(),
+                    self.checked_const_name(derived.right)?
+                )
+            }
+        })
+    }
+    /// One generic instance's written `targ` list [GRAM-3]: each parameter's
+    /// argument in declaration order, a type and a const in their canonical
+    /// spelling and a function argument as `fn` and the instance it names.
+    /// `None` when the substitution does not bind every parameter, which the
+    /// caller renders by the declared name alone.
+    fn generic_argument_spellings(
+        &self,
+        parameters: &[super::generics::GenericParameter],
+        substitution: &super::generics::GenericSubstitution,
+    ) -> Result<Option<Vec<String>>, CheckStop> {
+        let mut spellings = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            let key = parameter.key();
+            let Some((_, argument)) = substitution
+                .entries()
+                .iter()
+                .find(|(candidate, _)| *candidate == key)
+            else {
+                return Ok(None);
+            };
+            spellings.push(match *argument {
+                super::generics::GenericArgument::Type(ty) => self.checked_type_name(ty)?,
+                super::generics::GenericArgument::Const(value) => self.checked_const_name(value)?,
+                super::generics::GenericArgument::Function(function) => {
+                    format!("fn {}", self.function_argument_spelling(function)?)
+                }
+            });
+        }
+        Ok(Some(spellings))
+    }
+    /// The callee one function argument names [GRAM-2 `function_arg`]: the
+    /// instance it selects when one exists, and otherwise the declaration
+    /// or formal parameter it names.
+    fn function_argument_spelling(
+        &self,
+        function: super::behavior::FunctionArgument,
+    ) -> Result<String, CheckStop> {
+        if let Some(signature) = self
+            .function_argument_instance(function)
+            .ok()
+            .and_then(|instance| self.signatures.get(instance.0 as usize))
+        {
+            return self.render_function_instance(signature);
+        }
+        let declaration = match function {
+            super::behavior::FunctionArgument::Source { reference, .. } => {
+                self.function_reference(reference)?.declaration
+            }
+            super::behavior::FunctionArgument::Parameter(parameter) => match parameter {
+                super::generics::GenericParameterKey::Source(declaration)
+                | super::generics::GenericParameterKey::Member {
+                    member: declaration,
+                    ..
+                } => declaration,
+            },
+        };
+        self.declarations.declaration_spelling(declaration)
+    }
+    /// One function instance in the spelling a call writes to select it
+    /// [FN-2, GRAM-3]: the declared name, then `::` and the `targ` list of
+    /// its substitution. A nongeneric function is its name alone, and so is
+    /// an operand-directed [PRE-1] row, whose operand supplies its arguments
+    /// and whose call writes none [OP-10]. The instance's internal symbol
+    /// keys lowering and is not a source spelling.
+    pub(in crate::semantic::check) fn render_function_instance(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<String, CheckStop> {
+        let Some(template) = self
+            .templates_by_declaration
+            .get(&signature.declaration)
+            .and_then(|index| self.function_templates.get(*index))
+        else {
+            return Ok(signature.name.clone());
+        };
+        if template.generic_parameters.is_empty()
+            || signature.substitution.len() == 0
+            || self
+                .declarations
+                .operand_directed_row_index(template)?
+                .is_some()
+        {
+            return Ok(signature.name.clone());
+        }
+        Ok(
+            match self
+                .generic_argument_spellings(&template.generic_parameters, &signature.substitution)?
+            {
+                Some(arguments) => format!("{}::<{}>", signature.name, arguments.join(", ")),
+                None => signature.name.clone(),
+            },
+        )
+    }
+    /// Resolves a run of field-selection suffixes over one starting type.
+    /// Callers pass the suffix chain to walk — every suffix for a whole
+    /// place, or the chain before a subscript for that subscript's base. A
+    /// subscript suffix inside the walked run selects through a composite
+    /// element value, which this version does not implement.
+    pub(super) fn resolve_struct_path(
+        &self,
+        check_context: &CheckContext<'_>,
+        suffixes: &[NodeId],
+        mut ty: CheckedType,
+    ) -> Result<(Vec<u32>, CheckedType), CheckStop> {
+        let mut fields = Vec::new();
+        for &suffix in suffixes {
+            let member = self.elaborate_place_member(check_context, suffix, ty)?;
+            let places::PlaceMember::Field {
+                index,
+                ty: selected,
+                ..
+            } = member
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            fields.push(index);
+            ty = selected;
+        }
+        Ok((fields, ty))
+    }
+    fn check_generic_numeric_identity(
+        &self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        one: bool,
+    ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
+        let usage =
+            self.declarations
+                .use_at(check_context, node, LexicalUseRole::GenericNumericSuffix)?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::GenericType,
+        } = usage.target()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let ty = function
+            .substitution
+            .type_argument(declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let value = match ty {
+            CheckedType::Integer(ty) => CheckedValue::Integer {
+                ty,
+                bits: u64::from(one),
+            },
+            CheckedType::Float(FloatType::F32) => CheckedValue::Float {
+                ty: FloatType::F32,
+                bits: if one { 0x3f80_0000 } else { 0 },
+            },
+            CheckedType::Float(FloatType::F64) => CheckedValue::Float {
+                ty: FloatType::F64,
+                bits: if one { 0x3ff0_0000_0000_0000 } else { 0 },
+            },
+            CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
+                CheckedValue::NumericIdentity { ty, one }
+            }
+            _ => {
+                return self.declarations.issue_node(
+                    SemanticRule::Form5,
+                    node,
+                    SemanticIssueKind::type_mismatch(
+                        "an integer or float type, whose 0 and 1 this form names",
+                        self.checked_type_name(ty)?,
+                    ),
+                );
+            }
+        };
+        Ok(TypedExpression::owned(
+            CheckedExpression::Constant(value),
+            EffectSet::NONE,
+        ))
     }
 }

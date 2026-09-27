@@ -10,11 +10,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
-use crate::syntax::{FinalizedExtent, NodeId};
-use crate::{
-    CanonicalSyntaxUnit, ModuleId, ModuleRecord, Package, Production, SourceRole, SyntaxCoordinate,
-};
+use crate::syntax::NodeId;
+use crate::syntax::views::{SyntaxView, SyntaxViewFailure};
+use crate::{CanonicalSyntaxUnit, ModuleId, ModuleRecord, Package, SourceRole, SyntaxCoordinate};
 
 /// The logical path of a module program's graph record.
 pub const GRAPH_FILE_NAME: &str = "modules.wfg";
@@ -276,6 +274,12 @@ pub enum GraphCompilerFailure {
     InvalidGraphTree,
 }
 
+impl From<SyntaxViewFailure> for GraphCompilerFailure {
+    fn from(_: SyntaxViewFailure) -> Self {
+        Self::InvalidGraphTree
+    }
+}
+
 impl core::fmt::Display for GraphCompilerFailure {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("the canonical graph tree does not have the graph_file shape")
@@ -325,86 +329,32 @@ pub(crate) fn form_graph(
     package: Package,
     library: Option<&ModuleGraph>,
 ) -> Result<Result<ModuleGraph, GraphIssue>, GraphCompilerFailure> {
-    let topology = &unit.finalized.topology;
-    let classified = unit.classified_bundle();
-    let mut direct = vec![Vec::new(); topology.nodes.len()];
-    for (index, terminal) in topology.terminals.iter().enumerate() {
-        let owner = terminal
-            .owner
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?;
-        direct
-            .get_mut(owner.index())
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?
-            .push(index);
-    }
+    let view = SyntaxView::new(unit)?;
+    let graph = view.graph()?;
     let spelling = |terminal: usize| -> Result<String, GraphCompilerFailure> {
-        let token = classified
-            .tokens()
-            .get(terminal)
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?
-            .token();
-        let bytes = classified
-            .token_bytes(token)
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?;
-        std::str::from_utf8(bytes)
+        std::str::from_utf8(view.token_bytes(terminal)?)
             .map(str::to_owned)
             .map_err(|_| GraphCompilerFailure::InvalidGraphTree)
     };
-    let has = |terminal: usize, predicate: TerminalPredicate| {
-        classified
-            .tokens()
-            .get(terminal)
-            .is_some_and(|token| token.terminals().contains(predicate))
-    };
-    let coordinate = |node: NodeId| -> Result<SyntaxCoordinate, GraphCompilerFailure> {
-        let record = topology
-            .node(node)
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?;
-        let FinalizedExtent::Source { source, start, end } = record.extent else {
-            return Err(GraphCompilerFailure::InvalidGraphTree);
-        };
-        Ok(SyntaxCoordinate::new(source, start, end))
-    };
-    let children_with = |node: NodeId, production: Production| -> Vec<NodeId> {
-        topology
-            .node_children(node)
-            .unwrap_or(&[])
-            .iter()
-            .copied()
-            .filter(|child| {
-                topology
-                    .node(*child)
-                    .is_some_and(|record| record.production == production)
-            })
-            .collect()
-    };
+    let coordinate = |node| view.coordinate(node).map_err(GraphCompilerFailure::from);
     let written_path = |node: NodeId| -> Result<WrittenPath, GraphCompilerFailure> {
-        let mut components = Vec::new();
-        let mut standard = false;
-        for terminal in direct.get(node.index()).map_or(&[][..], Vec::as_slice) {
-            if has(*terminal, TerminalPredicate::Identifier) {
-                components.push(spelling(*terminal)?);
-            }
-            standard |= has(*terminal, TerminalPredicate::Fixed(FixedTerminal::Std));
-        }
+        let form = view.module_path(node)?;
         Ok(WrittenPath {
-            standard,
-            components,
+            standard: form.standard,
+            components: form
+                .components
+                .into_iter()
+                .map(spelling)
+                .collect::<Result<_, _>>()?,
             coordinate: coordinate(node)?,
         })
     };
 
-    let root = topology.root;
-    if topology.node(root).map(|record| record.production) != Some(Production::GraphFile) {
-        return Err(GraphCompilerFailure::InvalidGraphTree);
-    }
     let mut rows: Vec<(Vec<String>, Vec<Dependency>)> = Vec::new();
-    for row in children_with(root, Production::ModuleRow) {
-        let paths = children_with(row, Production::ModulePath);
-        let Some((module, dependencies)) = paths.split_first() else {
-            return Err(GraphCompilerFailure::InvalidGraphTree);
-        };
-        let module = written_path(*module)?;
+    for &row in &graph.rows {
+        let form = view.module_row(row)?;
+        let module = written_path(form.module)?;
+        let dependencies = &form.dependencies;
         if module.standard {
             return Ok(Err(GraphIssue {
                 coordinate: module.coordinate,
@@ -467,15 +417,11 @@ pub(crate) fn form_graph(
                     .iter()
                     .position(|(registered, _)| *registered == dependency.components)
                 else {
-                    let later = children_with(root, Production::ModuleRow)
-                        .into_iter()
-                        .filter_map(|later| {
-                            children_with(later, Production::ModulePath)
-                                .first()
-                                .copied()
-                        })
-                        .map(written_path)
-                        .collect::<Result<Vec<_>, _>>()?
+                    let later = graph
+                        .rows
+                        .iter()
+                        .map(|&later| written_path(view.module_row(later)?.module))
+                        .collect::<Result<Vec<_>, GraphCompilerFailure>>()?
                         .iter()
                         .any(|registered| {
                             !registered.standard && registered.components == dependency.components
@@ -534,21 +480,11 @@ pub(crate) fn form_graph(
     }
 
     let mut entries: Vec<GraphEntry> = Vec::new();
-    for entry in children_with(root, Production::EntryDecl) {
-        let terminals = direct.get(entry.index()).map_or(&[][..], Vec::as_slice);
-        let name_terminal = terminals
-            .iter()
-            .copied()
-            .find(|terminal| has(*terminal, TerminalPredicate::Identifier))
-            .ok_or(GraphCompilerFailure::InvalidGraphTree)?;
-        let name = spelling(name_terminal)?;
-        let no_heap = terminals
-            .iter()
-            .any(|terminal| has(*terminal, TerminalPredicate::Fixed(FixedTerminal::NoHeap)));
-        let [target] = children_with(entry, Production::ModulePath)[..] else {
-            return Err(GraphCompilerFailure::InvalidGraphTree);
-        };
-        let target = written_path(target)?;
+    for entry in graph.entries {
+        let form = view.graph_entry(entry)?;
+        let name = spelling(form.name)?;
+        let no_heap = form.no_heap;
+        let target = written_path(form.target)?;
         if target.standard {
             return Ok(Err(GraphIssue {
                 coordinate: target.coordinate,

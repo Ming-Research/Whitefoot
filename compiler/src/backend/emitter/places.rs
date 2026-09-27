@@ -274,11 +274,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let field_address =
                     self.aggregate_field_pointer(ty, &destination, *field as usize)?;
                 let field_type = self.value_type(*value).ok_or(BackendFailure::InvalidIr)?;
-                writeln!(
-                    self.output,
-                    "  store {} {replacement}, ptr {field_address}",
-                    llvm_type(self.program, field_type)?
-                )
+                {
+                    let emitted_type_0 = self.output.type_name(self.program, field_type)?;
+                    writeln!(
+                        self.output,
+                        "  store {} {replacement}, ptr {field_address}",
+                        emitted_type_0
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             _ => return Ok(false),
@@ -294,11 +297,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         fields: Vec<(usize, IrValueId)>,
     ) -> Result<(), BackendFailure> {
         let destination = self.value_place(result)?;
-        writeln!(
-            self.output,
-            "  store {} zeroinitializer, ptr {destination}",
-            llvm_type(self.program, ty)?
-        )
+        {
+            let emitted_type_0 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  store {} zeroinitializer, ptr {destination}",
+                emitted_type_0
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         if let Some(tag) = tag {
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
@@ -333,11 +339,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.emit_drops(drops)?;
         for (parameter, ty, operand) in transfers {
             let destination = self.value_place(parameter)?;
-            writeln!(
-                self.output,
-                "  store {} {operand}, ptr {destination}",
-                llvm_type(self.program, ty)?,
-            )
+            {
+                let emitted_type_0 = self.output.type_name(self.program, ty)?;
+                writeln!(
+                    self.output,
+                    "  store {} {operand}, ptr {destination}",
+                    emitted_type_0
+                )
+            }
             .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(())
@@ -448,13 +457,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let pointer = self.next_temporary()?;
-                writeln!(
-                    self.output,
-                    "  %{pointer} = getelementptr inbounds {}, ptr {}, i64 0, i64 {}",
-                    llvm_type(self.program, base.ty())?,
-                    self.value_name(address),
-                    self.element_address_index(referent.ty(), &self.value_name(*offset))?
-                )
+                {
+                    let emitted_type_0 = self.output.type_name(self.program, base.ty())?;
+                    writeln!(
+                        self.output,
+                        "  %{pointer} = getelementptr inbounds {}, ptr {}, i64 0, i64 {}",
+                        emitted_type_0,
+                        self.value_name(address),
+                        self.element_address_index(referent.ty(), &self.value_name(*offset))?
+                    )
+                }
                 .map_err(|_| BackendFailure::TextEmission)?;
                 format!("%{pointer}")
             }
@@ -521,11 +533,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let temporary = self.next_temporary()?;
         let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
         let address = self.value_place(value)?;
-        writeln!(
-            self.output,
-            "  %{temporary} = load {}, ptr {address}",
-            llvm_type(self.program, ty)?,
-        )
+        {
+            let emitted_type_0 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  %{temporary} = load {}, ptr {address}",
+                emitted_type_0
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(format!("%{temporary}"))
     }
@@ -553,7 +568,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
-        let llvm = llvm_type(self.program, ty)?;
+        let llvm = self.output.type_name(self.program, ty)?;
         // Keep the checked snapshot and its ordering, but do not expand an
         // aggregate into SSA fields merely to copy it. The target's allocated
         // type size includes representation padding and is not the source
@@ -572,6 +587,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
             "memmove"
         };
+        self.output.symbol(format!("llvm.{operation}.p0.p0.i64"));
         writeln!(
             self.output,
             "  call void @llvm.{operation}.p0.p0.i64(ptr {destination}, ptr {source}, i64 ptrtoint (ptr getelementptr ({llvm}, ptr null, i32 1) to i64), i1 false)"
@@ -589,12 +605,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let source = self.value_place(value)?;
             return self.copy_storage(ty, &source, destination);
         }
-        writeln!(
-            self.output,
-            "  store {} {}, ptr {destination}",
-            llvm_type(self.program, ty)?,
-            self.value_name(value),
-        )
+        {
+            let emitted_type_0 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  store {} {}, ptr {destination}",
+                emitted_type_0,
+                self.value_name(value)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -604,12 +623,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let ty = self.value_type(result).ok_or(BackendFailure::InvalidIr)?;
         let destination = self.value_place(result)?;
-        writeln!(
-            self.output,
-            "  store {} {}, ptr {destination}",
-            llvm_type(self.program, ty)?,
-            value_name(result),
-        )
+        {
+            let emitted_type_0 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  store {} {}, ptr {destination}",
+                emitted_type_0,
+                value_name(result)
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -620,11 +642,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         field: usize,
     ) -> Result<String, BackendFailure> {
         let pointer = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{pointer} = getelementptr inbounds {}, ptr {address}, i32 0, i32 {field}",
-            llvm_type(self.program, ty)?,
-        )
+        {
+            let emitted_type_0 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  %{pointer} = getelementptr inbounds {}, ptr {address}, i32 0, i32 {field}",
+                emitted_type_0
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(format!("%{pointer}"))
     }
@@ -639,12 +664,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let destination = self.value_place(result)?;
             return self.copy_storage(ty, address, &destination);
         }
-        writeln!(
-            self.output,
-            "  {} = load {}, ptr {address}",
-            value_name(result),
-            llvm_type(self.program, ty)?,
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, ty)?;
+            writeln!(
+                self.output,
+                "  {} = load {}, ptr {address}",
+                value_name(result),
+                emitted_type_1
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 }

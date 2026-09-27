@@ -710,7 +710,7 @@ fn main() -> status: std::process::ExitStatus pure {
     with_checked(source, |checked| {
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("accepted call inventory must close");
-        for function in &checked.data.functions {
+        for function in checked.data.executable_functions() {
             let variants = plan
                 .variants
                 .iter()
@@ -718,7 +718,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .count();
             assert_eq!(
                 variants, 1,
-                "{}: one heap leaves one release environment, and every source \
+                "{}: one heap leaves one release environment, and every ordinary \
                  definition is still emitted",
                 function.name
             );
@@ -732,10 +732,13 @@ fn main() -> status: std::process::ExitStatus pure {
                 "every call names a variant of this inventory"
             );
         }
-        assert!(
+        assert_eq!(
             plan.variants
-                .windows(2)
-                .all(|pair| pair[0].source.0 <= pair[1].source.0)
+                .iter()
+                .map(|variant| variant.source)
+                .collect::<Vec<_>>(),
+            checked.data.executable_functions,
+            "physical order follows ordinary discovery order"
         );
     });
 }

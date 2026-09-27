@@ -1429,26 +1429,19 @@ fn classify_projection_names(
     if subscript {
         return add_single(classified, owner, names, index_kind, roles, counts);
     }
-    match names {
-        [field] if name_predicate(classified, *field) == Some(TerminalPredicate::Identifier) => {
-            add_complete(classified, owner, *field, field_kind, roles, counts)
-        }
-        [variant, field]
-            if name_predicate(classified, *variant) == Some(TerminalPredicate::TypeIdentifier)
-                && name_predicate(classified, *field) == Some(TerminalPredicate::Identifier) =>
-        {
-            add_complete(
-                classified,
-                owner,
-                *variant,
-                RawRoleKind::DeferredUse(DeferredUseRole::PayloadVariant),
-                roles,
-                counts,
-            )?;
-            add_complete(classified, owner, *field, field_kind, roles, counts)
-        }
-        _ => Err(ResolutionCompilerFailure::InvalidRoleShape),
+    let member = crate::syntax::views::MemberForm::read(classified, names)
+        .map_err(|_| ResolutionCompilerFailure::InvalidRoleShape)?;
+    if let Some(variant) = member.variant {
+        add_complete(
+            classified,
+            owner,
+            variant,
+            RawRoleKind::DeferredUse(DeferredUseRole::PayloadVariant),
+            roles,
+            counts,
+        )?;
     }
+    add_complete(classified, owner, member.field, field_kind, roles, counts)
 }
 
 fn add_complete(

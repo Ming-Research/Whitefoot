@@ -1,7 +1,7 @@
 # Index surface settlement — v0.22 micro-batch candidate
 
-Status: CANDIDATE, DRAFT (2026-08-07; owner ruling "批" of 2026-08-07
-applied — the adversarial review's v0.22 section at
+Status: CANDIDATE, DRAFT (2026-08-07; owner ruling "approved" (translated
+from Chinese) of 2026-08-07 applied — the adversarial review's v0.22 section at
 `research/investigations/obligation-discharge/CANDIDATE-REVIEW.md`
 (186bde5) is applied in full: must-fix V1/O3, editorial V4–V6, the O1–O7
 recommendations, and the owner-approved residue strike R1).
@@ -428,8 +428,8 @@ indexing update likewise.
 
 ## 7. Ruled and open list
 
-All items are ruled (owner "批", 2026-08-07, applying the adversarial
-review at 186bde5):
+All items are ruled (owner "approved", translated from Chinese, 2026-08-07,
+applying the adversarial review at 186bde5):
 
 - R1 — the three items themselves: index_get removal (option a), subscript
   respelling (SWEEP C2), element-type deletion (SWEEP A2).

@@ -420,9 +420,9 @@ fn main() -> status: std::process::ExitStatus pure {
             // executable code allocates and frees it.
             let cells = checked
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
-                .take(checked.data.executable_nominal_count)
+                .map(|id| &checked.data.nominals[id.0 as usize])
                 .filter(|nominal| {
                     matches!(
                         nominal.kind,

@@ -2,9 +2,11 @@
 //! instance is materialized. Function-target flow is a finite set closure;
 //! it never expands a type expression or evaluates a const argument.
 
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::TypeContext;
 use std::collections::{HashMap, VecDeque};
 
-use super::{CheckStop, Checker, GenericParameter, GenericParameterKey};
+use super::{CheckStop, GenericParameter, GenericParameterKey};
 use crate::syntax::NodeId;
 use crate::{
     DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production, ResolvedTarget,
@@ -41,25 +43,53 @@ struct Dependency {
     unchanged: bool,
 }
 
-impl<'unit> Checker<'unit> {
+fn dependency_path(start: usize, finish: usize, edges: &[Vec<Dependency>]) -> Option<Vec<usize>> {
+    let mut previous = vec![None; edges.len()];
+    let mut seen = vec![false; edges.len()];
+    let mut pending = VecDeque::from([start]);
+    seen[start] = true;
+    while let Some(node) = pending.pop_front() {
+        if node == finish {
+            let mut path = vec![node];
+            let mut cursor = node;
+            while let Some(parent) = previous[cursor] {
+                path.push(parent);
+                cursor = parent;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        for edge in &edges[node] {
+            if !seen[edge.target] {
+                seen[edge.target] = true;
+                previous[edge.target] = Some(node);
+                pending.push_back(edge.target);
+            }
+        }
+    }
+    None
+}
+
+impl<'unit> TypeContext<'unit> {
     pub(in crate::semantic::check) fn reject_instantiation_cycles(
         &self,
+        check_context: &CheckContext<'_>,
         items: &[NodeId],
     ) -> Result<(), CheckStop> {
         let mut templates = Vec::new();
         for node in items {
-            let role = match self.tree.production(*node)? {
+            let role = match self.declarations.tree.production(*node)? {
                 Production::FnDecl | Production::FnSig => DeclarationRole::Function,
                 Production::StructDecl => DeclarationRole::Struct,
                 Production::EnumDecl => DeclarationRole::Enum,
                 _ => continue,
             };
-            let declaration = self.declaration_at(*node, role)?;
+            let declaration = self.declarations.declaration_at(*node, role)?;
             templates.push(Template {
                 node: *node,
                 declaration: declaration.id(),
                 name: declaration.spelling().into(),
-                parameters: self.finite_parameters(*node)?,
+                parameters: self.finite_parameters(check_context, *node)?,
             });
         }
         let by_declaration = templates
@@ -84,7 +114,7 @@ impl<'unit> Checker<'unit> {
 
         // Every explicit use supplies an instantiation edge, including a
         // function mentioned only as an argument or a type in a signature.
-        for usage in self.resolved.lexical_uses() {
+        for usage in self.declarations.resolved.lexical_uses() {
             let ResolvedTarget::Source { declaration, class } = usage.target() else {
                 continue;
             };
@@ -98,6 +128,7 @@ impl<'unit> Checker<'unit> {
                 continue;
             }
             let record = self
+                .declarations
                 .resolved
                 .declarations()
                 .iter()
@@ -108,34 +139,42 @@ impl<'unit> Checker<'unit> {
                 .copied()
                 .or_else(|| {
                     templates.iter().position(|template| {
-                        self.tree.path(template.node).is_ok_and(|path| {
-                            record
-                                .origin()
-                                .node()
-                                .components()
-                                .starts_with(path.components())
-                        })
+                        self.declarations
+                            .tree
+                            .path(template.node)
+                            .is_ok_and(|path| {
+                                record
+                                    .origin()
+                                    .node()
+                                    .components()
+                                    .starts_with(path.components())
+                            })
                     })
                 })
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let mut application = self
+                .declarations
                 .tree
                 .node_with_path(usage.origin().node())
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if self.tree.production(application)? == Production::Callee {
+            if self.declarations.tree.production(application)? == Production::Callee {
                 application = self
+                    .declarations
                     .tree
                     .parent(application)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             }
             let caller = templates.iter().position(|template| {
-                self.tree.path(template.node).is_ok_and(|path| {
-                    usage
-                        .origin()
-                        .node()
-                        .components()
-                        .starts_with(path.components())
-                })
+                self.declarations
+                    .tree
+                    .path(template.node)
+                    .is_ok_and(|path| {
+                        usage
+                            .origin()
+                            .node()
+                            .components()
+                            .starts_with(path.components())
+                    })
             });
             let mut pending = vec![(target, application)];
             let mut seen = Vec::new();
@@ -144,7 +183,8 @@ impl<'unit> Checker<'unit> {
                     continue;
                 }
                 seen.push((target, application));
-                let arguments = self.finite_arguments(application, &mut Vec::new())?;
+                let arguments =
+                    self.finite_arguments(check_context, application, &mut Vec::new())?;
                 if let Some(caller) = caller {
                     let unchanged = arguments.len() == templates[caller].parameters.len()
                         && arguments.len() == templates[target].parameters.len()
@@ -217,10 +257,11 @@ impl<'unit> Checker<'unit> {
         }
         for (caller, template) in templates.iter().enumerate() {
             for call in self
+                .declarations
                 .tree
                 .descendants_with(template.node, Production::Call)?
             {
-                if let Some(key) = self.behavior_call_key(call)? {
+                if let Some(key) = self.behavior_call_key(check_context, call)? {
                     let index = *key_indices
                         .get(&key)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
@@ -250,7 +291,7 @@ impl<'unit> Checker<'unit> {
                 if let Some(back) = dependency_path(edge.target, caller, &edges) {
                     let mut cycle = vec![templates[caller].name.clone()];
                     cycle.extend(back.into_iter().map(|index| templates[index].name.clone()));
-                    return self.issue_node(SemanticRule::Fn6, edge.node, SemanticIssueKind::PolymorphicRecursion {
+                    return self.declarations.issue_node(SemanticRule::Fn6, edge.node, SemanticIssueKind::PolymorphicRecursion {
                         cycle: cycle.join(" -> "),
                         mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
                     });
@@ -259,48 +300,65 @@ impl<'unit> Checker<'unit> {
         }
         Ok(())
     }
-
     /// Finiteness uses only written kinds and identities. Validating an
     /// unrelated const parameter's integer domain here would preempt FN-9's
     /// selector-admission ordering. Ordinary template formation still checks
     /// every bound and domain before a program can be accepted.
     fn finite_parameters(
         &self,
+        check_context: &CheckContext<'_>,
         declaration: NodeId,
     ) -> Result<Vec<(GenericParameterKey, ParameterKind)>, CheckStop> {
         let Some(generics) = self
+            .declarations
             .tree
             .first_child_with(declaration, Production::Generics)?
         else {
             return Ok(Vec::new());
         };
         let mut parameters = Vec::new();
-        for node in self.tree.children_with(generics, Production::Gparam)? {
-            if let Some(signature) = self.tree.first_child_with(node, Production::FnSig)? {
+        for node in self
+            .declarations
+            .tree
+            .children_with(generics, Production::Gparam)?
+        {
+            if let Some(signature) = self
+                .declarations
+                .tree
+                .first_child_with(node, Production::FnSig)?
+            {
                 parameters.push((
                     GenericParameterKey::Source(
-                        self.declaration_at(signature, DeclarationRole::FunctionParameter)?
+                        self.declarations
+                            .declaration_at(signature, DeclarationRole::FunctionParameter)?
                             .id(),
                     ),
                     ParameterKind::Function,
                 ));
-            } else if let Some(application) = self.tree.group_application(node)? {
-                parameters.extend(self.expand_formal_parameters(application)?.iter().map(
-                    |parameter| {
-                        (
-                            parameter.key(),
-                            match parameter {
-                                GenericParameter::Type { .. } => ParameterKind::Type,
-                                GenericParameter::Const { .. } => ParameterKind::Const,
-                                GenericParameter::Function { .. } => ParameterKind::Function,
-                            },
-                        )
-                    },
-                ));
-            } else if self.has_fixed(node, crate::FixedTerminal::Const)? {
+            } else if let Some(application) = self.declarations.tree.group_application(node)? {
+                parameters.extend(
+                    self.expand_formal_parameters(check_context, application)?
+                        .iter()
+                        .map(|parameter| {
+                            (
+                                parameter.key(),
+                                match parameter {
+                                    GenericParameter::Type { .. } => ParameterKind::Type,
+                                    GenericParameter::Const { .. } => ParameterKind::Const,
+                                    GenericParameter::Function { .. } => ParameterKind::Function,
+                                },
+                            )
+                        }),
+                );
+            } else if self
+                .declarations
+                .tree
+                .has_fixed(node, crate::FixedTerminal::Const)?
+            {
                 parameters.push((
                     GenericParameterKey::Source(
-                        self.declaration_at(node, DeclarationRole::ConstGeneric)?
+                        self.declarations
+                            .declaration_at(node, DeclarationRole::ConstGeneric)?
                             .id(),
                     ),
                     ParameterKind::Const,
@@ -308,7 +366,8 @@ impl<'unit> Checker<'unit> {
             } else {
                 parameters.push((
                     GenericParameterKey::Source(
-                        self.declaration_at(node, DeclarationRole::GenericType)?
+                        self.declarations
+                            .declaration_at(node, DeclarationRole::GenericType)?
                             .id(),
                     ),
                     ParameterKind::Type,
@@ -317,22 +376,34 @@ impl<'unit> Checker<'unit> {
         }
         Ok(parameters)
     }
-
     fn finite_arguments(
         &self,
+        check_context: &CheckContext<'_>,
         application: NodeId,
         visiting: &mut Vec<DeclarationId>,
     ) -> Result<Vec<Argument>, CheckStop> {
         let mut result = Vec::new();
-        if let Some(list) = self.tree.argument_list(application)? {
-            for argument in self.tree.children_with(list, Production::Targ)? {
-                if let Some(ty) = self.tree.first_child_with(argument, Production::Type)? {
-                    if self.tree.names_nominal(ty)? {
-                        match self.use_at(ty, LexicalUseRole::Type)?.target() {
+        if let Some(list) = self.declarations.tree.argument_list(application)? {
+            for argument in self
+                .declarations
+                .tree
+                .children_with(list, Production::Targ)?
+            {
+                if let Some(ty) = self
+                    .declarations
+                    .tree
+                    .first_child_with(argument, Production::Type)?
+                {
+                    if self.declarations.tree.names_nominal(ty)? {
+                        match self
+                            .declarations
+                            .use_at(check_context, ty, LexicalUseRole::Type)?
+                            .target()
+                        {
                             ResolvedTarget::Source {
                                 declaration,
                                 class: DeclarationClass::GenericType,
-                            } if self.tree.children(ty)?.is_empty() => {
+                            } if self.declarations.tree.children(ty)?.is_empty() => {
                                 result.push(Argument::Forward(GenericParameterKey::Source(
                                     declaration,
                                 )));
@@ -342,9 +413,10 @@ impl<'unit> Checker<'unit> {
                                 declaration,
                                 class: DeclarationClass::Interface,
                             } => {
-                                let selected = self.enclosing_group(ty, declaration)?;
+                                let selected =
+                                    self.enclosing_group(check_context, ty, declaration)?;
                                 result.extend(
-                                    self.expand_formal_parameters(selected)?
+                                    self.expand_formal_parameters(check_context, selected)?
                                         .iter()
                                         .map(|parameter| Argument::Forward(parameter.key())),
                                 );
@@ -357,10 +429,13 @@ impl<'unit> Checker<'unit> {
                                 if visiting.contains(&declaration) {
                                     let mut names = visiting
                                         .iter()
-                                        .map(|declaration| self.declaration_spelling(*declaration))
+                                        .map(|declaration| {
+                                            self.declarations.declaration_spelling(*declaration)
+                                        })
                                         .collect::<Result<Vec<_>, _>>()?;
-                                    names.push(self.declaration_spelling(declaration)?);
-                                    return self.behavior_mismatch(
+                                    names
+                                        .push(self.declarations.declaration_spelling(declaration)?);
+                                    return self.declarations.behavior_mismatch(
                                         SemanticRule::Fn3,
                                         ty,
                                         &format!(
@@ -375,9 +450,15 @@ impl<'unit> Checker<'unit> {
                                     .actuals
                                     .get(&declaration)
                                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                                result.extend(self.finite_arguments(group.application, visiting)?);
+                                result.extend(self.finite_arguments(
+                                    check_context,
+                                    group.application,
+                                    visiting,
+                                )?);
                                 for binding in &group.bindings {
-                                    result.push(self.finite_function_argument(*binding)?);
+                                    result.push(
+                                        self.finite_function_argument(check_context, *binding)?,
+                                    );
                                 }
                                 visiting.pop();
                                 continue;
@@ -386,55 +467,63 @@ impl<'unit> Checker<'unit> {
                         }
                     }
                     result.push(Argument::Constructed);
-                } else if let Some(value) =
-                    self.tree.first_child_with(argument, Production::Const)?
+                } else if let Some(value) = self
+                    .declarations
+                    .tree
+                    .first_child_with(argument, Production::Const)?
                 {
-                    if self
-                        .tree
-                        .topology()
-                        .node(value)
-                        .is_some_and(|node| node.terminal_count == 1)
-                        && !self.tree.direct_identifiers(value)?.is_empty()
+                    if self.declarations.tree.is_single_token(value)
+                        && !self.declarations.tree.direct_identifiers(value)?.is_empty()
                         && let ResolvedTarget::Source {
                             declaration,
                             class: DeclarationClass::ConstGeneric,
-                        } = self.use_at(value, LexicalUseRole::Const)?.target()
+                        } = self
+                            .declarations
+                            .use_at(check_context, value, LexicalUseRole::Const)?
+                            .target()
                     {
                         result.push(Argument::Forward(GenericParameterKey::Source(declaration)));
                         continue;
                     }
                     result.push(Argument::Constructed);
                 } else if let Some(function) = self
+                    .declarations
                     .tree
                     .first_child_with(argument, Production::FunctionArg)?
                 {
-                    result.push(self.finite_function_argument(function)?);
+                    result.push(self.finite_function_argument(check_context, function)?);
                 }
                 // Region arguments are alpha-bound, not instantiation keys.
             }
         }
         Ok(result)
     }
-
-    fn finite_function_argument(&self, node: NodeId) -> Result<Argument, CheckStop> {
+    fn finite_function_argument(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+    ) -> Result<Argument, CheckStop> {
         let mut node = node;
         loop {
             let callee = self
+                .declarations
                 .tree
                 .first_child_with(node, Production::Callee)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            if let Some(application) = self.tree.callee_application(callee)? {
-                if self.tree.argument_list(node)?.is_some() {
-                    return self.behavior_mismatch(
+            if let Some(application) = self.declarations.tree.callee_application(callee)? {
+                if self.declarations.tree.argument_list(node)?.is_some() {
+                    return self.declarations.behavior_mismatch(
                         SemanticRule::Fn2,
                         node,
                         "a group member has an already instantiated signature",
                     );
                 }
                 let target = self
-                    .use_at(application, LexicalUseRole::FormalGroup)?
+                    .declarations
+                    .use_at(check_context, application, LexicalUseRole::FormalGroup)?
                     .target();
                 let name = self
+                    .declarations
                     .deferred_use_at(callee, crate::DeferredUseRole::FunctionMember)?
                     .spelling();
                 if let ResolvedTarget::Source {
@@ -457,7 +546,7 @@ impl<'unit> Checker<'unit> {
                         .iter()
                         .position(|(_, _, member)| member == name)
                     else {
-                        return self.behavior_mismatch(
+                        return self.declarations.behavior_mismatch(
                             SemanticRule::Fn3,
                             callee,
                             "the group declares the selected member",
@@ -477,7 +566,7 @@ impl<'unit> Checker<'unit> {
                 else {
                     return Ok(Argument::Constructed);
                 };
-                let selected = self.enclosing_group(application, declaration)?;
+                let selected = self.enclosing_group(check_context, application, declaration)?;
                 let group = self
                     .behavior
                     .formals
@@ -495,7 +584,8 @@ impl<'unit> Checker<'unit> {
             }
             return Ok(
                 match self
-                    .use_at(callee, LexicalUseRole::FunctionBinding)?
+                    .declarations
+                    .use_at(check_context, callee, LexicalUseRole::FunctionBinding)?
                     .target()
                 {
                     ResolvedTarget::Source {
@@ -508,7 +598,7 @@ impl<'unit> Checker<'unit> {
                     ResolvedTarget::Source {
                         declaration,
                         class: DeclarationClass::FunctionParameter,
-                    } if self.tree.argument_list(node)?.is_none() => {
+                    } if self.declarations.tree.argument_list(node)?.is_none() => {
                         Argument::Forward(GenericParameterKey::Source(declaration))
                     }
                     _ => Argument::Constructed,
@@ -516,31 +606,4 @@ impl<'unit> Checker<'unit> {
             );
         }
     }
-}
-
-fn dependency_path(start: usize, finish: usize, edges: &[Vec<Dependency>]) -> Option<Vec<usize>> {
-    let mut previous = vec![None; edges.len()];
-    let mut seen = vec![false; edges.len()];
-    let mut pending = VecDeque::from([start]);
-    seen[start] = true;
-    while let Some(node) = pending.pop_front() {
-        if node == finish {
-            let mut path = vec![node];
-            let mut cursor = node;
-            while let Some(parent) = previous[cursor] {
-                path.push(parent);
-                cursor = parent;
-            }
-            path.reverse();
-            return Some(path);
-        }
-        for edge in &edges[node] {
-            if !seen[edge.target] {
-                seen[edge.target] = true;
-                previous[edge.target] = Some(node);
-                pending.push_back(edge.target);
-            }
-        }
-    }
-    None
 }

@@ -58,9 +58,9 @@ impl PhysicalFunctions {
         }
         // With roots, the functions they reach through calls; without, every
         // checked definition.
-        let mut emitted = vec![roots.is_none(); program.functions.len()];
+        let mut emitted = vec![false; program.functions.len()];
         let mut pending = Vec::new();
-        for root in roots.unwrap_or_default() {
+        for root in roots.unwrap_or(&program.executable_functions) {
             let slot = emitted
                 .get_mut(root.0 as usize)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;
@@ -82,22 +82,31 @@ impl PhysicalFunctions {
         // functions, so ordinals follow source order.
         let mut ordinals = vec![None; program.functions.len()];
         let mut next = 0u32;
-        for (index, emit) in emitted.iter().enumerate() {
-            if *emit {
+        for source in &program.executable_functions {
+            let index = source.0 as usize;
+            if emitted[index] {
                 ordinals[index] = Some(next);
                 next = next
                     .checked_add(1)
                     .ok_or(LoweringFailure::CounterOverflow)?;
             }
         }
-        let variants = program
-            .functions
+        if emitted
             .iter()
-            .zip(&dependencies)
-            .enumerate()
-            .filter(|(index, _)| emitted[*index])
-            .map(|(index, (function, dependency))| {
-                if function.id.0 as usize != index {
+            .zip(&ordinals)
+            .any(|(emitted, ordinal)| *emitted && ordinal.is_none())
+        {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let variants = program
+            .executable_functions
+            .iter()
+            .filter(|source| emitted[source.0 as usize])
+            .map(|source| {
+                let index = source.0 as usize;
+                let function = &program.functions[index];
+                let dependency = &dependencies[index];
+                if function.id != *source {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
                 let calls = dependency

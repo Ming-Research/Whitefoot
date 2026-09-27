@@ -52,7 +52,7 @@ pub use backend::{
     SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SCHED_PRIM_HOST_SOURCE, SCHED_PRIM_WINDOWS_SOURCE,
     WINDOWS_RUNTIME_HEADER, WINDOWS_RUNTIME_SOURCE, module_requires_parallel_runtime, stack_ledger,
 };
-pub use backend::{FragmentGranularity, SplitFailure, split_module};
+pub use backend::{FragmentGranularity, LlvmModule, SplitFailure, split_module};
 pub use driver::*;
 pub use graph::*;
 /// Where one call into an actualized recursive component starts counting the

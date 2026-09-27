@@ -58,7 +58,7 @@ branch. [AGENTS.md](../AGENTS.md#branch-and-main-boundary) holds the rules.
 
 | Check | Command | Locally | In CI | Covers |
 |---|---|---|---|---|
-| Static group | `make static` | Any time, before every push | `gate.yml`, every push | Repository invariants, compiler sources over 4,000 lines named in `docs/todo.md`'s Code structure section, specification archives, prose integrity, guidance references and this map's inventory, design-tree form |
+| Static group | `make static` | Any time, before every push | `gate.yml`, every push | Repository invariants, compiler sources over 4,000 lines named in `docs/todo.md`'s Code structure section, specification archives, the README and its Chinese translation changed together, prose integrity, guidance references and this map's inventory, design-tree form |
 | Full gate | `make check` | On the revision to merge | `gate.yml`, Linux and macOS | The static group plus the compiler build, tests, conformance adapter and runtime (`make check-groups` lists the groups) |
 | Design readiness | `make design-ready` | Before marking ready | `design-readiness.yml`, ready PRs and `main` | No pending amendment; tree changes logged |
 | Platform I/O | — | — | `io-hosts.yml`, every push | Linux io_uring and Windows IOCP runtime |
@@ -66,6 +66,32 @@ branch. [AGENTS.md](../AGENTS.md#branch-and-main-boundary) holds the rules.
 | Benchmarks | — | — | `io-bench.yml`, `compute-bench.yml`, on request | Experiments, never a gate |
 | Review scope | `make review-scope` | At completion | — | What a review covers, and at what depth |
 | Archive hooks | `make install-hooks` | At commit, optional | — | Released specification archives unchanged |
+
+Focused commands for a compiler change, before `make static`:
+
+```sh
+make -C compiler format lint
+make -C compiler build        # optimized compiler only
+make -C compiler test-build   # construct test executables without running cases
+perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib <filter>
+```
+
+- `make check` also needs `python3`, LLD on Linux (`ld.lld`) and the `time`
+  utility.
+- Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
+  as the `make` targets already do. It holds one host-wide lock across
+  worktrees, prints wall, user and system time with a report every 30
+  seconds, and stops a command after 30 minutes unless
+  `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. After an
+  uncatchable stop, inspect the recorded PID and command before removing a
+  stale lock.
+- The `gate` Cargo profile builds the Rust compiler with optimization, debug
+  assertions and overflow checks; it does not change how WF source is
+  compiled. Local builds of it are incremental; CI sets
+  `CARGO_INCREMENTAL=0`.
+- For a slow compiler test, set `WHITEFOOT_TEST_TIMINGS` to a scratch TSV
+  path to record the phases of the shared test helpers; see the
+  [build and test investigation](../research/investigations/test-economy/build-and-test.md).
 
 ## Document roles
 
@@ -77,6 +103,7 @@ or self-description merely to satisfy this table.
 | Document | Content that serves its reader | Content that does not belong |
 |---|---|---|
 | Root `README.md` | Project introduction, getting started, navigation | Detailed compiler inventory, a second specification, task history |
+| Root `README.zh-CN.md` | The content of `README.md` in Chinese, changed together with it | Anything `README.md` does not say |
 | `AGENTS.md` | Agent entry: goal and priorities, authority, the approval and merge rules, integrity and hygiene rules, and pointers to this map, skills and detailed guidance | Research narration, a procedure a skill owns, a second detailed checklist or compiler inventory |
 | `docs/workflow.md` | The development loop, decision rights, checks, document roles and process health signals, each pointing to its owner | A rule, procedure or check stated in full, which its owner holds |
 | `docs/skills/`, `design/skill/` (linked from `.agents/skills/` and `.claude/skills/`) | One recurring procedure per skill: its trigger, steps, commands and formats, loaded when the task matches its description | Project rules that `AGENTS.md` owns, language semantics, a copy of the review checklist |

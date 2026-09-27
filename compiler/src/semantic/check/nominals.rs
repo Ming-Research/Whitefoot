@@ -1,3 +1,5 @@
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::TypeContext;
 use std::collections::HashSet;
 
 use crate::{BuiltinPreludeId, SemanticCompilerFailure, UnsupportedSemanticFeature};
@@ -6,72 +8,64 @@ use super::super::model::{
     CheckedConst, CheckedConstructor, CheckedField, CheckedNominal, CheckedNominalKind,
     CheckedType, CheckedVariant, NominalId,
 };
-use super::{CheckStop, Checker, PendingNominal, PreludeType};
+use super::{CheckStop, Checker, PreludeType};
 
-impl<'unit> Checker<'unit> {
+impl<'unit> Checker<'_, 'unit> {
+    /// The ordered `(binder spelling, type)` rows of a `fn_decl`'s result
+    /// list, or `None` when an ordinal's mode is one this compiler cannot
+    /// carry in a result list yet.
+    ///
+    /// The mode judgment itself belongs to `build_function_signature`, which
+    /// reports it at the offending `rtype`; this reader is the shared walk
+    /// both the nominal pre-scan and the signature build take over the same
+    /// ordinals [GRAM-2, CALL-4].
+    pub(super) fn result_list_fields(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        function: crate::syntax::NodeId,
+        substitution: &super::generics::GenericSubstitution,
+    ) -> Result<Option<Vec<(String, CheckedType)>>, CheckStop> {
+        let mut rows = Vec::new();
+        for binding in self
+            .types
+            .declarations
+            .tree
+            .children_with(function, crate::Production::ResultBinding)?
+        {
+            let [name] = self.types.declarations.tree.direct_identifiers(binding)?[..] else {
+                return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+            };
+            let name = std::str::from_utf8(self.types.declarations.tree.token_bytes(name)?)
+                .map(str::to_owned)
+                .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
+            let rtype = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(binding, crate::Production::Rtype)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            let (mode, ty) = self.parse_rtype_with(check_context, rtype, substitution)?;
+            if mode != super::super::model::CheckedMode::Own {
+                return Ok(None);
+            }
+            rows.push((name, ty));
+        }
+        Ok(Some(rows))
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
     /// Appends one nominal instance, a change to the table.
     pub(super) fn push_nominal(&mut self, nominal: CheckedNominal) {
+        self.view.add_nominal(nominal.id);
         self.nominals.push(nominal);
         self.nominal_table_changed();
     }
-
     /// Notes a change to the nominal table, which its layout recursion
     /// judgment must see.
     pub(super) fn nominal_table_changed(&mut self) {
         self.nominal_generation = self.nominal_generation.wrapping_add(1);
     }
-
-    /// Rejects a nominal whose layout contains itself other than through a
-    /// `Box`. The judgment reads only the table, so a table unchanged since
-    /// it last found no recursion holds none now; the whole table is walked
-    /// again only after an instance was appended or completed or a
-    /// checkpoint restored.
-    pub(super) fn reject_recursive_nominal_layouts(&self) -> Result<(), CheckStop> {
-        if self.nominal_layouts_acyclic_at.get() == Some(self.nominal_generation) {
-            return Ok(());
-        }
-        let mut colors = vec![0_u8; self.nominals.len()];
-        for root in 0..self.nominals.len() {
-            if colors[root] != 0 {
-                continue;
-            }
-            colors[root] = 1;
-            let mut stack = vec![(root, 0_usize, self.nominal_dependencies(root)?)];
-            while let Some((current, next, dependencies)) = stack.last_mut() {
-                if *next == dependencies.len() {
-                    colors[*current] = 2;
-                    stack.pop();
-                    continue;
-                }
-                let dependency = dependencies[*next].0 as usize;
-                *next += 1;
-                match colors.get(dependency).copied() {
-                    Some(0) => {
-                        colors[dependency] = 1;
-                        stack.push((dependency, 0, self.nominal_dependencies(dependency)?));
-                    }
-                    Some(1) => {
-                        let node = stack
-                            .iter()
-                            .filter_map(|(index, _, _)| {
-                                self.nominal_nodes.get(*index).copied().flatten()
-                            })
-                            .next()
-                            .or_else(|| self.nominal_nodes.get(dependency).copied().flatten())
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                        return self
-                            .unsupported(UnsupportedSemanticFeature::RecursiveNominalLayout, node);
-                    }
-                    Some(2) => {}
-                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-                }
-            }
-        }
-        self.nominal_layouts_acyclic_at
-            .set(Some(self.nominal_generation));
-        Ok(())
-    }
-
     fn nominal_dependencies(&self, index: usize) -> Result<Vec<NominalId>, CheckStop> {
         let nominal = self
             .nominals
@@ -112,13 +106,63 @@ impl<'unit> Checker<'unit> {
         }
         Ok(dependencies)
     }
-
     pub(super) fn nominal(&self, id: NominalId) -> Result<&CheckedNominal, CheckStop> {
         self.nominals
             .get(id.0 as usize)
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
-
+    pub(super) fn prelude_type(&self, id: NominalId) -> Option<PreludeType> {
+        self.prelude_types.get(id.0 as usize).copied().flatten()
+    }
+    /// Rejects a nominal whose layout contains itself other than through a
+    /// `Box`. The selected roots and their dependencies are walked again
+    /// only after an instance was appended or completed or the selected
+    /// view changed; each such change invalidates the cached judgment.
+    pub(super) fn reject_recursive_nominal_layouts(&mut self) -> Result<(), CheckStop> {
+        if self.nominal_layouts_acyclic_at == Some(self.nominal_generation) {
+            return Ok(());
+        }
+        let mut colors = vec![0_u8; self.nominals.len()];
+        for root in self.view.nominals.iter().map(|id| id.0 as usize) {
+            if colors[root] != 0 {
+                continue;
+            }
+            colors[root] = 1;
+            let mut stack = vec![(root, 0_usize, self.nominal_dependencies(root)?)];
+            while let Some((current, next, dependencies)) = stack.last_mut() {
+                if *next == dependencies.len() {
+                    colors[*current] = 2;
+                    stack.pop();
+                    continue;
+                }
+                let dependency = dependencies[*next].0 as usize;
+                *next += 1;
+                match colors.get(dependency).copied() {
+                    Some(0) => {
+                        colors[dependency] = 1;
+                        stack.push((dependency, 0, self.nominal_dependencies(dependency)?));
+                    }
+                    Some(1) => {
+                        let node = stack
+                            .iter()
+                            .filter_map(|(index, _, _)| {
+                                self.nominal_nodes.get(*index).copied().flatten()
+                            })
+                            .next()
+                            .or_else(|| self.nominal_nodes.get(dependency).copied().flatten())
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        return self
+                            .declarations
+                            .unsupported(UnsupportedSemanticFeature::RecursiveNominalLayout, node);
+                    }
+                    Some(2) => {}
+                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                }
+            }
+        }
+        self.nominal_layouts_acyclic_at = Some(self.nominal_generation);
+        Ok(())
+    }
     /// [OWN-1] whether this type has the copy capability: every part it
     /// owns has it and its declaration does not remove it.
     ///
@@ -126,13 +170,17 @@ impl<'unit> Checker<'unit> {
     /// bound grants copy [PROV-6, FN-2], which is what admits the bare use
     /// and the duplication its body writes; a generic nominal is therefore
     /// judged per instance, from the arguments its fields carry.
-    pub(super) fn is_copy_type(&self, ty: CheckedType) -> Result<bool, CheckStop> {
+    pub(super) fn is_copy_type(
+        &self,
+        check_context: &CheckContext<'_>,
+        ty: CheckedType,
+    ) -> Result<bool, CheckStop> {
         let failure = std::cell::Cell::new(None);
         let answer = super::super::model::type_has_copy_capability(
             ty,
             &self.nominals,
-            &self.elements.borrow(),
-            &|declaration| match self.generic_parameter_class(declaration) {
+            &self.elements,
+            &|declaration| match self.generic_parameter_class(check_context, declaration) {
                 Ok(class) => Some(class == super::linearity::LinearityClass::Copy),
                 Err(stop) => {
                     failure.set(Some(stop));
@@ -145,34 +193,17 @@ impl<'unit> Checker<'unit> {
         }
         answer.ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
-
-    pub(super) fn prelude_type(&self, id: NominalId) -> Option<PreludeType> {
-        self.prelude_types.get(id.0 as usize).copied().flatten()
+    /// Intern a derived prelude result when the body first needs its type.
+    pub(super) fn prelude_nominal(&mut self, ty: PreludeType) -> Result<NominalId, CheckStop> {
+        self.intern_prelude_nominal(ty)
     }
-
-    /// The interned prelude instance, deferring when a derived type named one
-    /// that is not interned yet.
-    ///
-    /// The checked arithmetic rows produce `Result<T, Overflow>` and
-    /// `Result<T, DivError>` for a *derived* `T`, and after the annotation is
-    /// deleted nothing writes that type, so the miss is recoverable rather
-    /// than an error: the driver interns it and checks the function again.
-    pub(super) fn prelude_nominal(&self, ty: PreludeType) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.prelude_nominals.get(&ty) {
-            return Ok(*id);
-        }
-        self.pending_nominals
-            .borrow_mut()
-            .push(PendingNominal::Prelude(ty));
-        Err(CheckStop::DeferredNominal)
-    }
-
     pub(super) fn intern_box_nominal(
         &mut self,
         referent: CheckedType,
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.box_nominals.get(&referent) {
-            return Ok(*id);
+        if let Some(id) = self.box_nominals.get(&referent).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())
@@ -200,70 +231,13 @@ impl<'unit> Checker<'unit> {
         }
         Ok(id)
     }
-
-    /// The ordered `(binder spelling, type)` rows of a `fn_decl`'s result
-    /// list, or `None` when an ordinal's mode is one this compiler cannot
-    /// carry in a result list yet.
-    ///
-    /// The mode judgment itself belongs to `build_function_signature`, which
-    /// reports it at the offending `rtype`; this reader is the shared walk
-    /// both the nominal pre-scan and the signature build take over the same
-    /// ordinals [GRAM-2, CALL-4].
-    pub(super) fn result_list_fields(
-        &self,
-        function: crate::syntax::NodeId,
-        substitution: &super::generics::GenericSubstitution,
-    ) -> Result<Option<Vec<(String, CheckedType)>>, CheckStop> {
-        let mut rows = Vec::new();
-        for binding in self
-            .tree
-            .children_with(function, crate::Production::ResultBinding)?
-        {
-            let [name] = self.tree.direct_identifiers(binding)?[..] else {
-                return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-            };
-            let name = std::str::from_utf8(self.tree.token_bytes(name)?)
-                .map(str::to_owned)
-                .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
-            let rtype = self
-                .tree
-                .first_child_with(binding, crate::Production::Rtype)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let (mode, ty) = self.parse_rtype_with(rtype, substitution)?;
-            if mode != super::super::model::CheckedMode::Own {
-                return Ok(None);
-            }
-            rows.push((name, ty));
-        }
-        Ok(Some(rows))
-    }
-
-    /// The compiler-owned nominal a `fn_decl`'s ordered result list denotes
-    /// [GRAM-2, CALL-4].
-    ///
-    /// A declaration that writes two or more results hands its caller one
-    /// value carrying them in written order, and every result ordinal is one
-    /// field of it. Nothing else in the language changes: the callable
-    /// boundary keeps exactly one result type, the ordinary transfer,
-    /// ownership, and lowering rules apply to it, and a destructuring binder
-    /// list is the projection that names the ordinals again at the caller.
-    /// The name is spelled with parentheses so no source TYPEID can collide
-    /// with it; nothing reads it but a diagnostic.
-    /// The already-interned result-list nominal of one ordered result list,
-    /// for the `&self` checking path that cannot intern one itself.
-    pub(super) fn result_list_nominal(
-        &self,
-        results: &[(String, CheckedType)],
-    ) -> Option<NominalId> {
-        self.result_list_nominals.get(results).copied()
-    }
-
     pub(super) fn intern_result_list_nominal(
         &mut self,
         results: &[(String, CheckedType)],
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.result_list_nominals.get(results) {
-            return Ok(*id);
+        if let Some(id) = self.result_list_nominals.get(results).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())
@@ -299,20 +273,19 @@ impl<'unit> Checker<'unit> {
         }
         Ok(id)
     }
-
     pub(super) fn register_prelude_nominals(&mut self) -> Result<(), CheckStop> {
         self.intern_prelude_nominal(PreludeType::Overflow)?;
         self.intern_prelude_nominal(PreludeType::DivError)?;
         self.intern_prelude_nominal(PreludeType::NarrowError)?;
         Ok(())
     }
-
     pub(super) fn intern_prelude_nominal(
         &mut self,
         ty: PreludeType,
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.prelude_nominals.get(&ty) {
-            return Ok(*id);
+        if let Some(id) = self.prelude_nominals.get(&ty).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())

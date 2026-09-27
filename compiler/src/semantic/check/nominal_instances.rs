@@ -1,3 +1,5 @@
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::{DeclarationInventory, TypeContext};
 use std::collections::HashSet;
 
 use crate::syntax::NodeId;
@@ -16,83 +18,40 @@ use super::{
     CheckStop, Checker, ConstructorTemplate, NominalInstance, NominalTemplate, PreludeType,
 };
 
-impl<'unit> Checker<'unit> {
-    /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
-    ///
-    /// The modifier is a written one, and [GRAM-2] admits it on a source
-    /// `struct_decl` exactly as on the prelude's own opaque structs, so the
-    /// written token decides it first. The prelude-file test stays beside it
-    /// because the prelude's opaque declarations are read through a record
-    /// reader that fixes the modifier by its phase rather than by a token.
-    fn is_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
-        if self
-            .tree
-            .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Opaque))?
-            .is_some()
-        {
-            return Ok(true);
-        }
-        let source = self.tree.coordinate(node)?.source();
-        Ok(self
-            .resolved
-            .syntax()
-            .finalized
-            .parsed
-            .classified
-            .source_bundle()
-            .file(source)
-            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
-    }
-
-    pub(super) fn declare_nominals(&mut self, items: &[NodeId]) -> Result<(), CheckStop> {
-        let nodes = items
-            .iter()
-            .copied()
-            .filter(|node| {
-                self.tree.production(*node).is_ok_and(|production| {
-                    matches!(production, Production::StructDecl | Production::EnumDecl)
-                })
-            })
-            .collect::<Vec<_>>();
-        for node in nodes {
-            self.declare_nominal_template(node)?;
-        }
-        for index in 0..self.nominal_templates.len() {
-            if self.nominal_templates[index].generic_parameters.is_empty()
-                && self.nominal_templates[index].region_parameters.is_empty()
-            {
-                self.declare_source_nominal_instance(index, GenericSubstitution::default())?;
-            }
-        }
-        Ok(())
-    }
-
+impl<'unit> Checker<'_, 'unit> {
     /// Scratch inventory for selector signatures. Invalid source templates
     /// are unavailable only to signatures that name them; unrelated nominal
     /// declarations cannot suppress an independently decidable FN-9 verdict.
     pub(super) fn declare_nominals_for_postconditions(
         &mut self,
+        check_context: &CheckContext<'_>,
         items: &[NodeId],
     ) -> Result<(), CheckStop> {
         let nodes = items
             .iter()
             .copied()
             .filter(|node| {
-                self.tree.production(*node).is_ok_and(|production| {
-                    matches!(production, Production::StructDecl | Production::EnumDecl)
-                })
+                self.types
+                    .declarations
+                    .tree
+                    .production(*node)
+                    .is_ok_and(|production| {
+                        matches!(production, Production::StructDecl | Production::EnumDecl)
+                    })
             })
             .collect::<Vec<_>>();
         for node in nodes {
-            match self.declare_nominal_template(node) {
+            match self.types.declare_nominal_template(check_context, node) {
                 Ok(()) => {}
                 Err(CheckStop::Issue(_) | CheckStop::Unsupported(_)) => {
-                    let role = match self.tree.production(node)? {
+                    let role = match self.types.declarations.tree.production(node)? {
                         Production::StructDecl => DeclarationRole::Struct,
                         Production::EnumDecl => DeclarationRole::Enum,
                         _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
                     };
-                    self.mark_postcondition_unavailable(self.declaration_at(node, role)?.id());
+                    self.analysis.mark_postcondition_unavailable(
+                        self.types.declarations.declaration_at(node, role)?.id(),
+                    );
                 }
                 Err(stop) => return Err(stop),
             }
@@ -100,142 +59,115 @@ impl<'unit> Checker<'unit> {
         // Source instances are created and completed lazily by the exact
         // signature/type helpers. This is the dependency-local equivalent of
         // `complete_nominals`; PRE-1 instances remain ordinary shared setup.
-        self.register_prelude_nominals()?;
+        self.types.register_prelude_nominals()?;
 
         // A generic nominal declaration is a usable FN-2 signature premise
         // only after its ordinary symbolic template judgment succeeds. Keep
         // that judgment dependency-local: a bad template is unavailable to
         // headers and call arguments that name it, while an unrelated
         // selector remains independently decidable.
-        for template_index in 0..self.nominal_templates.len() {
+        for template_index in 0..self.types.nominal_templates.len() {
             let template = self
+                .types
                 .nominal_templates
                 .get(template_index)
                 .cloned()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             if (template.generic_parameters.is_empty() && template.region_parameters.is_empty())
-                || self.postcondition_declaration_unavailable(template.declaration)
+                || self
+                    .analysis
+                    .postcondition_declaration_unavailable(template.declaration)
             {
                 continue;
             }
-            let checkpoint = self.nominal_checkpoint();
+            let checkpoint = self.types.view.clone();
             let result = (|| {
-                let substitution = self.symbolic_nominal_substitution(
+                let substitution = Checker::symbolic_nominal_substitution(
                     &template.generic_parameters,
                     &template.region_parameters,
                 )?;
-                self.ensure_source_nominal_instance(template_index, substitution)?;
-                self.reject_recursive_nominal_layouts()
+                self.ensure_source_nominal_instance(check_context, template_index, substitution)?;
+                self.types.reject_recursive_nominal_layouts()
             })();
-            self.restore_nominal_checkpoint(checkpoint)?;
+            self.types.select_view(checkpoint);
             match result {
                 Ok(()) => {}
                 Err(
                     CheckStop::Issue(_)
                     | CheckStop::Unsupported(_)
                     | CheckStop::PostconditionPrerequisiteUnavailable,
-                ) => self.mark_postcondition_unavailable(template.declaration),
+                ) => self
+                    .analysis
+                    .mark_postcondition_unavailable(template.declaration),
                 Err(stop) => return Err(stop),
             }
         }
         Ok(())
     }
 
-    fn declare_nominal_template(&mut self, node: NodeId) -> Result<(), CheckStop> {
-        let role = match self.tree.production(node)? {
-            Production::StructDecl => DeclarationRole::Struct,
-            Production::EnumDecl => DeclarationRole::Enum,
-            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+    fn substitute_function_argument_regions(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        argument: super::behavior::FunctionArgument,
+        regions: &[(crate::DeclarationId, crate::DeclarationId)],
+    ) -> Result<super::behavior::FunctionArgument, CheckStop> {
+        use super::generics::GenericArgument;
+        let super::behavior::FunctionArgument::Source { reference, .. } = argument else {
+            return Ok(argument);
         };
-        let declaration = self.declaration_at(node, role)?;
-        let declaration_id = declaration.id();
-        // Parse every source-bearing premise before publishing any table
-        // entry, so a tolerant scratch failure is atomic.
-        let generic_parameters = self.parse_generic_parameters(node)?;
-        let variants = if role == DeclarationRole::Enum {
-            self.tree.children_with(node, Production::Variant)?
-        } else {
-            Vec::new()
-        };
-        let linear = self.declaration_is_linear(node)?;
-        let nocopy = self.declaration_is_nocopy(node)?;
-        // [GRAM-2] no nominal declares a region parameter in v0.60.
-        let region_parameters = Vec::new();
-        let template = NominalTemplate {
-            declaration: declaration_id,
-            node,
-            name: declaration.spelling().to_owned(),
-            role,
-            generic_parameters,
-            region_parameters,
-            linear,
-            nocopy,
-            constructors: Vec::new(),
-        };
-        let template_index = self.nominal_templates.len();
-        if self
-            .nominal_templates_by_declaration
-            .insert(declaration_id, template_index)
-            .is_some()
-        {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        if regions.is_empty() {
+            return Ok(argument);
         }
-        if role == DeclarationRole::Struct
-            && !self.is_opaque_declaration(node)?
-            && self
-                .constructor_templates_by_declaration
-                .insert(
-                    declaration_id,
-                    ConstructorTemplate::Struct {
-                        template: template_index,
-                    },
-                )
-                .is_some()
-        {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        let reference = self.types.function_reference(reference)?;
+        let mut bindings = Vec::new();
+        for (key, argument) in reference.substitution.entries() {
+            let argument =
+                match argument {
+                    GenericArgument::Type(ty) => GenericArgument::Type(
+                        self.substitute_type_regions(check_context, *ty, regions)?,
+                    ),
+                    GenericArgument::Function(value) => GenericArgument::Function(
+                        self.substitute_function_argument_regions(check_context, *value, regions)?,
+                    ),
+                    GenericArgument::Const(value) => GenericArgument::Const(*value),
+                };
+            bindings.push((*key, argument));
         }
-        for (variant, variant_node) in variants.into_iter().enumerate() {
-            let declaration = self.declaration_at(variant_node, DeclarationRole::Variant)?;
-            let variant =
-                u32::try_from(variant).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            if self
-                .constructor_templates_by_declaration
-                .insert(
-                    declaration.id(),
-                    ConstructorTemplate::Enum {
-                        template: template_index,
-                        variant,
-                    },
-                )
-                .is_some()
-            {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            }
-        }
-        self.nominal_templates.push(template);
-        Ok(())
+        let axis = reference
+            .substitution
+            .region_arguments()
+            .iter()
+            .map(|(formal, actual)| (*formal, Checker::substituted_region(regions, *actual)))
+            .collect();
+        let substitution = GenericSubstitution::from_bindings(bindings)?.with_regions(axis);
+        self.types
+            .intern_function_reference(reference.declaration, &substitution)
     }
 
-    pub(super) fn complete_nominals(&mut self) -> Result<(), CheckStop> {
-        self.register_prelude_nominals()?;
-        self.complete_pending_source_nominals()?;
-        self.reject_recursive_nominal_layouts()?;
-        self.validate_nominal_templates()
+    pub(super) fn complete_nominals(
+        &mut self,
+        check_context: &CheckContext<'_>,
+    ) -> Result<(), CheckStop> {
+        self.types.register_prelude_nominals()?;
+        self.complete_pending_source_nominals(check_context)?;
+        self.types.reject_recursive_nominal_layouts()?;
+        self.validate_nominal_templates(check_context)
     }
 
     pub(super) fn ensure_nominals_in_node(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
-        for ty in self.nominal_type_descendants(node)? {
-            self.ensure_nominal_type_head(ty, substitution)?;
+        for ty in self.types.declarations.nominal_type_descendants(node)? {
+            self.ensure_nominal_type_head(check_context, ty, substitution)?;
         }
-        for construct in self.tree.constructor_descendants(node)? {
-            self.ensure_source_constructor_instance(construct, substitution)?;
+        for construct in self.types.declarations.tree.constructor_descendants(node)? {
+            self.ensure_source_constructor_instance(check_context, construct, substitution)?;
         }
-        self.ensure_implicit_prelude_nominals(node, substitution, false)?;
-        self.reject_recursive_nominal_layouts()
+        self.ensure_implicit_prelude_nominals(check_context, node, substitution, false)?;
+        self.types.reject_recursive_nominal_layouts()
     }
 
     /// Performs the ordinary nominal pre-scan for one function without
@@ -244,35 +176,47 @@ impl<'unit> Checker<'unit> {
     /// only by the postcondition checker after that admission.
     pub(super) fn ensure_nominals_in_function(
         &mut self,
+        check_context: &CheckContext<'_>,
         function: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
         if self
+            .types
+            .declarations
             .tree
             .descendants_with(function, Production::EnsuresClause)?
             .is_empty()
         {
-            self.ensure_nominals_in_node(function, substitution)?;
-            return self.ensure_result_list_nominal(function, substitution);
+            self.ensure_nominals_in_node(check_context, function, substitution)?;
+            return self.ensure_result_list_nominal(check_context, function, substitution);
         }
         // Preserve the exact ordinary category order across the retained
         // subtree: every type, then every constructor, then every implicit
         // PRE-1 instance, followed by one recursive-layout judgment.
-        for ty in self.nominal_type_descendants(function)? {
-            if self.node_is_inside_postcondition(ty)? {
+        for ty in self.types.declarations.nominal_type_descendants(function)? {
+            if self.types.declarations.node_is_inside_postcondition(ty)? {
                 continue;
             }
-            self.ensure_nominal_type_head(ty, substitution)?;
+            self.ensure_nominal_type_head(check_context, ty, substitution)?;
         }
-        for construct in self.tree.constructor_descendants(function)? {
-            if self.node_is_inside_postcondition(construct)? {
+        for construct in self
+            .types
+            .declarations
+            .tree
+            .constructor_descendants(function)?
+        {
+            if self
+                .types
+                .declarations
+                .node_is_inside_postcondition(construct)?
+            {
                 continue;
             }
-            self.ensure_source_constructor_instance(construct, substitution)?;
+            self.ensure_source_constructor_instance(check_context, construct, substitution)?;
         }
-        self.ensure_implicit_prelude_nominals(function, substitution, true)?;
-        self.ensure_result_list_nominal(function, substitution)?;
-        self.reject_recursive_nominal_layouts()
+        self.ensure_implicit_prelude_nominals(check_context, function, substitution, true)?;
+        self.ensure_result_list_nominal(check_context, function, substitution)?;
+        self.types.reject_recursive_nominal_layouts()
     }
 
     /// Interns the compiler-owned result-list nominal of a `fn_decl` that
@@ -283,10 +227,13 @@ impl<'unit> Checker<'unit> {
     /// declaration has no list and nothing is interned.
     pub(super) fn ensure_result_list_nominal(
         &mut self,
+        check_context: &CheckContext<'_>,
         function: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
         if self
+            .types
+            .declarations
             .tree
             .children_with(function, Production::ResultBinding)?
             .len()
@@ -294,10 +241,10 @@ impl<'unit> Checker<'unit> {
         {
             return Ok(());
         }
-        let Some(results) = self.result_list_fields(function, substitution)? else {
+        let Some(results) = self.result_list_fields(check_context, function, substitution)? else {
             return Ok(());
         };
-        self.intern_result_list_nominal(&results).map(|_| ())
+        self.types.intern_result_list_nominal(&results).map(|_| ())
     }
 
     /// Interns only nominal instances read by `build_function_signature`.
@@ -305,19 +252,24 @@ impl<'unit> Checker<'unit> {
     /// executable body before selector admission.
     pub(super) fn ensure_nominals_in_function_signature(
         &mut self,
+        check_context: &CheckContext<'_>,
         function: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
         if let Some(parameters) = self
+            .types
+            .declarations
             .tree
             .first_child_with(function, Production::ParamList)?
         {
-            self.ensure_nominals_in_node(parameters, substitution)?;
+            self.ensure_nominals_in_node(check_context, parameters, substitution)?;
         }
         // [GRAM-2] a `fn_decl` writes one result or an ordered result list;
         // every ordinal's `rtype` is a signature type, and a list also needs
         // the compiler-owned nominal that carries the ordinals [CALL-4].
         let result_bindings = self
+            .types
+            .declarations
             .tree
             .children_with(function, Production::ResultBinding)?;
         if result_bindings.is_empty() {
@@ -325,66 +277,43 @@ impl<'unit> Checker<'unit> {
         }
         for binding in &result_bindings {
             let result = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(*binding, Production::Rtype)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            self.ensure_nominals_in_node(result, substitution)?;
+            self.ensure_nominals_in_node(check_context, result, substitution)?;
         }
-        self.ensure_result_list_nominal(function, substitution)
+        self.ensure_result_list_nominal(check_context, function, substitution)
     }
 
     pub(super) fn ensure_nominal_type(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
-        for nested in self.nominal_type_descendants(node)? {
-            self.ensure_nominal_type_head(nested, substitution)?;
+        for nested in self.types.declarations.nominal_type_descendants(node)? {
+            self.ensure_nominal_type_head(check_context, nested, substitution)?;
         }
-        self.ensure_nominal_type_head(node, substitution)
-    }
-
-    fn nominal_type_descendants(&self, node: NodeId) -> Result<Vec<NodeId>, CheckStop> {
-        let mut nested = self.tree.descendants_with(node, Production::Type)?;
-        let mut uses = Vec::with_capacity(nested.len());
-        for ty in nested {
-            if self
-                .optional_declaration_at(ty, DeclarationRole::GenericType)?
-                .is_none()
-            {
-                uses.push(ty);
-            }
-        }
-        nested = uses;
-        nested.sort_by(|left, right| {
-            let left_depth = self
-                .tree
-                .topology()
-                .node(*left)
-                .map(|record| record.tree_depth);
-            let right_depth = self
-                .tree
-                .topology()
-                .node(*right)
-                .map(|record| record.tree_depth);
-            right_depth
-                .cmp(&left_depth)
-                .then(left.index().cmp(&right.index()))
-        });
-        Ok(nested)
+        self.ensure_nominal_type_head(check_context, node, substitution)
     }
 
     fn ensure_nominal_type_head(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
         // [TYPE-9] `box<T>` is no longer a grammar atom: `Box<T>` is the
         // prelude's opaque struct and reaches the container branch below.
-        if !self.tree.names_nominal(node)? {
+        if !self.types.declarations.tree.names_nominal(node)? {
             return Ok(());
         }
-        let usage = self.use_at(node, LexicalUseRole::Type)?;
+        let usage = self
+            .types
+            .declarations
+            .use_at(check_context, node, LexicalUseRole::Type)?;
         // S39 a written `Box<'s, T>` is interned here, exactly as a written
         // `box<T>` is: the parse path is `&self` and cannot intern, and a
         // nominal's own field types are parsed there.
@@ -397,41 +326,56 @@ impl<'unit> Checker<'unit> {
             // is -- the argument list, then its one `targ`, then that
             // argument's `type` -- because `type := TYPEID targs?` puts no
             // `type` among the head's own children.
-            let Some(targs) = self.tree.argument_list(node)? else {
+            let Some(targs) = self.types.declarations.tree.argument_list(node)? else {
                 return Ok(());
             };
-            let arguments = self.tree.children_with(targs, Production::Targ)?;
+            let arguments = self
+                .types
+                .declarations
+                .tree
+                .children_with(targs, Production::Targ)?;
             let [referent] = arguments.as_slice() else {
                 return Ok(());
             };
-            let Some(referent_node) = self.tree.first_child_with(*referent, Production::Type)?
+            let Some(referent_node) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(*referent, Production::Type)?
             else {
                 return Ok(());
             };
-            self.ensure_nominals_in_node(referent_node, substitution)?;
-            let referent = self.parse_type_with(referent_node, substitution)?;
-            self.intern_box_nominal(referent)?;
+            self.ensure_nominals_in_node(check_context, referent_node, substitution)?;
+            let referent = self.parse_type_with(check_context, referent_node, substitution)?;
+            self.types.intern_box_nominal(referent)?;
             return Ok(());
         }
         match usage.target() {
             ResolvedTarget::Prelude(id) if id == BuiltinPreludeId::OPTION => {
-                let value = self.option_type_argument_with(node, substitution)?;
-                self.intern_prelude_nominal(PreludeType::Option(value))?;
+                let value = self.option_type_argument_with(check_context, node, substitution)?;
+                self.types
+                    .intern_prelude_nominal(PreludeType::Option(value))?;
                 Ok(())
             }
             ResolvedTarget::Prelude(id) if id == BuiltinPreludeId::RESULT => {
-                let (ok, error) = self.result_type_arguments_with(node, substitution)?;
-                self.intern_prelude_nominal(PreludeType::Result(ok, error))?;
+                let (ok, error) =
+                    self.result_type_arguments_with(check_context, node, substitution)?;
+                self.types
+                    .intern_prelude_nominal(PreludeType::Result(ok, error))?;
                 Ok(())
             }
             ResolvedTarget::Source {
                 declaration,
                 class: DeclarationClass::NominalType,
             } => {
-                if self.postcondition_declaration_unavailable(declaration) {
+                if self
+                    .analysis
+                    .postcondition_declaration_unavailable(declaration)
+                {
                     return Err(CheckStop::PostconditionPrerequisiteUnavailable);
                 }
                 let Some(template_index) = self
+                    .types
                     .nominal_templates_by_declaration
                     .get(&declaration)
                     .copied()
@@ -439,17 +383,19 @@ impl<'unit> Checker<'unit> {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 let template = self
+                    .types
                     .nominal_templates
                     .get(template_index)
                     .cloned()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let instance = self.nominal_generic_substitution(
+                    check_context,
                     node,
                     &template.generic_parameters,
                     &template.region_parameters,
                     substitution,
                 )?;
-                self.ensure_source_nominal_instance(template_index, instance)?;
+                self.ensure_source_nominal_instance(check_context, template_index, instance)?;
                 Ok(())
             }
             _ => Ok(()),
@@ -458,22 +404,29 @@ impl<'unit> Checker<'unit> {
 
     fn ensure_source_constructor_instance(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         caller: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
-        let usage = self.use_at(node, LexicalUseRole::Construct)?;
+        let usage =
+            self.types
+                .declarations
+                .use_at(check_context, node, LexicalUseRole::Construct)?;
         // [TYPE-5] a prelude variant constructor writes its nominal's
         // arguments, so the instance it names is interned from those written
         // arguments here, before function checking reads it immutably.
         if let ResolvedTarget::Prelude(id) = usage.target() {
             match id.ordinal() {
                 5 | 6 => {
-                    let value = self.option_type_argument_with(node, caller)?;
-                    self.intern_prelude_nominal(PreludeType::Option(value))?;
+                    let value = self.option_type_argument_with(check_context, node, caller)?;
+                    self.types
+                        .intern_prelude_nominal(PreludeType::Option(value))?;
                 }
                 11 | 13 => {
-                    let (ok, error) = self.result_type_arguments_with(node, caller)?;
-                    self.intern_prelude_nominal(PreludeType::Result(ok, error))?;
+                    let (ok, error) =
+                        self.result_type_arguments_with(check_context, node, caller)?;
+                    self.types
+                        .intern_prelude_nominal(PreludeType::Result(ok, error))?;
                 }
                 _ => {}
             }
@@ -487,7 +440,7 @@ impl<'unit> Checker<'unit> {
         // entry; this pre-scan interns nothing for it and leaves the refusal
         // to the ordinary construct judgment, which is where the rule sites
         // its hard error.
-        if self.is_opaque_struct_declaration(declaration)? {
+        if self.types.is_opaque_struct_declaration(declaration)? {
             return Ok(());
         }
         // [FORM-8] a construct whose field operands determine a region
@@ -495,12 +448,14 @@ impl<'unit> Checker<'unit> {
         // instance off the written list: it is formed while the operands are
         // checked, and interned then through the deferred-nominal route.
         if self
+            .types
             .constructor_shape(declaration)?
             .is_some_and(|site| site.shape.determining_field.iter().any(Option::is_some))
         {
             return Ok(());
         }
         let constructor = *self
+            .types
             .constructor_templates_by_declaration
             .get(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
@@ -509,22 +464,25 @@ impl<'unit> Checker<'unit> {
             | ConstructorTemplate::Enum { template, .. } => template,
         };
         let template = self
+            .types
             .nominal_templates
             .get(template_index)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let substitution = self.nominal_generic_substitution(
+            check_context,
             node,
             &template.generic_parameters,
             &template.region_parameters,
             caller,
         )?;
-        self.ensure_source_nominal_instance(template_index, substitution)?;
+        self.ensure_source_nominal_instance(check_context, template_index, substitution)?;
         Ok(())
     }
 
     fn ensure_implicit_prelude_nominals(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
         skip_postconditions: bool,
@@ -535,17 +493,24 @@ impl<'unit> Checker<'unit> {
         // Ok payload instead, so the instance is the callee's and its
         // signature already interned it.
 
-        for call in self.tree.descendants_with(node, Production::Call)? {
-            if skip_postconditions && self.node_is_inside_postcondition(call)? {
+        for call in self
+            .types
+            .declarations
+            .tree
+            .descendants_with(node, Production::Call)?
+        {
+            if skip_postconditions && self.types.declarations.node_is_inside_postcondition(call)? {
                 continue;
             }
             let callee = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(call, Production::Callee)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let spelling = self.tree.direct_spelling(callee)?;
+            let spelling = self.types.declarations.tree.direct_spelling(callee)?;
             if spelling == b"cvt.checked" {
-                self.ensure_conversion_result(call, substitution)?;
+                self.ensure_conversion_result(check_context, call, substitution)?;
                 continue;
             }
             let error = if matches!(
@@ -565,52 +530,71 @@ impl<'unit> Checker<'unit> {
             let Some(error) = error else {
                 continue;
             };
-            let Some(targs) = self.tree.argument_list(call)? else {
+            let Some(targs) = self.types.declarations.tree.argument_list(call)? else {
                 continue;
             };
-            let arguments = self.tree.children_with(targs, Production::Targ)?;
+            let arguments = self
+                .types
+                .declarations
+                .tree
+                .children_with(targs, Production::Targ)?;
             let [argument] = arguments.as_slice() else {
                 continue;
             };
-            let Some(ty_node) = self.tree.first_child_with(*argument, Production::Type)? else {
+            let Some(ty_node) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(*argument, Production::Type)?
+            else {
                 continue;
             };
-            let operand = self.parse_type_with(ty_node, substitution)?;
+            let operand = self.parse_type_with(check_context, ty_node, substitution)?;
             if !matches!(
                 operand,
                 CheckedType::Integer(_) | CheckedType::GenericInt(_)
             ) {
                 continue;
             }
-            let error = CheckedType::Nominal(self.prelude_nominal(error)?);
-            self.intern_prelude_nominal(PreludeType::Result(operand, error))?;
+            let error = CheckedType::Nominal(self.types.prelude_nominal(error)?);
+            self.types
+                .intern_prelude_nominal(PreludeType::Result(operand, error))?;
         }
         Ok(())
     }
 
     fn ensure_conversion_result(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
-        let Some(targs) = self.tree.argument_list(node)? else {
+        let Some(targs) = self.types.declarations.tree.argument_list(node)? else {
             return Ok(());
         };
-        let arguments = self.tree.children_with(targs, Production::Targ)?;
+        let arguments = self
+            .types
+            .declarations
+            .tree
+            .children_with(targs, Production::Targ)?;
         let [source_argument, destination_argument] = arguments.as_slice() else {
             return Ok(());
         };
         let (Some(source_node), Some(destination_node)) = (
-            self.tree
+            self.types
+                .declarations
+                .tree
                 .first_child_with(*source_argument, Production::Type)?,
-            self.tree
+            self.types
+                .declarations
+                .tree
                 .first_child_with(*destination_argument, Production::Type)?,
         ) else {
             return Ok(());
         };
         let (source, destination) = (
-            self.parse_type_with(source_node, substitution)?,
-            self.parse_type_with(destination_node, substitution)?,
+            self.parse_type_with(check_context, source_node, substitution)?,
+            self.parse_type_with(check_context, destination_node, substitution)?,
         );
         let (Some(_), Some(destination)) = (
             CheckedNumericType::from_type(source),
@@ -618,99 +602,39 @@ impl<'unit> Checker<'unit> {
         ) else {
             return Ok(());
         };
-        let error = CheckedType::Nominal(self.prelude_nominal(PreludeType::NarrowError)?);
-        self.intern_prelude_nominal(PreludeType::Result(destination.ty(), error))?;
+        let error = CheckedType::Nominal(self.types.prelude_nominal(PreludeType::NarrowError)?);
+        self.types
+            .intern_prelude_nominal(PreludeType::Result(destination.ty(), error))?;
         Ok(())
-    }
-
-    fn declare_source_nominal_instance(
-        &mut self,
-        template_index: usize,
-        substitution: GenericSubstitution,
-    ) -> Result<NominalId, CheckStop> {
-        let template = self
-            .nominal_templates
-            .get(template_index)
-            .cloned()
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if let Some(id) = self.source_nominal_instance(template.declaration, &substitution) {
-            return Ok(id);
-        }
-        let id = NominalId(
-            u32::try_from(self.nominals.len())
-                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-        );
-        let name = if substitution.len() == 0 {
-            template.name.clone()
-        } else {
-            format!("{}<instance:{}>", template.name, id.0)
-        };
-        self.nominal_nodes.push(Some(template.node));
-        self.nominal_states.push(0);
-        self.source_nominal_instances
-            .push(Some((template_index, substitution.clone())));
-        self.prelude_types.push(None);
-        self.push_nominal(CheckedNominal {
-            id,
-            name,
-            kind: match template.role {
-                DeclarationRole::Struct if self.is_opaque_declaration(template.node)? => {
-                    CheckedNominalKind::Opaque
-                }
-                DeclarationRole::Struct => CheckedNominalKind::Struct { fields: Vec::new() },
-                DeclarationRole::Enum => CheckedNominalKind::Enum {
-                    variants: Vec::new(),
-                },
-                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            },
-            linear: template.linear,
-            nocopy: template.nocopy,
-        });
-        self.nominals_by_declaration
-            .entry(template.declaration)
-            .or_default()
-            .push(NominalInstance { id, substitution });
-        Ok(id)
-    }
-
-    /// [TYPE-6] whether this nominal is an instance of that source
-    /// declaration.
-    pub(super) fn nominal_instantiates(
-        &self,
-        nominal: crate::NominalId,
-        declaration: crate::DeclarationId,
-    ) -> Result<bool, CheckStop> {
-        let Some(template) = self.nominal_templates_by_declaration.get(&declaration) else {
-            return Ok(false);
-        };
-        Ok(self
-            .source_nominal_instances
-            .get(nominal.0 as usize)
-            .and_then(|entry| entry.as_ref())
-            .is_some_and(|(index, _)| index == template))
     }
 
     pub(super) fn ensure_source_nominal_instance(
         &mut self,
+        check_context: &CheckContext<'_>,
         template_index: usize,
         substitution: GenericSubstitution,
     ) -> Result<NominalId, CheckStop> {
-        let id = self.declare_source_nominal_instance(template_index, substitution)?;
-        self.complete_source_nominal_instance(id)?;
+        let id = self
+            .types
+            .declare_source_nominal_instance(template_index, substitution)?;
+        self.complete_source_nominal_instance(check_context, id)?;
         Ok(id)
     }
 
-    fn complete_pending_source_nominals(&mut self) -> Result<(), CheckStop> {
+    fn complete_pending_source_nominals(
+        &mut self,
+        check_context: &CheckContext<'_>,
+    ) -> Result<(), CheckStop> {
         let mut index = 0_usize;
-        while index < self.nominals.len() {
+        while index < self.types.view.nominals.len() {
+            let id = self.types.view.nominals[index];
             if self
+                .types
                 .source_nominal_instances
-                .get(index)
+                .get(id.0 as usize)
                 .is_some_and(Option::is_some)
             {
-                self.complete_source_nominal_instance(NominalId(
-                    u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                ))?;
+                self.complete_source_nominal_instance(check_context, id)?;
             }
             index = index
                 .checked_add(1)
@@ -719,115 +643,43 @@ impl<'unit> Checker<'unit> {
         Ok(())
     }
 
-    fn validate_nominal_templates(&mut self) -> Result<(), CheckStop> {
-        let checkpoint = self.nominal_checkpoint();
-        for template_index in 0..self.nominal_templates.len() {
-            let parameters = self.nominal_templates[template_index]
+    fn validate_nominal_templates(
+        &mut self,
+        check_context: &CheckContext<'_>,
+    ) -> Result<(), CheckStop> {
+        let checkpoint = self.types.view.clone();
+        for template_index in 0..self.types.nominal_templates.len() {
+            let parameters = self.types.nominal_templates[template_index]
                 .generic_parameters
                 .clone();
-            let region_parameters = self.nominal_templates[template_index]
+            let region_parameters = self.types.nominal_templates[template_index]
                 .region_parameters
                 .clone();
             if parameters.is_empty() && region_parameters.is_empty() {
                 continue;
             }
             let substitution =
-                self.symbolic_nominal_substitution(&parameters, &region_parameters)?;
-            let id = self.ensure_source_nominal_instance(template_index, substitution)?;
+                Checker::symbolic_nominal_substitution(&parameters, &region_parameters)?;
+            let id =
+                self.ensure_source_nominal_instance(check_context, template_index, substitution)?;
             // [FORM-8] the one place a declaration's fields can be read
             // against its own region parameters: this instance carries each
             // region parameter as its own argument, so a field type naming
             // one is visibly that parameter and not some caller's actual.
             if !region_parameters.is_empty() {
-                let constructors = self.constructor_shapes(id, &region_parameters)?;
-                self.nominal_templates
+                let constructors =
+                    self.types
+                        .constructor_shapes(check_context, id, &region_parameters)?;
+                self.types
+                    .nominal_templates
                     .get_mut(template_index)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?
                     .constructors = constructors;
             }
         }
-        self.reject_recursive_nominal_layouts()?;
-        self.restore_nominal_checkpoint(checkpoint)
-    }
-
-    /// One declaration's constructors, read off its symbolic instance
-    /// [FORM-8].
-    ///
-    /// A field determines a region parameter exactly when its declared type
-    /// names that region — the same relation [FORM-8] uses at a call, where a
-    /// parameter whose type names a formal region determines it from the
-    /// actual. Where two fields name one region parameter the first decides
-    /// it and the rest are the ordinary [TYPE-5] equality against the formed
-    /// instance, exactly as a call's second store operand is.
-    fn constructor_shapes(
-        &self,
-        id: NominalId,
-        region_parameters: &[crate::DeclarationId],
-    ) -> Result<Vec<super::ConstructorShape>, CheckStop> {
-        let variants: Vec<&[super::super::model::CheckedField]> = match &self.nominal(id)?.kind {
-            CheckedNominalKind::Struct { fields } => vec![fields.as_slice()],
-            CheckedNominalKind::Enum { variants } => variants
-                .iter()
-                .map(|variant| variant.fields.as_slice())
-                .collect(),
-            _ => return Ok(Vec::new()),
-        };
-        let mut constructors = Vec::with_capacity(variants.len());
-        for fields in variants {
-            let field_regions = fields
-                .iter()
-                .map(|field| self.type_region_shape(field.ty, None))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut determining_field = vec![None; region_parameters.len()];
-            for (index, shape) in field_regions.iter().enumerate() {
-                for (slot, formal) in region_parameters.iter().enumerate() {
-                    if determining_field[slot].is_none() && shape.determines(*formal) {
-                        determining_field[slot] = Some(index);
-                    }
-                }
-            }
-            constructors.push(super::ConstructorShape {
-                fields: fields.iter().map(|field| field.name.clone()).collect(),
-                determining_field,
-            });
-        }
-        Ok(constructors)
-    }
-
-    /// The constructor shape one `construct` names, when its declaration
-    /// carries `region_params` [FORM-8]; `None` for every declaration that
-    /// does not, where a construct writes no region argument at all and the
-    /// instance is formed from the written list alone.
-    pub(super) fn constructor_shape(
-        &self,
-        declaration: crate::DeclarationId,
-    ) -> Result<Option<super::ConstructorSite>, CheckStop> {
-        let constructor = *self
-            .constructor_templates_by_declaration
-            .get(&declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let (template_index, variant) = match constructor {
-            ConstructorTemplate::Struct { template } => (template, None),
-            ConstructorTemplate::Enum { template, variant } => (template, Some(variant)),
-        };
-        let template = self
-            .nominal_templates
-            .get(template_index)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let Some(shape) = template
-            .constructors
-            .get(variant.unwrap_or(0) as usize)
-            .cloned()
-        else {
-            return Ok(None);
-        };
-        Ok(Some(super::ConstructorSite {
-            template: template_index,
-            variant,
-            generic_parameters: template.generic_parameters.clone(),
-            region_parameters: template.region_parameters.clone(),
-            shape,
-        }))
+        self.types.reject_recursive_nominal_layouts()?;
+        self.types.select_view(checkpoint);
+        Ok(())
     }
 
     /// The instance one `construct` names, at the regions its own field
@@ -836,15 +688,17 @@ impl<'unit> Checker<'unit> {
     /// No position of the writer's text need spell that instance — a
     /// construct whose every region parameter a field determines writes no
     /// region argument at all — so the interning pass cannot have found it,
-    /// and a miss is the ordinary deferred-nominal report the driver repairs.
+    /// so the body interns the selected instance as soon as it is known.
     pub(super) fn constructed_nominal(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         site: &super::ConstructorSite,
         determined: &[(crate::DeclarationId, crate::DeclarationId)],
         caller: &GenericSubstitution,
     ) -> Result<NominalId, CheckStop> {
         let substitution = self.nominal_generic_substitution_with(
+            check_context,
             node,
             &site.generic_parameters,
             &site.region_parameters,
@@ -852,107 +706,137 @@ impl<'unit> Checker<'unit> {
             caller,
         )?;
         let declaration = self
+            .types
             .nominal_templates
             .get(site.template)
+            .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .declaration;
-        if let Some(existing) = self.source_nominal_instance(declaration, &substitution) {
+        if let Some(existing) = self
+            .types
+            .source_nominal_instance(declaration, &substitution)
+        {
+            self.types.activate_nominal(existing)?;
+            self.complete_source_nominal_instance(check_context, existing)?;
             return Ok(existing);
         }
-        self.pending_nominals
-            .borrow_mut()
-            .push(super::PendingNominal::SourceInstance {
-                template: site.template,
-                substitution,
-            });
-        Err(CheckStop::DeferredNominal)
+        self.ensure_source_nominal_instance(check_context, site.template, substitution)
     }
 
-    fn complete_source_nominal_instance(&mut self, id: NominalId) -> Result<(), CheckStop> {
+    fn complete_source_nominal_instance(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        id: NominalId,
+    ) -> Result<(), CheckStop> {
         match self
+            .types
             .nominal_states
             .get(id.0 as usize)
             .copied()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
         {
-            2 => return Ok(()),
+            2 => return self.types.activate_nominal_fields(id),
             1 => return Ok(()),
             0 => {}
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
-        self.nominal_states[id.0 as usize] = 1;
+        self.types.nominal_states[id.0 as usize] = 1;
         let (template_index, substitution) = self
+            .types
             .source_nominal_instances
             .get(id.0 as usize)
             .and_then(Clone::clone)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let template = self
+            .types
             .nominal_templates
             .get(template_index)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        // [PROV-1] an elided stored brand belongs to this declaration's
-        // sole region, not a caller's enclosing nominal. Zero/multiple
-        // regions mask any outer nominal's elision context.
-        let brand = match substitution.region_arguments() {
-            [(_, region)] => Some(*region),
-            _ => None,
-        };
-        let outer_brand = self.elided_store_brand.replace(brand);
         let kind = (|| {
             Ok(match template.role {
-                DeclarationRole::Struct if self.is_opaque_declaration(template.node)? => {
+                DeclarationRole::Struct
+                    if self
+                        .types
+                        .declarations
+                        .is_opaque_declaration(template.node)? =>
+                {
                     CheckedNominalKind::Opaque
                 }
                 DeclarationRole::Struct => CheckedNominalKind::Struct {
-                    fields: self.parse_struct_fields(template.node, &substitution)?,
+                    fields: self.parse_struct_fields(
+                        check_context,
+                        template.node,
+                        &substitution,
+                    )?,
                 },
                 DeclarationRole::Enum => CheckedNominalKind::Enum {
-                    variants: self.parse_enum_variants(template.node, &substitution)?,
+                    variants: self.parse_enum_variants(
+                        check_context,
+                        template.node,
+                        &substitution,
+                    )?,
                 },
                 _ => return Err(CheckStop::from(SemanticCompilerFailure::InvalidResolution)),
             })
         })();
-        self.elided_store_brand.set(outer_brand);
-        let kind = kind?;
-        self.nominals
+        let kind = match kind {
+            Ok(kind) => kind,
+            Err(stop) => {
+                self.types.nominal_states[id.0 as usize] = 0;
+                return Err(stop);
+            }
+        };
+        self.types
+            .nominals
             .get_mut(id.0 as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .kind = kind;
-        self.nominal_table_changed();
-        self.nominal_states[id.0 as usize] = 2;
+        self.types.nominal_table_changed();
+        self.types.nominal_states[id.0 as usize] = 2;
         Ok(())
     }
 
     fn parse_struct_fields(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<Vec<CheckedField>, CheckStop> {
-        let nodes = self.tree.children_with(node, Production::Field)?;
+        let nodes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Field)?;
         let mut seen = HashSet::with_capacity(nodes.len());
         let mut fields = Vec::with_capacity(nodes.len());
         for field in nodes {
-            let declaration =
-                self.dependent_declaration_at(field, DependentDeclarationRole::Field)?;
+            let declaration = self
+                .types
+                .declarations
+                .dependent_declaration_at(field, DependentDeclarationRole::Field)?;
             let name = declaration.spelling().to_owned();
             if !seen.insert(name.clone()) {
-                return self.issue_node(
+                return self.types.declarations.issue_node(
                     SemanticRule::Type6,
                     field,
                     SemanticIssueKind::DuplicateFieldLabel { label: name },
                 );
             }
             let ty = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(field, Production::Type)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            self.ensure_nominal_type(ty, substitution)?;
-            let parsed = self.parse_type_with(ty, substitution)?;
-            self.reject_inline_runtime_capacity(ty, parsed)?;
+            self.ensure_nominal_type(check_context, ty, substitution)?;
+            let parsed = self.parse_type_with(check_context, ty, substitution)?;
+            self.types.reject_inline_runtime_capacity(ty, parsed)?;
             // [TYPE-2, GRAM-2] `field := "readonly"? IDENT ":" type ";"`: the
             // written modifier is what makes the field unassignable.
             let readonly = self
+                .types
+                .declarations
                 .tree
                 .direct_token_with(
                     field,
@@ -970,13 +854,21 @@ impl<'unit> Checker<'unit> {
 
     fn parse_enum_variants(
         &mut self,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         substitution: &GenericSubstitution,
     ) -> Result<Vec<CheckedVariant>, CheckStop> {
-        let nodes = self.tree.children_with(node, Production::Variant)?;
+        let nodes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Variant)?;
         let mut variants = Vec::with_capacity(nodes.len());
         for variant_node in nodes {
-            let declaration = self.declaration_at(variant_node, DeclarationRole::Variant)?;
+            let declaration = self
+                .types
+                .declarations
+                .declaration_at(variant_node, DeclarationRole::Variant)?;
             let declaration_id = declaration.id();
             let name = declaration.spelling().to_owned();
             let tag = u32::try_from(variants.len())
@@ -984,27 +876,38 @@ impl<'unit> Checker<'unit> {
             let mut fields = Vec::new();
             let mut seen = HashSet::new();
             if let Some(list) = self
+                .types
+                .declarations
                 .tree
                 .first_child_with(variant_node, Production::VfieldList)?
             {
-                for field in self.tree.children_with(list, Production::Vfield)? {
+                for field in self
+                    .types
+                    .declarations
+                    .tree
+                    .children_with(list, Production::Vfield)?
+                {
                     let declaration = self
+                        .types
+                        .declarations
                         .dependent_declaration_at(field, DependentDeclarationRole::VariantField)?;
                     let field_name = declaration.spelling().to_owned();
                     if !seen.insert(field_name.clone()) {
-                        return self.issue_node(
+                        return self.types.declarations.issue_node(
                             SemanticRule::Type6,
                             field,
                             SemanticIssueKind::DuplicateFieldLabel { label: field_name },
                         );
                     }
                     let ty = self
+                        .types
+                        .declarations
                         .tree
                         .first_child_with(field, Production::Type)?
                         .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                    self.ensure_nominal_type(ty, substitution)?;
-                    let parsed = self.parse_type_with(ty, substitution)?;
-                    self.reject_inline_runtime_capacity(ty, parsed)?;
+                    self.ensure_nominal_type(check_context, ty, substitution)?;
+                    let parsed = self.parse_type_with(check_context, ty, substitution)?;
+                    self.types.reject_inline_runtime_capacity(ty, parsed)?;
                     // [GRAM-2] a `vfield` carries no modifier: `readonly` is
                     // a `field` alternative and an enum payload has none.
                     fields.push(CheckedField {
@@ -1022,47 +925,6 @@ impl<'unit> Checker<'unit> {
             });
         }
         Ok(variants)
-    }
-
-    /// [S20] where each nominal instance's region axis leaves the program.
-    ///
-    /// Two instances share a representation when their region-erased source
-    /// families and complete reclamation graphs agree. Region identity is
-    /// proof-only, but the store's release class still selects runtime work.
-    /// This table uses declaration-level classes; physical specialization
-    /// interprets those classes in each accepted call's closed environment.
-    pub(super) fn nominal_lowering_aliases(&self) -> Result<Vec<NominalId>, CheckStop> {
-        self.nominal_aliases(true)
-    }
-
-    /// The region-erased source/type family used to select a release-class
-    /// specialization after semantic acceptance. Unlike the ordinary
-    /// lowering alias, this deliberately ignores a Box or Vector release
-    /// class; the physical specialization key restores those classes before
-    /// any IR type or cleanup action is selected.
-    pub(super) fn nominal_physical_aliases(&self) -> Result<Vec<NominalId>, CheckStop> {
-        self.nominal_aliases(false)
-    }
-
-    fn nominal_aliases(&self, release_sensitive: bool) -> Result<Vec<NominalId>, CheckStop> {
-        let mut aliases = Vec::with_capacity(self.nominals.len());
-        for index in 0..self.nominals.len() {
-            let id = NominalId(
-                u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-            );
-            let mut alias = id;
-            for earlier in 0..index {
-                let candidate = NominalId(
-                    u32::try_from(earlier).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                );
-                if self.nominals_share_region_erased_family(id, candidate, release_sensitive)? {
-                    alias = candidate;
-                    break;
-                }
-            }
-            aliases.push(alias);
-        }
-        Ok(aliases)
     }
 
     /// The actual one formal region of a call denotes, or the region itself
@@ -1101,7 +963,8 @@ impl<'unit> Checker<'unit> {
     /// spells the result's type — so a miss is the ordinary deferred-nominal
     /// report the driver repairs, exactly as a derived `box<T>` is.
     pub(super) fn substitute_type_regions(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         regions: &[(crate::DeclarationId, crate::DeclarationId)],
     ) -> Result<CheckedType, CheckStop> {
@@ -1116,13 +979,15 @@ impl<'unit> Checker<'unit> {
             | CheckedType::Generic(_)
             | CheckedType::GenericInt(_)
             | CheckedType::GenericFloat(_) => ty,
-            CheckedType::Nominal(id) => self.substitute_nominal_regions(id, regions)?,
+            CheckedType::Nominal(id) => {
+                self.substitute_nominal_regions(check_context, id, regions)?
+            }
             CheckedType::Array { element, length } => CheckedType::Array {
-                element: self.substitute_element_regions(element, regions)?,
+                element: self.substitute_element_regions(check_context, element, regions)?,
                 length,
             },
             CheckedType::Buffer { element } => CheckedType::Buffer {
-                element: self.substitute_element_regions(element, regions)?,
+                element: self.substitute_element_regions(check_context, element, regions)?,
             },
             CheckedType::Window {
                 shape,
@@ -1130,7 +995,7 @@ impl<'unit> Checker<'unit> {
                 capacity,
             } => CheckedType::Window {
                 shape,
-                element: self.substitute_element_regions(element, regions)?,
+                element: self.substitute_element_regions(check_context, element, regions)?,
                 capacity,
             },
         })
@@ -1138,38 +1003,52 @@ impl<'unit> Checker<'unit> {
 
     /// One slot's content with the same substitution [BLK-1].
     fn substitute_element_regions(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         element: CheckedElement,
         regions: &[(crate::DeclarationId, crate::DeclarationId)],
     ) -> Result<CheckedElement, CheckStop> {
-        let ty = self.substitute_type_regions(self.element_type(element)?, regions)?;
-        self.intern_element(ty)
+        let ty = self.substitute_type_regions(
+            check_context,
+            self.types.element_type(element)?,
+            regions,
+        )?;
+        self.types.intern_element(ty)
     }
 
     /// One nominal instance with the same substitution, reported as a
     /// deferred nominal when the instance it names is not interned yet.
     fn substitute_nominal_regions(
-        &self,
+        &mut self,
+        check_context: &CheckContext<'_>,
         id: NominalId,
         regions: &[(crate::DeclarationId, crate::DeclarationId)],
     ) -> Result<CheckedType, CheckStop> {
-        if let Some(prelude) = self.prelude_type(id) {
+        if let Some(prelude) = self.types.prelude_type(id) {
             let substituted = match prelude {
-                PreludeType::Option(value) => {
-                    PreludeType::Option(self.substitute_type_regions(value, regions)?)
-                }
+                PreludeType::Option(value) => PreludeType::Option(self.substitute_type_regions(
+                    check_context,
+                    value,
+                    regions,
+                )?),
                 PreludeType::Result(ok, error) => PreludeType::Result(
-                    self.substitute_type_regions(ok, regions)?,
-                    self.substitute_type_regions(error, regions)?,
+                    self.substitute_type_regions(check_context, ok, regions)?,
+                    self.substitute_type_regions(check_context, error, regions)?,
                 ),
                 PreludeType::Overflow | PreludeType::DivError | PreludeType::NarrowError => prelude,
             };
             if substituted == prelude {
                 return Ok(CheckedType::Nominal(id));
             }
-            return Ok(CheckedType::Nominal(self.prelude_nominal(substituted)?));
+            return Ok(CheckedType::Nominal(
+                self.types.prelude_nominal(substituted)?,
+            ));
         }
-        if let Some((template, instance)) = self.source_nominal_instance_entry(id)? {
+        if let Some((template, instance)) = self
+            .types
+            .source_nominal_instance_entry(id)?
+            .map(|(template, instance)| (template, instance.clone()))
+        {
             let mut changed = false;
             let mut bindings = Vec::with_capacity(instance.entries().len());
             for (declaration, argument) in instance.entries() {
@@ -1177,7 +1056,8 @@ impl<'unit> Checker<'unit> {
                     *declaration,
                     match argument {
                         super::generics::GenericArgument::Type(ty) => {
-                            let substituted = self.substitute_type_regions(*ty, regions)?;
+                            let substituted =
+                                self.substitute_type_regions(check_context, *ty, regions)?;
                             changed |= substituted != *ty;
                             super::generics::GenericArgument::Type(substituted)
                         }
@@ -1185,8 +1065,11 @@ impl<'unit> Checker<'unit> {
                             super::generics::GenericArgument::Const(*value)
                         }
                         super::generics::GenericArgument::Function(value) => {
-                            let substituted =
-                                self.substitute_function_argument_regions(*value, regions)?;
+                            let substituted = self.substitute_function_argument_regions(
+                                check_context,
+                                *value,
+                                regions,
+                            )?;
                             changed |= substituted != *value;
                             super::generics::GenericArgument::Function(substituted)
                         }
@@ -1195,7 +1078,7 @@ impl<'unit> Checker<'unit> {
             }
             let mut axis = Vec::with_capacity(instance.region_arguments().len());
             for (formal, actual) in instance.region_arguments() {
-                let substituted = Self::substituted_region(regions, *actual);
+                let substituted = Checker::substituted_region(regions, *actual);
                 changed |= substituted != *actual;
                 axis.push((*formal, substituted));
             }
@@ -1204,57 +1087,50 @@ impl<'unit> Checker<'unit> {
             }
             let target = GenericSubstitution::from_bindings(bindings)?.with_regions(axis);
             let declaration = self
+                .types
                 .nominal_templates
                 .get(template)
+                .cloned()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .declaration;
-            if let Some(existing) = self.source_nominal_instance(declaration, &target) {
+            if let Some(existing) = self.types.source_nominal_instance(declaration, &target) {
                 return Ok(CheckedType::Nominal(existing));
             }
-            self.pending_nominals
-                .borrow_mut()
-                .push(super::PendingNominal::SourceInstance {
-                    template,
-                    substitution: target,
-                });
-            return Err(CheckStop::DeferredNominal);
+            return self
+                .ensure_source_nominal_instance(check_context, template, target)
+                .map(CheckedType::Nominal);
         }
         if let Some((results, _)) = self
+            .types
             .result_list_nominals
             .iter()
             .find(|(_, candidate)| **candidate == id)
+            .map(|(results, id)| (results.clone(), *id))
         {
             let mut changed = false;
             let mut substituted = Vec::with_capacity(results.len());
-            for (name, ty) in results {
-                let ordinal = self.substitute_type_regions(*ty, regions)?;
+            for (name, ty) in &results {
+                let ordinal = self.substitute_type_regions(check_context, *ty, regions)?;
                 changed |= ordinal != *ty;
                 substituted.push((name.clone(), ordinal));
             }
             if !changed {
                 return Ok(CheckedType::Nominal(id));
             }
-            let Some(existing) = self.result_list_nominal(&substituted) else {
-                self.pending_nominals
-                    .borrow_mut()
-                    .push(super::PendingNominal::ResultList(substituted));
-                return Err(CheckStop::DeferredNominal);
-            };
-            return Ok(CheckedType::Nominal(existing));
+            return self
+                .types
+                .intern_result_list_nominal(&substituted)
+                .map(CheckedType::Nominal);
         }
-        match &self.nominal(id)?.kind {
+        match self.types.nominal(id)?.kind {
             CheckedNominalKind::Box { referent, .. } => {
-                let substituted = self.substitute_type_regions(*referent, regions)?;
-                if substituted == *referent {
+                let substituted = self.substitute_type_regions(check_context, referent, regions)?;
+                if substituted == referent {
                     return Ok(CheckedType::Nominal(id));
                 }
-                let Some(existing) = self.box_nominals.get(&substituted).copied() else {
-                    self.pending_nominals
-                        .borrow_mut()
-                        .push(super::PendingNominal::Box(substituted));
-                    return Err(CheckStop::DeferredNominal);
-                };
-                Ok(CheckedType::Nominal(existing))
+                self.types
+                    .intern_box_nominal(substituted)
+                    .map(CheckedType::Nominal)
             }
             CheckedNominalKind::Struct { .. }
             | CheckedNominalKind::Enum { .. }
@@ -1262,6 +1138,204 @@ impl<'unit> Checker<'unit> {
         }
     }
 
+    fn queue_region_blind_fields(
+        left: &[CheckedField],
+        right: &[CheckedField],
+        pending: &mut Vec<(CheckedType, CheckedType)>,
+    ) -> bool {
+        if left.len() != right.len() {
+            return false;
+        }
+        for (left, right) in left.iter().zip(right) {
+            if left.name != right.name {
+                return false;
+            }
+            pending.push((left.ty, right.ty));
+        }
+        true
+    }
+
+    pub(super) fn source_constructor(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        declaration: crate::DeclarationId,
+        caller: &GenericSubstitution,
+    ) -> Result<super::Constructor, CheckStop> {
+        let constructor = *self
+            .types
+            .constructor_templates_by_declaration
+            .get(&declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let template_index = match constructor {
+            ConstructorTemplate::Struct { template }
+            | ConstructorTemplate::Enum { template, .. } => template,
+        };
+        let template = self
+            .types
+            .nominal_templates
+            .get(template_index)
+            .cloned()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let substitution = self.nominal_generic_substitution(
+            check_context,
+            node,
+            &template.generic_parameters,
+            &template.region_parameters,
+            caller,
+        )?;
+        let nominal = self
+            .types
+            .source_nominal_instance(template.declaration, &substitution)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(match constructor {
+            ConstructorTemplate::Struct { .. } => super::Constructor::Struct(nominal),
+            ConstructorTemplate::Enum { variant, .. } => {
+                super::Constructor::Enum { nominal, variant }
+            }
+        })
+    }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
+    /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
+    ///
+    /// The modifier is a written one, and [GRAM-2] admits it on a source
+    /// `struct_decl` exactly as on the prelude's own opaque structs, so the
+    /// written token decides it first. The prelude-file test stays beside it
+    /// because the prelude's opaque declarations are read through a record
+    /// reader that fixes the modifier by its phase rather than by a token.
+    fn is_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
+        if self
+            .tree
+            .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Opaque))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let source = self.tree.coordinate(node)?.source();
+        Ok(self
+            .resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(source)
+            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
+    }
+    fn nominal_type_descendants(&self, node: NodeId) -> Result<Vec<NodeId>, CheckStop> {
+        let mut nested = self.tree.descendants_with(node, Production::Type)?;
+        let mut uses = Vec::with_capacity(nested.len());
+        for ty in nested {
+            if self
+                .optional_declaration_at(ty, DeclarationRole::GenericType)?
+                .is_none()
+            {
+                uses.push(ty);
+            }
+        }
+        nested = uses;
+        nested.sort_by(|left, right| {
+            let left_depth = self.tree.depth(*left);
+            let right_depth = self.tree.depth(*right);
+            right_depth
+                .cmp(&left_depth)
+                .then(left.index().cmp(&right.index()))
+        });
+        Ok(nested)
+    }
+}
+
+impl<'unit> TypeContext<'unit> {
+    /// [TYPE-6] whether this nominal is an instance of that source
+    /// declaration.
+    pub(super) fn nominal_instantiates(
+        &self,
+        nominal: crate::NominalId,
+        declaration: crate::DeclarationId,
+    ) -> Result<bool, CheckStop> {
+        let Some(template) = self.nominal_templates_by_declaration.get(&declaration) else {
+            return Ok(false);
+        };
+        Ok(self
+            .source_nominal_instances
+            .get(nominal.0 as usize)
+            .and_then(|entry| entry.as_ref())
+            .is_some_and(|(index, _)| index == template))
+    }
+    /// The constructor shape one `construct` names, when its declaration
+    /// carries `region_params` [FORM-8]; `None` for every declaration that
+    /// does not, where a construct writes no region argument at all and the
+    /// instance is formed from the written list alone.
+    pub(super) fn constructor_shape(
+        &self,
+        declaration: crate::DeclarationId,
+    ) -> Result<Option<super::ConstructorSite>, CheckStop> {
+        let constructor = *self
+            .constructor_templates_by_declaration
+            .get(&declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let (template_index, variant) = match constructor {
+            ConstructorTemplate::Struct { template } => (template, None),
+            ConstructorTemplate::Enum { template, variant } => (template, Some(variant)),
+        };
+        let template = self
+            .nominal_templates
+            .get(template_index)
+            .cloned()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(shape) = template
+            .constructors
+            .get(variant.unwrap_or(0) as usize)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        Ok(Some(super::ConstructorSite {
+            template: template_index,
+            variant,
+            generic_parameters: template.generic_parameters.clone(),
+            region_parameters: template.region_parameters.clone(),
+            shape,
+        }))
+    }
+    /// [S20] where each nominal instance's region axis leaves the program.
+    ///
+    /// Two instances share a representation when their region-erased source
+    /// families and complete reclamation graphs agree. Region identity is
+    /// proof-only, but the store's release class still selects runtime work.
+    /// This table uses declaration-level classes; physical specialization
+    /// interprets those classes in each accepted call's closed environment.
+    pub(super) fn nominal_lowering_aliases(&self) -> Result<Vec<NominalId>, CheckStop> {
+        self.nominal_aliases(true)
+    }
+    /// The region-erased source/type family used to select a release-class
+    /// specialization after semantic acceptance. Unlike the ordinary
+    /// lowering alias, this deliberately ignores a Box or Vector release
+    /// class; the physical specialization key restores those classes before
+    /// any IR type or cleanup action is selected.
+    pub(super) fn nominal_physical_aliases(&self) -> Result<Vec<NominalId>, CheckStop> {
+        self.nominal_aliases(false)
+    }
+    fn nominal_aliases(&self, release_sensitive: bool) -> Result<Vec<NominalId>, CheckStop> {
+        let mut aliases = Vec::with_capacity(self.nominals.len());
+        for index in 0..self.nominals.len() {
+            let id = NominalId(
+                u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+            );
+            let mut alias = id;
+            for earlier in 0..index {
+                let candidate = NominalId(
+                    u32::try_from(earlier).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                );
+                if self.nominals_share_region_erased_family(id, candidate, release_sensitive)? {
+                    alias = candidate;
+                    break;
+                }
+            }
+            aliases.push(alias);
+        }
+        Ok(aliases)
+    }
     /// [S20] whether two nominals are two names for one representation that
     /// differ in their regions alone.
     ///
@@ -1349,7 +1423,6 @@ impl<'unit> Checker<'unit> {
         }
         Ok(true)
     }
-
     fn nominals_have_same_region_erased_shape(
         &self,
         left: NominalId,
@@ -1394,7 +1467,7 @@ impl<'unit> Checker<'unit> {
             (
                 CheckedNominalKind::Struct { fields: left },
                 CheckedNominalKind::Struct { fields: right },
-            ) => Ok(Self::queue_region_blind_fields(left, right, pending)),
+            ) => Ok(Checker::queue_region_blind_fields(left, right, pending)),
             (
                 CheckedNominalKind::Enum { variants: left },
                 CheckedNominalKind::Enum { variants: right },
@@ -1405,7 +1478,7 @@ impl<'unit> Checker<'unit> {
                 for (left, right) in left.iter().zip(right) {
                     if left.name != right.name
                         || left.tag != right.tag
-                        || !Self::queue_region_blind_fields(&left.fields, &right.fields, pending)
+                        || !Checker::queue_region_blind_fields(&left.fields, &right.fields, pending)
                     {
                         return Ok(false);
                     }
@@ -1415,7 +1488,6 @@ impl<'unit> Checker<'unit> {
             _ => Ok(false),
         }
     }
-
     /// Compare identity before content: identical layout never merges two
     /// source declarations, different const arguments, or phantom type
     /// arguments. A type argument may itself contain the only region axis.
@@ -1487,24 +1559,6 @@ impl<'unit> Checker<'unit> {
         );
         Ok(matches!((left_list, right_list), (Some(left), Some(right)) if left == right))
     }
-
-    fn queue_region_blind_fields(
-        left: &[CheckedField],
-        right: &[CheckedField],
-        pending: &mut Vec<(CheckedType, CheckedType)>,
-    ) -> bool {
-        if left.len() != right.len() {
-            return false;
-        }
-        for (left, right) in left.iter().zip(right) {
-            if left.name != right.name {
-                return false;
-            }
-            pending.push((left.ty, right.ty));
-        }
-        true
-    }
-
     /// The ordinal names of a compiler-owned result-list nominal [CALL-4],
     /// absent for every nominal that is not one.
     fn result_list_ordinal_names(&self, id: NominalId) -> Option<Vec<String>> {
@@ -1513,7 +1567,6 @@ impl<'unit> Checker<'unit> {
             .find(|(_, candidate)| **candidate == id)
             .map(|(results, _)| results.iter().map(|(name, _)| name.clone()).collect())
     }
-
     /// The template index and instance arguments of one source nominal, when
     /// it is a source declaration's instance rather than a compiler-owned
     /// nominal [S20].
@@ -1528,7 +1581,6 @@ impl<'unit> Checker<'unit> {
             .as_ref()
             .map(|(template, substitution)| (*template, substitution)))
     }
-
     /// One nominal instance's region axis [S20], absent for every nominal that
     /// is not a source declaration's instance.
     pub(super) fn nominal_region_axis(
@@ -1539,7 +1591,6 @@ impl<'unit> Checker<'unit> {
             .source_nominal_instance_entry(id)?
             .map(|(_, substitution)| substitution.region_arguments()))
     }
-
     pub(super) fn source_nominal_instance(
         &self,
         declaration: crate::DeclarationId,
@@ -1552,7 +1603,222 @@ impl<'unit> Checker<'unit> {
             .find(|instance| instance.substitution == *substitution)
             .map(|instance| instance.id)
     }
-
+    pub(super) fn declare_nominals(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        items: &[NodeId],
+    ) -> Result<(), CheckStop> {
+        let nodes = items
+            .iter()
+            .copied()
+            .filter(|node| {
+                self.declarations
+                    .tree
+                    .production(*node)
+                    .is_ok_and(|production| {
+                        matches!(production, Production::StructDecl | Production::EnumDecl)
+                    })
+            })
+            .collect::<Vec<_>>();
+        for node in nodes {
+            self.declare_nominal_template(check_context, node)?;
+        }
+        for index in 0..self.nominal_templates.len() {
+            if self.nominal_templates[index].generic_parameters.is_empty()
+                && self.nominal_templates[index].region_parameters.is_empty()
+            {
+                self.declare_source_nominal_instance(index, GenericSubstitution::default())?;
+            }
+        }
+        Ok(())
+    }
+    fn declare_nominal_template(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
+        let role = match self.declarations.tree.production(node)? {
+            Production::StructDecl => DeclarationRole::Struct,
+            Production::EnumDecl => DeclarationRole::Enum,
+            _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+        };
+        let declaration = self.declarations.declaration_at(node, role)?;
+        let declaration_id = declaration.id();
+        if self
+            .nominal_templates_by_declaration
+            .contains_key(&declaration_id)
+        {
+            return Ok(());
+        }
+        // Parse every source-bearing premise before publishing any table
+        // entry, so a tolerant scratch failure is atomic.
+        let generic_parameters = self.parse_generic_parameters(check_context, node)?;
+        let variants = if role == DeclarationRole::Enum {
+            self.declarations
+                .tree
+                .children_with(node, Production::Variant)?
+        } else {
+            Vec::new()
+        };
+        let linear = self.declarations.declaration_is_linear(node)?;
+        let nocopy = self.declarations.declaration_is_nocopy(node)?;
+        // [GRAM-2] no nominal declares a region parameter in v0.60.
+        let region_parameters = Vec::new();
+        let template = NominalTemplate {
+            declaration: declaration_id,
+            node,
+            name: declaration.spelling().to_owned(),
+            role,
+            generic_parameters,
+            region_parameters,
+            linear,
+            nocopy,
+            constructors: Vec::new(),
+        };
+        let template_index = self.nominal_templates.len();
+        if self
+            .nominal_templates_by_declaration
+            .insert(declaration_id, template_index)
+            .is_some()
+        {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        if role == DeclarationRole::Struct
+            && !self.declarations.is_opaque_declaration(node)?
+            && self
+                .constructor_templates_by_declaration
+                .insert(
+                    declaration_id,
+                    ConstructorTemplate::Struct {
+                        template: template_index,
+                    },
+                )
+                .is_some()
+        {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        for (variant, variant_node) in variants.into_iter().enumerate() {
+            let declaration = self
+                .declarations
+                .declaration_at(variant_node, DeclarationRole::Variant)?;
+            let variant =
+                u32::try_from(variant).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            if self
+                .constructor_templates_by_declaration
+                .insert(
+                    declaration.id(),
+                    ConstructorTemplate::Enum {
+                        template: template_index,
+                        variant,
+                    },
+                )
+                .is_some()
+            {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+        }
+        self.nominal_templates.push(template);
+        Ok(())
+    }
+    fn declare_source_nominal_instance(
+        &mut self,
+        template_index: usize,
+        substitution: GenericSubstitution,
+    ) -> Result<NominalId, CheckStop> {
+        let template = self
+            .nominal_templates
+            .get(template_index)
+            .cloned()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if let Some(id) = self.source_nominal_instance(template.declaration, &substitution) {
+            self.activate_substitution(&substitution)?;
+            if self.view.add_nominal(id) {
+                self.nominal_layouts_acyclic_at = None;
+            }
+            return Ok(id);
+        }
+        let id = NominalId(
+            u32::try_from(self.nominals.len())
+                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+        );
+        let name = if substitution.len() == 0 {
+            template.name.clone()
+        } else {
+            format!("{}<instance:{}>", template.name, id.0)
+        };
+        self.nominal_nodes.push(Some(template.node));
+        self.nominal_states.push(0);
+        self.source_nominal_instances
+            .push(Some((template_index, substitution.clone())));
+        self.prelude_types.push(None);
+        self.push_nominal(CheckedNominal {
+            id,
+            name,
+            kind: match template.role {
+                DeclarationRole::Struct
+                    if self.declarations.is_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Opaque
+                }
+                DeclarationRole::Struct => CheckedNominalKind::Struct { fields: Vec::new() },
+                DeclarationRole::Enum => CheckedNominalKind::Enum {
+                    variants: Vec::new(),
+                },
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            },
+            linear: template.linear,
+            nocopy: template.nocopy,
+        });
+        self.nominals_by_declaration
+            .entry(template.declaration)
+            .or_default()
+            .push(NominalInstance { id, substitution });
+        Ok(id)
+    }
+    /// One declaration's constructors, read off its symbolic instance
+    /// [FORM-8].
+    ///
+    /// A field determines a region parameter exactly when its declared type
+    /// names that region — the same relation [FORM-8] uses at a call, where a
+    /// parameter whose type names a formal region determines it from the
+    /// actual. Where two fields name one region parameter the first decides
+    /// it and the rest are the ordinary [TYPE-5] equality against the formed
+    /// instance, exactly as a call's second store operand is.
+    fn constructor_shapes(
+        &self,
+        check_context: &CheckContext<'_>,
+        id: NominalId,
+        region_parameters: &[crate::DeclarationId],
+    ) -> Result<Vec<super::ConstructorShape>, CheckStop> {
+        let variants: Vec<&[super::super::model::CheckedField]> = match &self.nominal(id)?.kind {
+            CheckedNominalKind::Struct { fields } => vec![fields.as_slice()],
+            CheckedNominalKind::Enum { variants } => variants
+                .iter()
+                .map(|variant| variant.fields.as_slice())
+                .collect(),
+            _ => return Ok(Vec::new()),
+        };
+        let mut constructors = Vec::with_capacity(variants.len());
+        for fields in variants {
+            let field_regions = fields
+                .iter()
+                .map(|field| self.type_region_shape(check_context, field.ty, None))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut determining_field = vec![None; region_parameters.len()];
+            for (index, shape) in field_regions.iter().enumerate() {
+                for (slot, formal) in region_parameters.iter().enumerate() {
+                    if determining_field[slot].is_none() && shape.determines(*formal) {
+                        determining_field[slot] = Some(index);
+                    }
+                }
+            }
+            constructors.push(super::ConstructorShape {
+                fields: fields.iter().map(|field| field.name.clone()).collect(),
+                determining_field,
+            });
+        }
+        Ok(constructors)
+    }
     /// [TYPE-2] whether this declaration is an `opaque struct`, whose
     /// constructor entry exists only to be refused.
     ///
@@ -1570,13 +1836,11 @@ impl<'unit> Checker<'unit> {
         let template = self
             .nominal_templates
             .get(index)
+            .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        Ok(
-            template.role == DeclarationRole::Struct
-                && self.is_opaque_declaration(template.node)?,
-        )
+        Ok(template.role == DeclarationRole::Struct
+            && self.declarations.is_opaque_declaration(template.node)?)
     }
-
     /// [TYPE-2, PRE-2] where an opaque struct a construct names comes from,
     /// which selects the repair of its refusal. The standard library declares
     /// opaque structs only in its host modules, each a fieldless host handle
@@ -1587,6 +1851,7 @@ impl<'unit> Checker<'unit> {
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
         if !self
+            .declarations
             .declaration_home(declaration)
             .is_some_and(|(package, _)| package == crate::Package::Standard)
         {
@@ -1598,89 +1863,7 @@ impl<'unit> Checker<'unit> {
             .and_then(|&index| self.nominal_templates.get(index))
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         Ok(super::repairs::OpaqueStruct::HostHandle {
-            linear: self.declaration_is_linear(template.node)?,
+            linear: self.declarations.declaration_is_linear(template.node)?,
         })
-    }
-
-    pub(super) fn source_constructor(
-        &self,
-        node: NodeId,
-        declaration: crate::DeclarationId,
-        caller: &GenericSubstitution,
-    ) -> Result<super::Constructor, CheckStop> {
-        let constructor = *self
-            .constructor_templates_by_declaration
-            .get(&declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let template_index = match constructor {
-            ConstructorTemplate::Struct { template }
-            | ConstructorTemplate::Enum { template, .. } => template,
-        };
-        let template = self
-            .nominal_templates
-            .get(template_index)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let substitution = self.nominal_generic_substitution(
-            node,
-            &template.generic_parameters,
-            &template.region_parameters,
-            caller,
-        )?;
-        let nominal = self
-            .source_nominal_instance(template.declaration, &substitution)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        Ok(match constructor {
-            ConstructorTemplate::Struct { .. } => super::Constructor::Struct(nominal),
-            ConstructorTemplate::Enum { variant, .. } => {
-                super::Constructor::Enum { nominal, variant }
-            }
-        })
-    }
-
-    pub(super) fn nominal_checkpoint(&self) -> usize {
-        self.nominals.len()
-    }
-
-    pub(super) fn restore_nominal_checkpoint(
-        &mut self,
-        checkpoint: usize,
-    ) -> Result<(), CheckStop> {
-        if checkpoint > self.nominals.len() {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
-        // Element identities are append-only because a retained generic goal
-        // may still carry a scratch structural handle until its bridge is
-        // reified. Never reuse a key whose nominal identity is being retired.
-        // Unreachable historical entries are not executable type roots.
-        let mut retained = HashSet::new();
-        for (index, ty) in self.elements.borrow().iter().copied().enumerate() {
-            let mut nominals = Vec::new();
-            self.collect_type_nominals(ty, &mut nominals)?;
-            if nominals.iter().all(|id| (id.0 as usize) < checkpoint) {
-                retained.insert(CheckedElement(
-                    u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                ));
-            }
-        }
-        self.element_ids
-            .borrow_mut()
-            .retain(|_, id| retained.contains(id));
-        self.nominals.truncate(checkpoint);
-        self.nominal_table_changed();
-        self.nominal_nodes.truncate(checkpoint);
-        self.nominal_states.truncate(checkpoint);
-        self.source_nominal_instances.truncate(checkpoint);
-        self.prelude_types.truncate(checkpoint);
-        self.nominals_by_declaration.retain(|_, instances| {
-            instances.retain(|instance| (instance.id.0 as usize) < checkpoint);
-            !instances.is_empty()
-        });
-        self.prelude_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        self.box_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        self.result_list_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        Ok(())
     }
 }

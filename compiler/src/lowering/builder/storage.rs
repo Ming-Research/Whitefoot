@@ -317,7 +317,7 @@ impl IrBuilder<'_> {
                 ..
             } => {
                 let owner = self.lower_borrowed_place_address(value)?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 let referent = lower_type(self.erasure, *referent)?;
                 self.define(
                     IrType::Address(
@@ -337,7 +337,7 @@ impl IrBuilder<'_> {
                 ..
             } => {
                 let owner = self.lower_borrowed_place_address(value)?;
-                let nominal = self.erased(*nominal);
+                let nominal = self.erased(*nominal)?;
                 let field_ty = lower_type(self.erasure, *ty)?;
                 self.define(
                     IrType::Address(
@@ -418,7 +418,7 @@ impl IrBuilder<'_> {
                     )
                 }
                 crate::semantic::CheckedPlaceStep::BoxReferent(checked_nominal) => {
-                    let nominal = self.erased(*checked_nominal);
+                    let nominal = self.erased(*checked_nominal)?;
                     if base.ty() != IrType::Nominal(nominal) {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     }

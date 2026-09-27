@@ -1,12 +1,14 @@
 use crate::SemanticCompilerFailure;
+use crate::semantic::check::CheckContext;
+use crate::semantic::check::TypeContext;
 
 use super::super::model::{
     CheckedDrop, CheckedExpression, CheckedNominalKind, CheckedSetTarget, CheckedStatement,
     CheckedType,
 };
-use super::{CheckStop, Checker};
+use super::CheckStop;
 
-impl<'unit> Checker<'unit> {
+impl<'unit> TypeContext<'unit> {
     /// [STOR-8, PROV-6] Validate every release graph reached by the checked
     /// cleanup traversal before [EFF-2] compares the body's ordinary effects.
     pub(super) fn validate_release_graphs(
@@ -100,14 +102,12 @@ impl<'unit> Checker<'unit> {
         }
         Ok(())
     }
-
     fn validate_drop_release_graphs(&self, drops: &[CheckedDrop]) -> Result<(), CheckStop> {
         for drop in drops {
             self.release_graph_nodes(drop.ty)?;
         }
         Ok(())
     }
-
     fn validate_expression_release_graphs(
         &self,
         expression: &CheckedExpression,
@@ -187,6 +187,7 @@ impl<'unit> Checker<'unit> {
     }
     pub(super) fn drop_paths(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         fields: Vec<u32>,
     ) -> Result<Vec<(Vec<u32>, CheckedType)>, CheckStop> {
@@ -210,7 +211,7 @@ impl<'unit> Checker<'unit> {
                 | CheckedType::Window { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
-                    if !self.is_copy_type(current)? {
+                    if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }
                 }
@@ -221,7 +222,7 @@ impl<'unit> Checker<'unit> {
                     // and has an empty release. A tag-only enum declared
                     // `nocopy` is affine and owns nothing, so its release is
                     // empty as well.
-                    if self.is_copy_type(current)? || nominal.is_tag_only_enum() {
+                    if self.is_copy_type(check_context, current)? || nominal.is_tag_only_enum() {
                         continue;
                     }
                     match &nominal.kind {
@@ -230,7 +231,7 @@ impl<'unit> Checker<'unit> {
                             // PROV-6 visits fields in declaration order; the
                             // explicit work stack is last-in, first-out.
                             for (index, field) in fields.iter().enumerate().rev() {
-                                if self.is_copy_type(field.ty)? {
+                                if self.is_copy_type(check_context, field.ty)? {
                                     continue;
                                 }
                                 let mut child = path.clone();
@@ -252,9 +253,9 @@ impl<'unit> Checker<'unit> {
         }
         Ok(drops)
     }
-
     pub(super) fn residual_drop_paths(
         &self,
+        check_context: &CheckContext<'_>,
         ty: CheckedType,
         moved: &[u32],
     ) -> Result<Vec<(Vec<u32>, CheckedType)>, CheckStop> {
@@ -293,13 +294,13 @@ impl<'unit> Checker<'unit> {
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. } => {
-                    if !self.is_copy_type(current)? {
+                    if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }
                 }
                 CheckedType::Nominal(id) => {
                     let nominal = self.nominal(id)?;
-                    if self.is_copy_type(current)? {
+                    if self.is_copy_type(check_context, current)? {
                         if selected {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());
                         }
@@ -329,12 +330,12 @@ impl<'unit> Checker<'unit> {
                         let field = fields
                             .get(selected_field as usize)
                             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                        if self.is_copy_type(field.ty)? {
+                        if self.is_copy_type(check_context, field.ty)? {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());
                         }
                     }
                     for (index, field) in fields.iter().enumerate().rev() {
-                        if self.is_copy_type(field.ty)? {
+                        if self.is_copy_type(check_context, field.ty)? {
                             continue;
                         }
                         let index = u32::try_from(index)

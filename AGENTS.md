@@ -256,7 +256,10 @@ not a reason to pause on every file.
   gates. Prefer a clear map, a good name and a stated purpose over relocation.
 - No active source, build, test, or tool may depend on `archive/`.
 - New and modified repository artifacts, identifiers, comments, diagnostics,
-  fixtures, test names, and file names use English.
+  fixtures, test names, and file names use English. The one exception is
+  `README.zh-CN.md`, the owner's Chinese translation of `README.md`: a change
+  to either file changes the other in the same change, and `make static`
+  refuses a branch that changes only one.
 
 ## Compiler rules
 
@@ -269,9 +272,10 @@ revising compiler code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
 exploratory timing runs only when requested. Use the guarded verification
-targets in README, or wrap other local heavy builds, suites and benchmarks
-with `perl .github/run-check.pl <label> <command> ...`, including commands
-from other worktrees. Inspect an existing owner's PID instead of starting
+targets in the [workflow map](docs/workflow.md#checks), or wrap other local
+heavy builds, suites and benchmarks with
+`perl .github/run-check.pl <label> <command> ...`, including commands from
+other worktrees. Inspect an existing owner's PID instead of starting
 another heavy command. Separate build time from test/program execution,
 investigate a stage that exceeds its observed cost, and preserve the full gate
 before merge.
