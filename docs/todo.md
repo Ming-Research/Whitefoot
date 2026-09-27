@@ -1147,6 +1147,25 @@ rarely insert at the same place.
   changing the runtime; reopen with the next change to the context scheduler
   or when a program's rate depends on it.
 
+- **A 16-byte shift of a kernel's code changes its measured speed by 40
+  percent.** The `records` compute kernel's hot function,
+  `wf__par_seq_summarize_records`, runs about 21 ms at one worker when it
+  starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
+  instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
+  imported libc function adds a PLT entry before `.text`, which is enough to
+  move it. The waiting-context floor's `mprotect` did that, and so did an
+  unrelated `getpagesize` import linked beside the base runtime. The measured
+  times were 20.7 ms for the base, 29.5 ms for the base with the extra import
+  and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
+  Xeon. `compute-regression` then reports `records` as adverse at two widths
+  for a change that leaves the kernel's generated code identical. Every later
+  runtime import will do the same. Align emitted functions and loop headers
+  (for example 64-byte function alignment, or building kernel objects with
+  `-mbranches-within-32B-boundaries`), measure the kernels under both
+  placements, and adopt whichever makes their time independent of the
+  offset. Reopen when the next compute-regression verdict names a kernel
+  whose generated code did not change.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
