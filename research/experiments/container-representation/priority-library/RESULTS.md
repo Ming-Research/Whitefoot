@@ -323,6 +323,16 @@ native controls; no useful cell may regress and every newly eligible cell must
 beat the slower standard peer. This is a source correction under the current
 algorithm, not a new API or specification choice.
 
+#### Audit correction
+
+The preregistration above was based on a stale or misread source fragment. The
+current branch's `priority_queue_pop` has exactly one
+`priority_queue_sift_sink` call at `lib/std/collections/priority_queue/priority-queue.wf:230`; the neighboring call at line 242 belongs to
+`priority_queue_replace_top`. A fresh `rg` and `git show HEAD:` inspection found
+no duplicate pop call. No source candidate, compiler build, timing or verdict
+change was made. The preregistration is retained only as an audit trail and
+must not be treated as evidence of a PriorityQueue defect.
+
 ## Historical matched C comparison
 
 Run from the repository root, with a built compiler or `WHITEFOOTC` override:
