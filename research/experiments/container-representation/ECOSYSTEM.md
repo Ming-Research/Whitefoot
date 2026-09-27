@@ -333,7 +333,7 @@ is `-DECOSYSTEM`; native compilation and final linking use O3. Whitefoot's
 emitted LLVM is compiled by Clang at O3. Ordinary timed images omit allocation
 observers; separate `ACCOUNT_ONLY` images produce accounting data. Per-family
 `configuration.txt` files record these settings and full compiler identities.
-The rebuilt current gate compiler SHA-256 is
+The initial practical-matrix gate compiler SHA-256 is
 `cb918e191bb344733347e0602171d2ec53bd1d201044fdbc5dd7666468eea0a0`;
 the specification SHA-256 is
 `59951ec5e42c0daa46947d88448be3fae9ca14276ad3600c03af03a54ef74d83`.
@@ -350,6 +350,101 @@ The library remains an external experiment dependency, not vendored source or
 a new compiler/gate prerequisite. Preparation took 1.74 s to configure and
 52.72 s to build/install Abseil; neither duration is a container execution
 measurement.
+
+### Actual compiler construction and native admission
+
+The combined compiler implementation at
+`9efd6c624d5d947f68e676a9181e58b3168d9a69` was built from unchanged practical
+callers/library sources against preserved `.build/main-6bb-f` controls from
+`f945eceecb3aacac20e76864c73edf8b7c87902b`. It implements the provisional
+[terminal-consumption](../../../design/amendments/terminal-owned-consumption.md)
+and [function-actual hint](../../../design/amendments/function-actual-inlining.md)
+choices. This is actual compiler output, distinct from Vector's raw K+hint
+intervention. The later `0ebbb8cec408bc37ac2d1a60fe9cb2b237a10ffa` revision only
+repairs a documentation link; it does not change compiler/lib/spec bytes.
+The frozen candidate/control CLI SHA-256 values are
+`b3bbef4357cf89dfc45c4bda17cecde0240cb2253a01679e3518b8eb13566f8c` /
+`e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`.
+
+Fresh `BUILD=.build/actual-forward-hint` construction preserves ordinary O3,
+allocation, native controls and each family's existing visibility policy.
+All 22 phase commands exit 0: CLI/family/corpus construction takes 79.017 s
+(CLI 43.912 s), checks plus accounting 11.674 s, and five owning-program test
+commands 21.495 s. The latter include helper construction inside the tests;
+they are not pure native execution times. Each exact owning test passes once
+and exercises both lowering modes. The wrapper ledger records 113.203 s in
+one attempt. All existing checksum, cleanup and reserve fault controls remain
+active. All 104 non-WF object/archive inputs match the controls, all 446
+candidate-source pins held through construction, and every accounting CSV matches baseline
+bytes. These focused observations do not substitute for the full repository gate.
+
+| Family | Hinted physical definitions | Terminal regions selected | Accounting rows | Final native observation |
+| --- | ---: | ---: | ---: | --- |
+| Vector | 4 | 2 | 294 | Forward scalar/wide consumers; empty paths skip length publication |
+| Deque | 4 | 0 | 120 | WF object and all linked sections identical |
+| HashMap | 12 | 0 | 420 | WF object and all linked sections identical |
+| PriorityQueue | 10 | 0 | 150 | WF object and all linked sections identical |
+| OrderedMap | 11 | 0 | 210 | WF object and all linked sections identical |
+
+The hints follow supplied checked function identities, including forwarding;
+Priority's ten include two instances of imported `priority_queue_ignore_position`.
+Other raw bodies stay unchanged. The identical probe-stack attribute declaration
+moves, with whitespace changes; this is separate from function-body identity.
+For all four unaffected families, section bytes, sizes and addresses, symbols,
+retained calls, frames, copies/spills and native-control placement are unchanged.
+Their complete executable hashes differ in link metadata, not section contents.
+[Vector's native record](vector-library/RESULTS.md#actual-compiler-forward-consumption-with-ordinary-function-actual-hints)
+reports the eliminated callback/copy mechanisms, surviving batch calls and
+actual indexed loops that differ from raw K+hint. Its earlier timing cannot be
+assigned to this compiler.
+
+Before any timed invocation, the prospective all-five-family pair was reduced
+to a fresh **complete Vector pair** because the other four implementations and
+linked layouts are identical. Their prior baseline measurements remain retained
+observations, not fresh candidate timings or a new latency claim. Vector still
+uses `measure 1048576 7`, F then candidate, all 4,116 rows per arm, both cohorts,
+36 useful cells and six unranked suffix-zero controls. No Vector cell is dropped.
+The [fresh Vector result](vector-library/RESULTS.md#actual-compiler-paired-timing-scalar-gains-with-adverse-wide-results)
+is adverse: raw 6 gains/1 loss/29 overlaps; qualified 6 gains/0 qualified losses/
+27 overlaps/3 unstable cells. Wide suffix-one/16 retains a raw strict loss
+(1.557/1.415×) even though its 10.0478% cohort spread narrowly exceeds the
+unchanged 10% limit. The other wide suffix-one cells also regress in both
+medians; all three wide suffix-zero controls strictly regress 14.1–20.1%.
+Targets change from fresh F 13/9/14 to candidate 16/2/18 (pass/deficit/
+inconclusive); neither that count nor the instability flags establishes the
+required no-regression result. The complete table, raw pair, native drift and
+qualifications remain in the family report. No candidate performance policy is
+selected, and no separate time saving is attributed to either mechanism.
+
+Replay construction from the pinned implementation checkout with the toolchain
+and Abseil installation above, using a fresh output directory and the maintained
+opt-in targets (from the repository root):
+
+```sh
+perl .github/run-check.pl actual-compiler-build cargo build \
+  --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc \
+  --locked --offline -j2
+perl .github/run-check.pl actual-container-checks make \
+  -C research/experiments/container-representation \
+  ecosystem-build ecosystem-check ecosystem-account BUILD=.build/actual-replay \
+  WHITEFOOTC="$PWD/compiler/target/gate/whitefootc" \
+  ABSEIL_PREFIX=/private/tmp/whitefoot-abseil-20260817.0-install
+perl .github/run-check.pl actual-owning-build cargo test \
+  --manifest-path compiler/Cargo.toml --test corpus --profile gate \
+  --locked --offline -j2 --no-run
+```
+
+Invoke the five corresponding owning tests in
+[`compiler/tests/programs/containers.rs`](../../../compiler/tests/programs/containers.rs)
+separately under the guard, using the executable produced by that build; retain
+construction and execution costs. Compare raw LLVM, ordinary
+objects and final linked code before a new measurement; do not reuse optimized
+LLVM through another O3 pass or rebuild the preserved controls. Local records
+are under `/private/tmp/whitefoot-actual-compiler-validation/`: `manifest.json`,
+`construction-1/{candidate-source.json,phase-times.json,comparisons.json}` and
+`construction-1/native/{vector-audit.md,deque-report.md,map-native-audit.md,priority-native-audit.md,ordered-report.md}`.
+The source revision and maintained targets above make the scratch runner optional;
+research remains outside canonical gate dependencies.
 
 ### Preserved observations and execution cost
 

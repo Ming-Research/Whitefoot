@@ -2498,6 +2498,212 @@ UUID and code signature. The records and section comparison are under
 `/private/tmp/whitefoot-main-6bb-f-validation`; these are construction,
 correctness and identity observations. No performance timing was repeated.
 
+### Actual compiler: forward consumption with ordinary function-actual hints
+
+The actual compiler at `9efd6c624d5d947f68e676a9181e58b3168d9a69` passes
+the prospective Vector native criterion. This is newly emitted code from the
+unchanged source, compared with `.build/main-6bb-f`; it is not the raw K+hint
+artifact or its measured result. The [five-family construction record](../ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
+owns shared identities, costs and reproduction. The fresh paired result below
+is adverse; the earlier 13-gain/zero-loss raw K+hint result does not validate
+this implementation's performance.
+
+Exactly the scalar and wide `grow_vector_truncate` raw bodies change. The
+checked terminal region becomes an ascending logical-index traversal with an
+ordinary consumer call; retained length is published only after nonempty
+completion. Other Vector bodies retain their lowering. Exactly four physical
+make/accept definitions receive the ordinary hints from their checked supplied
+bindings; all 57 exported object symbols match the control. There is no source,
+callback ABI, allocation policy or specification change. The raw wide loop does
+materialize a 256-byte owned local before acceptance; native inspection must,
+and does, establish elimination of that copy.
+
+No scalar/record accept call or branch survives in the linked image. The wide
+batch helper at `0x10000d3c8` is frameless and call-free: its positive loop reads
+backing directly in forward order, with 16 paired loads, 32 digest multiply-adds
+and four cursor/count/branch instructions per owner. It writes no payload and
+creates no replacement owner snapshot. Suffix, mixed cleanup and final prefix
+drain each reach this consumer; suffix lengths 1/2/3 each retain one batch call.
+Scalar consumers inline into the corresponding paths without owner relocation.
+The pre-existing wide swap-remove temporary remains a separate cost.
+
+The wide suffix-zero caller still invokes the helper. Its empty branch bypasses
+payload reads, digest access and the same-value length store; scalar standalone
+and inlined consumers retain the corresponding guard. Removing those stores
+does not establish removal of all suffix-zero overhead or an isolated time saving.
+
+| Native observation | Frozen F | Raw K+hint | Actual compiler |
+| --- | ---: | ---: | ---: |
+| Scalar trace instructions / frame bytes | 246 / 160 | 236 / 176 | 229 / 160 |
+| Scalar positive consumer instructions per owner | rear/exchange walk | 4 | 6 |
+| Wide truncate instructions | 168 | 63 | 65 |
+| Wide positive consumer instructions per owner | take/exchange/remainder | 51 | 52 |
+| WF object / linked text bytes | 11,428 / 691,132 | 10,432 / 690,136 | 10,432 / 690,136 |
+
+The actual scalar loop uses indexed address formation/load/multiply-add/index
+advance/compare/branch instead of raw K's pointer/count recurrence. Wide trace,
+tail and mixed work normalize identically to K+hint, with frames 352/288/688 B;
+the previously disclosed environment-pointer spill/register rearrangement versus
+F remains. Growth calls stay on full-capacity edges, and tail construction writes
+directly to backing. Equal text sizes do not make the two implementations equal.
+
+Native driver/C++/Rust inputs are byte-identical to F. Their four standard trace
+entries move −996 bytes versus F; 43 wide constant references relocate while
+all loaded 16-byte values remain equal. Addresses/instructions match K+hint's
+standard traces. The complete images are different, so placement effects remain
+inside the whole-trace comparison below.
+
+Actual timed LLVM, WF object and linked-image SHA-256 values are respectively
+`49bc8ef4d39df3f24ce2314e237537c74675a1946a942166863cdba9c1b0a764`,
+`7e9667d18069e0e196b98d2cce6f070f1e5b11a3d8ce6f69cfb3a3175e7b9278` and
+`7bc4c7fff9c9af06e281dcc65d8cb3842cd96bf0770619e5b3c4e6c5ab65f5d2`.
+The 294-row allocation ledger is byte-identical to F. The local read-only audit,
+raw changed-body inventory, native dumps and constant qualification are under
+`/private/tmp/whitefoot-actual-compiler-validation/construction-1/native/`;
+`vector-audit.md` SHA-256 is
+`c6a39fbfaa602f47b854a6ca8b1d0ee614868ac259c8d8cf3648e9a5ff486493`.
+
+### Actual compiler paired timing: scalar gains with adverse wide results
+
+The fresh actual-compiler pair does not establish the required useful-cell
+no-regression result. All six strict gains are scalar suffix-two/three, but wide
+suffix-one at 16 has a raw strict loss: candidate medians are 35.789/32.046 ms
+versus F's 22.989/22.653 ms, ratios **1.556788/1.414647** in cohorts 0/1.
+Even its candidate minima exceed F's maxima by 1.290859/1.046363. Its ratio
+spread is **10.0478%**, just above the unchanged 10% stability limit, so it is
+unqualified for a ranked verdict. That flag does not turn the large observed
+regression into evidence of no regression. Wide suffix-one at 256 and 4096
+also regresses in both cohort medians: 1.107953/1.446962 and
+1.399245/1.578892, with spreads 30.5978% and 12.8389%; their ranges overlap.
+All samples remain. No outlier removal, selective replay or revised cutoff follows.
+
+Across 36 useful cells, raw range separation gives **6 gains, 1 loss and
+29 overlaps**. Applying the recorded duration/stability qualifications gives
+**6 gains, 0 qualified losses, 27 overlaps and 3 unstable cells**, all three
+wide suffix-one. The minimum useful paired sample is 1.234 ms. Standard targets
+move from fresh F's **13 pass/9 deficit/14 inconclusive** to the actual compiler's
+**16/2/18**; its two qualified deficits are scalar growth at 16 and scalar
+suffix-two at 256. The three wide suffix-one targets are inconclusive due to
+instability, despite the adverse observations above. Counts do not select the
+candidate or complete the family goal.
+
+The table covers all 36 useful cells and six unranked controls. Ratios list
+candidate/F cohort medians in order 0/1. Raw G/L/O require both complete sample
+ranges to separate as gain/loss, or otherwise overlap. Qualified X is unstable,
+S is shorter than 1 ms; target P/D/I/U means pass/deficit/inconclusive/unranked,
+shown F→actual. These are observed ranges, not confidence intervals.
+
+| Bytes | Path | n | Actual/F, 0 / 1 | Raw / qualified | Target F→actual |
+| ---: | --- | ---: | ---: | :---: | :---: |
+| 8 | reserved | 16 | 0.886 / 0.866 | O / O | I→I |
+| 8 | reserved | 256 | 1.011 / 0.998 | O / O | P→P |
+| 8 | reserved | 4096 | 1.019 / 0.978 | O / O | P→I |
+| 8 | growth | 16 | 1.036 / 1.010 | O / O | D→D |
+| 8 | growth | 256 | 1.004 / 1.003 | O / O | I→P |
+| 8 | growth | 4096 | 0.986 / 0.955 | O / O | P→P |
+| 8 | reuse | 16 | 0.808 / 0.844 | O / O | P→P |
+| 8 | reuse | 256 | 0.981 / 0.969 | O / O | P→P |
+| 8 | reuse | 4096 | 0.996 / 0.993 | O / O | P→P |
+| 8 | suffix-1 | 16 | 0.957 / 0.979 | O / O | I→P |
+| 8 | suffix-1 | 256 | 0.952 / 0.952 | O / O | I→I |
+| 8 | suffix-1 | 4096 | 0.974 / 0.932 | O / O | I→I |
+| 8 | suffix-2 | 16 | 0.757 / 0.744 | G / G | D→I |
+| 8 | suffix-2 | 256 | 0.713 / 0.713 | G / G | D→D |
+| 8 | suffix-2 | 4096 | 0.753 / 0.719 | G / G | D→I |
+| 8 | suffix-3 | 16 | 0.713 / 0.717 | G / G | I→P |
+| 8 | suffix-3 | 256 | 0.705 / 0.699 | G / G | D→P |
+| 8 | suffix-3 | 4096 | 0.679 / 0.703 | G / G | I→P |
+| 8 | suffix-0 | 16 | 1.039 / 0.968 | O / S | U |
+| 8 | suffix-0 | 256 | 1.013 / 0.996 | O / S | U |
+| 8 | suffix-0 | 4096 | 1.008 / 0.967 | O / S | U |
+| 256 | reserved | 16 | 0.985 / 0.990 | O / O | P→I |
+| 256 | reserved | 256 | 1.017 / 1.006 | O / O | P→P |
+| 256 | reserved | 4096 | 0.999 / 1.008 | O / O | P→P |
+| 256 | growth | 16 | 0.997 / 1.010 | O / O | I→I |
+| 256 | growth | 256 | 0.989 / 1.000 | O / O | P→P |
+| 256 | growth | 4096 | 0.980 / 0.992 | O / O | I→I |
+| 256 | reuse | 16 | 0.976 / 0.990 | O / O | P→P |
+| 256 | reuse | 256 | 0.984 / 1.005 | O / O | P→P |
+| 256 | reuse | 4096 | 0.997 / 1.005 | O / O | P→P |
+| 256 | suffix-1 | 16 | 1.557 / 1.415 | L / X | D→I |
+| 256 | suffix-1 | 256 | 1.108 / 1.447 | O / X | D→I |
+| 256 | suffix-1 | 4096 | 1.399 / 1.579 | O / X | D→I |
+| 256 | suffix-2 | 16 | 0.943 / 0.954 | O / O | I→I |
+| 256 | suffix-2 | 256 | 0.918 / 0.937 | O / O | D→I |
+| 256 | suffix-2 | 4096 | 0.929 / 0.930 | O / O | I→I |
+| 256 | suffix-3 | 16 | 0.958 / 0.985 | O / O | I→I |
+| 256 | suffix-3 | 256 | 0.965 / 0.971 | O / O | I→I |
+| 256 | suffix-3 | 4096 | 0.977 / 0.966 | O / O | I→I |
+| 256 | suffix-0 | 16 | 1.162 / 1.178 | L / L | U |
+| 256 | suffix-0 | 256 | 1.162 / 1.201 | L / L | U |
+| 256 | suffix-0 | 4096 | 1.146 / 1.141 | L / L | U |
+
+All three wide suffix-zero controls strictly regress, with median slowdowns
+14.1–20.1%; removing the empty-path length store did not remove their measured
+overhead. All three scalar suffix-zero controls overlap and each has a paired sample below 1 ms.
+These six rows stay unranked but visible; they are not dropped from the outcome.
+
+Useful native-control median drift spans Rust 0.942494–1.036989× and C++
+0.927650–1.037607×. At wide suffix-one/16, Rust ratios are 0.971984/1.008166
+and C++ 0.961146/1.037607; a uniform native slowdown does not explain the
+candidate's 1.556788/1.414647 ratios. At 256/4096 the corresponding standard
+ratios stay within 0.975032–0.999762×. Direct C is noisier: useful drift spans
+0.896501–1.296531×, and within-arm scalar suffix-two comparisons are unstable
+at F/256 (20.3089%) and candidate/4096 (48.3436%). Every candidate wide
+suffix-one comparison against all six native variants is unstable. These flags
+remain qualifications, not averaging corrections or isolated component costs.
+
+The fresh [F control](ecosystem-actual-compiler-control-samples.csv) and
+[actual compiler](ecosystem-actual-compiler-candidate-samples.csv) each retain
+4,116 rows with identical non-time fields/checksums and sample IDs 0–6.
+SHA-256 values are respectively
+`a11aa33b754b3e410c9f004c39c702f624f3e526fcb86844b720f80bd6206025` and
+`7d5eef6091d3be53ae683b3bd82f7d7e30b78d9bef8b85bc70f7c9d32bb71a08`.
+The frozen F image ran first, then the frozen `9efd6c624` candidate, each with
+`measure 1048576 7`: 81.360/81.040 s, both exit 0. The wrapper ledger records
+164.167 s in one attempt; maintained reductions cost 0.835 s separately within
+that guard. All seven phase commands and the later paired reduction exit 0.
+The 1,361 frozen source/input/artifact hashes matched before and after the pair;
+`freeze.json` SHA-256 is
+`cfc9e1a580c8e80bd0b57a58c642c6b536d6463b81f1f0ea030f689f6bd8af09`.
+These are newly paired controls, not pooled historical F or raw K measurements.
+
+The [prospective scope revision](../ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
+preceded every timing/guard attempt and retained the complete Vector matrix;
+the four unchanged families were not remeasured. Source, flags, allocation,
+cohort order and the maintained reducer are unchanged. Reproduce reductions
+from this directory, separately for `control` and `candidate`:
+
+```sh
+set -eu
+for arm in control candidate; do
+  perl ../summarize-ecosystem.pl --complete \
+    "vector=ecosystem-actual-compiler-$arm-samples.csv" > "/tmp/actual-$arm-summary.csv"
+  perl ../summarize-ecosystem.pl --targets \
+    "vector=ecosystem-actual-compiler-$arm-samples.csv" > "/tmp/actual-$arm-targets.csv"
+done
+```
+
+Use the preceding pinned construction recipe and frozen images for any new run;
+no extra optimizer pass or benchmark variant is implied. Local `measurement-1/`
+under `/private/tmp/whitefoot-actual-compiler-validation` retains phase/status,
+posthash, full paired-cell and native-drift reductions. This combined experiment
+establishes no separate latency share for hints, traversal or the empty-edge
+change, and its adverse result does not select a production performance policy.
+
+### Next discriminator: wide counted consumer with the actual empty guard
+
+Before construction, freeze the actual `9efd6c624` inputs and replace only its
+wide truncate LLVM body with raw K+hint's counted loop plus an explicit nonempty
+guard/empty return. Rebuilt actual control must reproduce the frozen code exactly;
+the candidate must retain a distinct counted loop, no per-owner callback or owner
+staging, and the actual empty bypass. Disclose every code/placement change and
+stop before timing if those criteria fail. A passing native/correctness result
+permits one complete 4,116-row-per-arm Vector pair with the existing matrix and
+qualifications, never selective replay. An improvement would implicate the
+consumer-and-placement package, not isolate one instruction or alignment effect.
+This is a prospective discriminator, with no construction or timing result here.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
