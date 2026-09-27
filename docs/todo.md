@@ -1702,6 +1702,22 @@ each is resolved by a discussion and a tree change.
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
+- **Two waiting calls whose results are both used cannot overlap.** Minimal
+  witness: a waiting function makes `let a = read_at(…first file…);` and
+  then `let b = read_at(…second file…);` and combines `a` and `b`. The second
+  read starts only after the first has completed: a statement that contains
+  a waiting call has no overlap permission [PAR-1, PAR-2], and `mustpar`
+  starts a waiting call only as an expression statement whose result is
+  dropped [PAR-4], so neither read can run alongside the other. Before
+  kernel-spec v0.76, `--par` could hand such calls to two workers. Serving
+  independent connections does not need this; issuing several requests and
+  combining their answers does. One candidate is `let a = mustpar f(…);`
+  for a waiting `f`: start a context and join it where `a` is first used or
+  where the activation exits. That matches the join a `--par` call already
+  has, and it needs a result slot per started context rather than one
+  count per activation. Reopen when the owner rules on it, or when a
+  program needs to gather several I/O results.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
