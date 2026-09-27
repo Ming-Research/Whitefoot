@@ -19,7 +19,7 @@ impl ModuleUnit {
                 return None;
             }
             let mut bodies = BTreeMap::new();
-            for pair in fields.chunks_exact(2) {
+            for pair in fields.chunks(2) {
                 if bodies.insert(pair[0].to_vec(), pair[1].to_vec()).is_some() {
                     return None;
                 }
