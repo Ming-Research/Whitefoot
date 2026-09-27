@@ -348,8 +348,8 @@ Not started. Each builds on what the proofs already establish.
 Short pieces, each on one idea, with programs that compile. The first three
 start from the examples above:
 
-1. Prove it or write a branch — bounds and overflow checks that disappear
-   because they are proved.
+1. [Prove it or write a branch](docs/articles/prove-it-or-write-a-branch.md) —
+   bounds and overflow checks that disappear because they are proved.
 2. [Write sequential code, get parallel
    results](docs/articles/sequential-code-parallel-results.md) — how the
    compiler finds independence in plain code, recursion included, and hands
