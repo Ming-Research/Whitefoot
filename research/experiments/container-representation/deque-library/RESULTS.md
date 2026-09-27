@@ -1140,3 +1140,18 @@ matrix with the existing 1 ms/10% stability qualification; any useful-cell
 regression rejects the row change. This experiment measures whether effect-row
 precision exposes an existing invariant; it does not amend the specification
 or promise a new operation.
+
+The source candidate was rejected before IR generation. With the exact row
+
+```text
+fn deque_push_front<T>(values: &Box<Ring<T>>, value: T) -> length: u64
+  writes(values.inner.head), writes(values.inner.next), writes(values.inner.len)
+```
+
+the compiler reports `EFF-2 EffectMismatch`: the body calls the prelude
+`place_front`, whose declared row is `writes(window)`, so the required covering
+row is `writes(values.inner)`. The rejection is the current effect-row
+boundary, not a performance observation. The candidate source was restored;
+no Deque timing or production API change resulted. A follow-up would have to
+re-evaluate the prelude operation's own row and its specification grounds
+before any code-generation comparison.
