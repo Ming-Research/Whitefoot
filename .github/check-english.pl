@@ -4,9 +4,13 @@
 # tracked files outside archive/, which is frozen and keeps its historical
 # text. Text is what `git grep -I` reads, so a file git treats as binary is
 # skipped. A line that is not valid UTF-8 is read as bytes and never matches.
+# The match is the Script property, `\p{Script=Han}`: the short `\p{Han}`
+# means Script_Extensions, which in older Unicode versions, such as macOS's
+# perl, also covers shared punctuation like the middle dot U+00B7.
 # `--self-test` builds a throwaway repository and requires the scan to reject
 # a Han file name, a Han line and a Han line after an invalid one, and to
-# accept English text, a binary file holding Han bytes and Han under archive/.
+# accept English text with a middle dot, a binary file holding Han bytes and
+# Han under archive/.
 use strict;
 use warnings;
 use File::Temp qw(tempdir);
@@ -34,14 +38,14 @@ sub first_han_line {
     return 0 unless defined $bytes;
     my $text = $bytes;
     if (utf8::decode($text)) {
-        return 0 unless $text =~ /\p{Han}/;
+        return 0 unless $text =~ /\p{Script=Han}/;
         return 1 + (substr($text, 0, $-[0]) =~ tr/\n//);
     }
     my $number = 0;
     for my $line (split /\n/, $bytes, -1) {
         $number++;
         utf8::decode($line);
-        return $number if $line =~ /\p{Han}/;
+        return $number if $line =~ /\p{Script=Han}/;
     }
     return 0;
 }
@@ -54,7 +58,7 @@ sub scan {
     for my $name (@names) {
         my $decoded = $name;
         utf8::decode($decoded);
-        push @findings, "$name: file name" if $decoded =~ /\p{Han}/;
+        push @findings, "$name: file name" if $decoded =~ /\p{Script=Han}/;
     }
     my @texts = git_paths('grep', '-I', '-l', '-z', '-e', '^', @outside_archive);
     die "check-english: git grep listed no text files\n" unless @texts;
@@ -69,7 +73,7 @@ sub self_test {
     my $han = "\xe4\xb8\xad";
     my $work = tempdir('whitefoot-english-test.XXXXXX', TMPDIR => 1, CLEANUP => 1);
     my %files = (
-        'english.md'          => "plain English\n",
+        'english.md'          => "plain English \xc2\xb7 with a middle dot\n",
         'binary.bin'          => "\0$han\n",
         "archive/$han.md"     => "$han\n",
         'notes.md'            => "first\n$han\n",
