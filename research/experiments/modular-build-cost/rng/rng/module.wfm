@@ -1,0 +1,1 @@
+public fn next(state: u64) -> result: u64 pure doc "One xorshift64 step.";

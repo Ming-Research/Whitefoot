@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_least(value: u8, floor: u8) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn resigned(value: i8) -> result: unit pure {
+  if -3_i8 <= value {
+    if value <= 0_i8 {
+      let bits = reinterpret::<i8, u8>(value);
+      at_least(value: bits, floor: 253_u8);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

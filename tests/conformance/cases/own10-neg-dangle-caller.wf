@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn dangle(x: i32) -> return_value: i32 pure {
   doc "A reference never escapes: it may not be returned, so a function that found something returns an index or other owned data and the caller forms the reference.";
   return &x;

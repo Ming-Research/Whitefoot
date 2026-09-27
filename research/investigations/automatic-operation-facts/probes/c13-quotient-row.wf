@@ -1,0 +1,12 @@
+fn row_of(cell: u64) -> result: u64 pure contract {
+  requires cell < 64_u64;
+} {
+  let rows = array_filled::<u64, 8>(value: 0_u64);
+  let row = cell / 8_u64;
+  let value = rows[row];
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

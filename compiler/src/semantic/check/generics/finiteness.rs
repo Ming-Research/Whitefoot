@@ -41,7 +41,7 @@ struct Dependency {
     unchanged: bool,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(in crate::semantic::check) fn reject_instantiation_cycles(
         &self,
         items: &[NodeId],
@@ -284,9 +284,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     ),
                     ParameterKind::Function,
                 ));
-            } else if let Some(application) =
-                self.tree.first_child_with(node, Production::PackUse)?
-            {
+            } else if let Some(application) = self.tree.group_application(node)? {
                 parameters.extend(self.expand_formal_parameters(application)?.iter().map(
                     |parameter| {
                         (
@@ -329,11 +327,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if let Some(list) = self.tree.argument_list(application)? {
             for argument in self.tree.children_with(list, Production::Targ)? {
                 if let Some(ty) = self.tree.first_child_with(argument, Production::Type)? {
-                    if self
-                        .tree
-                        .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-                        .is_some()
-                    {
+                    if self.tree.names_nominal(ty)? {
                         match self.use_at(ty, LexicalUseRole::Type)?.target() {
                             ResolvedTarget::Source {
                                 declaration,
@@ -429,7 +423,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 .tree
                 .first_child_with(node, Production::Callee)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            if let Some(application) = self.tree.first_child_with(callee, Production::PackUse)? {
+            if let Some(application) = self.tree.callee_application(callee)? {
                 if self.tree.argument_list(node)?.is_some() {
                     return self.behavior_mismatch(
                         SemanticRule::Fn2,

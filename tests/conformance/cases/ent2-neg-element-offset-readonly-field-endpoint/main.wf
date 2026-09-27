@@ -1,0 +1,16 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-2: every offset of a clause (b) place must itself be a tracked place or a constant, because only then does a change to it kill the term. slots[0] is an element read, so entries[slots[0]].width is no term and the endpoint is rejected with the let-binding restructuring.";
+  let narrow = kinds::make_entry(width: 3_u64, weight: 1_u64);
+  let entries = array_filled::<Entry, 4>(value: narrow);
+  let slots = array_filled::<u64, 2>(value: 1_u64);
+  let total = 0_u64;
+  for (c in 0_u64..entries[slots[0_u64]].width) {
+    set total = total +wrap 1_u64;
+  }
+  return exit_status(code: 0_u8);
+}

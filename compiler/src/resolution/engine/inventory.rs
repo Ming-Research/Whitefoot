@@ -9,9 +9,63 @@ use super::super::{
     ResolutionIssue, ResolutionIssueKind, ResolutionRule,
 };
 use super::{
-    ClassifiedRole, DeclarationIndex, DeclarationMeta, EventKey, RawRoleKind, SelectorRole,
-    ancestor_with_production, declaration_domain, is_visible,
+    ClassifiedRole, DeclarationIndex, DeclarationMeta, EventKey, FunctionForm, RawRoleKind,
+    SelectorRole, ancestor_with_production, declaration_domain, is_visible,
 };
+
+/// [MOD-7] pairs each interface function declaration with the one
+/// definition of its spelling in its module, when the module has exactly one
+/// of each. The definition takes the declaration's publication; any other
+/// combination is left for the collision check to report.
+pub(super) fn pair_interface_functions(
+    declarations: &mut [DeclarationRecord],
+    metas: &mut [DeclarationMeta],
+    index: &DeclarationIndex,
+) {
+    for record_index in 0..metas.len() {
+        if metas[record_index].function_form != (FunctionForm::Declaration { definition: None }) {
+            continue;
+        }
+        let scope = metas[record_index].scope;
+        let spelling = declarations[record_index].spelling.clone();
+        let same: Vec<usize> = index
+            .with_spelling(&spelling)
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                *candidate != record_index
+                    && metas.get(*candidate).is_some_and(|meta| {
+                        meta.scope == scope && meta.function_form != FunctionForm::None
+                    })
+            })
+            .collect();
+        if let [definition] = same.as_slice()
+            && metas[*definition].function_form == FunctionForm::Definition
+        {
+            let public = metas[record_index].public;
+            metas[record_index].function_form = FunctionForm::Declaration {
+                definition: Some(*definition),
+            };
+            metas[*definition].public = public;
+            declarations[*definition].public = public;
+            // [MOD-3, MOD-7] the definition stands for its interface
+            // declaration in lookup, so it is visible where that is.
+            metas[*definition].implementation_only = false;
+        }
+    }
+}
+
+/// Whether two declarations are one interface declaration and its paired
+/// definition [MOD-7].
+fn paired(left: &DeclarationMeta, right: &DeclarationMeta) -> bool {
+    let pair = |declaration: &DeclarationMeta, definition: &DeclarationMeta| {
+        declaration.function_form
+            == FunctionForm::Declaration {
+                definition: Some(definition.record_index),
+            }
+    };
+    pair(left, right) || pair(right, left)
+}
 
 struct InventoryTables<'a> {
     roles: &'a [ClassifiedRole],
@@ -31,6 +85,8 @@ pub(super) fn check_declaration_inventory(
     index: &DeclarationIndex,
     declaration_by_role: &[Option<usize>],
     prelude_origins: &[super::super::PreludeDeclarationId],
+    alias_issues: &[(usize, ResolutionIssue)],
+    modules: &[crate::ModuleRecord],
 ) -> Result<Option<ResolutionIssue>, ResolutionCompilerFailure> {
     check_inventory(
         topology,
@@ -41,6 +97,8 @@ pub(super) fn check_declaration_inventory(
         index,
         declaration_by_role,
         prelude_origins,
+        alias_issues,
+        modules,
         |_| true,
     )
 }
@@ -55,6 +113,8 @@ fn check_inventory(
     index: &DeclarationIndex,
     declaration_by_role: &[Option<usize>],
     prelude_origins: &[super::super::PreludeDeclarationId],
+    alias_issues: &[(usize, ResolutionIssue)],
+    modules: &[crate::ModuleRecord],
     include: impl Fn(&ClassifiedRole) -> bool,
 ) -> Result<Option<ResolutionIssue>, ResolutionCompilerFailure> {
     if declarations.len() != metas.len()
@@ -116,6 +176,71 @@ fn check_inventory(
             && let Some(issue) = match_binder_issue(topology, scopes, role, declaration, &tables)?
         {
             return Ok(Some(issue));
+        }
+
+        // [MOD-4] an alias whose target was refused reports at the alias.
+        if let Some((_, issue)) = alias_issues
+            .iter()
+            .find(|(alias, _)| *alias == record_index)
+        {
+            return Ok(Some(issue.clone()));
+        }
+
+        // [TYPE-6] a user variant belongs to its enum: it collides only with
+        // an earlier variant of that same enum.
+        if meta.type_owned {
+            let earlier = tables
+                .index
+                .with_spelling(&declaration.spelling)
+                .iter()
+                .copied()
+                .take_while(|candidate| *candidate < record_index)
+                .filter_map(|candidate| tables.metas.get(candidate))
+                .find(|candidate| candidate.type_owned && candidate.owner == meta.owner);
+            if let Some(earlier) = earlier {
+                return Ok(Some(collision(
+                    declaration,
+                    vec![DeclarationConflict {
+                        domain: super::super::DeclarationDomain::Constructor,
+                        class: DeclarationClass::EnumVariant,
+                        origin: DeclarationOrigin::Source(
+                            tables.declarations[earlier.record_index].origin.clone(),
+                        ),
+                    }],
+                    ResolutionRule::Type6,
+                    COLLIDES_IN_ONE_ENUM,
+                )));
+            }
+            continue;
+        }
+
+        // [MOD-3] a module's lowercase declaration and a child module
+        // registered under the same name would occupy one qualified slot.
+        if let Some(module) = meta.module
+            && scopes.module_scope(module) == Some(meta.scope)
+            && declaration
+                .spelling
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_lowercase)
+            && let Some(parent) = modules.get(module.index())
+        {
+            let mut child = parent.path().to_vec();
+            child.push(declaration.spelling.clone());
+            if modules
+                .iter()
+                .any(|module| module.is_at(parent.package(), &child))
+            {
+                return Ok(Some(ResolutionIssue {
+                    rule: ResolutionRule::Mod3,
+                    origin: declaration.origin.clone(),
+                    kind: ResolutionIssueKind::DeclarationCollision {
+                        spelling: declaration.spelling.clone(),
+                        conflicts: Vec::new(),
+                        mechanical_fix: COLLIDES_WITH_MODULE,
+                    },
+                }));
+            }
         }
 
         if let Some(issue) = collision_issue(scopes, declaration, meta, &tables)? {
@@ -317,7 +442,9 @@ fn collision_issue(
         .copied()
         .take_while(|candidate| *candidate < meta.record_index)
         .filter_map(|candidate| tables.metas.get(candidate))
-        .filter(|candidate| candidate.scope == meta.scope)
+        .filter(|candidate| {
+            candidate.scope == meta.scope && !candidate.type_owned && !paired(candidate, meta)
+        })
     {
         collect_domain_conflicts(
             declaration,
@@ -347,6 +474,7 @@ fn collision_issue(
     {
         if candidate.record_index == meta.record_index
             || candidate.scope == meta.scope
+            || candidate.type_owned
             || !scopes.is_ancestor(candidate.scope, meta.scope)
             || !is_visible(
                 scopes,
@@ -438,6 +566,8 @@ fn collect_domain_conflicts(
 /// guessing.
 const COLLIDES_WITH_PRELUDE: &str = "a source declaration never displaces, overrides, or shadows a PRE-1 prelude declaration of the same spelling and domain, and neither declaration resolves after the collision; rename this declaration";
 const COLLIDES_IN_ONE_SCOPE: &str = "one scope declares each spelling once in a domain, so this is a redeclaration and not a shadow; rename this declaration, or delete the earlier one when nothing reads it";
+const COLLIDES_IN_ONE_ENUM: &str = "one enum declares each variant name once; rename this variant";
+const COLLIDES_WITH_MODULE: &str = "a registered child module already occupies this qualified name, so a lowercase declaration of its parent module cannot take it; rename the declaration or the module directory";
 const COLLIDES_WITH_LIVE_OUTER: &str = "a declaration's scope ends with the block that declares it, and not where its value is consumed: a binding whose value was moved is dead as a value while its declaration stays live, so an inner declaration of the same spelling still collides with it. Rename the inner declaration, or close the block that declares the outer one before this point";
 
 fn collision(

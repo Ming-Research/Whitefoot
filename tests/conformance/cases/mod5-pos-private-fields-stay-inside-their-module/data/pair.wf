@@ -1,0 +1,8 @@
+fn make(left: u8, right: u8) -> pair: Pair pure {
+  doc "Inside its declaring module a private field is an ordinary field.";
+  return Pair(left: left, right: right);
+}
+
+fn right_of(pair: Pair) -> right: u8 pure {
+  return pair.right;
+}

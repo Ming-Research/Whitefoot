@@ -1,0 +1,4 @@
+fn boxed_copy<T: copy>(value: T) -> result: Box<T> pure {
+  doc "Allocates the cell with box_new. The kernel entry never instantiates this helper; the inspect entry uses it for Report.";
+  return box_new::<T>(value: value);
+}

@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let word = 72057594037927936_u64;
+  let byte = pkg::bits::top(value: word);
+  let placed = ishl(byte, 8_u32);
+  let wide = cvt::<u64, u16>(placed);
+  let small = imin(byte, 100_u64);
+  let code = cvt::<u64, u8>(small);
+  return exit_status(code: code);
+}

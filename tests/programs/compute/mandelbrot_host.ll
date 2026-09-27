@@ -12,12 +12,9 @@
 ; every element type here being `u64`, `f64` or `u8`, none of which [OP-9]
 ; aligns past 8. The same pointer is handed back as the retained handle, which
 ; is the only value the release row accepts.
+; A range argument crosses the call as its element pointer and count.
 define void @wf_bench_mandelbrot(ptr %real, ptr %imaginary, i64 %count, i64 %limit, ptr %out, ptr %out_len, ptr %out_cell) {
-  %a = insertvalue { ptr, i64 } poison, ptr %real, 0
-  %b = insertvalue { ptr, i64 } %a, i64 %count, 1
-  %c = insertvalue { ptr, i64 } poison, ptr %imaginary, 0
-  %d = insertvalue { ptr, i64 } %c, i64 %count, 1
-  %r = call ptr @wf_render_points({ ptr, i64 } %b, { ptr, i64 } %d, i64 0, i64 %count, i64 %limit)
+  %r = call ptr @wf_render_points(ptr %real, i64 %count, ptr %imaginary, i64 %count, i64 0, i64 %count, i64 %limit)
   %n = load i64, ptr %r
   %p = getelementptr inbounds i8, ptr %r, i64 8
   store ptr %p, ptr %out

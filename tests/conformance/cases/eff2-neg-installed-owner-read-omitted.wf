@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn exchange(slot: &Box<u64>, incoming: &Box<u64>) -> result: unit writes(slot), writes(incoming) {
   doc "Exchanges the two cells with swap, which consumes neither root and leaves each root the sole owner of the value the other held.";
   swap(first: slot, second: incoming);

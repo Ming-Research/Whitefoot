@@ -1,0 +1,10 @@
+fn bucket_head(hash: u64) -> result: u64 pure {
+  let heads = array_filled::<u64, 64>(value: 0_u64);
+  let index = ishr.wrap(hash, 58_u32);
+  let head = heads[index];
+  return head;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

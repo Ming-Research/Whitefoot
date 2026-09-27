@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nodrop enum Ticket {
   Open();
   Closed();
@@ -5,7 +8,7 @@ nodrop enum Ticket {
 
 fn main() -> status: ExitStatus pure {
   doc "Nodrop removes copy together with drop. The first move consumes the ticket binding, so a second move cannot duplicate it and is rejected as a use after move.";
-  let ticket = Open();
+  let ticket = Ticket::Open();
   let first = move ticket;
   let second = move ticket;
   return exit_status(code: 0_u8);

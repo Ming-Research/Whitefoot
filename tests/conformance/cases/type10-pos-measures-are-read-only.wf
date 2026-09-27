@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-10: len, cap and head are read-only pseudo-fields of a measured place; free slots is the ordinary expression cap - len. A program reads the measures like fields, and only window and construction operations change them.";
   let r = ring_new::<u64, 4>();

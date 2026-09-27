@@ -60,6 +60,19 @@ impl NodeRecord {
     }
 
     /// Returns the brace pairs this node owns, in source order.
+    /// The indentation depth of one terminal this node owns directly: the
+    /// node's own depth, one deeper when the terminal lies inside one of the
+    /// node's braced blocks. An entry's requirement block is the one block
+    /// whose content is its owner's own terminals [GRAM-2, FORM-2].
+    pub(crate) fn terminal_depth(self, terminal: u64) -> u32 {
+        let inside = self
+            .body_ranges()
+            .iter()
+            .flatten()
+            .any(|(open, close)| terminal > *open && terminal < *close);
+        self.format_depth.saturating_add(u32::from(inside))
+    }
+
     pub(crate) fn body_ranges(self) -> [Option<(u64, u64)>; 2] {
         [
             self.body_open.zip(self.body_close),

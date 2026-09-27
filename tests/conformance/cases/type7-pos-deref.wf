@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Reaching a referent is explicit via deref(place) [TYPE-7]; a reference variable denotes the reference [REF-1], so the stored 42 is read back through deref and the program runs to exit 0.";
   let a = 42_i32;

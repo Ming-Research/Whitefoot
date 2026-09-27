@@ -1,3 +1,18 @@
+alias DequeDrain = std::collections::deque::DequeDrain;
+alias DequeVisit = std::collections::deque::DequeVisit;
+alias ExitStatus = std::process::ExitStatus;
+alias deque_drain = std::collections::deque::deque_drain;
+alias deque_free_empty = std::collections::deque::deque_free_empty;
+alias deque_new = std::collections::deque::deque_new;
+alias deque_pop_back = std::collections::deque::deque_pop_back;
+alias deque_pop_front = std::collections::deque::deque_pop_front;
+alias deque_push_back = std::collections::deque::deque_push_back;
+alias deque_push_front = std::collections::deque::deque_push_front;
+alias deque_rebase = std::collections::deque::deque_rebase;
+alias deque_visit = std::collections::deque::deque_visit;
+alias deque_visit_at = std::collections::deque::deque_visit_at;
+alias exit_status = std::process::exit_status;
+
 struct DequeObservation {
   total: u64;
   sequence: u64;

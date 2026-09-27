@@ -1,0 +1,1 @@
+public fn main() -> result: u64 pure doc "Returns zero.";

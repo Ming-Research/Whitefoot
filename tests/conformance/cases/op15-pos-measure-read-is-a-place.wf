@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn measures(window: &Ring<u64, 4>) -> (length: u64, capacity: u64, spare: u64, origin: u64) reads(window.len), reads(window.cap), reads(window.head) {
   doc "OP-15: reading a measure performs no operation, allocates nothing, and reads only descriptor storage; through a reference parameter the three measure paths are len, cap and head, while spare is the ordinary expression cap - len and needs no fourth row member.";
   let l = deref(window).len;

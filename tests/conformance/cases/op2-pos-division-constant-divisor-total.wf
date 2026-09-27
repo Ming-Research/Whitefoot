@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn halve(n: i32) -> return_value: i32 pure {
   doc "A signed site with one constant operand is in the divisor class [OP-2]. A nonzero constant divisor that is not `-1` discharges both conjuncts with no fact source at all [ENT-6], so the site is total and `pure` and lowers to one plain instruction.";
   let h = n / 2_i32;

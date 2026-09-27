@@ -1,3 +1,21 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias OutputStream = std::io::OutputStream;
+alias ReadFile = std::fs::ReadFile;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias host_bytes_len = std::text::host_bytes_len;
+alias host_copy_bytes = std::text::host_copy_bytes;
+alias open_file = std::fs::open_file;
+alias read_at = std::fs::read_at;
+alias write_once = std::io::write_once;
+
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   match deref(error) {
     NotFound(code: native_code, origin: native_origin) => {

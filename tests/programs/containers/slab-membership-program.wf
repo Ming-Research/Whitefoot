@@ -1,3 +1,13 @@
+alias Slab = std::collections::slab::Slab;
+alias SlabConsume = std::collections::slab::SlabConsume;
+alias SlabHandle = std::collections::slab::SlabHandle;
+alias SlabVisit = std::collections::slab::SlabVisit;
+alias slab_free = std::collections::slab::slab_free;
+alias slab_insert = std::collections::slab::slab_insert;
+alias slab_new = std::collections::slab::slab_new;
+alias slab_remove = std::collections::slab::slab_remove;
+alias slab_visit = std::collections::slab::slab_visit;
+
 struct MembershipValue {
   id: u64;
 }

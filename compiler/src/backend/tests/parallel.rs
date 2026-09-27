@@ -48,7 +48,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::backend::emitter::emit_llvm_with_layout;
-use crate::backend::target::{
+use crate::target::{
     PARALLEL_LANE_FRAME_ALIGNMENT, TargetLayout, TargetLayoutFailure, TargetObject,
     parallel_lane_frame_layout,
 };
@@ -93,8 +93,8 @@ fn over_frame(values: Array<u8, 256>) -> result: u8 pure {
   return values[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -102,14 +102,14 @@ fn lane_frame_program(length: u64) -> Vec<u8> {
     format!(
         "fn first(values: Array<u8, {length}>) -> result: u8 pure {{\n  \
          return values[0_u64];\n}}\n\n\
-         fn main() -> status: ExitStatus pure {{\n  \
+         fn main() -> status: std::process::ExitStatus pure {{\n  \
          let left_values = array_filled::<u8, {length}>(value: 7_u8);\n  \
          let right_values = array_filled::<u8, {length}>(value: 9_u8);\n  \
          let left = first(values: left_values);\n  \
          let right = first(values: right_values);\n  \
-         if left != 7_u8 {{\n    return exit_status(code: 1_u8);\n  }}\n  \
-         if right != 9_u8 {{\n    return exit_status(code: 2_u8);\n  }}\n  \
-         return exit_status(code: 0_u8);\n}}\n"
+         if left != 7_u8 {{\n    return std::process::exit_status(code: 1_u8);\n  }}\n  \
+         if right != 9_u8 {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  \
+         return std::process::exit_status(code: 0_u8);\n}}\n"
     )
     .into_bytes()
 }
@@ -151,10 +151,10 @@ fn last_byte(v: u64) -> result: u8 pure {
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
   doc "A pure call handed out while a pure call written as an if condition runs.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let report = box_array_filled::<u8>(count: 2_u64, value: 0_u8);
   let value = mixdown(a: 11_u64, b: 22_u64);
   if odd(v: 33_u64) {
@@ -163,12 +163,12 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
   let byte = last_byte(v: value);
   set report.inner[0_u64] = byte;
   let ordinary_source_2 = &report.inner[0_u64..2_u64];
-  match write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64) {
+  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64) {
     Ok(value: accepted) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     Err(error: problem) => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
   }
 }
@@ -180,11 +180,11 @@ const DEPENDENT_SIBLINGS: &[u8] = br#"fn twice(v: u64) -> result: u64 pure {
   return imax(v, v);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = twice(v: 3_u64);
   let second = twice(v: first);
   let total = imax(first, second);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -214,7 +214,7 @@ fn par_thunk_0(x: u64) -> result: u64 pure {
   return imax(x, x);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = par_acquire_lane(x: 1_u64);
   let b = par_publish(x: 2_u64);
   let c = par_thunk_0(x: 3_u64);
@@ -224,7 +224,7 @@ fn main() -> status: ExitStatus pure {
   let cd = imax(c, d);
   let abcd = imax(ab, cd);
   let total = imax(abcd, e);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -296,7 +296,7 @@ fn selected_target_proves_the_complete_ordinary_lane_frame() {
         let exact_layout = layout(host, exact, false)
             .expect("the exact frame is target-representable")
             .expect("the exact frame fits the lane slot");
-        assert_eq!(exact_layout.size(), crate::LANE_FRAME_BYTES);
+        assert_eq!(exact_layout.size(), crate::target::LANE_FRAME_BYTES);
         assert_eq!(exact_layout.align(), 1);
         assert!(exact_layout.align() <= PARALLEL_LANE_FRAME_ALIGNMENT);
         assert_eq!(
@@ -314,7 +314,8 @@ fn selected_target_proves_the_complete_ordinary_lane_frame() {
             "a frame that exactly fills the slot cannot also carry a budget"
         );
 
-        let short_domain = host.with_address_index_max_for_test(crate::LANE_FRAME_BYTES - 1);
+        let short_domain =
+            host.with_address_index_max_for_test(crate::target::LANE_FRAME_BYTES - 1);
         assert_eq!(
             layout(short_domain, exact, false),
             Err(TargetLayoutFailure::Unrepresentable(
@@ -344,7 +345,7 @@ fn ordinary_lane_frame_limits_match_the_runtime_slot() {
             .trim_end_matches('u')
             .parse::<u64>()
             .expect("a decimal capacity"),
-        crate::LANE_FRAME_BYTES
+        crate::target::LANE_FRAME_BYTES
     );
     assert!(
         crate::SCHED_CORE_SOURCE.contains(&format!(
@@ -368,7 +369,7 @@ fn ordinary_overlap_uses_only_target_proved_lane_frames() {
     assert!(module_requires_parallel_runtime(&exact));
     assert!(exact.contains(&format!(
         "call ptr @wf__par_acquire_lane(i64 {})",
-        crate::LANE_FRAME_BYTES
+        crate::target::LANE_FRAME_BYTES
     )));
     assert!(
         !exact.contains("@wf__par_acquire_lane(i64 ptrtoint"),
@@ -602,7 +603,7 @@ const THREE_MEMBER_GROUP_BEFORE_A_LOOP: &[u8] = br#"fn choose(value: u64) -> res
   return imax(value, value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let prefix = 0_u64;
   let a = choose(value: 1_u64);
   let b = choose(value: 2_u64);
@@ -620,10 +621,10 @@ fn main() -> status: ExitStatus pure {
   }
   match cvt.checked::<u64, u8>(acc) {
     Ok(value: code) => {
-      return exit_status(code: code);
+      return std::process::exit_status(code: code);
     }
     Err(error: problem) => {
-      return exit_status(code: 255_u8);
+      return std::process::exit_status(code: 255_u8);
     }
   }
 }
@@ -722,6 +723,87 @@ fn a_group_joins_its_compute_members_newest_first_and_continues_at_the_oldest() 
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
+/// Two unit helpers called as [GRAM-4] expression statements over disjoint
+/// fields. A discarded result has no use, so the first call is handed out
+/// exactly as a let-bound one is, and the fields both calls wrote are read only
+/// after the join.
+const EXPRESSION_STATEMENT_PAIR: &[u8] = br#"struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn fill_left(pair: &Pair, seed: u64) -> result: unit writes(pair.left) {
+  let value = seed *wrap 3_u64;
+  set deref(pair).left = value;
+  return unit;
+}
+
+fn fill_right(pair: &Pair, seed: u64) -> result: unit writes(pair.right) {
+  let value = seed *wrap 5_u64;
+  set deref(pair).right = value;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pair = Pair(left: 0_u64, right: 0_u64);
+  fill_left(pair: &pair, seed: 2_u64);
+  fill_right(pair: &pair, seed: 4_u64);
+  let total = pair.left +wrap pair.right;
+  match cvt.checked::<u64, u8>(total) {
+    Ok(value: code) => {
+      return std::process::exit_status(code: code);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 255_u8);
+    }
+  }
+}
+"#;
+
+#[test]
+fn an_expression_statement_pair_is_handed_out_and_joined() {
+    let handed_out = with_parallel_ir(EXPRESSION_STATEMENT_PAIR, |program| {
+        program
+            .functions()
+            .iter()
+            .flat_map(crate::IrFunction::overlaps)
+            .map(|overlap| overlap.handed_out().len())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        handed_out,
+        vec![1],
+        "the two expression statements must lower to one group handing out the first"
+    );
+
+    let module = emit_with_overlap(EXPRESSION_STATEMENT_PAIR);
+    let body = emitted_function(&module, "main");
+    let at = |needle: &str| {
+        body.find(needle)
+            .unwrap_or_else(|| panic!("missing `{needle}`:\n{body}"))
+    };
+    assert!(
+        at("call void @wf__par_publish(ptr") < at("call void @wf__par_join(ptr"),
+        "the first call must be published before it is joined:\n{body}"
+    );
+
+    // 2*3 + 4*5 = 26 in every execution: the schedule is not an observation.
+    let directory = test_directory();
+    let executable = build_executable(&module, &directory);
+    for workers in ["0", "1", "4"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", workers)
+            .output()
+            .expect("run the expression-statement pair");
+        assert_eq!(
+            output.status.code(),
+            Some(26),
+            "WF_WORKERS={workers}: the pair must report the source-order result"
+        );
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
 /// Runs one linked mixed fixture at three worker counts and demands the
 /// source-order exit status from each.
 ///
@@ -769,16 +851,16 @@ fn spine(depth: u64, v: f64) -> result: f64 pure {
   return fadd.strict(a, b);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = spine(depth: DEPTH_u64, v: 1.0009765625_f64);
   let bits = reinterpret::<f64, u64>(total);
   let low = iand(bits, 1_u64);
   match cvt.checked::<u64, u8>(low) {
     Ok(value: byte) => {
-      return exit_status(code: byte);
+      return std::process::exit_status(code: byte);
     }
     Err(error: wide) => {
-      return exit_status(code: 2_u8);
+      return std::process::exit_status(code: 2_u8);
     }
   }
 }
@@ -1089,11 +1171,11 @@ fn peek(v: &u64) -> result: u64 reads(v) {
   return deref(v);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = make();
   let second = make();
   let seen = peek(v: &first);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = emit_with_overlap(borrowed);
@@ -1113,11 +1195,11 @@ fn peek(v: &u64) -> result: u64 reads(v) {
   return deref(v);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = make();
   let second = make();
   let seen = peek(v: &second);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert!(
@@ -1447,6 +1529,18 @@ fn without_clones(module: &str) -> String {
     kept
 }
 
+/// The definition that carries `symbol`'s emitted body: its own definition,
+/// or, for a result returned in registers, the internal destination-form
+/// body its public entry calls (compiler/src/backend/abi.rs).
+fn emitted_body_definition<'module>(module: &'module str, symbol: &str) -> &'module str {
+    let body = format!("{symbol}.body");
+    if module.contains(&format!("{body}(")) {
+        function_body(module, &body)
+    } else {
+        function_body(module, symbol)
+    }
+}
+
 /// The text of one emitted function definition, from its `define` line to its
 /// closing brace.
 pub(super) fn function_body<'module>(module: &'module str, symbol: &str) -> &'module str {
@@ -1479,8 +1573,12 @@ fn an_interposed_builtin_retains_the_outlined_call_and_join() {
     assert!(fold.contains(", ptr @wf__par_thunk_"));
 }
 
-// Stored results need independent caller destinations after lane retirement;
+// Stored results need independent caller storage after lane retirement;
 // scalar and descriptor-returning fixtures do not exercise that adapter.
+// This two-leaf Pair returns in registers: the thunk stores the returned
+// value into the lane frame, and the join copies it out before release.
+// `owning_enum_windows_survive_lane_arguments_results_and_refusal` keeps a
+// result too large for the registers on the destination adapter.
 const OWNED_PAIR_RESULTS: &[u8] = br#"struct Pair {
   left: u64;
   right: u64;
@@ -1492,26 +1590,26 @@ fn make(seed: u64) -> result: Pair pure {
   return Pair(left: scaled, right: adjacent);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = make(seed: 7_u64);
   let second = make(seed: 11_u64);
   if first.left != 21_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if first.right != 107_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if second.left != 33_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if second.right != 111_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   set first.left = 41_u64;
   if second.left != 33_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -1523,7 +1621,24 @@ fn owned_pair_results_survive_ordinary_join_and_forced_refusal() {
     assert!(main.contains("call void @wf__par_join(ptr "));
     assert!(main.contains("\npar.inline."));
     let make = function_body(&module, "@wf_make");
-    assert!(make.starts_with("define void @wf_make(ptr "));
+    let (result, _) = make
+        .strip_prefix("define ")
+        .and_then(|header| header.split_once(" @wf_make(i64 %v0)"))
+        .expect("make takes only its seed");
+    assert!(module.contains(&format!("{result} = type {{ i64, i64 }}")));
+    // The published thunk and the refused edge call the same by-value ABI;
+    // both edges join as one value that enters the caller's own storage.
+    // A thunk is named for the function that hands it out and numbered
+    // among that function's own [MOD-8]: `main`'s first.
+    let thunk = function_body(&module, "@wf__par_thunk_main.0");
+    assert!(
+        main.contains(", ptr @wf__par_thunk_main.0)"),
+        "the call is handed out through this thunk: {main}"
+    );
+    assert!(thunk.contains(&format!("%result = call {result} @wf_make(i64 %a0)")));
+    assert!(thunk.contains(&format!("store {result} %result, ptr %slot")));
+    assert!(main.contains(&format!(" = call {result} @wf_make(i64 ")));
+    assert!(main.contains(&format!(" = phi {result} [ ")));
     run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 0, 1, 0, 0, 1);
 }
 
@@ -1543,32 +1658,32 @@ fn transform(owner: Owner, value: u64) -> result: Owner pure {
       let values = slots_new::<Box<u64>, 3>();
       let cell = box_new::<u64>(value: value);
       place_back(window: &values, value: move cell);
-      return Full(values: move values);
+      return Owner::Full(values: move values);
     }
     Full(values: carried_values) => {
       if carried_values.len != 1_u64 {
-        return Full(values: move carried_values);
+        return Owner::Full(values: move carried_values);
       }
       let cell = take_back(window: &carried_values);
       if cell.inner != value {
-        return Full(values: move carried_values);
+        return Owner::Full(values: move carried_values);
       }
-      return Empty();
+      return Owner::Empty();
     }
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let left_values = slots_new::<Box<u64>, 3>();
   let left_cell = box_new::<u64>(value: 17_u64);
   place_back(window: &left_values, value: move left_cell);
-  let left = Full(values: move left_values);
-  let empty_left = Empty();
+  let left = Owner::Full(values: move left_values);
+  let empty_left = Owner::Empty();
   let right_values = slots_new::<Box<u64>, 3>();
   let right_cell = box_new::<u64>(value: 29_u64);
   place_back(window: &right_values, value: move right_cell);
-  let right = Full(values: move right_values);
-  let empty_right = Empty();
+  let right = Owner::Full(values: move right_values);
+  let empty_right = Owner::Empty();
   let first = transform(owner: move left, value: 17_u64);
   let second = transform(owner: move empty_left, value: 41_u64);
   let third = transform(owner: move empty_right, value: 53_u64);
@@ -1577,20 +1692,20 @@ fn main() -> status: ExitStatus pure {
     Empty() => {
     }
     Full(values: unexpected_first) => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
   }
   match move second {
     Empty() => {
-      return exit_status(code: 2_u8);
+      return std::process::exit_status(code: 2_u8);
     }
     Full(values: second_values) => {
       if second_values.len != 1_u64 {
-        return exit_status(code: 3_u8);
+        return std::process::exit_status(code: 3_u8);
       }
       let second_cell = take_back(window: &second_values);
       if second_cell.inner != 41_u64 {
-        return exit_status(code: 4_u8);
+        return std::process::exit_status(code: 4_u8);
       }
     }
   }
@@ -1598,24 +1713,24 @@ fn main() -> status: ExitStatus pure {
     Empty() => {
     }
     Full(values: unexpected_fourth) => {
-      return exit_status(code: 5_u8);
+      return std::process::exit_status(code: 5_u8);
     }
   }
   match move third {
     Empty() => {
-      return exit_status(code: 6_u8);
+      return std::process::exit_status(code: 6_u8);
     }
     Full(values: third_values) => {
       if third_values.len != 1_u64 {
-        return exit_status(code: 7_u8);
+        return std::process::exit_status(code: 7_u8);
       }
       let third_cell = take_back(window: &third_values);
       if third_cell.inner != 53_u64 {
-        return exit_status(code: 8_u8);
+        return std::process::exit_status(code: 8_u8);
       }
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = super::owned_places::retain_calls(&emit_with_overlap(source));
@@ -1862,22 +1977,22 @@ fn a_linked_body_and_source_bodies_use_one_ordinary_call_protocol() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = choose(value: 17_u64);
-  let linked = exit_status(code: 0_u8);
+  let linked = std::process::exit_status(code: 0_u8);
   let second = choose(value: 19_u64);
   let third = choose(value: 23_u64);
   let pair = first +wrap second;
   let total = pair +wrap third;
   if total != 59_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   return move linked;
 }
 "#;
     let module = emit_with_overlap(source);
     a_mixed_fixture_reports(&module, 0);
-    assert!(module.contains("@wf_exit_status"));
+    assert!(module.contains("@wf_std.process.exit_status"));
     assert!(!module.contains("@wf__completion_file_"));
 }
 
@@ -1886,12 +2001,12 @@ fn main() -> status: ExitStatus pure {
 /// hoping the worker steals the single task before the caller reaches join.
 #[test]
 fn an_ordinary_worker_helper_can_call_the_linked_io_library() {
-    let source = br#"fn write_byte(inputs: Inputs) -> result: u64 pure {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
-  close_directory(factory: &factory, directory: move cwd);
+    let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure {
+  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 88_u8);
   let window = &bytes.inner[0_u64..1_u64];
-  match write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64) {
+  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64) {
     Ok(value: accepted) => {
       return accepted;
     }
@@ -1905,13 +2020,13 @@ fn choose(value: u64) -> result: u64 pure {
   return value;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
   let first = write_byte(inputs: move inputs);
   let second = choose(value: 1_u64);
   if first != second {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = emit_with_overlap(source);
@@ -1920,7 +2035,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure {
     // as the parameter kind `&[T]` [REF-4, TYPE-8], so its emitted argument
     // list is whatever the range-reference ABI becomes. Only the `void` return
     // (the `Result` destination) is asserted here.
-    assert!(helper.contains("call void @wf_write_once("));
+    assert!(helper.contains("call void @wf_std.io.write_once("));
     assert!(!helper.contains("@wf__completion_"));
     let main = function_body(&module, "@wf_main");
     let publishes = main
@@ -2068,12 +2183,12 @@ fn mixed(x: u64) -> result: u64 pure {
   return partial +wrap e;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = mixed(x: 3_u64);
   if result == 290_u64 {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
     let all = super::emit_lowered(source, crate::OverlapLowering::On);
@@ -2128,14 +2243,14 @@ fn scalar_leaf_control_drops_small_offers_without_clones() {
   return x +wrap x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = twice(x: 3_u64);
   let b = twice(x: 4_u64);
   let value = a +wrap b;
   if value == 14_u64 {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
     let filtered = super::emit_lowered(
@@ -2209,13 +2324,13 @@ fn recursive_controls_preserve_scalar_and_destination_results() {
   return {merged};
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let seed = 2_u64;
   let answer = fold(depth: 5_u64, seed: &seed);
   if {read} == 64_u64 {{
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }}
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }}
 "#
             );
@@ -2274,14 +2389,18 @@ fn main() -> status: ExitStatus pure {{
                     );
                     continue; // Equality retains the emission check; its image already ran.
                 }
-                let entry = function_body(&module, "@wf_fold");
+                // `Answer` returns in registers, so each of these definitions
+                // is a public entry over an internal destination-form body
+                // that holds the calls and the cut (compiler/src/backend/abi.rs).
+                let entry = emitted_body_definition(&module, "@wf_fold");
                 let target = if mutual { "alternate" } else { "fold" };
                 assert_eq!(module.contains("@wf__par_budget_fold("), family);
                 if family {
                     // The entry keeps the writer's own signature and result
                     // ABI: what it adds is the budget it enters the family
                     // with, asked of the runtime unless it was pinned.
-                    let variant = function_body(&module, &format!("@wf__par_budget_{target}"));
+                    let variant =
+                        emitted_body_definition(&module, &format!("@wf__par_budget_{target}"));
                     assert!(entry.contains("@wf__par_budget_fold("), "{entry}");
                     assert!(!entry.contains("@wf__par_acquire_lane("), "{entry}");
                     assert_eq!(
@@ -2297,7 +2416,7 @@ fn main() -> status: ExitStatus pure {{
                         "{variant}"
                     );
                     assert_eq!(
-                        function_body(&module, "@wf__par_budget_fold")
+                        emitted_body_definition(&module, "@wf__par_budget_fold")
                             .matches(&format!("@wf__par_seq_{target}("))
                             .count(),
                         usize::from(!mutual) + usize::from(sequential)
@@ -2310,7 +2429,8 @@ fn main() -> status: ExitStatus pure {{
                 }
 
                 assert!(
-                    !function_body(&module, "@wf__par_seq_fold").contains("@wf__par_acquire_lane(")
+                    !emitted_body_definition(&module, "@wf__par_seq_fold")
+                        .contains("@wf__par_acquire_lane(")
                 );
                 let mut observed = module
                     .replace(
@@ -2391,14 +2511,14 @@ fn recursive_controls_keep_leaf_calls_unchanged() {
   return x +wrap 1_u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = leaf(x: 1_u64);
   let b = leaf(x: 2_u64);
   let sum = a +wrap b;
   if sum == 5_u64 {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
     let reference = emit_with_overlap(source);

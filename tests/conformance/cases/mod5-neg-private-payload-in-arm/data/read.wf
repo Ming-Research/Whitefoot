@@ -1,0 +1,3 @@
+fn read() -> reading: Reading pure {
+  return Reading::Value(raw: 1_u8, checksum: 7_u8);
+}

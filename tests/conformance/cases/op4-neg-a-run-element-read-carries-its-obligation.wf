@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-4: a subscript carries the bounds obligation i < p.len wherever it is written, and a read is written no differently from a target. The window below is formed empty, so 0 < run.len is false at this read and no ProofContext discharges it.";
   let run = slots_new::<u8, 4>();

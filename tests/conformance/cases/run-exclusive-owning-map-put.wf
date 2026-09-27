@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Resource {
   id: u64;
   data0: u64;
@@ -78,16 +81,16 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
   doc "Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path.";
   match deref(slot) {
     Vacant() => {
-      return Stop();
+      return Probe::Stop();
     }
     Deleted() => {
-      return Skip();
+      return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(present) == key {
-        return Match();
+        return Probe::Match();
       }
-      return Miss();
+      return Probe::Miss();
     }
   }
 }
@@ -104,7 +107,7 @@ fn fill_slots(slots: &Slots<Slot, 2>, count: u64) -> result: unit writes(slots) 
     invariant bounded: deref(slots).len <= index,
     invariant spare: deref(slots).cap - deref(slots).len + index >= count
   ) {
-    let vacant = Vacant();
+    let vacant = Slot::Vacant();
     place_back(window: slots, value: move vacant);
   }
   invariant complete_min: deref(slots).len >= count;
@@ -153,20 +156,20 @@ fn put(slots: &Slots<Slot, 2>, key: u64, payload: Box<Resource>) -> outcome: Put
   }
   if destination < count {
   } else {
-    return Full(offered: move payload);
+    return PutOutcome::Full(offered: move payload);
   }
   let tag = fingerprint(key: key);
-  let replacement = Occupied(fingerprint: tag, key: key, payload: move payload);
+  let replacement = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
   swap(first: &deref(slots)[destination], second: &replacement);
   match replacement {
     Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
-      return Replaced(previous: move old_payload);
+      return PutOutcome::Replaced(previous: move old_payload);
     }
     Vacant() => {
-      return Inserted();
+      return PutOutcome::Inserted();
     }
     Deleted() => {
-      return Inserted();
+      return PutOutcome::Inserted();
     }
   }
 }

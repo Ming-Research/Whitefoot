@@ -56,7 +56,7 @@
 use super::owned_places::retain_calls;
 use super::system::with_ir;
 use super::{compile, compile_and_run, compile_rejection, emitted_function};
-use crate::backend::target::{TargetLayout, TargetLayoutFailure, TargetObject, validate_program};
+use crate::target::{TargetLayout, TargetLayoutFailure, TargetObject, validate_program};
 
 fn invariant_bounded_runtime_allocation(
     construction: &str,
@@ -76,8 +76,8 @@ fn invariant_bounded_runtime_allocation(
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
     )
@@ -150,7 +150,7 @@ fn change(pair: &Pair) -> result: unit writes(pair.values) {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let seed = array_filled::<u8, 2>(value: 3_u8);
   let original = Pair(values: seed, tag: 5_u8);
   let twin = pass::<Pair>(value: original);
@@ -162,25 +162,25 @@ fn main() -> status: ExitStatus pure {
   set extracted.tag = 99_u8;
   if original.values[0_u64] == 9_u8 {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if original.values[1_u64] == 3_u8 {
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if twin.values[0_u64] == 3_u8 {
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if twin.values[1_u64] == 7_u8 {
   } else {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if heap.inner.tag == 5_u8 {
   } else {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = compile(source);
@@ -215,7 +215,7 @@ fn append_record(target: &Slots<Record, 2>, value: Record) -> result: unit write
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let old_bytes = array_filled::<u8, 64>(value: 1_u8);
   let target = Record(bytes: old_bytes);
   let new_bytes = array_filled::<u8, 64>(value: 2_u8);
@@ -224,9 +224,9 @@ fn main() -> status: ExitStatus pure {
   let records = slots_new::<Record, 2>();
   append_record(target: &records, value: target);
   if target.bytes[63_u64] == 2_u8 {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#;
     let module = compile(source);
@@ -302,26 +302,26 @@ fn read<const n: u64>(bytes: &SmallBytes<n>) -> result: u64 reads(bytes) {
   return checksum::<n>(bytes: bytes);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let cell = box_slots_new::<u8>(capacity: 4_u64);
   place_back(window: &cell.inner, value: 7_u8);
   place_back(window: &cell.inner, value: 11_u8);
-  let spilled = Spilled<4>(values: move cell);
+  let spilled = SmallBytes<4>::Spilled(values: move cell);
   let observed = read::<4>(bytes: &spilled);
   if observed != 228_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let inline_window = slots_new::<u8, 4>();
   place_back(window: &inline_window, value: 19_u8);
   place_back(window: &inline_window, value: 23_u8);
   let rotated = remove_at(window: &inline_window, index: 0_u64);
   place_back(window: &inline_window, value: rotated);
-  let small = Inline<4>(values: move inline_window);
+  let small = SmallBytes<4>::Inline(values: move inline_window);
   let local = read::<4>(bytes: &small);
   if local != 732_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -381,34 +381,34 @@ fn read_entry(value: &Entry) -> result: u64 reads(value.tag) {
   return deref(value).tag;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   if entries[1_u64].samples[1_u64][1_u64] != 53_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if stored_entry.tag != 59_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let length = stored_entry.samples[1_u64].len;
   if length != 2_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let first = read(values: &entries, outer: 0_u64, row: 0_u64, column: 1_u64);
   let trailing = read(values: &entries, outer: 1_u64, row: 1_u64, column: 1_u64);
   if first != 23_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if trailing != 53_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let projected = read_row(values: &stored_entry.samples[1_u64], index: 0_u64);
   if projected != 71_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let tag = read_entry(value: &stored_entry);
   if tag != 59_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // Independent calls with storage unavailable to the WF optimizer retain
@@ -469,19 +469,19 @@ const rows: Array<Array<u64, 2>, 2> =[[7_u64, 9_u64],[11_u64, 13_u64]];
 
 const entries: Array<Entry, 2> =[Entry(tag: 17_u64, samples:[19_u64, 23_u64]), Entry(tag: 29_u64, samples:[31_u64, 37_u64])];
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // This observes recursive global layout independently of the WF access
     // test above, using the host's ordinary C array and struct layout.
     //
-    // KEPT AS WRITTEN for the lowering port: `@.wf_const.N` in declaration
-    // order and `private unnamed_addr constant` are the emitted constant-pool
-    // spelling the rename below depends on.
+    // `@.wf_const.` and the digest of the constant's name, and `private
+    // unnamed_addr constant`, are the emitted constant-pool spelling the
+    // rename below depends on [MOD-8].
     let module = compile(source)
-        .replace("@.wf_const.0", "@wf_test_rows")
-        .replace("@.wf_const.1", "@wf_test_entries")
+        .replace(&super::constant_global("rows"), "@wf_test_rows")
+        .replace(&super::constant_global("entries"), "@wf_test_entries")
         .replace("= private unnamed_addr constant", "= constant");
     let observer = r#"#include <stdint.h>
 #include <stdlib.h>
@@ -546,7 +546,7 @@ fn read(values: &Array<Record, 3>, index: u64) -> result: u64 reads(values) cont
   return deref(values)[index].payload[7_u64];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = make_record(tag: 11_u64);
   let second_tag = first.payload[0_u64] +wrap 11_u64;
   let second = make_record(tag: second_tag);
@@ -561,22 +561,22 @@ fn main() -> status: ExitStatus pure {
   let b = read(values: &values, index: 1_u64);
   let c = read(values: &values, index: 2_u64);
   if a != 33_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if b != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if c != 22_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let fresh = make_record(tag: 99_u64);
   swap(first: &values[1_u64], second: &fresh);
   let Record(payload: old_payload, owner: old_owner) = move fresh;
   if old_payload[7_u64] != 11_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if old_owner.inner != 11_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let passed = relay::<Array<Record, 3>>(values: move values);
   let full = reopen(values: move passed);
@@ -585,15 +585,15 @@ fn main() -> status: ExitStatus pure {
   let b_again = read(values: &dense, index: 1_u64);
   let c_again = read(values: &dense, index: 2_u64);
   if a_again != 33_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if b_again != 99_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if c_again != 22_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -663,37 +663,37 @@ fn build(stop: u64) -> result: Result<Array<Record, 3>, u64> pure {
   return Ok<Array<Record, 3>, u64>(value: move passed);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let one = build(stop: 1_u64);
   match move one {
     Ok(value: unexpected_one) => {
-      return exit_status(code: 71_u8);
+      return std::process::exit_status(code: 71_u8);
     }
     Err(error: refused_one) => {
       if refused_one != 11_u64 {
-        return exit_status(code: 61_u8);
+        return std::process::exit_status(code: 61_u8);
       }
     }
   }
   let two = build(stop: 2_u64);
   match move two {
     Ok(value: unexpected_two) => {
-      return exit_status(code: 72_u8);
+      return std::process::exit_status(code: 72_u8);
     }
     Err(error: refused_two) => {
       if refused_two != 22_u64 {
-        return exit_status(code: 62_u8);
+        return std::process::exit_status(code: 62_u8);
       }
     }
   }
   let three = build(stop: 3_u64);
   match move three {
     Ok(value: unexpected_three) => {
-      return exit_status(code: 73_u8);
+      return std::process::exit_status(code: 73_u8);
     }
     Err(error: refused_three) => {
       if refused_three != 33_u64 {
-        return exit_status(code: 63_u8);
+        return std::process::exit_status(code: 63_u8);
       }
     }
   }
@@ -701,20 +701,20 @@ fn main() -> status: ExitStatus pure {
   match move complete {
     Ok(value: values) => {
       if values[0_u64].tag != 11_u64 {
-        return exit_status(code: 1_u8);
+        return std::process::exit_status(code: 1_u8);
       }
       if values[1_u64].tag != 22_u64 {
-        return exit_status(code: 2_u8);
+        return std::process::exit_status(code: 2_u8);
       }
       if values[2_u64].tag != 33_u64 {
-        return exit_status(code: 3_u8);
+        return std::process::exit_status(code: 3_u8);
       }
     }
     Err(error: unexpected_complete) => {
-      return exit_status(code: 74_u8);
+      return std::process::exit_status(code: 74_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -798,15 +798,15 @@ fn relay(values: Array<Record, 1>) -> result: Array<Record, 1> pure {
   return slots_into_array::<Record, 1>(values: move full);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 17_u64);
   let held = make(owner: move owner, tag: 17_u64);
   let returned = relay(values: move held);
   let tag = returned[0_u64].tag;
   if tag != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -848,7 +848,7 @@ fn relay<T: drop>(value: T) -> result: T pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let none = slots_new::<Box<u64>, 0>();
   let zero_owners = slots_into_array::<Box<u64>, 0>(values: move none);
   let zero_returned = relay::<Array<Box<u64>, 0>>(value: move zero_owners);
@@ -875,20 +875,20 @@ fn main() -> status: ExitStatus pure {
   set mixed[1_u64].empty = Empty();
   let mixed_empty = mixed[1_u64].empty;
   if mixed[0_u64].tag != 7_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if mixed[1_u64].tag != 19_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let zero_length = zero_again.len;
   let empty_length = empty_again.len;
   if zero_length != 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if empty_length != 2_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -944,16 +944,21 @@ fn const_runs_are_immutable_globals_and_execute_through_index_and_len() {
     ));
     // KEPT AS WRITTEN for the lowering port: the constant pool's LLVM type and
     // element spelling for a four-byte `Array<u8, 4>` global.
-    assert!(llvm.contains(
-        "@.wf_const.0 = private unnamed_addr constant [4 x i8] [i8 10, i8 20, i8 30, i8 40]"
-    ));
+    assert!(llvm.contains(&format!(
+        "{} = private unnamed_addr constant [4 x i8] [i8 10, i8 20, i8 30, i8 40]",
+        super::constant_global("table")
+    )));
     let main = emitted_function(&llvm, "main");
     // The constant lookup is discharged [OP-4]: no bounds compare remains.
     // The source's two terminal result checks are ordinary control flow, not
     // claims, so all three outcomes return an ExitStatus without a trap edge.
     assert!(!main.contains("icmp ult i64"));
     assert_eq!(main.matches("icmp eq").count(), 2);
-    assert_eq!(main.matches("call void @wf_exit_status").count(), 3);
+    assert_eq!(
+        main.matches("call void @wf_std.process.exit_status")
+            .count(),
+        3
+    );
     assert!(!main.contains("call void @wf_trap"));
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
@@ -987,17 +992,17 @@ fn read(values: Array<u16, 4>, offset: u64) -> result: u16 pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = make();
   let length = values.len;
   if length != 4_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let value = read(values: values, offset: 3_u64);
   if value != 42_u16 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1026,9 +1031,9 @@ fn an_out_of_bounds_run_read_is_an_op4_compile_rejection() {
     // [ENT-6] residual, rendered in [OP-15]'s measure member form.
     let source = br#"const values: Array<u8, 2> =[7_u8, 7_u8];
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = values[2_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
@@ -1042,16 +1047,16 @@ fn indexed_set_checks_before_rhs_and_updates_the_run() {
   return 9_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 2>();
   place_back(window: &values, value: 0_u8);
   place_back(window: &values, value: 0_u8);
   set values[1_u64] = replacement();
   let stored = values[1_u64];
   if stored != 9_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1089,12 +1094,12 @@ fn an_out_of_bounds_indexed_set_is_an_op4_compile_rejection() {
   return 9_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 2>();
   place_back(window: &values, value: 0_u8);
   place_back(window: &values, value: 0_u8);
   set values[2_u64] = replacement();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let failure = compile_rejection(source);
@@ -1117,7 +1122,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
     // third v0.59 invariant, `head_of(built) <= 0_u64`, retired with the
     // measure: [MSR-1] gives `Slots` no `head` cell at all, and the window it
     // would have pinned to zero begins at slot zero by [WIN-1].
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "Nested counted loops read and write one fixed run for two hundred thousand iterations.";
   let built = slots_new::<u64, 8>();
   for @fill (
@@ -1145,9 +1150,9 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
     }
   }
   if completed != 200000_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1188,7 +1193,7 @@ fn replacement() -> result: u8 pure {
   return 9_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values, sibling: 77_u16);
@@ -1196,15 +1201,15 @@ fn main() -> status: ExitStatus pure {
   set outer.inner.values[1_u64] = replacement();
   let stored = outer.inner.values[1_u64];
   if stored != 9_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if outer.inner.sibling != 77_u16 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if outer.prefix != 123_u32 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -1263,22 +1268,22 @@ fn main() -> status: ExitStatus pure {
 /// `len` observation this case keeps, over the same element writes and reads.
 #[test]
 fn general_run_elements_preserve_array_places_and_standing_extents() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let row = array_filled::<u64, 2>(value: 7_u64);
   let rows = slots_new::<Array<u64, 2>, 2>();
   place_back(window: &rows, value: row);
   let width = rows[0_u64].len;
   set rows[0_u64][1_u64] = 9_u64;
   if rows[0_u64][0_u64] != 7_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if rows[0_u64][1_u64] != 9_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if width != 2_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
@@ -1299,7 +1304,7 @@ fn general_run_elements_preserve_nested_owners_across_generic_calls() {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = box_new::<u64>(value: 17_u64);
   let second = box_new::<u64>(value: 29_u64);
   let leaf = slots_new::<Box<u64>, 2>();
@@ -1310,7 +1315,7 @@ fn main() -> status: ExitStatus pure {
   let outer = slots_new::<Slots<Slots<Box<u64>, 2>, 1>, 1>();
   place_back(window: &outer, value: move middle);
   let carried = pass::<Slots<Slots<Slots<Box<u64>, 2>, 1>, 1>>(value: move outer);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1365,9 +1370,9 @@ fn build() -> result: Tree pure {
   return move root;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let tree = build();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1430,7 +1435,7 @@ fn update(storage: &Box<Array<Record, 2>>, index: u64, replacement: &Record) -> 
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = make_record(tag: 11_u64);
   let second_tag = first.payload[0_u64] +wrap 11_u64;
   let second = make_record(tag: second_tag);
@@ -1442,22 +1447,22 @@ fn main() -> status: ExitStatus pure {
   let passed = pass_box(value: move storage);
   let before = read(storage: &passed, index: 0_u64);
   if before != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let replacement = make_record(tag: 99_u64);
   update(storage: &passed, index: 0_u64, replacement: &replacement);
   if replacement.payload[7_u64] != 11_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let first_tag = read(storage: &passed, index: 0_u64);
   let remaining_tag = read(storage: &passed, index: 1_u64);
   if first_tag != 99_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if remaining_tag != 22_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1504,46 +1509,46 @@ fn update(row: &Array<u64, 2>) -> result: unit writes(row) {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let seed = array_filled::<u64, 2>(value: 7_u64);
   let rows = make::<Array<u64, 2>>(value: seed);
   set rows.inner[1_u64][0_u64] = 11_u64;
   update(row: &rows.inner[1_u64]);
   if rows.inner[0_u64][0_u64] != 7_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   if rows.inner[0_u64][1_u64] != 7_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
   let snapshot = rows.inner[1_u64];
   set rows.inner[0_u64] = snapshot;
   set snapshot[1_u64] = 23_u64;
   if rows.inner[0_u64][0_u64] != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if rows.inner[0_u64][1_u64] != 19_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if rows.inner[1_u64][0_u64] != 11_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let observed = read(rows: &rows.inner[0_u64..2_u64], index: 1_u64);
   if observed != 19_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if seed[0_u64] != 7_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let empty = box_array_filled::<Array<u64, 2>>(count: 0_u64, value: seed);
   if empty.inner.len != 0_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let empty_seed = array_filled::<u64, 0>(value: 0_u64);
   let zero_width = box_array_filled::<Array<u64, 0>>(count: 3_u64, value: empty_seed);
   if zero_width.inner[2_u64].len != 0_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = retain_calls(&compile(source))
@@ -1568,8 +1573,8 @@ fn runtime_arrays_release_nested_fixed_array_owners_in_element_order() {
   return values.inner[1_u64][1_u64].inner;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = retain_calls(&compile(source))
@@ -1617,7 +1622,7 @@ fn inspect(values: &[Empty]) -> result: Empty reads(values) contract {
   return deref(values)[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let empty = Empty();
   let values = box_array_filled::<Empty>(count: 9223372036854775809_u64, value: empty);
   let last = values.inner[9223372036854775808_u64];
@@ -1630,7 +1635,7 @@ fn main() -> status: ExitStatus pure {
   let nested_length = nested.inner[9223372036854775808_u64].len;
   let window = slots_from_array::<Empty, 9223372036854775809>(values: fixed);
   let returned = slots_into_array::<Empty, 9223372036854775809>(values: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);

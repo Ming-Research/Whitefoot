@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scan(data: Array<u8, 8>) -> result: u8 pure {
   doc "A nine-element counted range does not fit an eight-element array; the captured range upper bound cannot be silently narrowed to the subscript domain.";
   let total = 0_u8;

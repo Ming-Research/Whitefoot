@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nonnegative(value: i32) -> result: unit pure contract {
+  requires 0_i32 <= value;
+} {
+  return unit;
+}
+
+fn masked(left: i32, right: i32) -> result: unit pure {
+  let common = iand(left, right);
+  nonnegative(value: common);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Op {
   Inc();
   Dec();
@@ -16,7 +19,7 @@ fn apply(op: Op, x: i32) -> result: i32 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  let inc_atom_0001 = Inc();
+  let inc_atom_0001 = Op::Inc();
   let r = apply(op: inc_atom_0001, x: 41_i32);
   if r == 42_i32 {
   } else {

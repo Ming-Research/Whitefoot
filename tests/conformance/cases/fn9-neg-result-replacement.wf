@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn selected(value: i32) -> result: Result<i32, Overflow> pure contract {
   ensures when Ok(value: payload): payload == value;
 } {
@@ -12,8 +15,8 @@ fn guard(left: i32, right: i32) -> result: unit pure contract {
 
 fn consumer(input: i32, choose: Bool) -> result: Result<unit, Overflow> pure {
   let outcome = selected(value: input);
-  let alias = &outcome;
-  set deref(alias) = Ok<i32, Overflow>(value: 0_i32);
+  let aliased = &outcome;
+  set deref(aliased) = Ok<i32, Overflow>(value: 0_i32);
   match outcome {
     Ok(value: payload) => {
       guard(left: payload, right: input);

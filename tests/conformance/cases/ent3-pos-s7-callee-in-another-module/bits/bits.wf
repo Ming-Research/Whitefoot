@@ -1,0 +1,6 @@
+fn top(value: u64) -> result: u64 pure contract {
+  ensures result <= 255_u64;
+} {
+  let high = ishr(value, 56_u32);
+  return high;
+}

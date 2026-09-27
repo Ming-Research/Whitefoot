@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Value-match giving from a nested value-match: the outer Ok arm delivers by giving `inner`, itself bound by an inner Result match [PRE-1]; both matches are exhaustive [ERR-2] and every arm delivers [GIVE-1]. Runs to exit 0.";
   let v = match 40_i32 +checked 2_i32 {

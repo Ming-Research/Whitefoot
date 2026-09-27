@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Packet {
   Data(left: i32, right: u64, ready: Bool);
   Empty();
@@ -29,7 +32,7 @@ fn score(packet: Packet) -> function_result: i32 pure {
 fn main() -> status: ExitStatus pure {
   doc "Construct, pass, destructure, and validate every field of one mixed-width payload variant [GRAM-8, GRAM-10, OWN-13].";
   let ready = True();
-  let packet = Data(left: 20_i32, right: 22_u64, ready: ready);
+  let packet = Packet::Data(left: 20_i32, right: 22_u64, ready: ready);
   let result = score(packet: packet);
   if result == 42_i32 {
   } else {

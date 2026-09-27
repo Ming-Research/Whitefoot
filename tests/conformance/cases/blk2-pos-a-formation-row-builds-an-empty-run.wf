@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn build() -> result: Slots<u8, 4> pure {
   doc "Forms an empty frame-resident run of four slots.";
   return slots_new::<u8, 4>();

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum MaybeByte {
   Present(value: u8);
   Absent();
@@ -6,11 +9,11 @@ nocopy enum MaybeByte {
 fn main() -> status: ExitStatus pure {
   doc "A subscript of a run is a swap place, which is what carries an affine element out of a slot and its successor in at one commit. At every program point the slot holds exactly one valid owner, so the window stays the run's complete typestate.";
   let run = slots_new::<MaybeByte, 4>();
-  let a = Present(value: 1_u8);
+  let a = MaybeByte::Present(value: 1_u8);
   place_back(window: &run, value: move a);
-  let b = Present(value: 2_u8);
+  let b = MaybeByte::Present(value: 2_u8);
   place_back(window: &run, value: move b);
-  let fresh = Present(value: 9_u8);
+  let fresh = MaybeByte::Present(value: 9_u8);
   swap(first: &run[0_u64], second: &fresh);
   match fresh {
     Present(value: was) => {
@@ -23,7 +26,7 @@ fn main() -> status: ExitStatus pure {
       return exit_status(code: 2_u8);
     }
   }
-  let again = Present(value: 8_u8);
+  let again = MaybeByte::Present(value: 8_u8);
   swap(first: &run[0_u64], second: &again);
   match again {
     Present(value: got) => {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A range reference must prove its end no greater than the source length [REF-4]; a written end past the array length is unproved and the formation is refused.";
   let values = array_filled::<u64, 4>(value: 0_u64);

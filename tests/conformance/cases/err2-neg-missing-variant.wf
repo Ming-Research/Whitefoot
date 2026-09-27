@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Color {
   Red();
   Green();
@@ -17,7 +20,7 @@ fn pick(c: Color) -> result: i32 pure {
 
 fn main() -> status: ExitStatus pure {
   doc "A match missing the Blue() arm is non-exhaustive [ERR-2]; rejected.";
-  let red_atom_0001 = Red();
+  let red_atom_0001 = Color::Red();
   let n = pick(c: red_atom_0001);
   return exit_status(code: 0_u8);
 }

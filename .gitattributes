@@ -3,8 +3,22 @@ research/experiments/data-layout-owning-sequence/DETACHED_CANDIDATE.patch whites
 governance/spec-evolution/grammar/evidence/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 
 # Whitefoot source identity is byte-exact. In particular, a Windows checkout
-# must not rewrite canonical LF bytes to CRLF before the compiler reads them.
+# must not rewrite canonical LF bytes to CRLF before the compiler reads them:
+# implementation records, module interface records, graph records, and the
+# standard library's records the compiler embeds at build time.
 *.wf -text
+*.wfm -text
+*.wfg -text
 
 # Generated TSV rows may end with an empty final field represented by a terminal tab.
 research/implementation/minimal-systems-capability/RUST-1.97.0-API-INVENTORY.tsv whitespace=-blank-at-eol
+
+# A released specification archive is a byte copy of an earlier active
+# specification, checked by `make spec-archives`. GitHub collapses it in pull
+# request diffs so that review reads the amendment rather than the copy.
+spec/kernel-spec-v*.md linguist-generated=true
+
+# Log entries are whole blocks inserted newest first and never edited, so two
+# branches that each add one conflict only textually: the union driver keeps
+# both blocks, and design lint rejects a heading the union kept twice.
+design/log.md merge=union

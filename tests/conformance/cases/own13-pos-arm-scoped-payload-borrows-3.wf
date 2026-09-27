@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Inner {
   Leaf(value: i32);
 }
@@ -8,8 +11,8 @@ enum Outer {
 
 fn main() -> status: ExitStatus pure {
   doc "A nested match through a reference extends the payload path one step further, and each arm's refinement fact keeps its own binder valid.";
-  let leaf = Leaf(value: 7_i32);
-  let packet = Wrap(inner: leaf);
+  let leaf = Inner::Leaf(value: 7_i32);
+  let packet = Outer::Wrap(inner: leaf);
   let holder = &packet;
   match deref(holder) {
     Wrap(inner: nested) => {

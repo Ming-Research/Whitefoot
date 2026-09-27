@@ -1,9 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Mode {
   Fast();
   Slow();
 }
 
-const preset: Mode = Fast();
+const preset: Mode = Mode::Fast();
 
 fn main() -> status: ExitStatus pure {
   doc "CONST-2 const-eligibility is a closed list: a primitive, an Array<T, N> of const-eligible T, or a source non-opaque struct whose every field type is const-eligible. Enums are not const-eligible, so this declaration is a hard error citing CONST-2.";

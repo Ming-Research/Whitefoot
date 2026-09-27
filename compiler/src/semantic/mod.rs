@@ -7,9 +7,11 @@
 
 mod check;
 mod entailment;
+mod entry;
 mod goal;
 mod loop_permission;
 mod model;
+mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
@@ -20,13 +22,15 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-use crate::{NodePath, ResolutionIssue, ResolvedSyntaxUnit, SyntaxCoordinate};
+use crate::{NodePath, ResolutionIssue, SyntaxCoordinate};
 
 pub use check::check_semantics;
 #[cfg(test)]
 pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
+pub(crate) use check::{ProofReceipts, check_semantics_with_receipts};
+pub(crate) use entry::{EntryRejection, EntryRequest};
 
 /// The permission table the overlap lowering reads. It is the same table the
 /// ledger renders; nothing derives a second judgment from it.
@@ -46,8 +50,8 @@ pub(crate) use model::{
     CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
     CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
     CheckedReleaseClass, CheckedSetTarget, CheckedStatement, CheckedTargetDomainObligation,
-    CheckedType, CheckedValue, CheckedWritablePlace, FunctionId, MeasureCell, MeasuredKind,
-    NominalId, PropagationContext, WindowShape, expression_children,
+    CheckedType, CheckedValue, CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell,
+    MeasuredKind, NominalId, PropagationContext, WindowShape,
 };
 
 /// Numbered rule owning one post-resolution semantic rejection.
@@ -69,6 +73,10 @@ pub enum SemanticRule {
     Gram11,
     /// Composite-type formation and element eligibility.
     Type2,
+    /// Cross-module access to a declaration's field [MOD-5].
+    Mod5,
+    /// A public signature naming an unpublished field [MOD-6].
+    Mod6,
     /// Exact mode/type agreement.
     Type5,
     /// Constructor/variant owner agreement.
@@ -209,6 +217,8 @@ impl SemanticRule {
             Self::Gram10 => "GRAM-10",
             Self::Gram11 => "GRAM-11",
             Self::Type2 => "TYPE-2",
+            Self::Mod5 => "MOD-5",
+            Self::Mod6 => "MOD-6",
             Self::Type5 => "TYPE-5",
             Self::Type6 => "TYPE-6",
             Self::Type9 => "TYPE-9",
@@ -328,7 +338,9 @@ impl SemanticRule {
             Self::Eff2 => Self::Eff5,
             Self::Eff5 => Self::Err2,
             Self::Err2 => Self::Err3,
-            Self::Err3 => Self::Ent2,
+            Self::Err3 => Self::Mod5,
+            Self::Mod5 => Self::Mod6,
+            Self::Mod6 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -399,20 +411,46 @@ impl SemanticRule {
             Self::Eff5 => 48,
             Self::Err2 => 49,
             Self::Err3 => 50,
-            Self::Ent2 => 51,
-            Self::Msr3 => 52,
-            Self::Call6 => 53,
-            Self::Inv1 => 54,
-            Self::Prf1 => 55,
+            Self::Mod5 => 51,
+            Self::Mod6 => 52,
+            Self::Ent2 => 53,
+            Self::Msr3 => 54,
+            Self::Call6 => 55,
+            Self::Inv1 => 56,
+            Self::Prf1 => 57,
         }
     }
 }
 
-/// Exact checked location selected for a semantic rejection.
+/// Exact checked location selected for a semantic rejection, or of a node its
+/// payload names.
+///
+/// A payload that names another node, such as the callee requirement an
+/// [FN-8] rejection failed, carries it in this form rather than as a bare
+/// path, so the node reaches a reader as a source position: the checker holds
+/// the tree that resolves the path, and the driver that renders the rejection
+/// does not.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SemanticLocation {
     /// One source-backed production node and its rule-selected coordinate.
     SourceNode(NodePath, SyntaxCoordinate),
+}
+
+impl SemanticLocation {
+    /// Returns the production node's path from the compilation-unit root.
+    #[must_use]
+    #[cfg(test)]
+    pub const fn path(&self) -> &NodePath {
+        let Self::SourceNode(path, _) = self;
+        path
+    }
+
+    /// Returns the rule-selected source coordinate within that node.
+    #[must_use]
+    pub const fn coordinate(&self) -> SyntaxCoordinate {
+        let Self::SourceNode(_, coordinate) = self;
+        *coordinate
+    }
 }
 
 /// One non-discharged static source obligation disposition [ENT-6].
@@ -480,14 +518,16 @@ pub enum CallRequirementDisposition {
 pub struct UndischargedCallRequirementDetail {
     /// The resolved concrete, possibly generic, callee instance.
     pub concrete_callee: String,
-    /// The callee requirement occurrence's `requires_clause` path.
-    pub requires_clause: NodePath,
+    /// The callee requirement occurrence's `requires_clause` node and its
+    /// complete source extent.
+    pub requires_clause: SemanticLocation,
     /// Stable structural rendering of the complete instantiated typed goal.
     pub instantiated_goal: String,
     /// The exact non-discharged disposition.
     pub disposition: CallRequirementDisposition,
-    /// The rule-selected mechanical restructuring.
-    pub mechanical_fix: &'static str,
+    /// The repair [DIAG-1], selected by the disposition and by what the
+    /// goal's terms are.
+    pub mechanical_fix: String,
 }
 
 /// One non-discharged [FN-9] relation disposition.
@@ -502,16 +542,19 @@ pub enum PostconditionProofDisposition {
 pub struct UndischargedPostconditionDetail {
     /// The concrete, possibly generic, function instance.
     pub concrete_function: String,
-    /// The unique postcondition occurrence's block path.
-    pub postcondition: NodePath,
+    /// The unique postcondition occurrence's block node and its complete
+    /// source extent.
+    pub postcondition: SemanticLocation,
     /// The fixed relation occurrence ordinal (zero in this version).
     pub conjunct: u32,
-    /// Exact admitted selector identity.
-    pub selector: NodePath,
+    /// Exact admitted selector identity and its complete source extent.
+    pub selector: SemanticLocation,
     /// The instantiated normalized relation at the selected exit.
     pub relation: String,
     /// The exact non-discharged disposition.
     pub disposition: PostconditionProofDisposition,
+    /// The repair [DIAG-1], selected by the disposition.
+    pub mechanical_fix: &'static str,
 }
 
 /// Structured reason for one semantic rejection.
@@ -523,6 +566,29 @@ pub enum SemanticIssueKind {
     InvalidFloatLiteral,
     /// A named constant value does not exactly inhabit its written type.
     InvalidConstValue,
+    /// Code or an annotation of another module selects, constructs or binds
+    /// a field its declaring module does not publish or its graph row does
+    /// not reach, or constructs a value with a readonly field [MOD-5,
+    /// TYPE-2].
+    InaccessibleField {
+        /// The field's spelling.
+        field: String,
+        /// What access the module lacks.
+        reason: &'static str,
+    },
+    /// An arm names a variant of an enum its module cannot access [MOD-5].
+    InaccessibleVariant {
+        /// The variant's spelling.
+        variant: String,
+        /// What access the module lacks.
+        reason: &'static str,
+    },
+    /// A named const's value depends on itself through the listed consts,
+    /// in dependency order [CONST-2].
+    ConstantCycle {
+        /// The consts on the cycle, beginning at the rejected one.
+        cycle: Vec<String>,
+    },
     /// A const-expression's compile-time evaluation has no u64 result: the
     /// mathematical result lies outside the domain or the divisor is zero.
     /// This is the const-eval overflow policy's rejection [CONST-1]; it is
@@ -544,6 +610,22 @@ pub enum SemanticIssueKind {
         expected: String,
         /// The exact type, mode, or written form found there.
         found: String,
+    },
+    /// [OP-10, OP-14] an operand whose shape is outside the operation's
+    /// admitted set.
+    UnadmittedOperandShape {
+        /// The shapes the operation admits.
+        expected: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// [FN-4] a supplied function whose signature, row or contract does not
+    /// match the formal interface it is bound to.
+    BehaviorArgumentMismatch {
+        /// The part of the formal interface the supplied function misses.
+        expected: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
     },
     /// A constant was selected as an assignment target.
     ImmutableSetTarget,
@@ -695,14 +777,14 @@ pub enum SemanticIssueKind {
         /// Exact mechanical repair required by OWN-1.
         mechanical_fix: &'static str,
     },
-    /// [BLK-1] a `construct` named one of the four compiler-owned container or
-    /// provider nominals. No construct produces a run, a provider, or a
-    /// store: each contributes a constructor entry that exists to be refused.
+    /// [TYPE-2] a constructor `call` or a destructuring `let_stmt` named an
+    /// opaque struct, whose constructor entry exists to be refused.
     ContainerConstruction {
         /// The nominal the construct named.
         nominal: String,
-        /// Exact restructuring required by BLK-1.
-        mechanical_fix: &'static str,
+        /// The repair [DIAG-1], chosen by where the struct comes from and,
+        /// for a cell taken apart, by its content.
+        mechanical_fix: String,
     },
     /// A binding was used after ownership had already been consumed.
     UseAfterMove {
@@ -777,19 +859,24 @@ pub enum SemanticIssueKind {
     /// A subscript's bounds obligation is not derivable from the closed fact
     /// state at its node [OP-4, ENT-6].
     UndischargedBoundsObligation {
-        /// The exact ENT-6 residual rendering: offset atom, ` < len_of(`, base
-        /// place, `)`.
+        /// The exact ENT-6 residual rendering: offset atom, ` < `, base
+        /// place, `.len`.
         residual: String,
-        /// The mechanical fix ENT-6 names.
-        mechanical_fix: &'static str,
+        /// The exact non-discharged disposition [MSR-4].
+        disposition: StaticObligationDisposition,
+        /// The repair [DIAG-1], selected by the disposition and by what the
+        /// residual's terms are.
+        mechanical_fix: String,
     },
     /// A release selected the empty-run graph but the current facts do not
     /// prove that the run has no initialized elements [PROV-6, ENT-6].
     UndischargedEmptyRunRelease {
         /// The exact remaining relation, `len_of(P) <= 0_u64`.
         residual: String,
-        /// The source-level way to establish or avoid the obligation.
-        mechanical_fix: &'static str,
+        /// The exact non-discharged disposition [OP-14].
+        disposition: StaticObligationDisposition,
+        /// The repair [DIAG-1], selected by the disposition.
+        mechanical_fix: String,
     },
     /// One proof-required exact integer operation's canonical `.defined`
     /// goal is not derivable from the closed fact state [OP-2, ENT-6].
@@ -798,28 +885,33 @@ pub enum SemanticIssueKind {
         residual: String,
         /// The exact non-discharged disposition.
         disposition: StaticObligationDisposition,
-        /// The mechanical fix OP-2 names.
-        mechanical_fix: &'static str,
+        /// The repair [DIAG-1], selected by the disposition and by what the
+        /// goal's terms are.
+        mechanical_fix: String,
     },
     /// One exact numeric conversion lacks its OP-6 domain proof.
     UndischargedConversionDomainObligation {
         residual: String,
         disposition: StaticObligationDisposition,
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// A runtime-sized buffer allocation lacks an OP-9 fit proof.
     UndischargedAllocationFitObligation {
         residual: String,
-        mechanical_fix: &'static str,
+        disposition: StaticObligationDisposition,
+        mechanical_fix: String,
     },
     /// One range-reference formation conjunct — `lo <= hi` or `hi <= x.len`
     /// — lacks a [REF-4] proof.
     UndischargedRangeFormationObligation {
         residual: String,
-        mechanical_fix: &'static str,
+        disposition: StaticObligationDisposition,
+        mechanical_fix: String,
     },
-    /// Two compared index or range steps have no source proof of disjointness
-    /// [OWN-7, EFF-5]. The residual names the exact position family.
+    /// Two compared positions have no source proof of the separation their
+    /// family needs [OWN-7, WIN-2, EFF-5]: two index or range steps, an index
+    /// beside a range, or either beside a window part. The residual names the
+    /// exact position family.
     UndischargedCallSeparation {
         residual: String,
         mechanical_fix: &'static str,
@@ -874,16 +966,20 @@ pub enum SemanticIssueKind {
         /// establish. A counted-loop backedge renders the hidden next binder
         /// as `i + 1_u64`; no checker-private term identity is exposed.
         required_relation: String,
-        /// Exact source-level repair selected by INV-1.
-        mechanical_fix: &'static str,
+        /// The failed judgment's disposition [MSR-4].
+        disposition: StaticObligationDisposition,
+        /// The repair [DIAG-1], selected by the obligation and disposition.
+        mechanical_fix: String,
     },
     /// A well-formed blockless local invariant target is not established by
     /// the specification-defined AUTO family in its entering context.
     UndischargedLocalInvariant {
         /// Source spelling of the invariant name.
         name: String,
-        /// Exact source-level repair selected by INV-1.
-        mechanical_fix: &'static str,
+        /// The target's disposition [MSR-4].
+        disposition: StaticObligationDisposition,
+        /// The repair [DIAG-1], selected by the disposition.
+        mechanical_fix: String,
     },
     /// A `proof_use` relation or certificate factor violates the closed
     /// PRF-1 source form.
@@ -928,7 +1024,11 @@ pub enum SemanticIssueKind {
     InvalidPostconditionSelector,
     /// [CALL-4] a route omits its ordinal binder where two or more declared
     /// result ordinals could carry it.
-    AmbiguousResultRoute,
+    AmbiguousResultRoute {
+        /// The repair [DIAG-1], naming the results that could carry the
+        /// route.
+        mechanical_fix: String,
+    },
     /// A variant selector does not spell exact `Ok(value: result)`.
     InvalidPostconditionFields {
         /// Exact closed field list required by the admitted selector.
@@ -973,6 +1073,8 @@ pub enum SemanticIssueKind {
     NoSelectedNormalExit {
         /// The exact fixed residual required by FN-9.
         residual: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
     },
     /// A selected normal return's complete instantiated FN-9 relation is
     /// refuted or unproved after entry-image stability and ordinary kills.
@@ -1014,6 +1116,15 @@ pub enum SemanticIssueKind {
     InvalidPropagation,
     /// `give` is absent, misplaced, duplicated, or followed by a statement.
     InvalidGive,
+    /// [GIVE-1] every arm or branch of a value initializer leaves by `return`
+    /// or `break`, so its delivery set is empty and no value reaches the
+    /// binding.
+    EmptyDeliverySet {
+        /// The binding no value reaches, as the source spells it.
+        binding: String,
+        /// The repair [DIAG-1]: the statement form, binding dropped.
+        mechanical_fix: String,
+    },
     /// The effect row is not a valid exact EFF-1 row.
     InvalidEffectRow {
         /// Which EFF-1 condition this row failed.
@@ -1021,19 +1132,33 @@ pub enum SemanticIssueKind {
         /// Exact repair required by EFF-1 for that condition.
         mechanical_fix: &'static str,
     },
+    /// A row carries an entry that another of its entries covers, such as
+    /// `reads(p)` or `writes(p.x)` beside `writes(p)`, or `reads(p.x)` beside
+    /// `reads(p)`, which EFF-1 never writes because the covering entry
+    /// already states it. EFF-1 names no restructuring for it, so the
+    /// rejection carries none.
+    SubsumedEffectEntry {
+        /// The redundant entry as the row writes it.
+        entry: String,
+        /// The first entry in written order whose path covers it: a `writes`
+        /// entry, or a `reads` entry covering a `reads` entry below it.
+        covering: String,
+    },
     /// The written effect row differs from syntactically exhibited effects.
     EffectMismatch {
-        /// The row the body exhibits, in EFF-1 canonical spelling. This is
-        /// exactly what the declaration must say.
+        /// The exhibited row without the entries another of its entries
+        /// covers, in EFF-1 canonical spelling: EFF-2 admits it for the body,
+        /// EFF-1 admits it as written, and every entry is an exhibited path.
         expected_row: String,
         /// The row the declaration writes, in the same spelling.
         found_row: String,
-        /// Exhibited categories and paths the declaration does not carry.
+        /// The entries of `expected_row` that cover an exhibited access the
+        /// declaration does not cover.
         missing: Vec<String>,
         /// Declared categories and paths the body does not exhibit.
         extra: Vec<String>,
-        /// Exact restructuring required by EFF-2.
-        mechanical_fix: &'static str,
+        /// The repair [DIAG-1]: declare `expected_row`.
+        mechanical_fix: String,
     },
     /// A generic type parameter named a source contract as its bound.
     SourceContractGenericBound,
@@ -1073,9 +1198,14 @@ impl SemanticIssueKind {
 /// One deterministic post-resolution source-language rejection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SemanticIssue {
-    rule: SemanticRule,
-    location: SemanticLocation,
-    kind: SemanticIssueKind,
+    pub(crate) rule: SemanticRule,
+    pub(crate) location: SemanticLocation,
+    pub(crate) kind: SemanticIssueKind,
+    /// The call that requested the concrete generic instance whose check
+    /// produced this rejection, when one did. The location stays at the
+    /// template's source, which owns the failure, and this names the
+    /// requester [FN-2, MOD-8].
+    pub(crate) request: Option<crate::SyntaxCoordinate>,
 }
 
 impl SemanticIssue {
@@ -1136,8 +1266,8 @@ pub enum UnsupportedSemanticFeature {
 /// Exact source node at which an unimplemented compiler family was required.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SemanticUnsupported {
-    feature: UnsupportedSemanticFeature,
-    node: NodePath,
+    pub(crate) feature: UnsupportedSemanticFeature,
+    pub(crate) node: SemanticLocation,
 }
 
 impl SemanticUnsupported {
@@ -1160,16 +1290,67 @@ pub enum SemanticCompilerFailure {
     InvalidSourceEncoding,
     /// A dense identity or source-coordinate calculation overflowed.
     CounterOverflow,
+    /// A function's obligation records and the entailment engine's judgments
+    /// disagreed: a record no judgment answered, with no answered record
+    /// undischarged, or a judgment that answered no record. The function is
+    /// not accepted (`design/compiler/acceptance-records.md`).
+    ObligationContract,
 }
 
 /// Whole-unit semantic success and its only lowering authority.
+///
+/// It holds what checking concluded and no syntax: a stage that reads
+/// resolution records, such as an entry's composition judgment, reads them
+/// from the resolved unit the check was made over.
 #[derive(Debug)]
-pub struct CheckedProgram<'classified, 'lexed, 'source> {
-    pub(crate) _resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+pub struct CheckedProgram {
     pub(crate) data: CheckedProgramData,
 }
 
-impl CheckedProgram<'_, '_, '_> {
+impl CheckedProgram {
+    /// [ENT-4] every judgment in the named functions that succeeded only
+    /// because the state it was asked in is contradictory, so that a test can
+    /// show a repaired program succeeds where its construct runs [DIAG-1].
+    #[cfg(test)]
+    pub(crate) fn contradictory_successes(&self, functions: &[String]) -> Vec<String> {
+        let mut found = Vec::new();
+        for function in self
+            .data
+            .functions
+            .iter()
+            .filter(|function| functions.contains(&function.name))
+        {
+            let summary = &function.entailment;
+            if matches!(
+                summary.body_disposition,
+                CheckedBodyDisposition::Uninhabited { .. }
+            ) {
+                found.push(format!("the body of `{}`", function.name));
+            }
+            for obligation in &summary.obligations {
+                if obligation.discharged && obligation.contradictory {
+                    found.push(format!(
+                        "a {:?} obligation in `{}`",
+                        obligation.family, function.name
+                    ));
+                }
+            }
+            for call in &summary.call_goals {
+                if call.disposition == entailment::CallGoalDisposition::Discharged
+                    && call
+                        .evidence
+                        .contains(&entailment::CallGoalEvidence::AllDerivable)
+                {
+                    found.push(format!(
+                        "the call requirement `{}` in `{}`",
+                        call.rendered_goal, function.name
+                    ));
+                }
+            }
+        }
+        found
+    }
+
     #[cfg(test)]
     pub(crate) fn element_type(&self, element: CheckedElement) -> Option<CheckedType> {
         self.data.elements.get(element.0 as usize).copied()
@@ -1200,9 +1381,9 @@ impl CheckedProgram<'_, '_, '_> {
 
 /// Failure-atomic result of target-independent semantic checking.
 #[derive(Debug)]
-pub enum SemanticOutcome<'classified, 'lexed, 'source> {
+pub enum SemanticOutcome {
     /// Every applicable whole-unit judgment succeeded.
-    Complete(Box<CheckedProgram<'classified, 'lexed, 'source>>),
+    Complete(Box<CheckedProgram>),
     /// A numbered language rule was violated.
     SourceIssue {
         /// Deterministically selected semantic issue.

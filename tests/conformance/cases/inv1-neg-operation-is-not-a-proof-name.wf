@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn probe(x: u64, limit: u64) -> result: unit pure contract {
   requires x <= limit;
 } {

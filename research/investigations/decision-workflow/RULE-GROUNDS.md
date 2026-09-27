@@ -38,12 +38,12 @@ cannot establish that the rule is the best design.
 unresolved objection identified here. `revisit` means the argument has been
 assessed but a concrete question remains open; it does not mean the row was
 skipped. The reopening triggers below belong to that historical assessment;
-current work follows [decision practice](../../../docs/practice.md#decision-work).
+current work follows [decision practice](https://github.com/mbbill/Whitefoot/blob/efe40194a05b339c46b931e87bd05a40036f23cf/docs/practice.md#decision-work).
 
 ## Scope and surface
 
 The earlier [surface assessment](DESIGN.md#surface-and-definition-conventions)
-and [surface decision memory](../../../mcts_mem/whitefoot/surface-form.md)
+and [surface decision memory](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form.md)
 record the canonical-form hypothesis and alternatives. Predictable editing is
 a reason to try these forms, not an established improvement in agent success.
 Reopen a convention when representative agent work exposes avoidable failures,
@@ -78,7 +78,7 @@ compiler costs, not merely token counts.
 ## Types, ownership, and storage
 
 The active TYPE through STOR rules are the semantic reading set. The
-[ownership record](../../../mcts_mem/whitefoot/ownership.md) preserves earlier
+[ownership record](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership.md) preserves earlier
 alternatives and their experimental conditions; its historical claims do not
 cover every subsequent container, view, or linearity amendment. Reopen the
 provisional boundaries below when a representative program requires a safe
@@ -154,7 +154,7 @@ real numeric workload needs a safe operation that the table excludes.
 
 ## Functions and contracts
 
-The [contract record](../../../mcts_mem/whitefoot/contracts.md) preserves the
+The [contract record](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/contracts.md) preserves the
 choice of checked metadata before callable contract-member behavior. That
 historical scope choice does not establish sufficiency for kernels, compilers,
 or browsers. The following assessment covers the full rule boundaries,
@@ -215,7 +215,7 @@ or new acceptance rule.
 ## Effects, execution, and system interfaces
 
 These arguments use the active EFF through SYS tables and the
-[system-interface rationale](../../../mcts_mem/whitefoot/system-interface.md).
+[system-interface rationale](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/system-interface.md).
 Earlier capability-category and trap-era explanations are not current grounds.
 The exact system inventory is a provisional executable profile, not evidence
 that kernels, browsers, or embedded resource budgets are already covered.

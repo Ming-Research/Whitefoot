@@ -1,7 +1,7 @@
 use std::os::unix::process::ExitStatusExt;
 
 use super::support::{
-    CompiledProgram, build_program, compile_and_run, compile_programs, emitted_function,
+    CompiledProgram, build_program, compile_and_run, compile_programs, emitted_body,
     fixture_directory,
 };
 
@@ -114,21 +114,25 @@ fn stored_fixed_and_dynamic_blocks_execute_with_data_failures() {
     // neither allocation nor release of a heap block.
     assert!(!llvm.contains("call ptr @malloc"));
     assert!(!llvm.contains("call void @free"));
-    let inflate = emitted_function(&llvm, "inflate");
+    // `inflate`, `decode_length` and `copy_distance` return in registers, so
+    // their checks and the absence of a trap edge are in each one's
+    // destination-form body, not in the entry that calls it
+    // (compiler/src/backend/abi.rs).
+    let inflate = emitted_body(&llvm, "inflate");
     assert!(!inflate.contains("call void @wf_trap"));
-    let length = emitted_function(&llvm, "decode_length");
-    let distance = emitted_function(&llvm, "copy_distance");
+    let length = emitted_body(&llvm, "decode_length");
+    let distance = emitted_body(&llvm, "copy_distance");
     assert!(length.contains("icmp ult i64"));
     assert!(!length.contains("call void @wf_trap"));
     assert!(distance.contains("icmp ult i64"));
     assert!(!distance.contains("call void @wf_trap"));
-    let store = emitted_function(&llvm, "store_dynamic_length");
+    let store = emitted_body(&llvm, "store_dynamic_length");
     assert!(!store.contains("call void @wf_trap"));
-    let fixed = emitted_function(&llvm, "decode_fixed");
+    let fixed = emitted_body(&llvm, "decode_fixed");
     assert!(!fixed.contains("call void @wf_trap"));
-    let table = emitted_function(&llvm, "build_huffman_table");
+    let table = emitted_body(&llvm, "build_huffman_table");
     assert!(!table.contains("call void @wf_trap"));
-    let dynamic = emitted_function(&llvm, "decode_dynamic");
+    let dynamic = emitted_body(&llvm, "decode_dynamic");
     assert!(!dynamic.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);

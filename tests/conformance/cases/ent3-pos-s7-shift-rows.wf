@@ -1,0 +1,47 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn nonzero(value: u64) -> result: unit pure contract {
+  requires value != 0_u64;
+} {
+  return unit;
+}
+
+fn nonnegative(value: i32) -> result: unit pure contract {
+  requires 0_i32 <= value;
+} {
+  return unit;
+}
+
+fn rows(word: u64, small: u8, amount: u32, signed: i32) -> result: unit pure {
+  let high = ishr(word, 32_u32);
+  let narrow = cvt::<u64, u32>(high);
+  let parent = ishr(word, 1_u32);
+  at_most(value: parent, limit: word);
+  let byte = cvt::<u8, u64>(small);
+  let placed = ishl(byte, 8_u32);
+  at_most(value: placed, limit: 65280_u64);
+  let one = 1_u64;
+  let bit = ishl.wrap(one, amount);
+  nonzero(value: bit);
+  if 56_u32 <= amount {
+    if amount <= 63_u32 {
+      let top = ishr.wrap(word, amount);
+      let top_byte = cvt::<u64, u8>(top);
+    }
+  }
+  let sign = iand(signed, 1_i32);
+  let raised = ishl.wrap(sign, 30_u32);
+  nonnegative(value: raised);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

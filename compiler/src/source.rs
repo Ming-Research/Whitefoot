@@ -46,37 +46,19 @@ impl ByteOffset {
     }
 }
 
-/// A validated half-open byte range bound to one exact bundle source.
-///
-/// The borrowed source file is the identity boundary: this handle can expose
-/// only the bytes against which its offsets were validated. Persisted artifact
+/// A validated half-open byte range of one bundle source: the source and
+/// byte offsets that [`SourceBundle::span`] checked against it. The span
+/// holds no borrow of the bundle; its bytes are read through the bundle that
+/// validated it ([`SourceBundle::span_bytes`]). Persisted artifact
 /// coordinates will instead require the enclosing source-binding identity.
-#[derive(Clone, Copy)]
-pub struct SourceSpan<'bundle> {
+#[derive(Clone, Copy, Debug)]
+pub struct SourceSpan {
     source: SourceId,
     start: ByteOffset,
     end: ByteOffset,
-    start_index: usize,
-    end_index: usize,
-    file: &'bundle SourceFile,
 }
 
-/// A span is printed by the name a reader is shown for its source, because a
-/// lexical rejection carries it straight to the writer and the bundle key can
-/// be a positional name for a host path the closed spelling cannot hold.
-impl fmt::Debug for SourceSpan<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SourceSpan")
-            .field("source", &self.source)
-            .field("path", &self.file.display_path())
-            .field("start", &self.start)
-            .field("end", &self.end)
-            .finish()
-    }
-}
-
-impl<'bundle> SourceSpan<'bundle> {
+impl SourceSpan {
     /// Returns the source containing the complete span.
     #[must_use]
     pub const fn source(self) -> SourceId {
@@ -93,18 +75,6 @@ impl<'bundle> SourceSpan<'bundle> {
     #[must_use]
     pub const fn end(self) -> ByteOffset {
         self.end
-    }
-
-    /// Returns the exact source file against which this span was validated.
-    #[must_use]
-    pub const fn file(self) -> &'bundle SourceFile {
-        self.file
-    }
-
-    /// Returns the exact bytes covered by the validated half-open range.
-    #[must_use]
-    pub fn bytes(self) -> &'bundle [u8] {
-        &self.file.bytes()[self.start_index..self.end_index]
     }
 }
 
@@ -225,6 +195,25 @@ pub struct SourceInput<'input> {
     logical_path: &'input str,
     display_path: &'input str,
     bytes: &'input [u8],
+    module: ModuleId,
+    role: SourceRole,
+}
+
+impl<'input> SourceInput<'input> {
+    /// The same record with other bytes, for a check that sets part of it
+    /// aside [MOD-8].
+    pub(crate) const fn with_bytes<'bytes>(&self, bytes: &'bytes [u8]) -> SourceInput<'bytes>
+    where
+        'input: 'bytes,
+    {
+        SourceInput {
+            logical_path: self.logical_path,
+            display_path: self.display_path,
+            bytes,
+            module: self.module,
+            role: self.role,
+        }
+    }
 }
 
 impl fmt::Debug for SourceInput<'_> {
@@ -251,6 +240,50 @@ impl<'input> SourceInput<'input> {
             logical_path,
             display_path: logical_path,
             bytes,
+            module: ModuleId::BUNDLE_ROOT,
+            role: SourceRole::Implementation,
+        }
+    }
+
+    /// Returns the module this input belongs to.
+    #[must_use]
+    pub const fn module(&self) -> ModuleId {
+        self.module
+    }
+
+    /// Returns this input's role in its module.
+    #[must_use]
+    pub const fn role(&self) -> SourceRole {
+        self.role
+    }
+
+    /// The program's own name for this input, the key that orders a bundle.
+    pub(crate) const fn logical_path(&self) -> &'input str {
+        self.logical_path
+    }
+
+    /// The name diagnostics print for this input.
+    pub(crate) const fn display_path(&self) -> &'input str {
+        self.display_path
+    }
+
+    /// The exact source bytes.
+    pub(crate) const fn bytes(&self) -> &'input [u8] {
+        self.bytes
+    }
+
+    /// Places this input in one module of a module program with its role
+    /// [MOD-2]. An input made by [`SourceInput::new`] or
+    /// [`SourceInput::from_host_path`] is an implementation record of a source
+    /// bundle's synthetic root module until this is called.
+    #[must_use]
+    pub const fn in_module(self, module: ModuleId, role: SourceRole) -> Self {
+        Self {
+            logical_path: self.logical_path,
+            display_path: self.display_path,
+            bytes: self.bytes,
+            module,
+            role,
         }
     }
 
@@ -273,7 +306,144 @@ impl<'input> SourceInput<'input> {
             logical_path,
             display_path,
             bytes,
+            module: ModuleId::BUNDLE_ROOT,
+            role: SourceRole::Implementation,
         }
+    }
+}
+
+/// One module's dense identity within a program: its graph row position, or
+/// the synthetic root module that one source bundle forms [MOD-1, MOD-9].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ModuleId(u32);
+
+impl ModuleId {
+    /// The synthetic root module every source bundle forms, and the first
+    /// row of a module graph.
+    pub const BUNDLE_ROOT: Self = Self(0);
+
+    /// Returns the dense row index.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Builds the identity of the module at this row index.
+    #[must_use]
+    pub fn from_index(index: usize) -> Option<Self> {
+        u32::try_from(index).ok().map(Self)
+    }
+}
+
+/// The part a writer source plays in its module [MOD-2]: the module's one
+/// interface record, `module.wfm`, or one of its implementation records.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SourceRole {
+    /// The module's interface, `module.wfm`.
+    Interface,
+    /// A direct `.wf` implementation record, or a source bundle's record.
+    Implementation,
+}
+
+/// The package a registered module belongs to [MOD-10]: the program's own,
+/// which its records name `pkg`, or the standard library the toolchain
+/// supplies, which every other package names `std`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Package {
+    /// The program's own package.
+    Program,
+    /// The standard library.
+    Standard,
+}
+
+impl Package {
+    /// The qualifier other packages write for this package: `pkg` for the
+    /// program's own, `std` for the standard library.
+    #[must_use]
+    pub const fn qualifier(self) -> &'static str {
+        match self {
+            Self::Program => "pkg",
+            Self::Standard => "std",
+        }
+    }
+}
+
+/// One registered module: its package, its path components after the
+/// package qualifier (none for the root module) and its direct dependencies
+/// in written order [MOD-1, MOD-10].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModuleRecord {
+    package: Package,
+    path: Vec<String>,
+    dependencies: Vec<ModuleId>,
+}
+
+impl ModuleRecord {
+    /// Creates one module record of the program's own package.
+    #[must_use]
+    pub const fn new(path: Vec<String>, dependencies: Vec<ModuleId>) -> Self {
+        Self {
+            package: Package::Program,
+            path,
+            dependencies,
+        }
+    }
+
+    /// Creates one module record of the given package.
+    #[must_use]
+    pub const fn in_package(
+        package: Package,
+        path: Vec<String>,
+        dependencies: Vec<ModuleId>,
+    ) -> Self {
+        Self {
+            package,
+            path,
+            dependencies,
+        }
+    }
+
+    /// Returns the package the module belongs to.
+    #[must_use]
+    pub const fn package(&self) -> Package {
+        self.package
+    }
+
+    /// Returns the path components after the package qualifier.
+    #[must_use]
+    pub fn path(&self) -> &[String] {
+        &self.path
+    }
+
+    /// Reports whether this module is registered at `path` in `package`.
+    #[must_use]
+    pub fn is_at(&self, package: Package, path: &[String]) -> bool {
+        self.package == package && self.path == path
+    }
+
+    /// Returns the direct dependencies in written order.
+    #[must_use]
+    pub fn dependencies(&self) -> &[ModuleId] {
+        &self.dependencies
+    }
+
+    /// Reports whether this module lists `target` as a direct dependency.
+    #[must_use]
+    pub fn depends_on(&self, target: ModuleId) -> bool {
+        self.dependencies.contains(&target)
+    }
+
+    /// Renders the module's qualified name as another package writes it:
+    /// `pkg` or `pkg::a::b` for the program's own modules, `std::a` for the
+    /// standard library's.
+    #[must_use]
+    pub fn qualified_name(&self) -> String {
+        let mut name = String::from(self.package.qualifier());
+        for component in &self.path {
+            name.push_str("::");
+            name.push_str(component);
+        }
+        name
     }
 }
 
@@ -285,6 +455,8 @@ pub struct SourceFile {
     bytes: Vec<u8>,
     byte_len: u64,
     prelude: Option<PreludeSource>,
+    module: ModuleId,
+    role: SourceRole,
 }
 
 impl fmt::Debug for SourceFile {
@@ -301,7 +473,6 @@ impl fmt::Debug for SourceFile {
 /// PRE-1 records use ordinary grammar without granting a writer a bodyless declaration form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PreludeSource {
-    Items,
     Opaque,
     Function,
 }
@@ -309,6 +480,18 @@ pub(crate) enum PreludeSource {
 impl SourceFile {
     pub(crate) const fn prelude(&self) -> Option<PreludeSource> {
         self.prelude
+    }
+
+    /// Returns the module this writer source belongs to [MOD-2].
+    #[must_use]
+    pub const fn module(&self) -> ModuleId {
+        self.module
+    }
+
+    /// Returns this writer source's role in its module [MOD-2].
+    #[must_use]
+    pub const fn role(&self) -> SourceRole {
+        self.role
     }
 
     /// Returns the portable logical source name.
@@ -418,10 +601,41 @@ impl SourceLimits {
 /// File order is caller-supplied source identity, not normative compilation-
 /// unit or declaration order. The current lexer never crosses a file boundary.
 /// Language meaning for multi-file composition remains separately gated.
-#[derive(Debug, Eq, PartialEq)]
+///
+/// A bundle is a shared handle: every syntax stage keeps one, and a clone is
+/// another handle on the same sources, so no stage borrows another's input.
+#[derive(Clone, Eq, PartialEq)]
 pub struct SourceBundle {
+    data: std::sync::Arc<BundleData>,
+}
+
+/// The sources and modules one bundle shares among its handles.
+#[derive(Eq, PartialEq)]
+struct BundleData {
     files: Vec<SourceFile>,
     total_bytes: u64,
+    modules: Vec<ModuleRecord>,
+    module_program: bool,
+}
+
+impl fmt::Debug for SourceBundle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SourceBundle")
+            .field("files", &self.data.files)
+            .field("total_bytes", &self.data.total_bytes)
+            .field("modules", &self.data.modules)
+            .field("module_program", &self.data.module_program)
+            .finish()
+    }
+}
+
+impl From<BundleData> for SourceBundle {
+    fn from(data: BundleData) -> Self {
+        Self {
+            data: std::sync::Arc::new(data),
+        }
+    }
 }
 
 fn try_reserve_exact<T>(
@@ -465,7 +679,8 @@ fn find_duplicate_paths(
 
 impl SourceBundle {
     pub(crate) fn includes_prelude(&self) -> bool {
-        self.files
+        self.data
+            .files
             .iter()
             .filter(|file| file.prelude.is_some())
             .count()
@@ -476,10 +691,33 @@ impl SourceBundle {
     /// At least one caller-provided source record is required by PROG-2;
     /// compiler-owned prelude records do not supply that source identity.
     /// Source-only transport tooling can continue to use `with_limits`.
+    ///
+    /// A bundle whose records name standard library modules also carries
+    /// those modules' records and forms the root module followed by the
+    /// library's modules, the root module naming every one of them [PROG-2,
+    /// MOD-10].
     pub fn with_prelude(
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
     ) -> Result<Self, SourceBundleError> {
+        if inputs.is_empty() {
+            return Err(SourceBundleError::EmptySourceSequence);
+        }
+        match crate::library::bundle_part(inputs) {
+            Some((records, modules)) => {
+                let mut bundle = Self::with_prelude_records(&records, limits)?;
+                bundle.modules = modules;
+                Ok(bundle.into())
+            }
+            None => Self::with_prelude_records(inputs, limits).map(Self::from),
+        }
+    }
+
+    /// `inputs` followed by the PRE-1 records, without a library part.
+    fn with_prelude_records(
+        inputs: &[SourceInput<'_>],
+        limits: SourceLimits,
+    ) -> Result<BundleData, SourceBundleError> {
         if inputs.is_empty() {
             return Err(SourceBundleError::EmptySourceSequence);
         }
@@ -504,14 +742,14 @@ impl SourceBundle {
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
     ) -> Result<Self, SourceBundleError> {
-        Self::from_inputs(inputs, limits, inputs.len())
+        Self::from_inputs(inputs, limits, inputs.len()).map(Self::from)
     }
 
     fn from_inputs(
         inputs: &[SourceInput<'_>],
         limits: SourceLimits,
         writer_count: usize,
-    ) -> Result<Self, SourceBundleError> {
+    ) -> Result<BundleData, SourceBundleError> {
         let source_count = inputs.len();
 
         let source_count_u64 =
@@ -640,34 +878,82 @@ impl SourceBundle {
                 bytes,
                 byte_len: source_len,
                 prelude: None,
+                module: input.module,
+                role: input.role,
             });
         }
 
-        Ok(Self { files, total_bytes })
+        Ok(BundleData {
+            files,
+            total_bytes,
+            modules: vec![ModuleRecord::new(Vec::new(), Vec::new())],
+            module_program: false,
+        })
+    }
+
+    /// Builds a module program's bundle: `inputs` are the selected modules'
+    /// interface and implementation records, each placed by
+    /// [`SourceInput::in_module`], and `modules` the graph rows they name
+    /// [MOD-1, MOD-2]. The PRE-1 records follow as for every bundle.
+    pub fn with_prelude_and_modules(
+        inputs: &[SourceInput<'_>],
+        modules: Vec<ModuleRecord>,
+        limits: SourceLimits,
+    ) -> Result<Self, SourceBundleError> {
+        if inputs
+            .iter()
+            .any(|input| input.module.index() >= modules.len())
+        {
+            return Err(SourceBundleError::UnknownModule);
+        }
+        let mut bundle = Self::with_prelude_records(inputs, limits)?;
+        bundle.modules = modules;
+        bundle.module_program = true;
+        Ok(bundle.into())
+    }
+
+    /// Returns every registered module in graph row order; a source bundle
+    /// has exactly its synthetic root module [MOD-9].
+    #[must_use]
+    pub fn modules(&self) -> &[ModuleRecord] {
+        &self.data.modules
+    }
+
+    /// Returns one registered module.
+    #[must_use]
+    pub fn module(&self, id: ModuleId) -> Option<&ModuleRecord> {
+        self.data.modules.get(id.index())
+    }
+
+    /// Reports whether this bundle is a module program rather than a source
+    /// bundle forming one synthetic root module [MOD-9].
+    #[must_use]
+    pub fn is_module_program(&self) -> bool {
+        self.data.module_program
     }
 
     /// Returns the number of ordered source files.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.files.len()
+        self.data.files.len()
     }
 
     /// Returns whether the closed input contains no source files.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.data.files.is_empty()
     }
 
     /// Returns the checked sum of all source byte lengths.
     #[must_use]
-    pub const fn total_bytes(&self) -> u64 {
-        self.total_bytes
+    pub fn total_bytes(&self) -> u64 {
+        self.data.total_bytes
     }
 
     /// Returns source files in caller-supplied transport order.
     #[must_use]
     pub fn files(&self) -> &[SourceFile] {
-        &self.files
+        &self.data.files
     }
 
     /// Looks up a source by its bundle-order identity.
@@ -675,13 +961,13 @@ impl SourceBundle {
     pub fn file(&self, source: SourceId) -> Option<&SourceFile> {
         usize::try_from(source.ordinal())
             .ok()
-            .and_then(|index| self.files.get(index))
+            .and_then(|index| self.data.files.get(index))
     }
 
     /// Iterates in transport order with derived source identities.
     pub fn iter(&self) -> impl Iterator<Item = (SourceId, &SourceFile)> {
         (0_u32..)
-            .zip(self.files.iter())
+            .zip(self.data.files.iter())
             .map(|(ordinal, file)| (SourceId::from_ordinal(ordinal), file))
     }
 
@@ -691,7 +977,7 @@ impl SourceBundle {
         source: SourceId,
         start: ByteOffset,
         end: ByteOffset,
-    ) -> Result<SourceSpan<'_>, SpanError> {
+    ) -> Result<SourceSpan, SpanError> {
         let file = self.file(source).ok_or(SpanError::UnknownSource(source))?;
         if start > end {
             return Err(SpanError::Reversed { start, end });
@@ -700,18 +986,17 @@ impl SourceBundle {
         if end.value() > source_len {
             return Err(SpanError::OutOfBounds { end, source_len });
         }
-        let start_index = usize::try_from(start.value())
-            .map_err(|_| SpanError::OutOfBounds { end, source_len })?;
-        let end_index =
-            usize::try_from(end.value()).map_err(|_| SpanError::OutOfBounds { end, source_len })?;
-        Ok(SourceSpan {
-            source,
-            start,
-            end,
-            start_index,
-            end_index,
-            file,
-        })
+        Ok(SourceSpan { source, start, end })
+    }
+
+    /// Returns the bytes a span of this bundle covers; `None` for a span
+    /// whose range this bundle's source does not hold, which only a span
+    /// another bundle validated can name.
+    #[must_use]
+    pub fn span_bytes(&self, span: SourceSpan) -> Option<&[u8]> {
+        let start = usize::try_from(span.start.value()).ok()?;
+        let end = usize::try_from(span.end.value()).ok()?;
+        self.file(span.source)?.bytes().get(start..end)
     }
 }
 
@@ -749,6 +1034,8 @@ pub enum SourceBundleError {
     },
     /// A byte count cannot be represented without wrapping.
     ArithmeticOverflow,
+    /// A module program placed a source in a module its graph does not register.
+    UnknownModule,
 }
 
 impl fmt::Display for SourceBundleError {
@@ -756,6 +1043,9 @@ impl fmt::Display for SourceBundleError {
         match self {
             Self::EmptySourceSequence => {
                 formatter.write_str("compilation requires at least one source record")
+            }
+            Self::UnknownModule => {
+                formatter.write_str("a source record names a module the graph does not register")
             }
             Self::LogicalPath(error) => write!(formatter, "{error}"),
             Self::DuplicateLogicalPath {

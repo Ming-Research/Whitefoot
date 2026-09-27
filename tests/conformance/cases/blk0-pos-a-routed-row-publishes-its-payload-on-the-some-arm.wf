@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bounded(request: u64) -> result: Result<u64, Overflow> pure contract {
   requires request <= 3_u64;
   ensures when Ok(value: granted): granted <= 3_u64;

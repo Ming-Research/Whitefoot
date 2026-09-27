@@ -1,0 +1,11 @@
+pkg::data: [];
+pkg::runtime::queue: [pkg::data];
+pkg::runtime: [pkg::data, pkg::runtime::queue];
+pkg::kernel: [pkg::data, pkg::runtime::queue, pkg::runtime, std::process];
+pkg::tools::inspect: [pkg::data, pkg::runtime::queue, pkg::runtime, std::process];
+
+entry kernel = pkg::kernel::start {
+  no_heap;
+}
+
+entry inspect = pkg::tools::inspect::run;

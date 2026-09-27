@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fetch_shifted(b: &[u8], i: u64, wide: Bool) -> result: u8 reads(b) {
   doc "Each value_if edge bounds its own wrapping-derived atom by the same length, then gives that atom. The specified forward delivery preserves the common nonconstant relation on the receiving index [ENT-5, GIVE-1], so the subscript discharges [OP-4].";
   let spare = deref(b).len;

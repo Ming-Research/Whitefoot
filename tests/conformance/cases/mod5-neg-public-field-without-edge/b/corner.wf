@@ -1,0 +1,3 @@
+fn corner() -> point: pkg::a::Point pure {
+  return pkg::a::origin();
+}

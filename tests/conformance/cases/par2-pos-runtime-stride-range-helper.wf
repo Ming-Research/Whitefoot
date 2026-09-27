@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill(output: &[u64]) -> result: u64 writes(output) {
   doc "Fills every element of the range reference it was handed.";
   let count = deref(output).len;

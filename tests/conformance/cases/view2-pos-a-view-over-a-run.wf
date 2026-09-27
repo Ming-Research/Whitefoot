@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A Slots window is a range-reference source [REF-4], its initialized storage being one contiguous extent beginning at slot zero [WIN-1]; a Ring is refused there instead, a wrapped window being two extents. Two overlapping range references of the one run are formed, which read/read overlap admits without limit [EFF-5], and the program reads the range length through one and the elements back through both.";
   let two = slots_new::<u8, 4>();

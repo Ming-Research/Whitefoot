@@ -1,0 +1,9 @@
+fn bump(x: u8) -> result: u8 pure {
+  let y = x + 1_u8;
+  return y;
+}
+
+fn main() -> status: ExitStatus pure {
+  let r = bump(x: 7_u8);
+  return exit_status(code: r);
+}

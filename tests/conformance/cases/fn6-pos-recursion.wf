@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn sumto(n: i32) -> result: i32 pure {
   doc "Recursion is permitted [FN-6]. The guard discharges the exact decrement domain, while the bounded fixture uses wrapping accumulation because arithmetic behavior is not this case's subject.";
   if n <= 0_i32 {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
   doc "Both control-flow branches establish the same real bound. ENT-5 keeps that common bound at the join and the following subscript discharges [OP-4]; no unchecked conclusion substitutes for an input guard.";
   let spare = deref(b).len;

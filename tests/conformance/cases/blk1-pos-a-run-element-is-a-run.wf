@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "What a slot may hold: a shape's element type is any nameable type, a shape included, so a Slots<Slots<u8, 4>, 2> holds complete inner runs, each with its own descriptor word in its own slot. An element that is a run is affine, so it leaves the outer window through a window operation and comes back with its own window intact, its measures reread at the caller.";
   let outer = slots_new::<Slots<u8, 4>, 2>();

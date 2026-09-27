@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn joined(left: u64, right: u64) -> total: u64 pure contract {
   requires left <= 10_u64;
   requires right <= 10_u64;

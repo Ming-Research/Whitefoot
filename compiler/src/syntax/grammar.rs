@@ -377,6 +377,14 @@ impl Production {
     pub fn owner(self) -> RuleOwner {
         generated::PRODUCTION_OWNERS[self.index()]
     }
+
+    /// Reports whether this production is a grammar start: `program` for
+    /// interface and implementation sources, `graph_file` for the module graph
+    /// [GRAM-1]. A start production is the derivation root and never a child.
+    #[must_use]
+    pub const fn is_start(self) -> bool {
+        matches!(self, Self::Program | Self::GraphFile)
+    }
 }
 
 /// Returns every production in specification-definition order.

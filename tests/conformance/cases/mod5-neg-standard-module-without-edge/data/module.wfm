@@ -1,0 +1,3 @@
+alias io = std::io;
+
+public fn width(output: &io::OutputStream) -> result: u64 pure doc "Returns the width of a line.";

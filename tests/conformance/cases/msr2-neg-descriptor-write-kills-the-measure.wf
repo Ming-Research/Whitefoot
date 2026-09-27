@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-2: a write to P's own descriptor storage kills every measure of P. The swap exchanges the whole ten-slot window for one whose window holds two slots, which overlaps the descriptor storage the length fact is supported by, so run.len == 10 does not survive it and the later subscript of offset nine has nothing to discharge against. This is the other side of the element-position sentence: descriptor storage and element storage are disjoint parts of one value, and a write kills exactly the measures whose support it overlaps.";
   let values = array_filled::<u8, 10>(value: 0_u8);

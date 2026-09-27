@@ -1,0 +1,6 @@
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u8, 4>(value: 0_u8);
+  invariant inside: 5_u64 < values.len;
+  let v = values[5_u64];
+  return exit_status(code: v);
+}

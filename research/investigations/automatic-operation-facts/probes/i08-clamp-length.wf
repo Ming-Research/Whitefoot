@@ -1,0 +1,14 @@
+fn copy_prefix(destination: &[u8], source: &[u8], count: u64) -> result: u64 reads(source), writes(destination) contract {
+  requires deref(source).len <= deref(destination).len;
+} {
+  let room = deref(source).len;
+  let limit = imin(count, room);
+  for (at in 0_u64..limit) {
+    set deref(destination)[at] = deref(source)[at];
+  }
+  return limit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

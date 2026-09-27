@@ -6,13 +6,13 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out) {
   let n = len_of(src);
   let i = 0_u64;
   let o = 0_u64;
-  let alias = ident(x: &uniq 'r deref(out));
+  let aliased = ident(x: &uniq 'r deref(out));
   loop @groups {
     let rem = n -wrap i;
     if rem < 3_u64 {
       break @groups;
     }
-    set deref(alias)[o] = 0_u8;
+    set deref(aliased)[o] = 0_u8;
     set i = i +wrap 3_u64;
     set o = o +wrap 4_u64;
   }

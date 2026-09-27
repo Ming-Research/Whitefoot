@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn mixed_sum(p: u16, p_cap: u16, q: u16, q_cap: u16, r: u16, r_cap: u16) -> result: unit pure contract {
   requires p <= p_cap;
   requires q <= q_cap;

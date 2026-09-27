@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Packet {
   Data(value: u64);
   Empty();
@@ -18,7 +21,7 @@ fn read(packet: &Packet) -> result: u64 reads(packet) {
 
 fn main() -> status: ExitStatus pure {
   doc "The selected payload still exists after match exit; retaining its reference exports no new variant refinement.";
-  let packet = Data(value: 23_u64);
+  let packet = Packet::Data(value: 23_u64);
   let observed = read(packet: &packet);
   if observed == 23_u64 {
     return exit_status(code: 0_u8);

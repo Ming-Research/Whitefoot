@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn pick(a: &i32, b: &i32) -> result: i32 reads(a) {
   doc "One input supplies the result and the other stays unrelated. That is settled by value: the result is owned data read out of `a`, so no region relation is needed to say where it came from and `b` is neither read nor written [FN-1, REF-1].";
   return deref(a);

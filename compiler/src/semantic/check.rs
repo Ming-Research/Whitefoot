@@ -1,39 +1,45 @@
+mod acceptance;
 mod behavior;
 mod cleanup;
 mod control;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
-mod floats;
+pub(in crate::semantic) mod floats;
 mod generics;
 mod linearity;
 mod nominal_instances;
 mod nominals;
+mod obligations;
 pub(crate) mod publication;
+mod receipts;
 mod references;
+mod repairs;
 mod requires;
 mod support;
 mod tail_calls;
 mod type_regions;
 mod types;
 
+pub(crate) use receipts::ProofReceipts;
+
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::{
     DeclarationId, DeclarationRole, NodePath, Production, ResolvedSyntaxUnit,
     SemanticCompilerFailure, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticOutcome,
-    SemanticRule, StaticObligationDisposition,
+    SemanticRule,
 };
 
 use super::entailment::{
-    CallGoalDisposition, EntailmentCallee, EntailmentContext, PostconditionSchedule,
-    VerifiedPostconditionSummary, analyze_function, analyze_function_candidate,
-    collect_statement_calls, finalize_function_entailment, postcondition_schedule,
+    EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
+    analyze_function, analyze_function_candidate, collect_statement_calls,
+    finalize_function_entailment, postcondition_schedule,
 };
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
-    GoalOperation, GoalProjection, first_ephemeral_argument,
+    GoalOperation, GoalProjection,
 };
 use super::model::{
     BindingId, CheckedConst, CheckedConstant, CheckedConstantId, CheckedElement, CheckedExpression,
@@ -53,11 +59,11 @@ use generics::{GenericParameter, GenericSubstitution, PendingGenericRequirement}
 use references::ReferenceInfo;
 
 /// The syntax tree, as the permission ledger's citations reach it.
-struct PermissionLedgerSource<'view, 'unit, 'classified, 'lexed, 'source> {
-    tree: &'view TreeView<'unit, 'classified, 'lexed, 'source>,
+struct PermissionLedgerSource<'view, 'unit> {
+    tree: &'view TreeView<'unit>,
 }
 
-impl LedgerSource for PermissionLedgerSource<'_, '_, '_, '_, '_> {
+impl LedgerSource for PermissionLedgerSource<'_, '_> {
     type Error = SemanticCompilerFailure;
 
     fn location(&self, path: &NodePath) -> Result<(String, u64), Self::Error> {
@@ -85,6 +91,19 @@ struct ResultSignature {
     ty: CheckedType,
     /// The ordinal's complete `rtype`, for a diagnostic at the declaration.
     rtype: NodeId,
+}
+
+/// Restores the module under check when one declaration's judgments end
+/// [MOD-5].
+pub(in crate::semantic::check) struct ModuleContext<'checker> {
+    cell: &'checker Cell<Option<crate::ModuleId>>,
+    previous: Option<crate::ModuleId>,
+}
+
+impl Drop for ModuleContext<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.previous);
+    }
 }
 
 #[derive(Clone)]
@@ -263,6 +282,12 @@ struct LocalBinding {
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [EFF-1] whether this binding is a parameter holding the value its call
+    /// passed on every path to here. An index names a row's index parameter
+    /// only while it does, since a row evaluates that parameter once at the
+    /// call. A write of the binding ends it, and a join or loop header holds
+    /// it only when every incoming edge does.
+    call_value: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -291,6 +316,7 @@ impl LocalBinding {
         if let (Some(left), Some(right)) = (&mut self.reference, &other.reference) {
             left.join(right);
         }
+        self.call_value &= other.call_value;
         for witness in &mut self.refinement_witnesses {
             witness.valid &= other
                 .refinement_witnesses
@@ -422,9 +448,6 @@ impl TypedExpression {
     }
 }
 
-/// [EFF-2]'s only repair: the declaration must equal the exhibited row.
-const EFF2_ROW_FIX: &str = "declare exactly the row the body exhibits: add every missing category and path and remove every extra one; EFF-2 admits no wider and no narrower declaration than the union of the body-syntactic and release contributions";
-
 /// One ordinary resolved-place contribution to the enclosing effect row.
 #[derive(Clone, Debug)]
 struct EffectPath {
@@ -494,8 +517,8 @@ enum PreludeType {
     NarrowError,
 }
 
-struct Checker<'unit, 'classified, 'lexed, 'source> {
-    resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+struct Checker<'unit> {
+    resolved: &'unit ResolvedSyntaxUnit,
     /// [DIAG-1, FN-10] retain tail-condition failures until ordinary call
     /// checking, including FN-8 proofs, can establish a prior same-node rule.
     musttail_rejections: RefCell<Vec<SemanticIssue>>,
@@ -512,8 +535,15 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// Whether an undischarged obligation rejects. Always true outside the
     /// test-only observability hooks.
     reject_entailment: bool,
-    tree: TreeView<'unit, 'classified, 'lexed, 'source>,
+    tree: TreeView<'unit>,
     nominals: Vec<CheckedNominal>,
+    /// Counts the changes to `nominals`: an instance appended or completed,
+    /// or a checkpoint restored. The table's layout recursion is judged again
+    /// only after it changed [`Checker::reject_recursive_nominal_layouts`].
+    nominal_generation: u64,
+    /// The generation at which the table was last judged to hold no
+    /// recursive layout.
+    nominal_layouts_acyclic_at: std::cell::Cell<Option<u64>>,
     elements: RefCell<Vec<CheckedType>>,
     element_ids: RefCell<HashMap<CheckedType, CheckedElement>>,
     nominal_nodes: Vec<Option<NodeId>>,
@@ -539,6 +569,11 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// records it here; the `&mut self` driver builds the signature and
     /// retries the function, exactly as it does for a derived nominal.
     pending_instances: RefCell<Vec<(usize, generics::GenericSubstitution)>>,
+    /// [FN-2, MOD-8] the call that first requested each concrete generic
+    /// instance, keyed by its template node and substitution, in the
+    /// deterministic discovery order, so a rejection raised while checking
+    /// that instance names its requester.
+    instance_requests: RefCell<Vec<(NodeId, generics::GenericSubstitution, NodeId)>>,
     /// [PROV-1] the region an elided store brand denotes at the position
     /// being parsed: the enclosing nominal's sole region parameter while a
     /// `struct_decl` or `enum_decl` body is being read, and `None`
@@ -571,6 +606,20 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// the function driver clears this scratch state on every retry.
     deferred_loop_reference_uses: RefCell<Vec<references::DeferredLoopReferenceUse>>,
     loop_reference_summaries: RefCell<HashMap<references::LoopReferenceToken, Vec<ResolvedPlace>>>,
+    /// [REF-1, EFF-1] for each loop, the bindings a write reaches its
+    /// backedge with where its header depends on them: a reference live at
+    /// the header captured an index from the binding, or the binding is a
+    /// parameter holding its call value there. The next iteration reaches the
+    /// header after that write, so the header supersedes those indices and
+    /// ends those call values. The sets only grow across the function's
+    /// retries, and a new member restarts the walk, as a new loop-header
+    /// summary path does.
+    loop_superseded_bindings: RefCell<HashMap<super::model::CheckedLoopId, HashSet<BindingId>>>,
+    /// [EFF-1] the index and range-endpoint captures that read a parameter
+    /// while it held its call value on every path to their formation, which
+    /// name the row's index parameter whatever later writes and joins do.
+    /// Every retry starts empty.
+    call_value_captures: RefCell<HashSet<super::places::CaptureId>>,
     /// Resolved origins established by this structural function attempt.
     /// Every retry starts fresh; only its complete final walk is published.
     reference_origins: RefCell<Vec<Vec<ResolvedPlace>>>,
@@ -605,6 +654,9 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     postcondition_selectors: Vec<CheckedPostconditionSelector>,
     postcondition_unavailable_declarations: Vec<DeclarationId>,
     active_postcondition: Cell<Option<PostconditionCheckContext>>,
+    /// The module of the function body under check: a readonly field is a
+    /// write target only inside the module that declares it [TYPE-2].
+    writing_module: Cell<Option<crate::ModuleId>>,
     /// The result datums admitted in the [FN-9] clause currently being
     /// checked: each written spelling with the result ordinal it names and
     /// the type that datum has [CALL-4]. A declaration writing one result
@@ -612,6 +664,15 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// `active_postcondition`.
     active_result_datums: RefCell<Vec<(String, u32, CheckedType)>>,
     behavior: behavior::BehaviorInventory,
+    /// [MOD-8] where this check finds and keeps proof receipts; without one
+    /// every function is analyzed.
+    receipts: Option<&'unit dyn receipts::ProofReceipts>,
+    /// Per concrete function: whether its analysis stands on a receipt
+    /// rather than a fresh run [FN-9].
+    reused_analyses: RefCell<Vec<bool>>,
+    /// The receipt key of each function analyzed afresh, recorded once its
+    /// analysis is accepted.
+    receipt_keys: RefCell<Vec<(usize, Vec<u8>)>>,
 }
 
 /// Checks the currently implemented active-specification semantic family.
@@ -619,10 +680,24 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
 /// Unsupported language families remain explicit compiler capability results;
 /// only a proved numbered-rule violation becomes [`SemanticOutcome::SourceIssue`].
 #[must_use]
-pub fn check_semantics<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
-    check_semantics_with(resolved, true)
+pub fn check_semantics(resolved: &ResolvedSyntaxUnit) -> SemanticOutcome {
+    check_semantics_with(resolved, true, None)
+}
+
+/// [`check_semantics`] with proof receipts [MOD-8]: a function whose
+/// analysis would read exactly what a recorded accepted analysis read takes
+/// that analysis's conclusions instead of running it again, and every
+/// function analyzed afresh and accepted is recorded. The judgments are the
+/// same; only the work differs. The checked program keeps no entailment
+/// detail for a reused function, so a caller that reads more than acceptance,
+/// publication, body dispositions and allocation ceilings, such as the
+/// permission table, checks without receipts.
+#[must_use]
+pub(crate) fn check_semantics_with_receipts(
+    resolved: &ResolvedSyntaxUnit,
+    receipts: &dyn receipts::ProofReceipts,
+) -> SemanticOutcome {
+    check_semantics_with(resolved, true, Some(receipts))
 }
 
 /// [`check_semantics`] with entailment rejection disabled, so unit tests can
@@ -632,55 +707,51 @@ pub fn check_semantics<'classified, 'lexed, 'source>(
 /// exactly one path.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_dark<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
-    check_semantics_with(resolved, false)
+pub(crate) fn check_semantics_dark(resolved: &ResolvedSyntaxUnit) -> SemanticOutcome {
+    check_semantics_with(resolved, false, None)
 }
 
 /// Legacy test helper selecting the one shipped semantic judgment. It remains
 /// only while the arithmetic obligation tests are renamed around IntegerDomain.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_arithmetic_obligations<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
-    check_semantics_with(resolved, true)
+pub(crate) fn check_semantics_arithmetic_obligations(
+    resolved: &ResolvedSyntaxUnit,
+) -> SemanticOutcome {
+    check_semantics_with(resolved, true, None)
 }
 
 /// Legacy test helper selecting the one shipped semantic judgment. It remains
 /// only while the division obligation tests are renamed around IntegerDomain.
 #[cfg(test)]
 #[must_use]
-pub(crate) fn check_semantics_division_obligations<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
-    check_semantics_with(resolved, true)
+pub(crate) fn check_semantics_division_obligations(
+    resolved: &ResolvedSyntaxUnit,
+) -> SemanticOutcome {
+    check_semantics_with(resolved, true, None)
 }
 
-fn check_semantics_with<'classified, 'lexed, 'source>(
-    resolved: ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+fn check_semantics_with(
+    resolved: &ResolvedSyntaxUnit,
     reject_entailment: bool,
-) -> SemanticOutcome<'classified, 'lexed, 'source> {
+    receipts: Option<&dyn receipts::ProofReceipts>,
+) -> SemanticOutcome {
     let preflight = if resolved.postconditions().is_empty() {
         Ok(())
     } else {
-        Checker::new(&resolved, reject_entailment).and_then(|mut checker| {
+        Checker::new(resolved, reject_entailment, None).and_then(|mut checker| {
             let items = checker.item_declarations()?;
             checker.preflight_postcondition_selectors(&items)
         })
     };
     let result = preflight.and_then(|()| {
-        Checker::new(&resolved, reject_entailment).and_then(|mut checker| {
+        Checker::new(resolved, reject_entailment, receipts).and_then(|mut checker| {
             let result = checker.check_program();
             checker.finish_musttail_checks(result)
         })
     });
     match result {
-        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram {
-            _resolved: resolved,
-            data,
-        })),
+        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
         Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
         Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
         Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
@@ -699,7 +770,7 @@ fn check_semantics_with<'classified, 'lexed, 'source>(
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     fn mark_postcondition_unavailable(&mut self, declaration: DeclarationId) {
         if !self
             .postcondition_unavailable_declarations
@@ -730,45 +801,72 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// The rejection compared two rows and published neither, so a writer was
     /// told their row was wrong and left to derive both sides by hand. Both
     /// are in hand here, and so is the exact difference.
+    ///
+    /// Each entry names exactly one path, every `reads` entry precedes every
+    /// `writes` entry [EFF-1], so the rendered row is one a declaration can
+    /// carry as written.
     fn render_effect_row(
         &self,
         effects: &EffectSet,
         signature: &FunctionSignature,
     ) -> Result<String, CheckStop> {
-        let mut categories = Vec::new();
-        if !effects.reads.is_empty() {
-            categories.push(format!(
-                "reads({})",
-                self.render_effect_paths(&effects.reads, signature)?
-                    .join(", ")
-            ));
-        }
-        if !effects.writes.is_empty() {
-            categories.push(format!(
-                "writes({})",
-                self.render_effect_paths(&effects.writes, signature)?
-                    .join(", ")
-            ));
+        let mut entries = Vec::with_capacity(effects.reads.len() + effects.writes.len());
+        for (category, paths) in [("reads", &effects.reads), ("writes", &effects.writes)] {
+            for path in paths {
+                entries.push(format!(
+                    "{category}({})",
+                    self.render_effect_path(path, signature)?
+                ));
+            }
         }
         // [EFF-1] the row has two categories. Allocation carries no effect
         // entry [STOR-8], so an allocating boundary still writes `pure` where
         // it reads and writes nothing [EFF-2].
-        Ok(if categories.is_empty() {
+        Ok(if entries.is_empty() {
             "pure".to_owned()
         } else {
-            categories.join(", ")
+            entries.join(", ")
         })
     }
 
-    fn render_effect_paths(
-        &self,
-        paths: &[super::model::CheckedStatePath],
-        signature: &FunctionSignature,
-    ) -> Result<Vec<String>, CheckStop> {
-        paths
-            .iter()
-            .map(|path| self.render_effect_path(path, signature))
-            .collect()
+    /// The row an [EFF-2] rejection suggests: the exhibited row without the
+    /// entries another of its entries covers.
+    ///
+    /// The exhibited set records each access as the body made it, so it can
+    /// hold a read and a write of one path, or a write of a whole parameter
+    /// beside a write below it. A `writes` entry states every access at or
+    /// below its path, so [EFF-1] refuses any entry it covers, and a `reads`
+    /// entry covered by another `reads` entry adds nothing to the row. What
+    /// remains is exact: every entry is an exhibited path, EFF-2 admits it in
+    /// both directions, and EFF-1 admits it as written. Two entries left on one
+    /// parameter either overlap at every position, which [EFF-5] does not
+    /// compare, or overlap only for some position values, which the call's
+    /// own proof decides.
+    fn suggested_effect_row(exhibited: &EffectSet) -> EffectSet {
+        let mut suggested = EffectSet::NONE;
+        for path in &exhibited.writes {
+            let covered = exhibited
+                .writes
+                .iter()
+                .any(|entry| entry != path && Self::effect_path_covers(entry, path));
+            if !covered {
+                suggested.add_write(path.clone());
+            }
+        }
+        for path in &exhibited.reads {
+            let covered_by_write = exhibited
+                .writes
+                .iter()
+                .any(|entry| Self::effect_path_covers(entry, path));
+            let covered_by_read = exhibited
+                .reads
+                .iter()
+                .any(|entry| entry != path && Self::effect_path_covers(entry, path));
+            if !covered_by_write && !covered_by_read {
+                suggested.add_read(path.clone());
+            }
+        }
+        suggested
     }
 
     /// One `effect_path` in its written spelling [EFF-1]: the parameter's own
@@ -880,9 +978,6 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(rendered)
     }
 
-    /// The exhibited categories the declaration is missing, and the declared
-    /// categories the body does not exhibit, each in the spelling the writer
-    /// would have to add or delete.
     /// Whether `entry` is `access` or a proper prefix of it [EFF-1].
     ///
     /// [EFF-2] states the relation as "the body accesses storage at or below
@@ -905,12 +1000,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// while a row declaring only a field is not covered by an access to the
     /// whole.
     ///
-    /// The two categories are not independent. [EFF-1] states that
-    /// "`writes(p)` subsumes `reads(p)`, so the pair is never written for one
-    /// path", so a declared write covers an exhibited read at or below its
-    /// path and an exhibited write answers for a declared read. A declared
-    /// write is answered only by an exhibited write: nothing subsumes a write
-    /// the body never makes.
+    /// The two categories are not independent. [EFF-1] states that a
+    /// `writes` entry "states every access at that path and below it", so a
+    /// declared write covers an exhibited read at or below its path and an
+    /// exhibited write answers for a declared read. A declared write is
+    /// answered only by an exhibited write: nothing subsumes a write the body
+    /// never makes.
     fn effect_row_matches(declared: &EffectSet, exhibited: &EffectSet) -> bool {
         exhibited.reads.iter().all(|access| {
             declared
@@ -937,40 +1032,63 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
+    /// The declared row's two [EFF-2] failures, each named by the entry the
+    /// writer adds or deletes.
+    ///
+    /// `missing` covers each exhibited access lying under no declared entry,
+    /// and names it by the entry of the suggested row that covers it, so a
+    /// read and a write of one path are one missing `writes` entry [EFF-1].
+    /// `extra` names each declared entry the body never accesses at or below.
     fn effect_row_difference(
         &self,
         exhibited: &EffectSet,
+        suggested: &EffectSet,
         declared: &EffectSet,
         signature: &FunctionSignature,
     ) -> Result<(Vec<String>, Vec<String>), CheckStop> {
         let mut missing = Vec::new();
         let mut extra = Vec::new();
-        // `missing` names each exhibited access lying under no declared
-        // entry; `extra` names each declared entry the body never accesses at
-        // or below. Both are [EFF-2]'s own two failures.
-        for path in &exhibited.reads {
-            if !declared
+        let uncovered_reads = exhibited.reads.iter().filter(|path| {
+            !declared
                 .reads
                 .iter()
                 .chain(&declared.writes)
                 .any(|entry| Self::effect_path_covers(entry, path))
-            {
-                missing.push(format!(
-                    "reads({})",
-                    self.render_effect_path(path, signature)?
-                ));
-            }
-        }
-        for path in &exhibited.writes {
-            if !declared
+        });
+        let uncovered_writes = exhibited.writes.iter().filter(|path| {
+            !declared
                 .writes
                 .iter()
                 .any(|entry| Self::effect_path_covers(entry, path))
-            {
-                missing.push(format!(
-                    "writes({})",
-                    self.render_effect_path(path, signature)?
-                ));
+        });
+        for (write, path) in uncovered_reads
+            .map(|path| (false, path))
+            .chain(uncovered_writes.map(|path| (true, path)))
+        {
+            let covering = suggested
+                .writes
+                .iter()
+                .find(|entry| Self::effect_path_covers(entry, path))
+                .map(|entry| ("writes", entry))
+                .or_else(|| {
+                    (!write)
+                        .then(|| {
+                            suggested
+                                .reads
+                                .iter()
+                                .find(|entry| Self::effect_path_covers(entry, path))
+                                .map(|entry| ("reads", entry))
+                        })
+                        .flatten()
+                })
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let entry = format!(
+                "{}({})",
+                covering.0,
+                self.render_effect_path(covering.1, signature)?
+            );
+            if !missing.contains(&entry) {
+                missing.push(entry);
             }
         }
         for entry in &declared.reads {
@@ -1084,14 +1202,308 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         written
     }
 
+    /// The symbol base of one source function [MOD-3]: its plain name in the
+    /// root module, its module path joined by `.` before the name in every
+    /// other module of the program, and `std.` before that path in a
+    /// standard library module [MOD-10], so equal names of different modules
+    /// stay distinct and no program module, whose path cannot begin with the
+    /// reserved `std`, shares a library module's symbols.
+    pub(in crate::semantic::check) fn module_symbol_base(
+        &self,
+        declaration: DeclarationId,
+        name: &str,
+    ) -> String {
+        match self.declaration_home(declaration) {
+            Some((crate::Package::Standard, path)) => format!("std.{}.{name}", path.join(".")),
+            Some((_, path)) if !path.is_empty() => format!("{}.{name}", path.join(".")),
+            _ => name.to_owned(),
+        }
+    }
+
+    /// The package and path of the module whose records declare a
+    /// declaration, as its key names them; `None` for a PRE-1 declaration
+    /// [MOD-3].
+    pub(in crate::semantic::check) fn declaration_home(
+        &self,
+        declaration: DeclarationId,
+    ) -> Option<(crate::Package, &[String])> {
+        match self.resolved.declaration(declaration)?.key().item() {
+            crate::ItemKey::Declared {
+                home: crate::ItemHome::Module { package, path, .. },
+                ..
+            } => Some((*package, path)),
+            _ => None,
+        }
+    }
+
+    /// The concrete function ids of a substitution's function-kind actuals
+    /// [FN-2]; an actual not yet instantiated as a signature contributes none.
+    fn function_actual_ids(
+        &self,
+        substitution: &generics::GenericSubstitution,
+    ) -> Result<Vec<super::model::FunctionId>, CheckStop> {
+        let mut actuals = Vec::new();
+        for argument in substitution.function_arguments() {
+            if let behavior::FunctionArgument::Source {
+                reference,
+                concrete: true,
+            } = argument
+                && let Some(id) = self.function_reference_instance(reference)?
+            {
+                actuals.push(id);
+            }
+        }
+        Ok(actuals)
+    }
+
+    /// Enters the module of one declaration for the judgments written in it
+    /// [MOD-5, TYPE-2]: every field access and readonly write is judged from
+    /// the module that writes it. The previous module is restored when the
+    /// returned guard drops, so a signature built while a body is checked
+    /// does not change the body's module.
+    pub(in crate::semantic::check) fn enter_module(
+        &self,
+        declaration: DeclarationId,
+    ) -> ModuleContext<'_> {
+        let module = self
+            .resolved
+            .declaration(declaration)
+            .and_then(crate::DeclarationRecord::module);
+        ModuleContext {
+            cell: &self.writing_module,
+            previous: self.writing_module.replace(module),
+        }
+    }
+
+    /// The module whose inventory declares a source nominal; `None` for a
+    /// PRE-1 or compiler-owned nominal [MOD-3].
+    pub(in crate::semantic::check) fn nominal_module(
+        &self,
+        nominal: super::model::NominalId,
+    ) -> Option<crate::ModuleId> {
+        let (template, _) = self
+            .source_nominal_instances
+            .get(nominal.0 as usize)?
+            .as_ref()?;
+        let declaration = self.nominal_templates.get(*template)?.declaration;
+        self.resolved
+            .declaration(declaration)
+            .and_then(crate::DeclarationRecord::module)
+    }
+
+    /// Whether a field of a source nominal carries `public` in its
+    /// declaration: a struct field when `variant` is `None`, or a payload
+    /// field of that variant [MOD-6].
+    pub(in crate::semantic::check) fn field_declared_public(
+        &self,
+        nominal: super::model::NominalId,
+        variant: Option<usize>,
+        field: usize,
+    ) -> Result<bool, CheckStop> {
+        let Some((template, _)) = self
+            .source_nominal_instances
+            .get(nominal.0 as usize)
+            .and_then(Option::as_ref)
+        else {
+            return Ok(true);
+        };
+        let node = self
+            .nominal_templates
+            .get(*template)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .node;
+        let field_node = match variant {
+            None => self
+                .tree
+                .children_with(node, Production::Field)?
+                .get(field)
+                .copied(),
+            Some(variant) => {
+                let variants = self.tree.children_with(node, Production::Variant)?;
+                let Some(variant) = variants.get(variant) else {
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                };
+                match self
+                    .tree
+                    .first_child_with(*variant, Production::VfieldList)?
+                {
+                    Some(list) => self
+                        .tree
+                        .children_with(list, Production::Vfield)?
+                        .get(field)
+                        .copied(),
+                    None => None,
+                }
+            }
+        };
+        let field_node = field_node.ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        self.has_fixed(field_node, crate::FixedTerminal::Public)
+    }
+
+    /// [MOD-5] refuses a field selection, binding or construction written in
+    /// a module other than the field's declaring module when that module
+    /// does not publish the field, or when the writing module's graph row
+    /// does not list the declaring module. PRE-1 and compiler-owned fields
+    /// keep their ordinary availability.
+    pub(in crate::semantic::check) fn reject_inaccessible_field(
+        &self,
+        nominal: super::model::NominalId,
+        variant: Option<usize>,
+        field: usize,
+        name: &str,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
+        let Some(module) = self.nominal_module(nominal) else {
+            return Ok(());
+        };
+        let public = self.field_declared_public(nominal, variant, field)?;
+        // [MOD-6] a public function's contract, effect row and formals are
+        // read by every client, so they name only published fields even in
+        // the declaring module.
+        if !public && self.in_published_header(node)? {
+            return self.issue_node(
+                SemanticRule::Mod6,
+                node,
+                SemanticIssueKind::InaccessibleField {
+                    field: name.to_owned(),
+                    reason: "a public function's contract, effect row and formals name only fields its clients can access; publish the field, usually as public readonly",
+                },
+            );
+        }
+        let Some(writer) = self.writing_module.get() else {
+            return Ok(());
+        };
+        if writer == module || (public && self.module_lists(writer, module)) {
+            return Ok(());
+        }
+        self.issue_node(
+            SemanticRule::Mod5,
+            node,
+            SemanticIssueKind::InaccessibleField {
+                field: name.to_owned(),
+                reason: if public {
+                    "the field's declaring module is not in this module's graph row; list it there, or reach the field through an operation of a module the row lists"
+                } else {
+                    "the field is private to its declaring module; publish it in that module's interface, or use one of its operations"
+                },
+            },
+        )
+    }
+
+    /// [MOD-5] refuses an arm label written in a module other than its
+    /// enum's declaring module unless the enum is public and the writing
+    /// module's graph row lists the declaring module: the label is a name
+    /// written in the body. PRE-1 enums keep their ordinary availability.
+    pub(in crate::semantic::check) fn reject_inaccessible_variant(
+        &self,
+        nominal: super::model::NominalId,
+        name: &str,
+        arm: NodeId,
+    ) -> Result<(), CheckStop> {
+        let Some(module) = self.nominal_module(nominal) else {
+            return Ok(());
+        };
+        let Some(writer) = self.writing_module.get() else {
+            return Ok(());
+        };
+        if writer == module {
+            return Ok(());
+        }
+        let public = self.nominal_declared_public(nominal)?;
+        if public && self.module_lists(writer, module) {
+            return Ok(());
+        }
+        self.issue_node(
+            SemanticRule::Mod5,
+            arm,
+            SemanticIssueKind::InaccessibleVariant {
+                variant: name.to_owned(),
+                reason: if public {
+                    "the enum's declaring module is not in this module's graph row; list it there, or match through an operation of a module the row lists"
+                } else {
+                    "the enum is private to its declaring module, and so are its variants"
+                },
+            },
+        )
+    }
+
+    /// Whether `writer`'s graph row lists `module` [MOD-1, MOD-5].
+    fn module_lists(&self, writer: crate::ModuleId, module: crate::ModuleId) -> bool {
+        self.resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .module(writer)
+            .is_some_and(|record| record.depends_on(module))
+    }
+
+    /// Whether a source nominal's declaration carries `public` [MOD-6].
+    fn nominal_declared_public(&self, nominal: super::model::NominalId) -> Result<bool, CheckStop> {
+        let Some((template, _)) = self
+            .source_nominal_instances
+            .get(nominal.0 as usize)
+            .and_then(Option::as_ref)
+        else {
+            return Ok(true);
+        };
+        let declaration = self
+            .nominal_templates
+            .get(*template)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .declaration;
+        Ok(self
+            .resolved
+            .declaration(declaration)
+            .is_some_and(crate::DeclarationRecord::is_public))
+    }
+
+    /// Whether a node lies in a published header: a public function's
+    /// parameters, results, effect row, contract or function-kind formals,
+    /// and not its body, or any formal of a public interface group, which
+    /// publishes its complete formal vector [MOD-6].
+    fn in_published_header(&self, node: NodeId) -> Result<bool, CheckStop> {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            match self.tree.production(candidate)? {
+                Production::Stmt | Production::Doc => return Ok(false),
+                Production::FnDecl => {
+                    return Ok(self
+                        .optional_declaration_at(candidate, DeclarationRole::Function)?
+                        .is_some_and(crate::DeclarationRecord::is_public));
+                }
+                Production::InterfaceDecl => {
+                    return Ok(self
+                        .optional_declaration_at(candidate, DeclarationRole::Interface)?
+                        .is_some_and(crate::DeclarationRecord::is_public));
+                }
+                _ => {}
+            }
+            current = self.tree.parent(candidate)?;
+        }
+        Ok(false)
+    }
+
+    /// [TYPE-2] whether a readonly field withholds writes from the body under
+    /// check: a PRE-1 field's from every body, and a source field's from
+    /// every module except the one that declares its nominal.
+    pub(in crate::semantic::check) fn field_withholds_writes(
+        &self,
+        nominal: super::model::NominalId,
+        field: &super::model::CheckedField,
+    ) -> bool {
+        field.readonly
+            && match self.nominal_module(nominal) {
+                Some(module) => self.writing_module.get() != Some(module),
+                None => true,
+            }
+    }
+
     /// [GRAM-2, STOR-8] whether this unit wrote `program no_heap;`.
     ///
     /// Resolution has already refused a second `heap_decl` and one at any
     /// later item position, so a `heap_decl` present anywhere under the root
     /// is the admitted first-item declaration.
-    fn declares_no_heap(
-        tree: &TreeView<'unit, 'classified, 'lexed, 'source>,
-    ) -> Result<bool, CheckStop> {
+    fn declares_no_heap(tree: &TreeView<'unit>) -> Result<bool, CheckStop> {
         for item in tree.children(tree.root())? {
             if tree.production(*item)? != Production::Item {
                 continue;
@@ -1106,8 +1518,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     fn new(
-        resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+        resolved: &'unit ResolvedSyntaxUnit,
         reject_entailment: bool,
+        receipts: Option<&'unit dyn receipts::ProofReceipts>,
     ) -> Result<Self, CheckStop> {
         // A semantic unit includes the fixed PRE-1 declarations before resolution.
         // A source-only parse is useful to tools but is not a complete compiler input.
@@ -1129,6 +1542,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             no_heap,
             tree,
             nominals: Vec::new(),
+            nominal_generation: 0,
+            nominal_layouts_acyclic_at: std::cell::Cell::new(None),
             elements: RefCell::new(Vec::new()),
             element_ids: RefCell::new(HashMap::new()),
             nominal_nodes: Vec::new(),
@@ -1139,12 +1554,15 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             musttail_rejections: RefCell::new(Vec::new()),
             pending_nominals: RefCell::new(Vec::new()),
             pending_instances: RefCell::new(Vec::new()),
+            instance_requests: RefCell::new(Vec::new()),
             elided_store_brand: std::cell::Cell::new(None),
             template_spelling_authority: std::cell::Cell::new(false),
             commit_read_outs: RefCell::new(Vec::new()),
             call_separations: RefCell::new(Vec::new()),
             deferred_loop_reference_uses: RefCell::new(Vec::new()),
             loop_reference_summaries: RefCell::new(HashMap::new()),
+            loop_superseded_bindings: RefCell::new(HashMap::new()),
+            call_value_captures: RefCell::new(HashSet::new()),
             reference_origins: RefCell::new(Vec::new()),
             contract_queries: RefCell::new(Vec::new()),
             prelude_nominals: HashMap::new(),
@@ -1166,8 +1584,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             postcondition_selectors: Vec::new(),
             postcondition_unavailable_declarations: Vec::new(),
             active_postcondition: Cell::new(None),
+            writing_module: Cell::new(None),
             active_result_datums: RefCell::new(Vec::new()),
             behavior: behavior::BehaviorInventory::default(),
+            receipts,
+            reused_analyses: RefCell::new(Vec::new()),
+            receipt_keys: RefCell::new(Vec::new()),
         })
     }
 
@@ -1225,6 +1647,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // program-level goal summaries extend this same complete context.
         let callees = self.entailment_callees()?;
         self.install_call_requirements(&mut function_inventory)?;
+        self.form_obligation_records(&mut function_inventory)?;
         let permission_signatures = self
             .signatures
             .iter()
@@ -1267,10 +1690,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .collect::<Vec<_>>();
         if self.reject_entailment {
             let mut rejections = Vec::new();
-            for function in &baseline_functions {
-                match self.entailment_rejection(function) {
+            let mut rejected = vec![false; baseline_functions.len()];
+            for (index, function) in baseline_functions.iter().enumerate() {
+                // A receipt stands for an accepted analysis of exactly these
+                // inputs [MOD-8].
+                if self.analysis_reused(index) {
+                    continue;
+                }
+                match self
+                    .entailment_rejection(function)
+                    .map_err(|stop| self.attribute_to_request(function.id, stop))
+                {
                     Ok(()) => {}
                     Err(CheckStop::Issue(issue)) => {
+                        rejected[index] = true;
                         let path = Self::source_issue_path(&issue)?.clone();
                         rejections.push((
                             path,
@@ -1282,6 +1715,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     Err(stop) => return Err(stop),
                 }
             }
+            // Every accepted fresh analysis is kept, whether or not another
+            // function's rejection fails this check [MOD-8].
+            self.record_receipts(&baseline_functions, &rejected);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()
@@ -1299,8 +1735,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .map(|checked| checked.function)
             .collect::<Vec<_>>();
         if optimistic_batch {
-            for function in &mut functions {
-                finalize_function_entailment(&mut function.entailment);
+            for (index, function) in functions.iter_mut().enumerate() {
+                // A receipt's analysis retains no derivation to prune.
+                if !self.analysis_reused(index) {
+                    finalize_function_entailment(&mut function.entailment);
+                }
             }
         }
         for function in &mut functions {
@@ -1352,6 +1791,18 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             nominal_lowering_alias: self.nominal_lowering_aliases()?,
             nominal_physical_alias: self.nominal_physical_aliases()?,
             constants: self.checked_constants.clone(),
+            nominal_spellings: (0..self.nominals.len())
+                .map(|index| {
+                    u32::try_from(index).ok().and_then(|index| {
+                        self.stable_type_spelling(CheckedType::Nominal(NominalId(index)))
+                    })
+                })
+                .collect(),
+            constant_spellings: self
+                .checked_constants
+                .iter()
+                .map(|constant| self.module_symbol_base(constant.declaration, &constant.name))
+                .collect(),
             derived_consts,
             functions,
             contract_queries: self.contract_queries.borrow().clone(),
@@ -1362,13 +1813,31 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         })
     }
 
+    /// Every item's declaration node the checker reads. An alias binds names
+    /// only [MOD-4], and an interface function declaration whose definition
+    /// exists is that definition's claim, checked for correspondence and not
+    /// a second function [MOD-7].
     fn item_declarations(&self) -> Result<Vec<NodeId>, CheckStop> {
+        let defined = self
+            .resolved
+            .interface_functions()
+            .iter()
+            .filter(|function| function.definition().is_some())
+            .filter_map(|function| self.resolved.declaration(function.declaration()))
+            .map(|declaration| declaration.origin().node().clone())
+            .collect::<Vec<_>>();
         let mut declarations = Vec::new();
         for item in self.tree.children(self.tree.root())? {
             if self.tree.production(*item)? != Production::Item {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
-            declarations.push(self.tree.only_child(*item)?);
+            let declaration = self.tree.only_child(*item)?;
+            match self.tree.production(declaration)? {
+                Production::AliasDecl => continue,
+                Production::FnDecl if defined.contains(self.tree.path(declaration)?) => continue,
+                _ => {}
+            }
+            declarations.push(declaration);
         }
         Ok(declarations)
     }
@@ -1385,15 +1854,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// need completed field inventories and are collected by the second pass
     /// below.
     fn collect_constants(&mut self, items: &[NodeId]) -> Result<(), CheckStop> {
-        let nodes = items
-            .iter()
-            .copied()
-            .filter(|node| {
-                self.tree
-                    .production(*node)
-                    .is_ok_and(|production| production == Production::ConstDecl)
-            })
-            .collect::<Vec<_>>();
+        let nodes = self.constant_order(items)?;
         for node in nodes {
             if self.constant_declaration_is_deferred(node)? {
                 continue;
@@ -1410,6 +1871,21 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// containing a nominal type (a cvalue reference has the exact expected
     /// type), so the two passes never reorder a legal dependency.
     fn collect_deferred_nominal_constants(&mut self, items: &[NodeId]) -> Result<(), CheckStop> {
+        let nodes = self.constant_order(items)?;
+        for node in nodes {
+            if self.constant_declaration_is_deferred(node)? {
+                self.collect_constant(node)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Every const item in dependency order [CONST-2]: a const's value
+    /// follows the values of the consts it names, whatever their item order,
+    /// since a module's consts are visible throughout it [MOD-3]. A const
+    /// whose value depends on itself is rejected at the first const in item
+    /// order that lies on the cycle.
+    fn constant_order(&self, items: &[NodeId]) -> Result<Vec<NodeId>, CheckStop> {
         let nodes = items
             .iter()
             .copied()
@@ -1419,12 +1895,90 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     .is_ok_and(|production| production == Production::ConstDecl)
             })
             .collect::<Vec<_>>();
-        for node in nodes {
-            if self.constant_declaration_is_deferred(node)? {
-                self.collect_constant(node)?;
+        let mut declarations = HashMap::new();
+        for (index, node) in nodes.iter().enumerate() {
+            declarations.insert(
+                self.declaration_at(*node, DeclarationRole::NamedConst)?
+                    .id(),
+                index,
+            );
+        }
+        let mut dependencies = vec![Vec::new(); nodes.len()];
+        for (index, node) in nodes.iter().enumerate() {
+            let owner = self.tree.path(*node)?.components().to_vec();
+            for usage in self.resolved.lexical_uses() {
+                let path = usage.origin().node().components();
+                if path.len() < owner.len() || !path.starts_with(&owner) {
+                    continue;
+                }
+                if let crate::ResolvedTarget::Source {
+                    declaration,
+                    class: crate::DeclarationClass::NamedConst,
+                } = usage.target()
+                    && let Some(target) = declarations.get(&declaration)
+                    && !dependencies[index].contains(target)
+                {
+                    dependencies[index].push(*target);
+                }
             }
         }
-        Ok(())
+        // 0: unvisited, 1: on the current path, 2: ordered.
+        let mut state = vec![0_u8; nodes.len()];
+        let mut order = Vec::with_capacity(nodes.len());
+        for root in 0..nodes.len() {
+            if state[root] != 0 {
+                continue;
+            }
+            let mut stack = vec![(root, 0_usize)];
+            state[root] = 1;
+            while let Some((current, next)) = stack.last_mut() {
+                let current = *current;
+                if let Some(&dependency) = dependencies[current].get(*next) {
+                    *next += 1;
+                    match state[dependency] {
+                        0 => {
+                            state[dependency] = 1;
+                            stack.push((dependency, 0));
+                        }
+                        1 => {
+                            let start = stack
+                                .iter()
+                                .position(|(member, _)| *member == dependency)
+                                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                            let members = stack[start..]
+                                .iter()
+                                .map(|(member, _)| *member)
+                                .collect::<Vec<_>>();
+                            let first = members
+                                .iter()
+                                .copied()
+                                .min()
+                                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                            let at = members
+                                .iter()
+                                .position(|member| *member == first)
+                                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                            let cycle = members[at..]
+                                .iter()
+                                .chain(&members[..at])
+                                .map(|member| self.identifier(nodes[*member]))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            return self.issue_node(
+                                SemanticRule::Const2,
+                                nodes[first],
+                                SemanticIssueKind::ConstantCycle { cycle },
+                            );
+                        }
+                        _ => {}
+                    }
+                } else {
+                    state[current] = 2;
+                    order.push(nodes[current]);
+                    stack.pop();
+                }
+            }
+        }
+        Ok(order)
     }
 
     fn constant_declaration_is_deferred(&self, node: NodeId) -> Result<bool, CheckStop> {
@@ -1434,12 +1988,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let mut pending = vec![ty];
         while let Some(node) = pending.pop() {
-            if self.tree.production(node)? == Production::Type
-                && self
-                    .tree
-                    .direct_token_with(node, crate::TerminalPredicate::TypeIdentifier)?
-                    .is_some()
-            {
+            if self.tree.production(node)? == Production::Type && self.tree.names_nominal(node)? {
                 return Ok(true);
             }
             pending.extend(self.tree.children(node)?.iter().copied());
@@ -1451,15 +2000,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         &mut self,
         items: &[NodeId],
     ) -> Result<(), CheckStop> {
-        let nodes = items
-            .iter()
-            .copied()
-            .filter(|node| {
-                self.tree
-                    .production(*node)
-                    .is_ok_and(|production| production == Production::ConstDecl)
-            })
-            .collect::<Vec<_>>();
+        let nodes = self.constant_order(items)?;
         for node in nodes {
             let declaration = self.declaration_at(node, DeclarationRole::NamedConst)?.id();
             if !self.postcondition_constant_has_links(node)? {
@@ -1519,17 +2060,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             return Ok(false);
         }
         for ty in self.tree.descendants_with(node, Production::Type)? {
-            if self
-                .tree
-                .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-                .is_some()
+            if self.tree.names_nominal(ty)?
+                && !self
+                    .resolved
+                    .lexical_uses_at(ty)
+                    .any(|usage| usage.role() == crate::LexicalUseRole::Type)
             {
-                let path = self.tree.path(ty)?;
-                if !self.resolved.lexical_uses().iter().any(|usage| {
-                    usage.role() == crate::LexicalUseRole::Type && usage.origin().node() == path
-                }) {
-                    return Ok(false);
-                }
+                return Ok(false);
             }
         }
         let value = self
@@ -1541,18 +2078,29 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 .tree
                 .direct_token_with(value, crate::TerminalPredicate::Identifier)?
                 .is_some()
+            && !self
+                .resolved
+                .lexical_uses_at(value)
+                .any(|usage| usage.role() == crate::LexicalUseRole::ConstValue)
         {
-            let path = self.tree.path(value)?;
-            if !self.resolved.lexical_uses().iter().any(|usage| {
-                usage.role() == crate::LexicalUseRole::ConstValue && usage.origin().node() == path
-            }) {
-                return Ok(false);
-            }
+            return Ok(false);
         }
         Ok(true)
     }
 
+    /// Checks one const in its declaring module [MOD-5]: a construction of
+    /// another module's struct in its value obeys that module's publication.
     fn collect_constant(&mut self, node: NodeId) -> Result<(), CheckStop> {
+        let module = self
+            .declaration_at(node, DeclarationRole::NamedConst)?
+            .module();
+        let previous = self.writing_module.replace(module);
+        let result = self.collect_constant_in_module(node);
+        self.writing_module.set(previous);
+        result
+    }
+
+    fn collect_constant_in_module(&mut self, node: NodeId) -> Result<(), CheckStop> {
         let declaration = self.declaration_at(node, DeclarationRole::NamedConst)?;
         let declaration_id = declaration.id();
         let name = declaration.spelling().to_owned();
@@ -1633,8 +2181,65 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
                     }
                 }
-                outcome => return outcome,
+                outcome => {
+                    return outcome.map_err(|stop| match u32::try_from(index) {
+                        Ok(ordinal) => self.attribute_to_request(FunctionId(ordinal), stop),
+                        Err(_) => stop,
+                    });
+                }
             }
+        }
+    }
+
+    /// [FN-2, MOD-8] records `call` as the requester of the instance of
+    /// `template` at `substitution`, unless an earlier call already is.
+    pub(super) fn record_instance_request(
+        &self,
+        template: NodeId,
+        substitution: &generics::GenericSubstitution,
+        call: NodeId,
+    ) {
+        let mut requests = self.instance_requests.borrow_mut();
+        if !requests
+            .iter()
+            .any(|(node, known, _)| *node == template && known == substitution)
+        {
+            requests.push((template, substitution.clone(), call));
+        }
+    }
+
+    /// [FN-2, MOD-8] names `call` as the requester on a rejection that names
+    /// none yet. The rejection keeps its location in the template.
+    pub(super) fn attribute_to_call(&self, call: NodeId, stop: CheckStop) -> CheckStop {
+        match stop {
+            CheckStop::Issue(mut issue) if issue.request.is_none() => {
+                issue.request = self.tree.coordinate(call).ok();
+                CheckStop::Issue(issue)
+            }
+            stop => stop,
+        }
+    }
+
+    /// [FN-2, MOD-8] names the call that requested `function` on a rejection
+    /// raised while checking it, when `function` is a requested concrete
+    /// instance of a generic template.
+    pub(super) fn attribute_to_request(&self, function: FunctionId, stop: CheckStop) -> CheckStop {
+        let request = self
+            .signatures
+            .get(function.0 as usize)
+            .filter(|signature| signature.id == function)
+            .and_then(|signature| {
+                self.instance_requests
+                    .borrow()
+                    .iter()
+                    .find(|(node, substitution, _)| {
+                        *node == signature.node && *substitution == signature.substitution
+                    })
+                    .map(|(_, _, call)| *call)
+            });
+        match request {
+            Some(call) => self.attribute_to_call(call, stop),
+            None => stop,
         }
     }
 
@@ -1667,10 +2272,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .template_spelling_authority
             .replace(signature.substitution.len() > 0 && !signature.substitution.is_symbolic());
         self.loop_reference_summaries.borrow_mut().clear();
+        self.loop_superseded_bindings.borrow_mut().clear();
         let queries = self.contract_queries.borrow().len();
         let tail_rejections = self.musttail_rejections.borrow().len();
         let outcome = loop {
             self.call_separations.borrow_mut().clear();
+            self.call_value_captures.borrow_mut().clear();
             self.contract_queries.borrow_mut().truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
@@ -1736,6 +2343,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // boundary.
         self.deferred_loop_reference_uses.borrow_mut().clear();
         self.reference_origins.borrow_mut().clear();
+        let _module = self.enter_module(signature.declaration);
         self.check_musttail_callees(signature)?;
         self.check_entry_formers(signature)?;
         let mut bindings = HashMap::new();
@@ -1785,16 +2393,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // judgment below reaches once an operand fixes W. Every other generic
         // row, prelude or source, keeps its symbolic judgment.
         let unsupplied_window_row = self.has_unsupplied_window_type_parameter(signature)?;
-        let requirements = if let Some(node) = self
+        let (requirements, requirement_places) = if let Some(node) = self
             .tree
             .first_child_with(signature.node, Production::ContractBlock)?
             .filter(|_| !unsupplied_window_row)
         {
             let mut requires_bindings = parameter_bindings.clone();
-            self.check_requires(signature, node, &mut requires_bindings, &mut counters)?
-                .requirements
+            let checked =
+                self.check_requires(signature, node, &mut requires_bindings, &mut counters)?;
+            (checked.requirements, checked.places)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
         let postcondition_selectors = if unsupplied_window_row {
@@ -1833,7 +2442,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if !self.deferred_loop_reference_uses.borrow().is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        let declaration_only = self.tree.production(signature.node)? == Production::FnSig;
+        // A function-kind formal and a pending interface declaration
+        // [MOD-8] are body-less leaves: their written boundary is what their
+        // callers use, and nothing is checked below it.
+        let declaration_only = self.tree.is_body_less(signature.node)?;
         if declaration_only {
             checked.can_continue = false;
             checked.effects = signature.declared_effects.clone();
@@ -1846,6 +2458,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     self.tree.closing_brace_coordinate(signature.node)?,
                 ),
                 kind: SemanticIssueKind::FunctionFallthrough,
+                request: None,
             }));
         }
         let exhibited = self.written_body_effects(signature, checked.effects.clone());
@@ -1860,17 +2473,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // Each category is judged by [EFF-2]'s own two-way covering relation
         // rather than by set equality.
         if !Self::effect_row_matches(&signature.declared_effects, &exhibited) {
-            let (missing, extra) =
-                self.effect_row_difference(&exhibited, &signature.declared_effects, signature)?;
+            let suggested = Self::suggested_effect_row(&exhibited);
+            let (missing, extra) = self.effect_row_difference(
+                &exhibited,
+                &suggested,
+                &signature.declared_effects,
+                signature,
+            )?;
+            // [EFF-2] the repair is the suggested row itself: a row EFF-1 and
+            // EFF-2 admit for this body and no call refuses against itself.
+            let expected_row = self.render_effect_row(&suggested, signature)?;
             return self.issue_node(
                 SemanticRule::Eff2,
                 signature.effects_node,
                 SemanticIssueKind::EffectMismatch {
-                    expected_row: self.render_effect_row(&exhibited, signature)?,
+                    mechanical_fix: format!(
+                        "declare the row as `{expected_row}`, which covers every access the body makes and no other"
+                    ),
+                    expected_row,
                     found_row: self.render_effect_row(&signature.declared_effects, signature)?,
                     missing,
                     extra,
-                    mechanical_fix: EFF2_ROW_FIX,
                 },
             );
         }
@@ -1910,8 +2533,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             formal_hypothesis: signature.formal_parameter.is_some(),
             id: signature.id,
             declaration: signature.declaration,
+            module: self
+                .resolved
+                .declaration(signature.declaration)
+                .and_then(crate::DeclarationRecord::module)
+                .unwrap_or(crate::ModuleId::BUNDLE_ROOT),
             name: signature.name.clone(),
             symbol: signature.symbol.clone(),
+            function_actuals: self.function_actual_ids(&signature.substitution)?,
             region_parameters: signature.region_parameters.clone(),
             parameters,
             result_mode: signature.result_mode,
@@ -1924,6 +2553,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            requirement_places,
             postconditions,
             body: (!declaration_only).then_some(checked.statements),
             reference_origins: std::mem::take(&mut *self.reference_origins.borrow_mut()),
@@ -1934,6 +2564,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 separations
             },
             permission_separation_queries: Vec::new(),
+            obligations: Vec::new(),
             entailment: super::entailment::FunctionEntailment::default(),
         };
         Ok(CheckedFunctionInventory {
@@ -1960,7 +2591,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             | CheckedStatement::DestructuringLet { .. }
             | CheckedStatement::PropagateLet { .. }
             | CheckedStatement::Set { .. }
-            | CheckedStatement::Evaluate(_)
+            | CheckedStatement::Evaluate { .. }
             | CheckedStatement::DropExpression { .. }
             | CheckedStatement::Proof(_)
             | CheckedStatement::Return { .. }
@@ -2018,6 +2649,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 )
             }),
             refinement_witnesses: Vec::new(),
+            call_value: true,
         })
     }
 
@@ -2115,16 +2747,40 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
         let contract_queries = self.contract_queries.borrow().clone();
         let const_parameter_types = self.const_generic_types().collect();
+        // [MOD-8] the concrete inventory's analyses may stand on receipts;
+        // the symbolic validation of generic templates always runs afresh.
+        let receipts = self
+            .receipts
+            .filter(|_| analyzed.is_none() && self.reject_entailment);
+        let items = receipts.map(|_| self.receipt_items()).transpose()?;
+        if receipts.is_some() {
+            *self.reused_analyses.borrow_mut() = vec![false; functions.len()];
+        }
         // ENT is the single acceptance-bearing proof path for ordinary
         // obligations, call requirements, invariants and postconditions.
         let mut schedule =
             postcondition_schedule(functions.iter().map(|checked| &checked.function))
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if schedule.components.is_empty() {
-            for (index, checked) in functions.iter_mut().enumerate() {
+            for index in 0..functions.len() {
                 if !selected(index) {
                     continue;
                 }
+                if let (Some(store), Some(items)) = (receipts, &items)
+                    && let Some(entailment) = self.recorded_analysis(
+                        store,
+                        items,
+                        functions,
+                        index,
+                        callees,
+                        &[],
+                        &const_parameter_types,
+                    )
+                {
+                    functions[index].function.entailment = entailment;
+                    continue;
+                }
+                let checked = &mut functions[index];
                 let context = EntailmentContext {
                     declarations: self.resolved.declarations(),
                     callees,
@@ -2199,20 +2855,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         .get(function_index)
                         .filter(|checked| checked.function.id == *function)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let context = EntailmentContext {
-                        declarations: self.resolved.declarations(),
-                        callees,
-                        constants: &self.checked_constants,
-                        constant_ids: &self.constants,
-                        const_parameter_types: &const_parameter_types,
-                        nominals: &self.nominals,
-                        elements: &self.elements.borrow(),
-                        contract_queries: &contract_queries,
-                        verified_postconditions: &verified_postconditions,
-                        verified_postcondition_proofs: &verified_postcondition_proofs,
-                        binding_names: &checked.binding_names,
+                    let recorded = match (receipts, &items) {
+                        (Some(store), Some(items)) => self.recorded_analysis(
+                            store,
+                            items,
+                            functions,
+                            function_index,
+                            callees,
+                            &verified_postconditions,
+                            &const_parameter_types,
+                        ),
+                        _ => None,
                     };
-                    let entailment = analyze_function_candidate(&checked.function, &context);
+                    let entailment = if let Some(entailment) = recorded {
+                        entailment
+                    } else {
+                        let context = EntailmentContext {
+                            declarations: self.resolved.declarations(),
+                            callees,
+                            constants: &self.checked_constants,
+                            constant_ids: &self.constants,
+                            const_parameter_types: &const_parameter_types,
+                            nominals: &self.nominals,
+                            elements: &self.elements.borrow(),
+                            contract_queries: &contract_queries,
+                            verified_postconditions: &verified_postconditions,
+                            verified_postcondition_proofs: &verified_postcondition_proofs,
+                            binding_names: &checked.binding_names,
+                        };
+                        analyze_function_candidate(&checked.function, &context)
+                    };
                     drop(verified_postconditions);
                     drop(verified_postcondition_proofs);
                     functions[function_index].function.entailment = entailment;
@@ -2371,7 +3043,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             match statement {
                 CheckedStatement::Let { value, .. }
                 | CheckedStatement::DestructuringLet { value, .. }
-                | CheckedStatement::Evaluate(value)
+                | CheckedStatement::Evaluate { value, .. }
                 | CheckedStatement::DropExpression { value, .. }
                 | CheckedStatement::Return { value, .. }
                 | CheckedStatement::Give { value, .. } => {
@@ -2570,7 +3242,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             match statement {
                 CheckedStatement::Let { value, .. }
                 | CheckedStatement::DestructuringLet { value, .. }
-                | CheckedStatement::Evaluate(value)
+                | CheckedStatement::Evaluate { value, .. }
                 | CheckedStatement::DropExpression { value, .. }
                 | CheckedStatement::Return { value, .. }
                 | CheckedStatement::Give { value, .. } => {
@@ -3179,576 +3851,5 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         match &issue.location {
             SemanticLocation::SourceNode(path, _) => Ok(path),
         }
-    }
-
-    /// The enclosing `loop_stmt` or `for_stmt` of one loop-header invariant.
-    ///
-    /// A header invariant is always written inside its loop statement, so the
-    /// ancestor exists for every well-formed tree. The absent case keeps the
-    /// caller total and simply leaves the invariant at its own position.
-    fn enclosing_loop_node(&self, node: NodeId) -> Result<Option<NodeId>, SemanticCompilerFailure> {
-        let mut current = node;
-        loop {
-            let production = self.tree.production(current)?;
-            if production == Production::LoopStmt || production == Production::ForStmt {
-                return Ok(Some(current));
-            }
-            match self.tree.parent(current)? {
-                Some(parent) => current = parent,
-                None => return Ok(None),
-            }
-        }
-    }
-
-    fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
-        /// One position in the causal order in which obligations are decided.
-        ///
-        /// `Child` is a syntax child ordinal, so a plain node path orders a
-        /// failure exactly where the walk reaches it. `AfterSubtree` is the
-        /// position immediately after everything one node encloses: it is
-        /// greater than every child ordinal under that node and still less
-        /// than the node's following siblings.
-        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-        enum ProofPosition {
-            Child(u32),
-            AfterSubtree,
-        }
-
-        enum Rejection<'outcome> {
-            LoopInvariant(&'outcome super::entailment::LoopInvariantOutcome),
-            SourceProof(&'outcome super::entailment::SourceProofOutcome),
-            Obligation(&'outcome super::entailment::ObligationOutcome),
-            Call(&'outcome super::entailment::CallGoalOutcome),
-        }
-
-        impl Rejection<'_> {
-            fn node_path(&self) -> &crate::NodePath {
-                match self {
-                    Self::LoopInvariant(outcome) => &outcome.node_path,
-                    Self::SourceProof(outcome) => outcome.rejection_node_path(),
-                    Self::Obligation(outcome) => &outcome.node_path,
-                    Self::Call(outcome) => &outcome.node_path,
-                }
-            }
-
-            const fn rule(&self) -> SemanticRule {
-                match self {
-                    Self::LoopInvariant(_) => SemanticRule::Inv1,
-                    Self::SourceProof(outcome) => {
-                        if outcome.certificate_written {
-                            SemanticRule::Prf1
-                        } else {
-                            SemanticRule::Inv1
-                        }
-                    }
-                    Self::Obligation(outcome) => match outcome.family {
-                        super::entailment::ObligationFamily::Bounds => SemanticRule::Op4,
-                        super::entailment::ObligationFamily::IntegerDomain => SemanticRule::Op2,
-                        super::entailment::ObligationFamily::ConversionDomain => SemanticRule::Op6,
-                        super::entailment::ObligationFamily::AllocationFit => SemanticRule::Op9,
-                        super::entailment::ObligationFamily::RangeFormation => SemanticRule::Ref4,
-                        super::entailment::ObligationFamily::CallSeparation => SemanticRule::Eff5,
-                        super::entailment::ObligationFamily::ReferencePreservation(_) => {
-                            SemanticRule::Ref2
-                        }
-                        super::entailment::ObligationFamily::ExchangeSeparation => {
-                            SemanticRule::Op11
-                        }
-                    },
-                    Self::Call(_) => SemanticRule::Fn8,
-                }
-            }
-        }
-
-        let loop_invariant = function
-            .entailment
-            .loop_invariants
-            .iter()
-            .filter(|outcome| !outcome.proof.discharged())
-            .map(Rejection::LoopInvariant);
-        let source_proof = function
-            .entailment
-            .source_proofs
-            .iter()
-            .filter(|outcome| !outcome.check.discharged())
-            .map(Rejection::SourceProof);
-        let obligation = function
-            .entailment
-            .obligations
-            .iter()
-            .filter(|outcome| !outcome.discharged)
-            .map(Rejection::Obligation);
-        let call = function
-            .entailment
-            .call_goals
-            .iter()
-            .filter(|outcome| outcome.disposition != CallGoalDisposition::Discharged)
-            .map(Rejection::Call);
-        // [DIAG-1] admits exactly one rule and one location, so the single
-        // reported failure is selected by the order in which the checker
-        // decides obligations, not by where they are written. Every judgment
-        // but one is decided where it stands. INV-1's backedge judgment is the
-        // exception: it is proved only after the whole loop body has been
-        // walked, and a body failure that demotes a value to a fresh full-range
-        // atom is exactly what breaks it. Positioning the backedge after the
-        // body it consumes therefore reports the cause rather than the effect,
-        // while INV-1's base judgment stays at the header where it is decided.
-        let position = |rejection: &Rejection<'_>| -> Result<Vec<ProofPosition>, CheckStop> {
-            let path = rejection.node_path();
-            if let Rejection::LoopInvariant(outcome) = rejection
-                && outcome.proof.base
-                && outcome.proof.step == Some(false)
-            {
-                let node = self
-                    .tree
-                    .node_with_path(path)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if let Some(loop_node) = self.enclosing_loop_node(node)? {
-                    let mut components = self
-                        .tree
-                        .path(loop_node)?
-                        .components()
-                        .iter()
-                        .copied()
-                        .map(ProofPosition::Child)
-                        .collect::<Vec<_>>();
-                    components.push(ProofPosition::AfterSubtree);
-                    return Ok(components);
-                }
-            }
-            Ok(path
-                .components()
-                .iter()
-                .copied()
-                .map(ProofPosition::Child)
-                .collect())
-        };
-        let mut candidates = Vec::new();
-        for rejection in loop_invariant
-            .chain(source_proof)
-            .chain(obligation)
-            .chain(call)
-        {
-            candidates.push((position(&rejection)?, rejection));
-        }
-        // `min_by` keeps the first of several equal minima, so the selection
-        // depends only on this order and on collection order, never on a hash.
-        let rejection = candidates
-            .into_iter()
-            .min_by(|left, right| {
-                left.0.cmp(&right.0).then_with(|| {
-                    left.1
-                        .rule()
-                        .definition_rank()
-                        .cmp(&right.1.rule().definition_rank())
-                })
-            })
-            .map(|(_, rejection)| rejection);
-        if let Some(rejection) = rejection {
-            return match rejection {
-                Rejection::LoopInvariant(outcome) => {
-                    let node = self
-                        .tree
-                        .node_with_path(&outcome.node_path)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let obligation = if !outcome.proof.base {
-                        crate::LoopInvariantProofObligation::Base
-                    } else if outcome.proof.step == Some(false) {
-                        crate::LoopInvariantProofObligation::Backedge
-                    } else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let mechanical_fix = match obligation {
-                        crate::LoopInvariantProofObligation::Base => {
-                            "weaken or correct this invariant, or establish the missing facts before the loop so the invariant holds at the first loop header"
-                        }
-                        crate::LoopInvariantProofObligation::Backedge => {
-                            "strengthen the invariant prefix, weaken or correct this invariant, or establish the missing body facts so every reachable normal fallthrough preserves it at the next loop header"
-                        }
-                    };
-                    let required_relation = match obligation {
-                        crate::LoopInvariantProofObligation::Base => outcome.base_target.clone(),
-                        crate::LoopInvariantProofObligation::Backedge => {
-                            outcome.backedge_target.clone()
-                        }
-                    };
-                    Err(CheckStop::source_issue(SemanticIssue {
-                        rule: SemanticRule::Inv1,
-                        location: SemanticLocation::SourceNode(
-                            outcome.node_path.clone(),
-                            self.tree.coordinate(node)?,
-                        ),
-                        kind: SemanticIssueKind::UndischargedLoopInvariant {
-                            name: outcome.name.clone(),
-                            obligation,
-                            required_relation,
-                            mechanical_fix,
-                        },
-                    }))
-                }
-                Rejection::SourceProof(outcome) => {
-                    let rejection_node_path = outcome.rejection_node_path();
-                    let node = self
-                        .tree
-                        .node_with_path(rejection_node_path)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if let Some(failure) = outcome.check.target_failure {
-                        let (reason, mechanical_fix) = match failure {
-                            super::entailment::SourceProofCertificateFailure::ArithmeticOverflow => (
-                                "the invariant target exceeds the i128 proof domain after current value images are substituted",
-                                "split or rescale the invariant so its normalized current-value coefficients and constant fit i128",
-                            ),
-                            super::entailment::SourceProofCertificateFailure::FormationCapacity => (
-                                "the invariant target exceeds a fixed affine formation capacity after current value images are substituted",
-                                "split the invariant into smaller local invariants whose normalized current-value shapes fit the fixed capacities",
-                            ),
-                            super::entailment::SourceProofCertificateFailure::RepeatedUse { .. }
-                            | super::entailment::SourceProofCertificateFailure::UseCapacity { .. }
-                            | super::entailment::SourceProofCertificateFailure::NonlinearResidual
-                            | super::entailment::SourceProofCertificateFailure::InvalidFactor { .. } => {
-                                return Err(SemanticCompilerFailure::InvalidResolution.into());
-                            }
-                        };
-                        return Err(CheckStop::source_issue(SemanticIssue {
-                            rule: SemanticRule::Inv1,
-                            location: SemanticLocation::SourceNode(
-                                rejection_node_path.clone(),
-                                self.tree.coordinate(node)?,
-                            ),
-                            kind: SemanticIssueKind::InvalidInvariant {
-                                reason,
-                                mechanical_fix,
-                            },
-                        }));
-                    }
-                    if !outcome.certificate_written {
-                        if !outcome.check.premises.is_empty()
-                            || outcome.check.source_failure.is_some()
-                            || outcome.check.certificate_failure.is_some()
-                            || outcome.check.residual_failure.is_some()
-                            || outcome.check.redundant
-                            || outcome.check.combination
-                        {
-                            return Err(SemanticCompilerFailure::InvalidResolution.into());
-                        }
-                        return Err(CheckStop::source_issue(SemanticIssue {
-                            rule: SemanticRule::Inv1,
-                            location: SemanticLocation::SourceNode(
-                                rejection_node_path.clone(),
-                                self.tree.coordinate(node)?,
-                            ),
-                            kind: SemanticIssueKind::UndischargedLocalInvariant {
-                                name: outcome.name.clone(),
-                                mechanical_fix: "weaken or correct this invariant, or establish the missing facts before this statement so AUTO proves its target in the entering context",
-                            },
-                        }));
-                    }
-                    let failure_obligation = |failure| match failure {
-                        super::entailment::SourceProofCertificateFailure::RepeatedUse {
-                            first,
-                            repeated,
-                        } => crate::SourceProofObligation::RepeatedUse { first, repeated },
-                        super::entailment::SourceProofCertificateFailure::UseCapacity {
-                            maximum,
-                            actual,
-                        } => crate::SourceProofObligation::UseCapacity { maximum, actual },
-                        super::entailment::SourceProofCertificateFailure::ArithmeticOverflow => {
-                            crate::SourceProofObligation::CertificateArithmeticOverflow
-                        }
-                        super::entailment::SourceProofCertificateFailure::FormationCapacity => {
-                            crate::SourceProofObligation::CertificateFormationCapacity
-                        }
-                        super::entailment::SourceProofCertificateFailure::InvalidFactor {
-                            use_index,
-                        } => crate::SourceProofObligation::InvalidUseFactor { use_index },
-                        super::entailment::SourceProofCertificateFailure::NonlinearResidual => {
-                            crate::SourceProofObligation::NonlinearCertificateSum
-                        }
-                    };
-                    let obligation = if let Some(failure) = outcome.check.source_failure {
-                        failure_obligation(failure)
-                    } else if outcome.check.redundant {
-                        crate::SourceProofObligation::RedundantUseBlock
-                    } else if let Some(failure) = outcome.check.certificate_failure {
-                        failure_obligation(failure)
-                    } else if let Some(index) = outcome.check.first_unproved_premise {
-                        crate::SourceProofObligation::Premise(index)
-                    } else if let Some(failure) = outcome.check.residual_failure {
-                        failure_obligation(failure)
-                    } else if !outcome.check.combination {
-                        crate::SourceProofObligation::Combination
-                    } else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    let mechanical_fix = match obligation {
-                        crate::SourceProofObligation::Premise(_) => {
-                            "establish this use relation from facts already available before the invariant statement, or replace it with a relation AUTO can prove in that same entering context"
-                        }
-                        crate::SourceProofObligation::Combination => {
-                            "rewrite the invariant target, use relations, or explicit positive factors so their source-order weighted sum leaves a residual proved by the fixed direct L0 or interval rule"
-                        }
-                        crate::SourceProofObligation::RedundantUseBlock => {
-                            "remove the use block; AUTO already proves this invariant target from the same entering context in this specification version"
-                        }
-                        crate::SourceProofObligation::RepeatedUse { .. } => {
-                            "replace repeated normalized use relations with one use carrying their combined explicit positive factor"
-                        }
-                        crate::SourceProofObligation::UseCapacity { .. } => {
-                            "split this local certificate into named intermediate invariants so every written use list is within the fixed structural capacity"
-                        }
-                        crate::SourceProofObligation::CertificateArithmeticOverflow => {
-                            "split or rescale this certificate so every source-order proof-domain coefficient and constant operation fits i128"
-                        }
-                        crate::SourceProofObligation::CertificateFormationCapacity => {
-                            "split this certificate into smaller named intermediate invariants whose canonical affine shapes fit the fixed formation capacities"
-                        }
-                        crate::SourceProofObligation::InvalidUseFactor { .. } => {
-                            "write a canonical positive bare-decimal factor, or omit the factor when it is one"
-                        }
-                        crate::SourceProofObligation::NonlinearCertificateSum => {
-                            "the multiplied operand must be one the checker holds as a single value — a parameter or a call result — because a locally derived one is expanded into its own operands and no admitted product then matches the sum; take it as a parameter, or scale the premise by a bare decimal instead"
-                        }
-                    };
-                    Err(CheckStop::source_issue(SemanticIssue {
-                        rule: SemanticRule::Prf1,
-                        location: SemanticLocation::SourceNode(
-                            rejection_node_path.clone(),
-                            self.tree.coordinate(node)?,
-                        ),
-                        kind: SemanticIssueKind::UndischargedSourceProof {
-                            name: outcome.name.clone(),
-                            obligation,
-                            mechanical_fix,
-                        },
-                    }))
-                }
-                Rejection::Obligation(outcome) => {
-                    let residual = outcome
-                        .residual
-                        .clone()
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let node = self
-                        .tree
-                        .node_with_path(&outcome.node_path)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let location = SemanticLocation::SourceNode(
-                        outcome.node_path.clone(),
-                        self.tree.coordinate(node)?,
-                    );
-                    Err(CheckStop::source_issue(match outcome.family {
-                        super::entailment::ObligationFamily::Bounds => SemanticIssue {
-                            rule: SemanticRule::Op4,
-                            location,
-                            kind: SemanticIssueKind::UndischargedBoundsObligation {
-                                residual,
-                                mechanical_fix: "when the relation must hold, establish the residual with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise restructure the access",
-                            },
-                        },
-                        super::entailment::ObligationFamily::IntegerDomain => SemanticIssue {
-                            rule: SemanticRule::Op2,
-                            location,
-                            kind: SemanticIssueKind::UndischargedIntegerDomainObligation {
-                                residual,
-                                disposition: if outcome.refuted {
-                                    StaticObligationDisposition::Refuted
-                                } else {
-                                    StaticObligationDisposition::Unproved
-                                },
-                                mechanical_fix: "when the relation must hold, establish the fixed `.defined` normalization with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise use an available total non-exact row or restructure the arithmetic",
-                            },
-                        },
-                        super::entailment::ObligationFamily::AllocationFit => SemanticIssue {
-                            rule: SemanticRule::Op9,
-                            location,
-                            kind: SemanticIssueKind::UndischargedAllocationFitObligation {
-                                residual,
-                                mechanical_fix: "the allocation's own size arithmetic must stay inside u64: bound the count with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when the refusal is intended program behavior; otherwise restructure the allocation",
-                            },
-                        },
-                        super::entailment::ObligationFamily::ConversionDomain => SemanticIssue {
-                            rule: SemanticRule::Op6,
-                            location,
-                            kind: SemanticIssueKind::UndischargedConversionDomainObligation {
-                                residual,
-                                disposition: if outcome.refuted {
-                                    StaticObligationDisposition::Refuted
-                                } else {
-                                    StaticObligationDisposition::Unproved
-                                },
-                                mechanical_fix: "establish this cvt.defined domain with a verified requirement, an integer range invariant, or explicit finite proof steps; use a dominating cvt.defined condition when refusal is intended behavior, or use cvt.checked to return the failed conversion",
-                            },
-                        },
-                        super::entailment::ObligationFamily::CallSeparation
-                        | super::entailment::ObligationFamily::ExchangeSeparation => {
-                            SemanticIssue {
-                                rule: if outcome.family
-                                    == super::entailment::ObligationFamily::ExchangeSeparation
-                                {
-                                    SemanticRule::Op11
-                                } else {
-                                    SemanticRule::Eff5
-                                },
-                                location,
-                                kind: SemanticIssueKind::UndischargedCallSeparation {
-                                    residual,
-                                    mechanical_fix: "prove the two positions distinct before this call, or pass one of them",
-                                },
-                            }
-                        }
-                        super::entailment::ObligationFamily::ReferencePreservation(query) => {
-                            let use_site = function
-                                .call_separations
-                                .get(query as usize)
-                                .and_then(|query| query.reference_use.as_ref())
-                                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                            SemanticIssue {
-                                rule: SemanticRule::Ref2,
-                                location,
-                                kind: SemanticIssueKind::InvalidReferenceUse {
-                                    binder: use_site.binder.clone(),
-                                    event: use_site.event,
-                                    mechanical_fix: references::REF2_FORM_AGAIN,
-                                },
-                            }
-                        }
-                        super::entailment::ObligationFamily::RangeFormation => SemanticIssue {
-                            rule: SemanticRule::Ref4,
-                            location,
-                            kind: SemanticIssueKind::UndischargedRangeFormationObligation {
-                                residual,
-                                mechanical_fix: "establish lo <= hi and hi <= x.len with a verified requirement, a source invariant, or explicit finite proof steps; otherwise restructure the range",
-                            },
-                        },
-                    }))
-                }
-                Rejection::Call(outcome) => {
-                    let node = self
-                        .tree
-                        .node_with_path(&outcome.node_path)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let signature = self
-                        .signatures
-                        .get(outcome.callee.0 as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let disposition = match outcome.disposition {
-                        CallGoalDisposition::Discharged => {
-                            return Err(SemanticCompilerFailure::InvalidResolution.into());
-                        }
-                        CallGoalDisposition::Refuted => crate::CallRequirementDisposition::Refuted,
-                        CallGoalDisposition::Unproved => {
-                            crate::CallRequirementDisposition::Unproved
-                        }
-                    };
-                    // [OP-14] `free_empty` has its own site: "An undischarged
-                    // obligation is a hard error citing OP-14 at the complete
-                    // `call`, rendering the residual". The requirement reaches
-                    // the checker on the ordinary call-requirement path, so
-                    // the rule and the restructuring are selected here rather
-                    // than by a second judgment of the same goal.
-                    if signature.name == "free_empty" {
-                        return Err(CheckStop::source_issue(SemanticIssue {
-                            rule: SemanticRule::Op14,
-                            location: SemanticLocation::SourceNode(
-                                outcome.node_path.clone(),
-                                self.tree.coordinate(node)?,
-                            ),
-                            kind: SemanticIssueKind::UndischargedEmptyRunRelease {
-                                residual: outcome.rendered_goal.clone(),
-                                mechanical_fix: "empty the window and establish its zero length at this point; otherwise take every element out and consume it",
-                            },
-                        }));
-                    }
-                    let mechanical_fix = if first_ephemeral_argument(&outcome.goal.root).is_some() {
-                        "bind that argument or referent value with one preceding ordinary let, establish the entire instantiated requirement over that binding, and pass the binding, borrowing it when the parameter mode requires a borrow"
-                    } else {
-                        "when the call is required to succeed, establish the entire instantiated callee requirement with a verified requirement, a source invariant, or explicit finite proof steps before the call; use a dominating branch only when rejection is intended program behavior; otherwise restructure the call"
-                    };
-                    Err(CheckStop::source_issue(SemanticIssue {
-                        rule: SemanticRule::Fn8,
-                        location: SemanticLocation::SourceNode(
-                            outcome.node_path.clone(),
-                            self.tree.coordinate(node)?,
-                        ),
-                        kind: SemanticIssueKind::UndischargedCallRequirement(Box::new(
-                            crate::UndischargedCallRequirementDetail {
-                                concrete_callee: signature.symbol.clone(),
-                                requires_clause: outcome.requires_clause.clone(),
-                                instantiated_goal: outcome.rendered_goal.clone(),
-                                disposition,
-                                mechanical_fix,
-                            },
-                        )),
-                    }))
-                }
-            };
-        }
-
-        // PRE-1 signature contracts have a declaration premise, not selected
-        // WF return statements. Their ordinary aggregate was published by
-        // the same entailment schedule before caller goals were checked.
-        if function.body.is_none()
-            || matches!(
-                function.entailment.body_disposition,
-                super::model::CheckedBodyDisposition::Uninhabited { .. }
-            )
-        {
-            return Ok(());
-        }
-        for proof in &function.entailment.postconditions {
-            if proof.exits.is_empty() {
-                let node = self
-                    .tree
-                    .node_with_path(&proof.selector)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                return Err(CheckStop::source_issue(SemanticIssue {
-                    rule: SemanticRule::Fn9,
-                    location: SemanticLocation::SourceNode(
-                        proof.selector.clone(),
-                        self.tree.coordinate(node)?,
-                    ),
-                    kind: SemanticIssueKind::NoSelectedNormalExit {
-                        residual: "no selected normal exit",
-                    },
-                }));
-            }
-            let Some(exit) = proof.exits.iter().find(|exit| {
-                exit.disposition != super::entailment::PostconditionDisposition::Discharged
-            }) else {
-                continue;
-            };
-            let disposition = match exit.disposition {
-                super::entailment::PostconditionDisposition::Discharged => {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                super::entailment::PostconditionDisposition::Refuted => {
-                    crate::PostconditionProofDisposition::Refuted
-                }
-                super::entailment::PostconditionDisposition::Unproved => {
-                    crate::PostconditionProofDisposition::Unproved
-                }
-            };
-            let node = self
-                .tree
-                .node_with_path(&exit.statement)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            return Err(CheckStop::source_issue(SemanticIssue {
-                rule: SemanticRule::Fn9,
-                location: SemanticLocation::SourceNode(
-                    exit.statement.clone(),
-                    self.tree.coordinate(node)?,
-                ),
-                kind: SemanticIssueKind::UndischargedPostcondition(Box::new(
-                    crate::UndischargedPostconditionDetail {
-                        concrete_function: function.symbol.clone(),
-                        postcondition: proof.block.clone(),
-                        conjunct: proof.relation_ordinal,
-                        selector: proof.selector.clone(),
-                        relation: exit.residual.clone(),
-                        disposition,
-                    },
-                )),
-            }));
-        }
-        Ok(())
     }
 }

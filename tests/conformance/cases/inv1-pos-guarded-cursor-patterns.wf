@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn count_equal_prefix(left: &[u64], right: &[u64]) -> matched: u64 reads(left), reads(right) {
   doc "Paired cursors kept equal by two orderings, walked under a shared bound.";
   let left_len = deref(left).len;

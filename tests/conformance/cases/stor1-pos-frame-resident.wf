@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Storage class is a function of type [STOR-1]: an i32 local is frame-resident with no per-binding storage annotation and no default clause.";
   let a = 7_i32;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Tri {
   Lo();
   Mid();
@@ -6,7 +9,7 @@ enum Tri {
 
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1 amendment: tag-only enums are copy - matched twice, passed bare, loop-carried, and set-mutated without move.";
-  let t = Mid();
+  let t = Tri::Mid();
   match t {
     Lo() => {
     }

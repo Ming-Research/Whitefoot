@@ -1,0 +1,48 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn at_least(value: u64, floor: u64) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn rows(first: u8, second: u8, wide: u64) -> result: unit pure {
+  let a = cvt::<u8, u64>(first);
+  let b = cvt::<u8, u64>(second);
+  let sum = a + b;
+  at_most(value: sum, limit: 510_u64);
+  at_least(value: sum, floor: a);
+  at_least(value: sum, floor: b);
+  let wrapped = a +wrap b;
+  at_most(value: wrapped, limit: 510_u64);
+  at_least(value: wrapped, floor: a);
+  let back = sum - b;
+  at_most(value: back, limit: sum);
+  let raised = a + 300_u64;
+  let lowered = raised -wrap b;
+  at_least(value: lowered, floor: 45_u64);
+  at_most(value: lowered, limit: raised);
+  let product = a * b;
+  at_most(value: product, limit: 65025_u64);
+  let scaled = a *wrap 256_u64;
+  at_most(value: scaled, limit: 65280_u64);
+  let lifted = wide +sat b;
+  at_least(value: lifted, floor: wide);
+  at_least(value: lifted, floor: b);
+  let drained = wide -sat b;
+  at_most(value: drained, limit: wide);
+  let capped = a *sat b;
+  at_most(value: capped, limit: 65025_u64);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

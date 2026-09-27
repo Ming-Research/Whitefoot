@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn takesint(n: i32) -> function_result: i32 pure {
   doc "Parameter n is an own i32 [FN-1].";
   return n;

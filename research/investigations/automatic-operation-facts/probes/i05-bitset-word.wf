@@ -1,0 +1,16 @@
+fn test_bit(words: &[u64], at: u64) -> result: Bool reads(words) contract {
+  requires at < 256_u64;
+  requires 4_u64 <= deref(words).len;
+} {
+  let word_index = ishr(at, 6_u32);
+  let word = deref(words)[word_index];
+  let bit = iand(at, 63_u64);
+  let amount = cvt::<u64, u32>(bit);
+  let selected = ishr.wrap(word, amount);
+  let low = iand(selected, 1_u64);
+  return low == 1_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn first(start: u64, end: u64) -> result: u64 pure contract {
   requires start <= end;
   requires end <= 8_u64;

@@ -12,10 +12,9 @@
 ; every element type here being `u64`, `f64` or `u8`, none of which [OP-9]
 ; aligns past 8. The same pointer is handed back as the retained handle, which
 ; is the only value the release row accepts.
+; A range argument crosses the call as its element pointer and count.
 define void @wf_bench_prefix(ptr %data, i64 %count, i64 %block_size, i64 %buckets, ptr %out, ptr %out_len, ptr %out_cell) {
-  %a = insertvalue { ptr, i64 } poison, ptr %data, 0
-  %b = insertvalue { ptr, i64 } %a, i64 %count, 1
-  %r = call ptr @wf_prefix({ ptr, i64 } %b, i64 %block_size)
+  %r = call ptr @wf_prefix(ptr %data, i64 %count, i64 %block_size)
   %n = load i64, ptr %r
   %p = getelementptr inbounds i8, ptr %r, i64 8
   store ptr %p, ptr %out

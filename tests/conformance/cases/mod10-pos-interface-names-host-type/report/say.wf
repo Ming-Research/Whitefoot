@@ -1,0 +1,15 @@
+alias io = std::io;
+
+fn say(factory: &io::HandleFactory, output: &io::OutputStream) -> result: u64 writes(factory), writes(output) {
+  let bytes = array_filled::<u8, 2>(value: 111_u8);
+  set bytes[1_u64] = 10_u8;
+  let window = &bytes[0_u64..2_u64];
+  match io::write_once(factory: factory, output: output, source: window, start: 0_u64, end: 2_u64) {
+    Ok(value: written) => {
+      return written;
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}

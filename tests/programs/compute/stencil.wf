@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn stencil_row(top: &[f64], middle: &[f64], bottom: &[f64], output: &[f64]) -> result: u64 reads(top), reads(middle), reads(bottom), writes(output) contract {
   define width = deref(output).len;
   requires 3_u64 <= width;

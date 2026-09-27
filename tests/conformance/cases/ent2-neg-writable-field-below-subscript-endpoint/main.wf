@@ -1,0 +1,15 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-2: a subscripted place is a term only when its final step selects a readonly field. weight is writable, so entries[1].weight is no clause (b) term and the endpoint is rejected with the let-binding restructuring.";
+  let narrow = kinds::make_entry(width: 3_u64, weight: 3_u64);
+  let entries = array_filled::<Entry, 4>(value: narrow);
+  let total = 0_u64;
+  for (c in 0_u64..entries[1_u64].weight) {
+    set total = total +wrap 1_u64;
+  }
+  return exit_status(code: 0_u8);
+}

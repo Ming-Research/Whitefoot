@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The ordinary exit_status function returns a value whose selected native launcher observes exit 0. This is library/build adapter behavior under PROG-3, with no entry program kind or target qualification.";
   return exit_status(code: 0_u8);

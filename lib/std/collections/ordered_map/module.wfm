@@ -1,0 +1,53 @@
+public struct OrderedPair<K, V> {
+  public key: K;
+  public value: V;
+}
+
+public struct OrderedEntry<K, V, N> {
+  public readonly pair: OrderedPair<K, V>;
+  public readonly after: Slots<Box<N>, 1>;
+}
+
+public struct OrderedNode<K, V> {
+  public readonly leading: Slots<Box<OrderedNode<K, V>>, 1>;
+  public readonly entries: Slots<OrderedEntry<K, V, OrderedNode<K, V>>, 15>;
+}
+
+public struct OrderedMap<K, V, const ceiling: u64> {
+  public readonly root: Slots<Box<OrderedNode<K, V>>, 1>;
+  public readonly length: u64;
+}
+
+public enum OrderedReturnReason {
+  OrderedReplaced();
+  OrderedFull();
+}
+
+public enum OrderedPut<K, V> {
+  OrderedInserted();
+  OrderedReturned(public reason: OrderedReturnReason, public pair: OrderedPair<K, V>);
+}
+
+public interface OrderedKey<K, E> {
+  fn compare(env: &E, left: &K, right: &K) -> order: i32 reads(env), reads(left), reads(right);
+}
+
+public fn ordered_map_new<K, V, const ceiling: u64>() -> result: OrderedMap<K, V, ceiling> pure doc "Creates an empty map that allocates no node.";
+
+public fn ordered_map_len<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> length: u64 reads(map) contract {
+  ensures length == deref(map).length;
+} doc "Reports the number of pairs the map holds.";
+
+public fn ordered_map_put<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: OrderedPut<K, V> reads(env), writes(map) doc "Inserts an owned pair in key order: OrderedInserted, or OrderedReturned with OrderedReplaced and the old pair, or OrderedFull and the offered pair at the logical ceiling, where replacement stays available.";
+
+public fn ordered_map_remove<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<OrderedPair<K, V>> reads(key), reads(env), writes(map) doc "Removes the pair stored under key and returns it owned, merging and releasing nodes and contracting the root as needed; None reports an absent key.";
+
+public fn ordered_map_lookup<interface OrderedKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) doc "Lends the value stored under key, with that key, to observe and returns its owned result in Ok; Err reports an absent key.";
+
+public fn ordered_map_edit<interface OrderedKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) doc "Lets update write the value stored under key while reading the key, and returns its owned result in Ok; Err reports an absent key.";
+
+public fn ordered_map_each<K, V, F, fn visit(env: &F, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, env: &F) -> result: unit reads(map), writes(env) doc "Lends every pair to visit in key order.";
+
+public fn ordered_map_range<interface OrderedKey<K, E>, V, F, fn visit(env: &F, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, lower: &K, upper: &K, key_env: &E, visit_env: &F) -> result: unit reads(map), reads(lower), reads(upper), reads(key_env), writes(visit_env) doc "Lends every pair whose key lies in the half-open interval from lower to upper to visit, in key order.";
+
+public fn ordered_map_free<K, V, F, fn consume(env: &F, key: K, value: V) -> result: unit writes(env), const ceiling: u64>(map: OrderedMap<K, V, ceiling>, env: &F) -> result: unit writes(env) doc "Consumes every remaining key and value through consume, nodrop owners included, and releases every node.";

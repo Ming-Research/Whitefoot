@@ -1,0 +1,15 @@
+fn prefix_total(values: &[u32], count: u64) -> result: u32 reads(values) contract {
+  requires 16_u64 <= deref(values).len;
+} {
+  let limit = imin(count, 16_u64);
+  let total = 0_u32;
+  for (at in 0_u64..limit) {
+    let value = deref(values)[at];
+    set total = total +wrap value;
+  }
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

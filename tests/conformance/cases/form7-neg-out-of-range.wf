@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An out-of-range integer literal is a hard error at check time [FORM-7].";
   let a = 9999999999_i32;

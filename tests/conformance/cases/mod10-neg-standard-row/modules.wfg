@@ -1,0 +1,4 @@
+std::io: [];
+pkg: [];
+
+entry main = pkg::main;

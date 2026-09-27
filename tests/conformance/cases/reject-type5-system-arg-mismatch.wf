@@ -1,3 +1,7 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn take_args(args: Args) -> function_result: unit pure {
   doc "A helper accepts the admitted opaque Args type, while its command caller passes unit. Exact argument conformance rejects the value-type mismatch under TYPE-5.";
   return unit;

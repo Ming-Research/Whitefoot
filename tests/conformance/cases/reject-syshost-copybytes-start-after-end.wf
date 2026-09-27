@@ -1,5 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias host_copy_bytes = std::text::host_copy_bytes;
+
 fn main(inputs: Inputs) -> status: ExitStatus pure {
-  doc "The start greater than end refutes the ordinary PRE-1 function requirement start <= end. FN-8 rejects the call before lowering; no runtime fallback exists.";
+  doc "The start greater than end refutes the ordinary PRE-2 function requirement start <= end. FN-8 rejects the call before lowering; no runtime fallback exists.";
   let Inputs(args: arguments, cwd: root, handles: factory, ..) = move inputs;
   close_directory(factory: &factory, directory: move root);
   let bytes = box_array_filled::<u8>(count: 4_u64, value: 0_u8);

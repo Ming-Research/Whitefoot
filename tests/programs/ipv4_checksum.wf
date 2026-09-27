@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const ipv4_header: Array<u8, 20> =[69_u8, 0_u8, 0_u8, 84_u8, 0_u8, 0_u8, 64_u8, 0_u8, 64_u8, 1_u8, 0_u8, 0_u8, 192_u8, 168_u8, 0_u8, 1_u8, 192_u8, 168_u8, 0_u8, 199_u8];
 
 fn ipv4_checksum(header: &[u8]) -> result: u16 reads(header) contract {

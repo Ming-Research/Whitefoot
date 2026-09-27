@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn half_checked(x: i64) -> result: Result<i64, Overflow> pure {
   let d = x +checked x;
   let v = propagate d;

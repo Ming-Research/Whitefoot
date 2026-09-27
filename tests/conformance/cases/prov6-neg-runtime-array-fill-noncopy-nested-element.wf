@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill(row: Array<Box<u64>, 2>) -> result: unit pure {
   doc "A zero runtime count does not waive box_array_filled's copy bound. Array<Box<u64>, 2> owns affine elements and cannot satisfy that bound.";
   let rows = box_array_filled::<Array<Box<u64>, 2>>(count: 0_u64, value: move row);

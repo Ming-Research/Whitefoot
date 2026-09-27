@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn exchange(window: &Slots<Box<u64>, 2>, i: u64, j: u64) -> result: unit writes(window[i]), writes(window[j]) contract {
   requires i < deref(window).len;
   requires j < deref(window).len;

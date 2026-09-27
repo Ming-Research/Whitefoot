@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 interface Zeroed {
   doc "A formal declares function-kind signatures [FN-3].";
   fn zero() -> result: i32 pure;

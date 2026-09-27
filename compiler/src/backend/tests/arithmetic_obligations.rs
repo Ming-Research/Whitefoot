@@ -29,16 +29,16 @@ fn wrapping_increment(x: u64) -> result: u64 pure {
   return stepped;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = increment(x: 6_u64);
   if total != 7_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let around = wrapping_increment(x: 6_u64);
   if around != 7_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 

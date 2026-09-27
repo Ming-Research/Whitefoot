@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn measure(taken: Slots<u8, 4>) -> measured: u64 pure contract {
   ensures measured <= taken.len;
   ensures taken.len < measured;

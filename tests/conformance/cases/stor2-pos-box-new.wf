@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Construction: box_new(value: v) returns own Box<T> with no store argument and no failure arm, because allocation is total; content is read as the field inner.";
   let b = box_new::<i32>(value: 5_i32);

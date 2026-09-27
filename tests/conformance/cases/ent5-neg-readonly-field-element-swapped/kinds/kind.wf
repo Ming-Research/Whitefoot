@@ -1,0 +1,5 @@
+fn make_entry(width: u64, weight: u64) -> made: Entry pure {
+  doc "Inside its declaring module a readonly field is an ordinary field, so the construction supplies it.";
+  let made = Entry(width: width, weight: weight);
+  return move made;
+}

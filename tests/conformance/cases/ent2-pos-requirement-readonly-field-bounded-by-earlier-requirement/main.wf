@@ -1,0 +1,38 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Node = pkg::kinds::Node;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn child_sum(nodes: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(nodes), reads(kids) contract {
+  define width = deref(nodes)[i].count;
+  define wider = width + 1_u64;
+  requires i < deref(nodes).len;
+  requires wider <= deref(kids).len + 1_u64;
+} {
+  doc "ENT-2, FN-8, OP-4: the definitions are erased by expansion, so their place deref(nodes)[i] is formed in the second requirement, the first to expand them, where the first requirement discharges i < deref(nodes).len. S4 then bounds the element's count and the counted endpoint discharges every child read.";
+  let acc = 0_u64;
+  for (c in 0_u64..deref(nodes)[i].count) {
+    let kid = deref(kids)[c];
+    set acc = acc +wrap kid;
+  }
+  return acc;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller discharges both instantiated requirements from its own guards; the callee sums two children of five.";
+  let arena = slots_new::<Node, 4>();
+  let node = kinds::make_node(count: 2_u64, weight: 1_u64);
+  place_back(window: &arena, value: node);
+  let kids = array_filled::<u64, 3>(value: 5_u64);
+  let children = &kids[0_u64..3_u64];
+  if 0_u64 < arena.len {
+    if arena[0_u64].count <= deref(children).len {
+      let total = child_sum(nodes: &arena, kids: children, i: 0_u64);
+      if total == 10_u64 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn narrow_direct(x: i32) -> result: i8 pure {
   let narrowed = cvt.checked::<i32, i8>(x);
   return narrowed;

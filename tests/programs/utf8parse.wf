@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const utf8_input: Array<u8, 15> =[65_u8, 194_u8, 162_u8, 226_u8, 130_u8, 172_u8, 240_u8, 159_u8, 152_u8, 128_u8, 194_u8, 65_u8, 255_u8, 226_u8, 130_u8];
 
 fn parse(out: &[u32], src: &[u8]) -> result: u64 reads(src), writes(out) contract {

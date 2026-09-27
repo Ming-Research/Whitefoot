@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn allocate() -> result: u8 pure {
+  let cell = box_new::<u8>(value: 1_u8);
+  return 0_u8;
+}
+
+fn run<fn work() -> result: u8 pure>() -> result: u8 pure {
+  doc "The instance's body calls its function-kind actual, so the allocating actual belongs to the entry's closure and introduces the requirement there.";
+  let code = work();
+  return code;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = run::<fn allocate>();
+  return exit_status(code: code);
+}

@@ -1,0 +1,3 @@
+alias io = std::io;
+
+public fn say(factory: &io::HandleFactory, output: &io::OutputStream) -> result: u64 writes(factory), writes(output) doc "Writes two bytes and returns how many were written.";

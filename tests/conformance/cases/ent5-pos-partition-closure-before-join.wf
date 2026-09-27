@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64, half: u64) -> result: u8 reads(b) {
   doc "The lower partition reaches i below the length through i below half at most the length, while the upper partition proves it directly. Each predecessor is closed before the join [ENT-4], which must preserve their common consequence [ENT-5, OP-4].";
   let spare = deref(b).len;

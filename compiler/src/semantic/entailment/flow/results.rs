@@ -10,7 +10,7 @@ pub(super) struct ResultEvidence {
     pub(super) definitely_err: bool,
 }
 
-impl Analyzer<'_, '_> {
+impl Input<'_, '_> {
     fn result_payload_type(&self, ty: CheckedType) -> Option<IntegerType> {
         let CheckedType::Nominal(id) = ty else {
             return None;
@@ -27,16 +27,20 @@ impl Analyzer<'_, '_> {
         };
         fragment_type(field.ty)
     }
+}
 
+impl Reasoning<'_, '_, '_> {
     fn result_context(&mut self, ty: CheckedType) -> Option<ResultEvidence> {
-        let ty = self.result_payload_type(ty)?;
+        let ty = self.input.result_payload_type(ty)?;
         Some(ResultEvidence {
-            payload: self.terms.intern(TermKind::ResultPayload(ty)),
+            payload: self.vocabulary.terms.intern(TermKind::ResultPayload(ty)),
             facts: FactState::new(),
             definitely_err: false,
         })
     }
+}
 
+impl Vocabulary {
     /// Merge ordinary facts into exactly one conditional context. A guard's
     /// contradiction remains local until that value's success is selected.
     pub(super) fn refresh_result(&mut self, result: &mut ResultEvidence, ordinary: &FactState) {
@@ -120,7 +124,7 @@ impl Analyzer<'_, '_> {
             if !relation.terms().contains(&from) {
                 continue;
             }
-            let substituted = Self::replace_relation_term(&relation, from, to);
+            let substituted = replace_relation_term(&relation, from, to);
             let parent = self.derivations.intern(DerivationNode::ResultTransport {
                 statement: statement.clone(),
                 from,
@@ -132,7 +136,9 @@ impl Analyzer<'_, '_> {
         }
         target
     }
+}
 
+impl Analyzer<'_, '_> {
     /// Read the value before its own consuming transfer. Calls supply their
     /// evidence separately, after the successful call's ordered effects.
     pub(super) fn capture_result(
@@ -141,7 +147,7 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &ProofFlowState,
     ) -> Option<ResultEvidence> {
-        if matches!(expression, CheckedExpression::Binding { binding, .. } if self.is_holder(*binding))
+        if matches!(expression, CheckedExpression::Binding { binding, .. } if is_holder(*binding))
             || matches!(
                 expression,
                 CheckedExpression::BorrowAddressed { .. }
@@ -150,13 +156,13 @@ impl Analyzer<'_, '_> {
         {
             return None;
         }
-        let mut result = self.result_context(expression.ty())?;
+        let mut result = self.reasoning().result_context(expression.ty())?;
         match expression {
-            CheckedExpression::Binding { binding, .. } if !self.is_holder(*binding) => {
+            CheckedExpression::Binding { binding, .. } if !is_holder(*binding) => {
                 if let Some(held) = state.results.get(binding) {
                     result = held.clone();
                 }
-                self.refresh_result(&mut result, &state.facts);
+                self.vocabulary.refresh_result(&mut result, &state.facts);
             }
             CheckedExpression::ConstructEnum {
                 variant, fields, ..
@@ -164,27 +170,36 @@ impl Analyzer<'_, '_> {
                 let [value] = fields.as_slice() else {
                     return Some(result);
                 };
-                if let Some(term) = self.read_operand(value) {
-                    result.facts =
-                        self.substitute_result_facts(statement, &state.facts, term, result.payload);
+                if let Some(term) = self.reasoning().read_operand(value) {
+                    result.facts = self.vocabulary.substitute_result_facts(
+                        statement,
+                        &state.facts,
+                        term,
+                        result.payload,
+                    );
                     // A literal or a previously unmentioned binding needs
                     // its exact value equality as well as its consequences.
-                    let event = self.proof_event(FlowEventKind::S5, Some(statement));
+                    let event = self
+                        .vocabulary
+                        .proof_event(FlowEventKind::S5, Some(statement));
                     result.facts.establish(
                         &Relation::Equal {
                             left: result.payload,
                             right: term,
                             difference: 0,
                         },
-                        &mut self.derivations,
+                        &mut self.vocabulary.derivations,
                         event,
                     );
                 }
             }
             CheckedExpression::ConstructEnum { variant, .. } if *variant == 1 => {
-                let parent = self.derivations.intern(DerivationNode::ResultErr {
-                    statement: statement.clone(),
-                });
+                let parent = self
+                    .vocabulary
+                    .derivations
+                    .intern(DerivationNode::ResultErr {
+                        statement: statement.clone(),
+                    });
                 result.facts = FactState::contradictory(parent);
                 result.definitely_err = true;
             }
@@ -199,9 +214,11 @@ impl Analyzer<'_, '_> {
                 // even when its input is outside the tracked-place vocabulary.
                 // Existing sources publish only the input's admitted image;
                 // no identity is invented for an indirect mutable read.
-                self.refresh_result(&mut result, &state.facts);
+                self.vocabulary.refresh_result(&mut result, &state.facts);
                 let (minimum, maximum) = type_range(*source);
-                let event = self.proof_event(FlowEventKind::S5, Some(statement));
+                let event = self
+                    .vocabulary
+                    .proof_event(FlowEventKind::S5, Some(statement));
                 for relation in [
                     Relation::Bound {
                         left: result.payload,
@@ -216,7 +233,7 @@ impl Analyzer<'_, '_> {
                 ] {
                     result
                         .facts
-                        .establish(&relation, &mut self.derivations, event);
+                        .establish(&relation, &mut self.vocabulary.derivations, event);
                 }
                 self.establish_value_image(
                     statement,
@@ -226,11 +243,24 @@ impl Analyzer<'_, '_> {
                     &mut None,
                 );
             }
+            // [ENT-5] a checked integer row's success payload is the exact
+            // row's mathematical result, with that row's [ENT-3.S7] facts.
+            CheckedExpression::IntegerOperation { .. } => {
+                self.vocabulary.refresh_result(&mut result, &state.facts);
+                self.establish_checked_payload(
+                    statement,
+                    result.payload,
+                    expression,
+                    &mut result.facts,
+                );
+            }
             _ => {}
         }
         Some(result)
     }
+}
 
+impl Reasoning<'_, '_, '_> {
     pub(super) fn finish_result(
         &mut self,
         expression: &CheckedExpression,
@@ -244,9 +274,9 @@ impl Analyzer<'_, '_> {
         }
         let Some(result) = result else { return };
         let mut kills = Vec::new();
-        self.collect_expression_kills(expression, &mut kills);
+        self.input.collect_expression_kills(expression, &mut kills);
         self.apply_kills_one(&state.separations, &mut result.facts, &kills);
-        self.refresh_result(result, &state.facts);
+        self.vocabulary.refresh_result(result, &state.facts);
         let (
             Some(prepared),
             CheckedExpression::UserCall {
@@ -285,26 +315,31 @@ impl Analyzer<'_, '_> {
             ) {
                 continue;
             }
-            if let Some(parent) = self.retain_postcondition_call(&instantiated, available, prepared)
+            if let Some(parent) =
+                self.vocabulary
+                    .retain_postcondition_call(&instantiated, available, prepared)
             {
-                let occurrence = self.s12_roots;
-                self.s12_roots = self
+                let occurrence = self.vocabulary.s12_roots;
+                self.vocabulary.s12_roots = self
+                    .vocabulary
                     .s12_roots
                     .checked_add(1)
                     .expect("S12 root identity fits u32");
-                self.derivations.add_root(
+                self.vocabulary.derivations.add_root(
                     DerivationRootKind::PostconditionConditional { occurrence },
                     parent,
                 );
                 result.facts.establish_from_proof(
                     &instantiated.relation,
                     parent,
-                    &self.derivations,
+                    &self.vocabulary.derivations,
                 );
             }
         }
     }
+}
 
+impl Vocabulary {
     pub(super) fn select_result(
         &mut self,
         statement: &crate::NodePath,
@@ -337,7 +372,9 @@ impl Analyzer<'_, '_> {
                 .establish_from_proof(&relation, parent, &self.derivations);
         }
     }
+}
 
+impl Reasoning<'_, '_, '_> {
     pub(super) fn kill_result_evidence(
         &mut self,
         state: &mut ProofFlowState,
@@ -348,7 +385,7 @@ impl Analyzer<'_, '_> {
         }
         let mut held = std::mem::take(&mut state.results);
         held.retain(|binding, _| {
-            let place = self.bound_place(*binding);
+            let place = bound_place(*binding);
             if events.iter().any(|event| match event {
                 KillEvent::Consume {
                     binding: source, ..
@@ -357,26 +394,30 @@ impl Analyzer<'_, '_> {
                     binding: source, ..
                 } => binding == source,
                 KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(&state.separations, &place, written)
-                }
+                | KillEvent::EntryImageHolderWrite { place: written, .. } => self
+                    .input
+                    .resolved_places_overlap(&state.separations, &place, written),
             }) {
                 return false;
             }
             true
         });
         if !held.is_empty() {
-            let ordinary = self.result_ordinary_snapshot(&state.facts);
+            let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
             for result in held.values_mut() {
-                self.refresh_result_from_snapshot(result, &ordinary);
+                self.vocabulary
+                    .refresh_result_from_snapshot(result, &ordinary);
                 self.apply_kills_one(&state.separations, &mut result.facts, events);
             }
         }
         state.results = held;
     }
+}
 
+impl Analyzer<'_, '_> {
     pub(super) fn exit_result_scopes(&mut self, state: &mut ProofFlowState, depth: usize) {
         let exited = self
+            .frames
             .scopes
             .iter()
             .skip(depth)
@@ -386,21 +427,24 @@ impl Analyzer<'_, '_> {
         let mut held = std::mem::take(&mut state.results);
         held.retain(|binding, _| !exited.contains(binding));
         if !held.is_empty() {
-            let ordinary = self.result_ordinary_snapshot(&state.facts);
+            let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
             for result in held.values_mut() {
-                self.refresh_result_from_snapshot(result, &ordinary);
+                self.vocabulary
+                    .refresh_result_from_snapshot(result, &ordinary);
                 materialize_closure_before_kill(
                     &mut result.facts,
-                    &self.terms,
-                    &self.goals,
-                    &mut self.derivations,
+                    &self.vocabulary.terms,
+                    &self.vocabulary.goals,
+                    &mut self.vocabulary.derivations,
                 );
                 self.exit_scopes_to_one(&mut result.facts, depth);
             }
         }
         state.results = held;
     }
+}
 
+impl Vocabulary {
     pub(super) fn join_result_evidence(
         &mut self,
         states: &[ProofFlowState],
@@ -493,14 +537,17 @@ mod tests {
             formal_hypothesis: false,
             id: FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
+            module: crate::ModuleId::BUNDLE_ROOT,
             name: String::new(),
             symbol: String::new(),
+            function_actuals: Vec::new(),
             region_parameters: Vec::new(),
             parameters: Vec::new(),
             result_mode: CheckedMode::Own,
             result: CheckedType::Unit,
             declared_state_writes: Vec::new(),
             requirements: Vec::new(),
+            requirement_places: Vec::new(),
             postconditions: Vec::new(),
             body: None,
             reference_origins: Vec::new(),
@@ -508,14 +555,16 @@ mod tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);
         let from = analyzer
+            .vocabulary
             .terms
             .intern(TermKind::ResultPayload(IntegerType::I32));
         let [middle, to] = [0, 1].map(|binding| {
-            analyzer.terms.intern(TermKind::Place(
+            analyzer.vocabulary.terms.intern(TermKind::Place(
                 ResolvedPlace::binding(BindingId(binding)),
                 IntegerType::I32,
             ))
@@ -523,12 +572,15 @@ mod tests {
         let statement = crate::NodePath {
             components: vec![0],
         };
-        let event = analyzer.derivations.event(FlowEventKind::S1, None);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
         let mut source = FactState::new();
         for (left, right, bound) in [(from, middle, 5), (to, middle, 10)] {
             source.establish(
                 &Relation::Bound { left, right, bound },
-                &mut analyzer.derivations,
+                &mut analyzer.vocabulary.derivations,
                 event,
             );
         }
@@ -537,7 +589,7 @@ mod tests {
             right: middle,
             difference: 0,
         };
-        source.establish(&distinct, &mut analyzer.derivations, event);
+        source.establish(&distinct, &mut analyzer.vocabulary.derivations, event);
         for relation in [
             Relation::Bound {
                 left: from,
@@ -547,6 +599,7 @@ mod tests {
             distinct,
         ] {
             let proof = analyzer
+                .vocabulary
                 .derivations
                 .intern(DerivationNode::PostconditionCall {
                     detail: Box::new(PostconditionCallDetail {
@@ -565,30 +618,33 @@ mod tests {
                         parents: Vec::new(),
                     }),
                 });
-            source.establish_from_proof(&relation, proof, &analyzer.derivations);
+            source.establish_from_proof(&relation, proof, &analyzer.vocabulary.derivations);
         }
         let unseeded = source.clone();
         materialize_closure_before_kill(
             &mut source,
-            &analyzer.terms,
-            &analyzer.goals,
-            &mut analyzer.derivations,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
         );
         // Retain alternate witnesses as well as the materialized selection,
         // so both transport paths must keep every distinct proof candidate.
         for (relation, proof) in unseeded.l0_candidates() {
-            source.establish_from_proof(&relation, proof, &analyzer.derivations);
+            source.establish_from_proof(&relation, proof, &analyzer.vocabulary.derivations);
         }
         let candidates =
             |state: &FactState| state.l0_candidates().into_iter().collect::<HashSet<_>>();
         assert_eq!(candidates(&source), candidates(&source.numeric_snapshot()));
-        let mut transported = analyzer.substitute_result_facts(&statement, &source, from, to);
+        let mut transported = analyzer
+            .vocabulary
+            .substitute_result_facts(&statement, &source, from, to);
         // Reference the previous full import, independent of closed-core reuse.
         let mut rebuilt = FactState::new();
         for (relation, parent) in source.l0_candidates() {
-            let substituted = Analyzer::replace_relation_term(&relation, from, to);
+            let substituted = replace_relation_term(&relation, from, to);
             let parent = if relation.terms().contains(&from) {
                 analyzer
+                    .vocabulary
                     .derivations
                     .intern(DerivationNode::ResultTransport {
                         statement: statement.clone(),
@@ -600,30 +656,30 @@ mod tests {
             } else {
                 parent
             };
-            rebuilt.establish_from_proof(&substituted, parent, &analyzer.derivations);
+            rebuilt.establish_from_proof(&substituted, parent, &analyzer.vocabulary.derivations);
         }
         for remove_calls in [false, true] {
             if remove_calls {
-                transported.retain_non_postcondition_candidates(&analyzer.derivations);
-                rebuilt.retain_non_postcondition_candidates(&analyzer.derivations);
+                transported.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
+                rebuilt.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
             }
             assert_eq!(candidates(&transported), candidates(&rebuilt));
             let actual = close(
                 &transported,
-                &analyzer.terms,
-                &analyzer.goals,
-                &mut analyzer.derivations,
+                &analyzer.vocabulary.terms,
+                &analyzer.vocabulary.goals,
+                &mut analyzer.vocabulary.derivations,
             );
             let expected = close(
                 &rebuilt,
-                &analyzer.terms,
-                &analyzer.goals,
-                &mut analyzer.derivations,
+                &analyzer.vocabulary.terms,
+                &analyzer.vocabulary.goals,
+                &mut analyzer.vocabulary.derivations,
             );
             assert!(!actual.contradictory());
             assert_eq!(actual.contradictory(), expected.contradictory());
-            for left in analyzer.terms.ids() {
-                for right in analyzer.terms.ids() {
+            for left in analyzer.vocabulary.terms.ids() {
+                for right in analyzer.vocabulary.terms.ids() {
                     assert_eq!(
                         actual.tight_bound(left, right),
                         expected.tight_bound(left, right)
@@ -640,6 +696,7 @@ mod tests {
         }
 
         let foreign = analyzer
+            .vocabulary
             .terms
             .intern(TermKind::ResultPayload(IntegerType::U8));
         let mut ordinary = FactState::new();
@@ -649,10 +706,10 @@ mod tests {
                 right: middle,
                 bound: 8,
             },
-            &mut analyzer.derivations,
+            &mut analyzer.vocabulary.derivations,
             event,
         );
-        let ordinary = analyzer.result_ordinary_snapshot(&ordinary);
+        let ordinary = analyzer.vocabulary.result_ordinary_snapshot(&ordinary);
         // Exercise both an unseeded conditional state and a previously
         // closed context whose core predates a newly registered term.
         for conditional in [unseeded, source] {
@@ -665,15 +722,22 @@ mod tests {
             let mut imported = conditional;
             // The former refresh loop is an independent reference for the union.
             for (relation, parent) in ordinary.l0_candidates() {
-                if !relation
-                    .terms()
-                    .iter()
-                    .any(|term| matches!(analyzer.terms.kind(*term), TermKind::ResultPayload(_)))
-                {
-                    imported.establish_from_proof(&relation, parent, &analyzer.derivations);
+                if !relation.terms().iter().any(|term| {
+                    matches!(
+                        analyzer.vocabulary.terms.kind(*term),
+                        TermKind::ResultPayload(_)
+                    )
+                }) {
+                    imported.establish_from_proof(
+                        &relation,
+                        parent,
+                        &analyzer.vocabulary.derivations,
+                    );
                 }
             }
-            analyzer.refresh_result_from_snapshot(&mut refreshed, &ordinary);
+            analyzer
+                .vocabulary
+                .refresh_result_from_snapshot(&mut refreshed, &ordinary);
             assert!(closure_is_seeded(&refreshed.facts));
             assert_eq!(
                 refreshed.facts.numeric_core_terms(),
@@ -690,25 +754,25 @@ mod tests {
                 if remove_calls {
                     refreshed
                         .facts
-                        .retain_non_postcondition_candidates(&analyzer.derivations);
-                    imported.retain_non_postcondition_candidates(&analyzer.derivations);
+                        .retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
+                    imported.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
                 }
                 assert_eq!(candidates(&refreshed.facts), candidates(&imported));
                 let actual = close(
                     &refreshed.facts,
-                    &analyzer.terms,
-                    &analyzer.goals,
-                    &mut analyzer.derivations,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.goals,
+                    &mut analyzer.vocabulary.derivations,
                 );
                 let expected = close(
                     &imported,
-                    &analyzer.terms,
-                    &analyzer.goals,
-                    &mut analyzer.derivations,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.goals,
+                    &mut analyzer.vocabulary.derivations,
                 );
                 assert!(!actual.contradictory());
-                for left in analyzer.terms.ids() {
-                    for right in analyzer.terms.ids() {
+                for left in analyzer.vocabulary.terms.ids() {
+                    for right in analyzer.vocabulary.terms.ids() {
                         assert_eq!(
                             actual.tight_bound(left, right),
                             expected.tight_bound(left, right)
@@ -727,12 +791,17 @@ mod tests {
                     Some(if remove_calls { 5 } else { -1 })
                 );
             }
-            let contradiction = analyzer.derivations.intern(DerivationNode::ResultErr {
-                statement: statement.clone(),
-            });
+            let contradiction = analyzer
+                .vocabulary
+                .derivations
+                .intern(DerivationNode::ResultErr {
+                    statement: statement.clone(),
+                });
             refreshed.facts = FactState::contradictory(contradiction);
             refreshed.definitely_err = true;
-            analyzer.refresh_result_from_snapshot(&mut refreshed, &ordinary);
+            analyzer
+                .vocabulary
+                .refresh_result_from_snapshot(&mut refreshed, &ordinary);
             assert!(refreshed.facts.all_derivable);
             assert_eq!(refreshed.facts.contradiction, Some(contradiction));
             assert!(refreshed.definitely_err);

@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Wrap {
   W(inner: i32);
 }
 
 fn make() -> return_value: Wrap pure {
   doc "GRAM-8: a misspelled field name is a hard error citing GRAM-8.";
-  return W(inr: 7_i32);
+  return Wrap::W(inr: 7_i32);
 }
 
 fn main() -> return_value: ExitStatus pure {

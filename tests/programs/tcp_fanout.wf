@@ -1,3 +1,25 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpListener = std::net::TcpListener;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_listen = std::net::tcp_listen;
+
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   match deref(error) {
     NotFound(code: native_code, origin: native_origin) => {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn length(window: &Slots<u8, 4>) -> result: Result<u64, u8> reads(window) contract {
   ensures when Ok(value: size): size == deref(window).len;
 } {

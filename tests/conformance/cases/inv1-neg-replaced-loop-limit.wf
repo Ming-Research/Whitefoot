@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn loopy2(limit: u8, bump: u8) -> result: u8 pure contract {
   requires limit <= 5_u8;
 } {

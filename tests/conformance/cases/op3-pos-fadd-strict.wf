@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fsum(a: f32, b: f32) -> return_value: f32 pure {
   doc "A float op that ROUNDS carries .strict [OP-3]: fadd.strict is IEEE-754 with no reassociation and no contraction.";
   return fadd.strict(a, b);

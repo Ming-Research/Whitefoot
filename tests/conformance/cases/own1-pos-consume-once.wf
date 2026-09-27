@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum Sign {
   Neg();
   Zero();
@@ -6,7 +9,7 @@ nocopy enum Sign {
 
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1: an affine value (own enum) is consumed by exactly one match-move.";
-  let s = Pos();
+  let s = Sign::Pos();
   match move s {
     Neg() => {
       return exit_status(code: 0_u8);

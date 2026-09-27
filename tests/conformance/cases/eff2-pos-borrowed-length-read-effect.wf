@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn length(values: &Slots<u8, 8>) -> result: u64 reads(values) {
   doc "A measure read is a place form that performs no operation and exhibits reads(values.len), a path below the declared reads(values) [OP-15, EFF-2, MSR-1]; the guarded element read beside it exhibits reads(values) itself, and the declared row covers both.";
   let n = deref(values).len;

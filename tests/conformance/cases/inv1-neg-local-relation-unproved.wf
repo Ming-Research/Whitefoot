@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn clamp_hint(x: u8, limit: u8) -> result: u8 pure {
   invariant within_cap: x <= limit;
   return x;

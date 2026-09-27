@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn clamp_range(value: i32, floor: i32, ceiling: i32) -> result: i32 pure contract {
   requires value >= floor;
   requires value <= ceiling;

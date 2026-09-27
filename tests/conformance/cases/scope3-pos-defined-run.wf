@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An accepted program has defined behavior and runs to normal exit [SCOPE-3].";
   let a = 20_i32;

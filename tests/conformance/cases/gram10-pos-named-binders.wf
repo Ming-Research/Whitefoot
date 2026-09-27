@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "GRAM-10: named match binders - each field written as field:binder (a fresh IDENT) in declared order.";
   let a = 40_i32;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn first_of(table: &Slots<u32, 4>) -> value: u32 reads(table) contract {
   requires deref(table).len > 0_u64;
 } {

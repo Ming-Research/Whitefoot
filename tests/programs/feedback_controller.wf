@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn controller_output(error: f64, integral: f64, previous_error: f64, step: f64) -> result: f64 pure {
   let proportional = fmul.strict(0.5_f64, error);
   let integral_term = fmul.strict(0.125_f64, integral);

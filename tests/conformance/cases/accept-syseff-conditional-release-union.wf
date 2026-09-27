@@ -1,3 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias IoError = std::io::IoError;
+alias ReadFile = std::fs::ReadFile;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+
 fn dispose_open_outcome(factory: &HandleFactory, outcome: Result<ReadFile, IoError>) -> result: unit writes(factory) {
   doc "EFF-2: the explicit close occurs only in the Ok arm, but its factory access contributes to the complete body row. The moved payload is local storage.";
   match outcome {

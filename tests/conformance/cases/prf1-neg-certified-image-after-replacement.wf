@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn chain_then_kill(first: u8, first_limit: u8, second: u8, second_limit: u8, replacement: u8) -> result: unit pure contract {
   requires first <= first_limit;
   requires second <= second_limit;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -6,7 +9,7 @@ enum Sign {
 
 fn main() -> status: ExitStatus pure {
   doc "give is legal only inside a let-initializer match arm; a give in a statement match, which acts by effect and yields no value, is rejected citing GIVE-1 (the break-precedent checker-scoped restriction) [GIVE-1, OWN-13, OP-1].";
-  let s = Zero();
+  let s = Sign::Zero();
   match s {
     Neg() => {
       give 0_i32;

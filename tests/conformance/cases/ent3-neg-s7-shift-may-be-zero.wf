@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn require_nonzero(value: u32) -> result: unit pure contract {
+  requires value != 0_u32;
+} {
+  return unit;
+}
+
+fn shifted_bit(value: u32, count: u32) -> result: unit pure {
+  let bit = iand(value, 1_u32);
+  let shifted = ishl.wrap(bit, count);
+  require_nonzero(value: shifted);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

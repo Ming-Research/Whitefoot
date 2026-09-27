@@ -356,19 +356,18 @@ mod tests {
 
     /// The built-in half of [PRE-1], read out of the rule's own fences.
     ///
-    /// [PRE-1] opens with the opaque-struct fence [TYPE-2] — the cell `Box`
-    /// and the fourteen host handles — which this catalog does not carry:
+    /// [PRE-1] opens with the opaque-struct fence [TYPE-2] — the three
+    /// storage shapes and the cell `Box` — which this catalog does not carry:
     /// those are parsed prelude records whose declarations are ordinary
-    /// source text. The records read here are the leading enums of the
-    /// *ordinary* struct and enum fence, up to its first `struct`, plus the
-    /// two numeric bounds the sentence after it names.
+    /// source text. The records read here are the enums of the enum fence
+    /// that follows, plus the two numeric bounds the sentence after it names.
     fn extract_prelude_records(spec: &str) -> Vec<(String, Option<DeclarationClass>)> {
         let (block, after) = spec
             .split_once("[PRE-1] The prelude contributes")
             .expect("exact PRE-1 opening")
             .1
-            .split_once("The complete ordinary struct and enum declarations are:\n\n```\n")
-            .expect("PRE-1 ordinary declaration fence")
+            .split_once("The complete enum declarations are:\n\n```\n")
+            .expect("PRE-1 enum declaration fence")
             .1
             .split_once("\n```\n")
             .expect("exact PRE-1 closing");

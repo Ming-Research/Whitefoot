@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn need(index: u8) -> result: unit pure contract {
   requires index <= 254_u8;
 } {

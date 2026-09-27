@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f(y: &Slots<i32, 4>, x: &Slots<i32, 4>) -> result: i32 writes(y), reads(x) contract {
   requires deref(y).len < deref(y).cap;
   requires deref(x).len > 0_u64;

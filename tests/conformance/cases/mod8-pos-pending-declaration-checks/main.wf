@@ -1,0 +1,4 @@
+fn caller() -> result: i32 pure {
+  let value = pkg::data::later(value: 1_i32);
+  return value;
+}

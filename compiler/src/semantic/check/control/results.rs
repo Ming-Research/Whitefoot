@@ -20,7 +20,16 @@ const _: () = assert!(
     "check_return_implicit_read precedes the operand's OWN-1 judgments"
 );
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+/// The consumed place of a destructuring consume, as its repairs name it.
+pub(super) struct ConsumedPlace {
+    /// Whether it names owned storage directly, so that its parts can move
+    /// out [OWN-1, WIN-3].
+    pub(super) owned: bool,
+    /// The place as a read of it is written [TYPE-7].
+    pub(super) spelling: String,
+}
+
+impl<'unit> Checker<'unit> {
     /// The result-list nominal a checked value carries, when it is one
     /// [GRAM-2, CALL-4].
     ///
@@ -118,6 +127,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         compiler_updated: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        call_value: false,
                     },
                 )
                 .is_some()
@@ -173,19 +183,30 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // error at the complete statement. `Box` is the prelude's opaque
         // struct [TYPE-9, PRE-1], so a cell's content is reached through its
         // member `inner` and never by taking the cell apart.
-        let opaque_typeid = match usage.target() {
+        let opaque_repair = match usage.target() {
             ResolvedTarget::Source { declaration, .. } => {
-                self.is_opaque_struct_declaration(declaration)?
+                if self.is_opaque_struct_declaration(declaration)? {
+                    Some(
+                        super::super::repairs::opaque_struct_taken_apart(
+                            self.opaque_struct_kind(declaration)?,
+                            self.consumed_place(place, bindings)?.owned,
+                        )
+                        .to_owned(),
+                    )
+                } else {
+                    None
+                }
             }
-            _ => cell,
+            _ if cell => Some(self.cell_taken_apart_repair(node, place, bindings)?),
+            _ => None,
         };
-        if opaque_typeid {
+        if let Some(mechanical_fix) = opaque_repair {
             return self.issue_node(
                 SemanticRule::Type2,
                 node,
                 SemanticIssueKind::ContainerConstruction {
                     nominal: written,
-                    mechanical_fix: "build it with a construction function [OP-13, PRE-1]",
+                    mechanical_fix,
                 },
             );
         }
@@ -268,6 +289,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let field = fields
                 .get(ordinal)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            // [MOD-5] outside the declaring module a destructuring consume
+            // binds only published fields; `..` covers the rest.
+            if !cell {
+                self.reject_inaccessible_field(
+                    nominal,
+                    None,
+                    ordinal,
+                    &field.name,
+                    written_binder,
+                )?;
+            }
             let declaration = self.declaration_at(written_binder, crate::DeclarationRole::Let)?;
             let binding = Self::allocate_binding(counters.next_binding)?;
             counters
@@ -286,6 +318,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         compiler_updated: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        call_value: false,
                     },
                 )
                 .is_some()
@@ -357,6 +390,113 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(releases)
     }
 
+    /// [TYPE-2, TYPE-9] the repair of a destructuring consume that names
+    /// `Box`: how the statement reaches the content instead, which turns on
+    /// what the consumed cell holds and on whether the place owns it. The
+    /// cell is typed by the oracle that reads declared types without judging
+    /// the use, so the refusal still precedes every judgment of the consumed
+    /// place.
+    fn cell_taken_apart_repair(
+        &self,
+        node: NodeId,
+        place: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<String, CheckStop> {
+        use super::super::repairs::{CellContent, cell_taken_apart};
+        let binder = match self
+            .tree
+            .first_child_with(node, Production::FieldbindList)?
+        {
+            Some(list) => match self
+                .tree
+                .children_with(list, Production::Fieldbind)?
+                .first()
+            {
+                Some(&written) => Some(
+                    self.declaration_at(written, crate::DeclarationRole::Let)?
+                        .spelling()
+                        .to_owned(),
+                ),
+                None => None,
+            },
+            None => None,
+        };
+        // A range reference selects a run, never one cell [REF-4].
+        let content = match self.place_selected_kind(place, bindings) {
+            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => self.box_content(ty)?,
+            Ok(_) | Err(CheckStop::Unsupported(_)) => None,
+            Err(stop) => return Err(stop),
+        };
+        let consumed = self.consumed_place(place, bindings)?;
+        // [OWN-1, WIN-3] nothing moves out of a cell a reference or an element
+        // reaches, so there a content that is not read as a copy is used in
+        // place. A runtime-capacity content is never a binding's value,
+        // whatever its elements [TYPE-9].
+        let content = match content {
+            Some(CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }) => {
+                Some(if consumed.owned {
+                    CellContent::RuntimeCapacity
+                } else {
+                    CellContent::InPlace
+                })
+            }
+            Some(ty) if self.is_copy_type(ty)? => Some(CellContent::Copy),
+            Some(_) if consumed.owned => Some(CellContent::Owned),
+            Some(_) => Some(CellContent::InPlace),
+            None => None,
+        };
+        Ok(cell_taken_apart(
+            content,
+            &consumed.spelling,
+            binder.as_deref(),
+        ))
+    }
+
+    /// How the consumed place of a destructuring consume holds its value:
+    /// `owned` when it names owned storage directly, with no reference and no
+    /// element on its path, so that its parts can move out [OWN-1, WIN-3];
+    /// and the spelling that reads it as a place, which steps through a
+    /// reference variable written bare with `deref` [TYPE-7].
+    pub(super) fn consumed_place(
+        &self,
+        place: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<ConsumedPlace, CheckStop> {
+        let spelling = self.tree.source_spelling(place)?;
+        let pbase = self
+            .tree
+            .first_child_with(place, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let mut element = false;
+        for suffix in self.tree.children_with(place, Production::Psuffix)? {
+            element |= self.subscript_offset(suffix)?.is_some();
+        }
+        if self.has_fixed(pbase, FixedTerminal::Deref)? {
+            return Ok(ConsumedPlace {
+                owned: false,
+                spelling,
+            });
+        }
+        let reference = match self.use_at(pbase, LexicalUseRole::PlaceBase)?.target() {
+            ResolvedTarget::Source { declaration, .. } => bindings
+                .get(&declaration)
+                .is_some_and(|local| local.mode.is_reference()),
+            _ => false,
+        };
+        if !reference {
+            return Ok(ConsumedPlace {
+                owned: !element,
+                spelling,
+            });
+        }
+        let root = self.tree.source_spelling(pbase)?;
+        let rest = spelling.strip_prefix(root.as_str()).unwrap_or_default();
+        Ok(ConsumedPlace {
+            owned: false,
+            spelling: format!("deref({root}){rest}"),
+        })
+    }
+
     /// [TYPE-5] the destructuring consume's operand is not a value of the
     /// nominal struct type it writes.
     fn destructuring_shape_rejection<T>(
@@ -424,6 +564,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         self.tree.coordinate(*expression_node)?,
                     ),
                     kind: SemanticIssueKind::ReturnMismatch,
+                    request: None,
                 }));
             }
             // [REF-3] a result ordinal is owned, so a reference written at
@@ -535,6 +676,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()

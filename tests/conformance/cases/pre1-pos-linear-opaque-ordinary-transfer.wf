@@ -1,3 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias ReadFile = std::fs::ReadFile;
+alias exit_status = std::process::exit_status;
+
 fn relay(value: ReadFile) -> result: ReadFile pure {
   doc "A linear opaque owner crosses a local binding and a function result.";
   let local = move value;

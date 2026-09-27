@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const values: Array<i32, 4> =[10_i32, 20_i32, 30_i32, 40_i32];
 
 fn get(i: u64) -> result: i32 pure {

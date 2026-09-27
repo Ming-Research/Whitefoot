@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn negate(n: i32) -> return_value: i32 pure {
   doc "The one expressible signed-overflow shape [OP-2, ENT-6]: a constant `-1` divisor puts the site in the divisor class and leaves the signed-overflow conjunct as the residual, so an unbounded dividend rejects at the `infix` node.";
   let m = n / -1_i32;

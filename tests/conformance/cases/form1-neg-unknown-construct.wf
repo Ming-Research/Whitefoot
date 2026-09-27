@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main () -> status: ExitStatus pure {
   doc "An unknown construct is a hard error (conservative extension) [FORM-1].";
   gimble x;

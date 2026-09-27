@@ -1,0 +1,19 @@
+alias GrowVector = pkg::vec::GrowVector;
+
+public fn push_one<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < ceiling;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+} doc "Appends one value through the vector module, repeating its boundary and effect row.";
+
+public fn fill<fn push(values: &GrowVector<u64, 8>, value: u64) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < 8_u64;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+}>(values: &GrowVector<u64, 8>, count: u64) -> total: u64 writes(values.storage) contract {
+  requires count <= 8_u64;
+  requires deref(values).storage.inner.len == 0_u64;
+  ensures total == deref(values).storage.inner.len;
+} doc "Pushes the values of count / 2 pairs through the supplied push, which states the vector module's boundary, and returns the length reached.";

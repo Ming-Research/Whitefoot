@@ -67,7 +67,7 @@ fn every_operator_token_selects_its_row() {
         // Proof-required exact rows are statically discharged for these
         // constant operands and therefore contribute no runtime effect.
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let c = 6_i32 {operator} 7_i32;\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let c = 6_i32 {operator} 7_i32;\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         let (operation, operand_type) = sole_operation(source.as_bytes());
         assert_eq!(operation, expected, "operator {operator:?} selects its row");
@@ -84,11 +84,11 @@ fn every_operator_token_selects_its_row() {
 /// disagreement is reported.
 #[test]
 fn a_disagreeing_second_operand_is_a_type5_rejection_at_that_operand() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = 1_i32;
   let b = 2_u64;
   let c = a + b;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(source, SemanticRule::Type5, "b");
@@ -98,11 +98,11 @@ fn a_disagreeing_second_operand_is_a_type5_rejection_at_that_operand() {
 /// reports it at the whole expression rather than at one operand.
 #[test]
 fn an_operand_type_outside_every_row_is_an_op1_rejection() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let f = True();
   let g = False();
   let h = f + g;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_at(source, SemanticRule::Op1, "f + g");
@@ -117,8 +117,8 @@ fn bare_arithmetic_is_a_static_obligation_without_a_runtime_effect() {
   return a + b;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -148,11 +148,11 @@ fn main() -> status: ExitStatus pure {
 const EXPRESSION_POSITIONS: [(&str, &str); 9] = [
     (
         "ordinary_let_rhs",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   let c = a +wrap b;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
@@ -164,18 +164,18 @@ const EXPRESSION_POSITIONS: [(&str, &str); 9] = [
   return Ok<u64, Overflow>(value: c);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
     (
         "set_stmt",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   set a = a +wrap b;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
@@ -186,14 +186,14 @@ fn main() -> status: ExitStatus pure {
   return a +wrap b;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
     (
         "give_stmt",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   let f = True();
@@ -202,21 +202,21 @@ fn main() -> status: ExitStatus pure {
   } else {
     give a;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
     (
         "match_stmt scrutinee",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   match a +checked b {
     Ok(value: v) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     Err(error: e) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
   }
 }
@@ -224,7 +224,7 @@ fn main() -> status: ExitStatus pure {
     ),
     (
         "value_match scrutinee",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   let c = match a +checked b {
@@ -235,25 +235,25 @@ fn main() -> status: ExitStatus pure {
       give 2_u64;
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
     (
         "if_stmt condition",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   if a +defined b {
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
     (
         "value_if condition",
-        "fn main() -> status: ExitStatus pure {
+        "fn main() -> status: std::process::ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
   let c = if a +defined b {
@@ -261,7 +261,7 @@ fn main() -> status: ExitStatus pure {
   } else {
     give 2_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 ",
     ),
@@ -304,8 +304,8 @@ fn an_infix_returned_at_a_disagreeing_result_type_is_an_fn1_rejection() {
   return a +wrap b;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(infix, SemanticRule::Fn1, SemanticIssueKind::ReturnMismatch);
@@ -313,8 +313,8 @@ fn main() -> status: ExitStatus pure {
   return a;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(plain, SemanticRule::Fn1, SemanticIssueKind::ReturnMismatch);

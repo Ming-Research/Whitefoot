@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A range reference must independently prove start no greater than end [REF-4] before its length is the difference of the endpoints; a reversed pair is refused at the formation.";
   let values = array_filled::<u64, 4>(value: 0_u64);

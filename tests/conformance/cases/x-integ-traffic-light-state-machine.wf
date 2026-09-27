@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Light {
   Red();
   Green();
@@ -6,38 +9,38 @@ enum Light {
 
 fn main() -> status: ExitStatus pure {
   doc "A traffic-light state machine advanced by value-matches: each match moves the own state and gives its own successor, so after three transitions the light returns to Red [OWN-13, GIVE-1, OP-1, SCOPE-3].";
-  let s0 = Red();
+  let s0 = Light::Red();
   let s1 = match s0 {
     Red() => {
-      give Green();
+      give Light::Green();
     }
     Green() => {
-      give Yellow();
+      give Light::Yellow();
     }
     Yellow() => {
-      give Red();
+      give Light::Red();
     }
   }
   let s2 = match s1 {
     Red() => {
-      give Green();
+      give Light::Green();
     }
     Green() => {
-      give Yellow();
+      give Light::Yellow();
     }
     Yellow() => {
-      give Red();
+      give Light::Red();
     }
   }
   let s3 = match s2 {
     Red() => {
-      give Green();
+      give Light::Green();
     }
     Green() => {
-      give Yellow();
+      give Light::Yellow();
     }
     Yellow() => {
-      give Red();
+      give Light::Red();
     }
   }
   let code = match s3 {

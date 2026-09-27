@@ -1,0 +1,7 @@
+alias Hidden = pkg::data::Shown;
+
+public struct Shown {
+  public value: u8;
+}
+
+public fn seven() -> result: u8 pure doc "Seven.";

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -12,7 +15,7 @@ fn main() -> return_value: ExitStatus pure {
   doc "GRAM-1: IDENT-headed place versus user call uses two-token lookahead; construction, table-op, statement-match, and value-match positions stay distinct; one parse each.";
   let a = id(x: 20_i32);
   let b = a +wrap 22_i32;
-  let s = Neg();
+  let s = Sign::Neg();
   let c = if b < 100_i32 {
     give b;
   } else {

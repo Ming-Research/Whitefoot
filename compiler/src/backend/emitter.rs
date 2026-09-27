@@ -24,10 +24,10 @@ mod slice;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
-use super::abi::FunctionAbi;
+use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, is_stored_aggregate};
-use super::target::{
+use crate::target::{
     TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout, TargetLayoutFailure,
     TargetStorageType, parallel_lane_frame_layout, plan_target_frame, validate_program,
     validate_static_storage,
@@ -90,7 +90,7 @@ impl LlvmModule {
 }
 
 #[cfg(test)]
-pub fn emit_llvm(program: &IrProgram<'_, '_, '_>) -> Result<LlvmModule, BackendFailure> {
+pub fn emit_llvm(program: &IrProgram) -> Result<LlvmModule, BackendFailure> {
     let target = TargetLayout::host().map_err(BackendFailure::TargetLayout)?;
     emit_llvm_with_layout(program, target)
 }
@@ -98,7 +98,7 @@ pub fn emit_llvm(program: &IrProgram<'_, '_, '_>) -> Result<LlvmModule, BackendF
 /// The executable builder may choose the no-pool world once at startup. The
 /// set depends on ordinary calls and physical lane fit, never on an entry kind.
 pub(crate) fn sequential_entry_symbol(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     name: &str,
 ) -> Result<Option<String>, BackendFailure> {
     let clones = sequential_clone_set(program);
@@ -133,7 +133,7 @@ pub(crate) fn sequential_entry_symbol(
 
 /// Emits the same ordinary callable ABI with a selected physical target layout.
 pub(crate) fn emit_llvm_with_layout(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     target: TargetLayout,
 ) -> Result<LlvmModule, BackendFailure> {
     emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
@@ -150,7 +150,7 @@ pub(super) enum WindowAddressFacts {
 }
 
 pub(super) fn emit_llvm_with_window_address_facts(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
 ) -> Result<LlvmModule, BackendFailure> {
@@ -271,10 +271,11 @@ pub(super) fn emit_llvm_with_window_address_facts(
     let drop_helpers = emit_resource_drop_helpers(program, target)?;
     let has_heap_storage = !drop_helpers.is_empty()
         || program.functions().iter().any(IrFunction::contains_buffer)
-        || program
-            .nominals()
-            .iter()
-            .any(|nominal| matches!(nominal.kind(), IrNominalKind::Box { .. }));
+        || cleanup::program_types(program)?.into_iter().any(|ty| {
+            matches!(ty, IrType::Nominal(id) if program
+                .nominal(id)
+                .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Box { .. })))
+        });
     let heap_record_type = TargetStorageType::bytes(
         u64::try_from(HEAP_RECORD.len()).map_err(|_| BackendFailure::CounterOverflow)?,
     );
@@ -472,26 +473,52 @@ const HEAP_RECORD: &str = "{\"resource\":\"heap\"}\n";
 /// One call's arguments, in the emitting function's own parameters: what a
 /// same-signature forward to a clone or a variant passes on.
 fn ordinary_call_arguments(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     function: &IrFunction,
     abi: &FunctionAbi,
 ) -> Result<String, BackendFailure> {
     let mut arguments = Vec::with_capacity(abi.parameters().len() + 1);
     if abi.result().uses_destination() {
-        arguments.push("ptr %wf.result".to_owned());
+        arguments.push(format!("ptr {RESULT_POINTER}"));
     }
     for ((value, _), parameter) in function.parameters().iter().zip(abi.parameters()) {
-        arguments.push(if parameter.is_indirect() {
-            format!("ptr %wf.arg.v{}", value.ordinal())
-        } else {
-            format!(
-                "{} {}",
-                llvm_type(program, parameter.ty())?,
-                value_name(*value)
-            )
-        });
+        arguments.push(incoming_parameter(program, *value, *parameter, "")?);
     }
     Ok(arguments.join(", "))
+}
+
+/// One parameter as the emitting function receives it: its head's
+/// declaration with `facts` after the pointer's type, or, with no facts, the
+/// operands a same-signature forward passes on unchanged.
+///
+/// A range reference arrives as its element pointer and count (see
+/// [`super::abi`]); the body reassembles its `{ ptr, i64 }` pair at entry.
+fn incoming_parameter(
+    program: &IrProgram,
+    value: IrValueId,
+    parameter: ParameterAbi,
+    facts: &str,
+) -> Result<String, BackendFailure> {
+    Ok(if parameter.is_indirect() {
+        format!("ptr %wf.arg.v{}", value.ordinal())
+    } else if parameter.is_range() {
+        let (pointer, count) = incoming_range_parts(value);
+        format!("ptr{facts} {pointer}, i64 {count}")
+    } else {
+        format!(
+            "{}{facts} {}",
+            llvm_type(program, parameter.ty())?,
+            value_name(value)
+        )
+    })
+}
+
+/// The element pointer and count a range-reference parameter arrives as.
+fn incoming_range_parts(value: IrValueId) -> (String, String) {
+    (
+        format!("%wf.arg.v{}.data", value.ordinal()),
+        format!("%wf.arg.v{}.len", value.ordinal()),
+    )
 }
 
 /// A budgeted component's ordinary entry: obtain the initial budget and enter
@@ -508,7 +535,7 @@ fn ordinary_call_arguments(
 /// outside the component sees the family; what changes is that the body it
 /// forwards to is emitted once, with the budget as a trailing parameter.
 fn emit_recursion_budget_entry(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     function: &IrFunction,
     frontiers: &RecursiveFrontiers,
     thunks: &mut ParallelThunks,
@@ -526,22 +553,10 @@ fn emit_recursion_budget_entry(
         source_symbol(function.name())
     )
     .map_err(|_| BackendFailure::TextEmission)?;
-    let mut parameters = Vec::with_capacity(abi.parameters().len() + 1);
-    if abi.result().uses_destination() {
-        parameters.push("ptr %wf.result".to_owned());
-    }
-    for ((value, _), parameter) in function.parameters().iter().zip(abi.parameters()) {
-        parameters.push(if parameter.is_indirect() {
-            format!("ptr %wf.arg.v{}", value.ordinal())
-        } else {
-            format!(
-                "{} {}",
-                llvm_type(program, parameter.ty())?,
-                value_name(*value)
-            )
-        });
-    }
-    output.push_str(&parameters.join(", "));
+    // The entry forwards its parameters unchanged, so its head declares
+    // exactly the operands it passes on.
+    let mut arguments = ordinary_call_arguments(program, function, &abi)?;
+    output.push_str(&arguments);
     output.push_str(") {\nentry:\n");
     let budget = match frontiers.initial().ok_or(BackendFailure::InvalidIr)? {
         crate::RecursionBudget::Off => return Err(BackendFailure::InvalidIr),
@@ -552,7 +567,6 @@ fn emit_recursion_budget_entry(
             "%wf.budget".to_owned()
         }
     };
-    let mut arguments = ordinary_call_arguments(program, function, &abi)?;
     if !arguments.is_empty() {
         arguments.push_str(", ");
     }
@@ -631,17 +645,14 @@ fn attach_stack_probe(module: &str, target: TargetLayout) -> String {
     text
 }
 
-fn emit_global_constants(
-    output: &mut String,
-    program: &IrProgram<'_, '_, '_>,
-) -> Result<(), BackendFailure> {
+fn emit_global_constants(output: &mut String, program: &IrProgram) -> Result<(), BackendFailure> {
     for constant in program.constants() {
         writeln!(output, "; const {}", constant.name())
             .map_err(|_| BackendFailure::TextEmission)?;
         write!(
             output,
             "{} = private unnamed_addr constant {} {}",
-            constant_symbol(constant.id()),
+            constant_symbol(constant),
             llvm_type(program, constant.ty())?,
             global_constant_value(program, constant.value(), constant.ty())?
         )
@@ -658,7 +669,7 @@ fn emit_global_constants(
 /// complete array, or a complete struct aggregate with each field rendered
 /// recursively [CONST-2 candidate].
 fn global_constant_value(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     value: &IrGlobalValue,
     ty: IrType,
 ) -> Result<String, BackendFailure> {
@@ -722,7 +733,7 @@ fn global_constant_value(
 
 fn emit_nominal_declarations(
     output: &mut String,
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
 ) -> Result<(), BackendFailure> {
     let mut emitted = false;
     for nominal in program.nominals() {
@@ -737,7 +748,7 @@ fn emit_nominal_declarations(
             continue;
         }
         emitted = true;
-        write!(output, "{} = type {{ ", nominal_symbol(nominal.id()))
+        write!(output, "{} = type {{ ", nominal_symbol(nominal))
             .map_err(|_| BackendFailure::TextEmission)?;
         match nominal.kind() {
             IrNominalKind::Struct { fields } => {
@@ -814,6 +825,26 @@ enum FunctionSlot {
     OwnedValue(usize),
     ArrayFillIndex(IrValueId),
     Address(IrValueId),
+    /// The slot a register-returned definition's public entry gives its
+    /// body to construct the result in.
+    Result,
+}
+
+/// Where a body constructs its stored result: its destination parameter,
+/// which for a register-returned result is its public entry's frame slot.
+const RESULT_POINTER: &str = "%wf.result";
+
+/// The internal symbol a register-returned definition's destination-form
+/// body is emitted under, beside the public entry that keeps `symbol`.
+///
+/// No other definition can hold it. A function outside the root module is
+/// spelled `path.name`, so a source function could take `<symbol>.body`
+/// only as a function `body` in a child module named after the entry's
+/// function, and [MOD-3] rejects a declaration that extends its module's
+/// path to a registered module. An instance's `$instance$` suffix and a
+/// compiler-owned `wf__` symbol hold spellings no IDENT has [FORM-3].
+fn result_body_symbol(symbol: &str) -> String {
+    format!("{symbol}.body")
 }
 
 struct PlannedFunctionSlot {
@@ -842,7 +873,7 @@ struct FunctionFrameContents<'plan> {
 impl FunctionFramePlan {
     fn build(
         target: TargetLayout,
-        program: &IrProgram<'_, '_, '_>,
+        program: &IrProgram,
         function: &IrFunction,
         contents: FunctionFrameContents<'_>,
     ) -> Result<Self, BackendFailure> {
@@ -921,6 +952,36 @@ impl FunctionFramePlan {
         })
     }
 
+    /// The frame of a register-returned definition's public entry: the one
+    /// target-qualified slot at [`RESULT_POINTER`] its body constructs the
+    /// result in.
+    fn returned_value(
+        target: TargetLayout,
+        program: &IrProgram,
+        ty: IrType,
+    ) -> Result<Self, BackendFailure> {
+        let mut specifications = Vec::new();
+        let mut ordered = Vec::new();
+        push_function_slot(
+            &mut specifications,
+            &mut ordered,
+            FunctionSlot::Result,
+            TargetStorageType::source(ty),
+            None,
+        )?;
+        let target_plan = plan_target_frame(target, program, &specifications)
+            .map_err(BackendFailure::TargetLayout)?;
+        let slot = PlannedFunctionSlot {
+            logical_index: 0,
+            pointer: RESULT_POINTER.to_owned(),
+        };
+        Ok(Self {
+            target: target_plan,
+            slots: HashMap::from([(FunctionSlot::Result, slot)]),
+            ordered,
+        })
+    }
+
     fn slot(&self, key: FunctionSlot) -> Result<String, BackendFailure> {
         self.slots
             .get(&key)
@@ -928,7 +989,7 @@ impl FunctionFramePlan {
             .ok_or(BackendFailure::InvalidIr)
     }
 
-    fn render(&self, program: &IrProgram<'_, '_, '_>) -> Result<String, BackendFailure> {
+    fn render(&self, program: &IrProgram) -> Result<String, BackendFailure> {
         if self.target.is_empty() {
             return Ok(String::new());
         }
@@ -1013,7 +1074,7 @@ fn push_function_slot(
 
 #[allow(clippy::too_many_arguments)]
 struct FunctionEmitter<'program, 'state> {
-    program: &'program IrProgram<'program, 'program, 'program>,
+    program: &'program IrProgram,
     function: &'program IrFunction,
     /// The selected target, for the extents a proved fact states in bytes
     /// (compiler/backend-facts).
@@ -1108,7 +1169,7 @@ struct ModuleState<'state> {
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
     fn new(
-        program: &'program IrProgram<'_, '_, '_>,
+        program: &'program IrProgram,
         target: TargetLayout,
         function: &'program IrFunction,
         module: ModuleState<'state>,
@@ -1198,21 +1259,41 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// A reference is a local name for a path that is live where it is used
     /// [REF-1, REF-2], so it is `nonnull` and `dereferenceable` for the
     /// referent's own extent; [REF-3] keeps it from escaping, so nothing in
-    /// the callee captures it; and [EFF-5]'s pairwise check runs at every
-    /// call and rejects any program whose substituted paths are not disjoint
-    /// where one of them writes, so the surviving callers are exactly the
-    /// ones for which `noalias` holds.
+    /// the callee captures it; and `noalias` holds because every place the
+    /// call writes is reached only through the parameter whose row entry
+    /// names it. [EFF-5] runs at every call and rejects any program in which
+    /// a place one argument's entries write is not proved disjoint from every
+    /// place another argument's entries reach; entries one argument supplies
+    /// may overlap each other, but they are all reached through that one
+    /// parameter's pointer, which is what LLVM's `noalias` on that parameter
+    /// concerns. The attribute is per parameter and no per-access alias scope
+    /// is emitted, so nothing here asserts two entries of one parameter
+    /// disjoint.
     ///
     /// `swap` is the stated exception: [OP-11] admits the one call whose two
     /// arguments name the same place, so its two parameters carry every fact
     /// but that one.
+    ///
+    /// A `&[T]` range reference [REF-4] is a reference too, and the facts go
+    /// on the element pointer it arrives as. LLVM's `noalias` constrains only
+    /// memory the call modifies, and [EFF-5] proved every place one argument
+    /// writes disjoint from every place another argument reaches; the callee
+    /// reaches caller storage only through its reference parameters, whose
+    /// accesses its exact row covers [EFF-2]. Two read-only ranges may
+    /// overlap, which `noalias` permits because neither is modified. The
+    /// pointer addresses storage that exists while the range is valid, even
+    /// for an empty range, so it is `nonnull`. Its extent is `len` elements,
+    /// known only at run time and possibly zero, so it states no
+    /// `dereferenceable` extent.
     fn reference_parameter_facts(
         &self,
         index: usize,
         ty: IrType,
     ) -> Result<String, BackendFailure> {
-        let IrType::Address(referent) = ty else {
-            return Ok(String::new());
+        let (mode, referent) = match ty {
+            IrType::Address(referent) => (crate::IrSourceMode::Reference, Some(referent)),
+            IrType::Range { .. } => (crate::IrSourceMode::Range, None),
+            _ => return Ok(String::new()),
         };
         // A synthesized function has no source signature, and a fact whose
         // derivation is missing is simply not emitted.
@@ -1220,7 +1301,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .function
             .source_signature()
             .and_then(|signature| signature.parameters().get(index).copied())
-            != Some(crate::IrSourceMode::Reference)
+            != Some(mode)
         {
             return Ok(String::new());
         }
@@ -1233,11 +1314,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // The referent's own selected-target extent. A shape whose block
         // extends past its statically typed header states only the header it
         // is sure of, which is the direction `dereferenceable` needs.
-        if let Ok(layout) = crate::backend::target::validate_static_storage(
-            self.target,
-            self.program,
-            &crate::backend::target::TargetStorageType::source(referent.ty()),
-        ) && layout.size() > 0
+        if let Some(referent) = referent
+            && let Ok(layout) = crate::target::validate_static_storage(
+                self.target,
+                self.program,
+                &crate::target::TargetStorageType::source(referent.ty()),
+            )
+            && layout.size() > 0
         {
             write!(facts, " dereferenceable({})", layout.size())
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1285,7 +1368,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ///
     /// Returns where the frame prelude belongs, which is this block when there
     /// is one: an `alloca` is promotable only in the entry block.
-    fn emit_grain_entry(&mut self, abi: &FunctionAbi) -> Result<Option<usize>, BackendFailure> {
+    ///
+    /// `public` is the function's own ABI, which the clone's public symbol
+    /// keeps. A register-returned clone returns its value there, and this
+    /// variant's body stores it through its own destination.
+    fn emit_grain_entry(&mut self, public: &FunctionAbi) -> Result<Option<usize>, BackendFailure> {
         if self.grain.is_none() {
             return Ok(None);
         }
@@ -1295,9 +1382,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.incoming.first().is_some_and(|edges| !edges.is_empty()) {
             return Err(BackendFailure::InvalidIr);
         }
-        let arguments = ordinary_call_arguments(self.program, self.function, abi)?;
+        let arguments = ordinary_call_arguments(self.program, self.function, public)?;
         let spent = RecursiveFrontiers::exhausted(self.function.name());
-        let body = block_label(IrBlockId::from_index(0).map_err(|_| BackendFailure::InvalidIr)?);
+        let body = block_label(IrBlockId::from_index(0).ok_or(BackendFailure::InvalidIr)?);
         writeln!(self.output, "{GRAIN_ENTRY_LABEL}:").map_err(|_| BackendFailure::TextEmission)?;
         let anchor = self.output.len();
         writeln!(
@@ -1308,16 +1395,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
              {GRAIN_SPENT_LABEL}:"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        if abi.result().uses_destination() {
-            writeln!(self.output, "  call void @{spent}({arguments})\n  ret void")
+        match public.result() {
+            ResultAbi::Destination(_) => {
+                writeln!(self.output, "  call void @{spent}({arguments})\n  ret void")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            ResultAbi::StoredValue(ty) => {
+                let result = llvm_type(self.program, ty)?;
+                writeln!(
+                    self.output,
+                    "  %wf.spent = call {result} @{spent}({arguments})\n  \
+                     store {result} %wf.spent, ptr {RESULT_POINTER}\n  ret void"
+                )
                 .map_err(|_| BackendFailure::TextEmission)?;
-        } else {
-            let result = llvm_type(self.program, abi.result().ty())?;
-            writeln!(
-                self.output,
-                "  %wf.spent = call {result} @{spent}({arguments})\n  ret {result} %wf.spent"
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            ResultAbi::Value(ty) => {
+                let result = llvm_type(self.program, ty)?;
+                writeln!(
+                    self.output,
+                    "  %wf.spent = call {result} @{spent}({arguments})\n  ret {result} %wf.spent"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+            }
         }
         self.grain_next = Some("%wf.budget.next".to_owned());
         Ok(Some(anchor))
@@ -1331,16 +1430,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.reachable_blocks()?
         };
         self.incoming = self.collect_incoming(&reachable)?;
-        let abi = FunctionAbi::build(self.program, self.function)?;
+        // A declaration names a linked definition by its public ABI. A
+        // definition whose result returns in registers is emitted as its
+        // destination-form body under an internal symbol, followed by the
+        // public entry that returns the value.
+        let public = FunctionAbi::build(self.program, self.function)?;
+        let entry = !declaration && matches!(public.result(), ResultAbi::StoredValue(_));
+        let abi = if entry { public.body() } else { public.clone() };
         let symbol = match (self.sequential_clones, self.grain) {
             (Some(_), _) => sequential_clone_symbol(self.function.name()),
             (None, Some(_)) => recursion_budget_symbol(self.function.name()),
             (None, None) => source_symbol(self.function.name()),
         };
+        let body_symbol = if entry {
+            result_body_symbol(&symbol)
+        } else {
+            symbol.clone()
+        };
         write!(
             self.output,
-            "{} {} @{symbol}(",
+            "{} {}{} @{body_symbol}(",
             if declaration { "declare" } else { "define" },
+            if entry { "internal " } else { "" },
             if abi.result().uses_destination() {
                 "void".to_owned()
             } else {
@@ -1348,56 +1459,50 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             },
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        let result_address = abi.result().uses_destination();
-        if result_address {
-            self.output.push_str("ptr %wf.result");
+        let parameters = self.signature_parameters(&abi)?;
+        let mut head = Vec::with_capacity(parameters.len() + 2);
+        if abi.result().uses_destination() {
+            head.push(format!("ptr {RESULT_POINTER}"));
         }
-        for (index, ((value, _), parameter)) in self
-            .function
-            .parameters()
-            .iter()
-            .zip(abi.parameters())
-            .enumerate()
-        {
-            if index != 0 || result_address {
-                self.output.push_str(", ");
-            }
-            if parameter.is_indirect() {
-                write!(self.output, "ptr %wf.arg.v{}", value.ordinal())
-                    .map_err(|_| BackendFailure::TextEmission)?;
-                continue;
-            }
-            write!(
-                self.output,
-                "{}{} {}",
-                llvm_type(self.program, parameter.ty())?,
-                self.reference_parameter_facts(index, parameter.ty())?,
-                self.value_name(*value)
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
-        }
+        head.extend(parameters.iter().cloned());
         if declaration {
+            self.output.push_str(&head.join(", "));
             self.output.push_str(")\n\n");
             return Ok(self.output);
+        }
+        // A range reference arrives as its element pointer and count; the
+        // body reads its ordinary `{ ptr, i64 }` pair, reassembled once in
+        // the entry block beside the frame's slots, where it dominates every
+        // use, including a self-tail transfer's parameterized body entry.
+        for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
+            if !parameter.is_range() {
+                continue;
+            }
+            let (pointer, count) = incoming_range_parts(*value);
+            let pair = llvm_type(self.program, parameter.ty())?;
+            let name = value_name(*value);
+            writeln!(
+                self.entry_prelude,
+                "  {name}.data = insertvalue {pair} poison, ptr {pointer}, 0\n  \
+                 {name} = insertvalue {pair} {name}.data, i64 {count}, 1"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         // The variant's hidden trailing budget. Legal because this definition
         // is synthesized and is named by no source call: a writer's own
         // signature is the entry's, which is emitted unchanged.
         if self.grain.is_some() {
-            if !self.function.parameters().is_empty() || result_address {
-                self.output.push_str(", ");
-            }
-            self.output.push_str("i64 %wf.budget");
+            head.push("i64 %wf.budget".to_owned());
         }
+        self.output.push_str(&head.join(", "));
         self.output.push_str(") {\n");
-        let mut prelude_anchor = self.emit_grain_entry(&abi)?;
+        let mut prelude_anchor = self.emit_grain_entry(&public)?;
         for (index, block) in self.function.blocks().iter().enumerate() {
             if !reachable[index] {
                 continue;
             }
             self.materialized.clear();
-            let block_id =
-                IrBlockId::from_index(index).map_err(|_| BackendFailure::CounterOverflow)?;
+            let block_id = IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
             writeln!(self.output, "{}:", block_label(block_id))
                 .map_err(|_| BackendFailure::TextEmission)?;
             if index == 0 && prelude_anchor.is_none() {
@@ -1440,7 +1545,68 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let anchor = prelude_anchor.ok_or(BackendFailure::InvalidIr)?;
             self.output.insert_str(anchor, &self.entry_prelude);
         }
+        if entry {
+            let text = self.public_entry(&symbol, &body_symbol, &public, &abi, parameters)?;
+            self.output.push_str(&text);
+        }
         Ok(self.output)
+    }
+
+    /// Every parameter of this definition's signature, with the facts the
+    /// checked program proved about each (compiler/backend-facts), and
+    /// without the destination pointer or a variant's budget.
+    fn signature_parameters(&self, abi: &FunctionAbi) -> Result<Vec<String>, BackendFailure> {
+        let mut parameters = Vec::with_capacity(abi.parameters().len());
+        for (index, ((value, _), parameter)) in self
+            .function
+            .parameters()
+            .iter()
+            .zip(abi.parameters())
+            .enumerate()
+        {
+            let facts = self.reference_parameter_facts(index, parameter.ty())?;
+            parameters.push(incoming_parameter(
+                self.program,
+                *value,
+                *parameter,
+                &facts,
+            )?);
+        }
+        Ok(parameters)
+    }
+
+    /// A register-returned definition's public entry: the slot its body
+    /// constructs the result in, the call, and the loaded value.
+    ///
+    /// The body is internal, so the entry is its one caller, and it is
+    /// never marked always-inline. The host therefore simplifies the body
+    /// in its destination form before it inlines the body here. An
+    /// always-inline body would be merged before that simplification and
+    /// would lose the loop shapes the destination form gives it.
+    fn public_entry(
+        &self,
+        symbol: &str,
+        body_symbol: &str,
+        public: &FunctionAbi,
+        body: &FunctionAbi,
+        mut head: Vec<String>,
+    ) -> Result<String, BackendFailure> {
+        let ty = public.result().ty();
+        let result = llvm_type(self.program, ty)?;
+        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
+            .render(self.program)?;
+        let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
+        if self.grain.is_some() {
+            head.push("i64 %wf.budget".to_owned());
+            arguments.push_str(", i64 %wf.budget");
+        }
+        Ok(format!(
+            "define {result} @{symbol}({}) {{\nentry:\n{frame}  \
+             call void @{body_symbol}({arguments})\n  \
+             %wf.returned = load {result}, ptr {RESULT_POINTER}\n  \
+             ret {result} %wf.returned\n}}\n\n",
+            head.join(", ")
+        ))
     }
 
     /// Source checking retains the conservative continuation of every loop
@@ -1479,7 +1645,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } = block.terminator()
             {
                 let predecessor =
-                    IrBlockId::from_index(index).map_err(|_| BackendFailure::CounterOverflow)?;
+                    IrBlockId::from_index(index).ok_or(BackendFailure::CounterOverflow)?;
                 incoming
                     .get_mut(target.index())
                     .ok_or(BackendFailure::InvalidIr)?
@@ -1909,7 +2075,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     "  {} = getelementptr inbounds {}, ptr {}, i64 0",
                     self.value_name(result),
                     llvm_type(self.program, global.ty())?,
-                    constant_symbol(*constant)
+                    constant_symbol(global)
                 )
                 .map_err(|_| BackendFailure::TextEmission)
             }
@@ -1951,12 +2117,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     .map_err(|_| BackendFailure::TextEmission)
             }
             IrTerminator::Return { value, drops } => {
-                let abi = FunctionAbi::build(self.program, self.function)?;
+                // A register-returned result's body constructs it through
+                // its destination; only the public entry returns the value.
+                let abi = FunctionAbi::build(self.program, self.function)?.body();
                 if self.value_type(*value) != Some(abi.result().ty()) {
                     return Err(BackendFailure::InvalidIr);
                 }
                 if abi.result().uses_destination() {
-                    self.store_value_at(*value, "%wf.result")?;
+                    self.store_value_at(*value, RESULT_POINTER)?;
                     self.emit_drops(drops)?;
                     return writeln!(self.output, "  ret void")
                         .map_err(|_| BackendFailure::TextEmission);
@@ -2185,7 +2353,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
 /// Fit every ordinary call's frame before selecting an overlap group.
 fn ordinary_overlap_lane_frames(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     target: TargetLayout,
     function: &IrFunction,
     overlap: &IrOverlap,
@@ -2236,7 +2404,7 @@ fn definition_operation(function: &IrFunction, value: IrValueId) -> Option<&IrOp
 }
 
 fn llvm_storage_type(
-    program: &IrProgram<'_, '_, '_>,
+    program: &IrProgram,
     ty: &TargetStorageType,
 ) -> Result<String, BackendFailure> {
     match ty {
@@ -2252,10 +2420,7 @@ fn llvm_storage_type(
     }
 }
 
-pub(crate) fn llvm_type(
-    program: &IrProgram<'_, '_, '_>,
-    ty: IrType,
-) -> Result<String, BackendFailure> {
+pub(crate) fn llvm_type(program: &IrProgram, ty: IrType) -> Result<String, BackendFailure> {
     match ty {
         IrType::Unit => Ok("i8".to_owned()),
         IrType::Bool => Ok("i1".to_owned()),
@@ -2348,13 +2513,13 @@ pub(crate) fn llvm_type(
                 };
                 Ok(if variants.len() <= 2 { "i1" } else { "i32" }.to_owned())
             } else {
-                Ok(nominal_symbol(id))
+                Ok(nominal_symbol(nominal))
             }
         }
     }
 }
 
-fn is_tag_only_type(program: &IrProgram<'_, '_, '_>, ty: IrType) -> Result<bool, BackendFailure> {
+fn is_tag_only_type(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {
     match ty {
         IrType::Bool => Ok(true),
         IrType::Nominal(id) => program
@@ -2525,12 +2690,15 @@ fn value_name(value: IrValueId) -> String {
     format!("%v{}", value.ordinal())
 }
 
-fn nominal_symbol(nominal: IrNominalId) -> String {
-    format!("%wf.t{}", nominal.ordinal())
+/// A nominal's LLVM type name, by its stable link name, so an unchanged
+/// function's fragment keeps its text when another type is added [MOD-8].
+fn nominal_symbol(nominal: &crate::IrNominal) -> String {
+    format!("%wf.t.{}", nominal.link_name())
 }
 
-fn constant_symbol(constant: crate::IrConstantId) -> String {
-    format!("@.wf_const.{}", constant.ordinal())
+/// A constant's LLVM global, by its stable link name [MOD-8].
+fn constant_symbol(constant: &crate::IrGlobalConstant) -> String {
+    format!("@.wf_const.{}", constant.link_name())
 }
 
 fn integer_safe_label(value: IrValueId) -> String {

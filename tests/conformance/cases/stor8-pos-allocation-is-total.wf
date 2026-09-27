@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "STOR-8: there is one heap and allocation is total in the source; it never returns a failure, never traps, and no allocating operation carries a Result, so an allocating construction's result is used directly with no failure arm.";
   let b = box_new::<u64>(value: 7_u64);

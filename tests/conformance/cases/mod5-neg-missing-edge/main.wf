@@ -1,0 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let sign = pkg::data::sign_of(value: 1_i32);
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-13: slots_from_array consumes a full array into a full window and slots_into_array consumes a window whose len equals its cap.";
   let a = array_filled::<u64, 3>(value: 4_u64);

@@ -1,0 +1,5 @@
+alias io = std::io;
+
+fn width(output: &io::OutputStream) -> result: u64 pure {
+  return 80_u64;
+}

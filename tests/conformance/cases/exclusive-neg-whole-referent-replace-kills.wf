@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {
   doc "Exchanges the whole referent of its reference parameter for a fresh empty window [OP-11].";
   let empty = slots_new::<u64, 4>();

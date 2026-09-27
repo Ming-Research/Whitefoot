@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn tail_byte(data: &[u8]) -> result: u8 reads(data) {
   doc "A direct-place set commit publishes its finite S5 post-write image only after facts about the old target value die. Here start = back carries the already proved n - 8 bound to the subscript without a runtime check.";
   let n = deref(data).len;

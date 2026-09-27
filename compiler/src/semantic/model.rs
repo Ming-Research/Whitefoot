@@ -431,6 +431,16 @@ pub(crate) enum CheckedNumericType {
 }
 
 impl CheckedNumericType {
+    /// The checked type this numeric type names.
+    pub(crate) const fn checked_type(self) -> CheckedType {
+        match self {
+            Self::Integer(ty) => CheckedType::Integer(ty),
+            Self::Float(ty) => CheckedType::Float(ty),
+            Self::GenericInteger(declaration) => CheckedType::GenericInt(declaration),
+            Self::GenericFloat(declaration) => CheckedType::GenericFloat(declaration),
+        }
+    }
+
     pub(crate) const fn from_type(ty: CheckedType) -> Option<Self> {
         match ty {
             CheckedType::Integer(ty) => Some(Self::Integer(ty)),
@@ -958,7 +968,7 @@ impl CheckedNominal {
 /// owns has it and its declaration does not remove it: a struct's fields and
 /// an enum's variant payload fields are its parts, an `Array<T, N>` has the
 /// capabilities of its element, and `Slots`, `Ring`, `Box` and the host
-/// handles are declared `nocopy` or `nodrop` [PRE-1]. `parameter` answers for
+/// handles are declared `nocopy` or `nodrop` [PRE-1, PRE-2]. `parameter` answers for
 /// a type parameter standing for itself, whose capabilities are the ones its
 /// written bound grants [PROV-6]. `None` reports a nominal or element handle
 /// the tables do not hold.
@@ -1581,6 +1591,32 @@ pub(crate) enum CheckedRangeSource {
     Range(CheckedRangeRoot),
 }
 
+impl CheckedRangeSource {
+    /// The written root and steps of the place this range is formed over
+    /// [REF-1, REF-4], before reference resolution.
+    ///
+    /// A re-slice is formed over the run its holder names, so its steps are
+    /// empty: resolving the holder supplies that run's own range step. The
+    /// formed reference names each resolved place of this source extended by
+    /// the formation's own range step, which is what [OWN-7] compares and
+    /// what [EFF-5] substitutes into a callee's row.
+    pub(crate) fn place(&self) -> (super::places::PlaceRoot, Vec<super::places::PlaceStep>) {
+        match self {
+            Self::Storage(root) => (root.root, root.place_path()),
+            Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+        }
+    }
+
+    /// The binding the source is written at: the storage root's binding, or
+    /// the holder a re-slice reads through.
+    pub(crate) const fn binding(&self) -> Option<BindingId> {
+        match self {
+            Self::Storage(root) => root.binding(),
+            Self::Range(root) => Some(root.binding),
+        }
+    }
+}
+
 /// One typed element place in the run a range reference names [REF-4, OP-4].
 ///
 /// Reads, borrows, measures and `set` targets share the evaluated outer offset
@@ -1636,6 +1672,27 @@ impl CheckedRangeElementPlace {
 
     pub(crate) const fn measured(&self) -> Option<MeasuredKind> {
         self.ty.measured()
+    }
+
+    /// [ENT-2] how this element place's offsets stand: the range's own
+    /// subscript first, then every nested one.
+    pub(crate) fn subscripted_term(&self) -> Option<SubscriptedTerm> {
+        SubscriptedTerm::of_offsets(
+            std::iter::once((&self.offset, self.captured)).chain(subscript_offsets(&self.path)),
+        )
+    }
+
+    /// [ENT-2] clause (b): whether this element place is a term because its
+    /// final step selects a readonly field of one fragment type. The range's
+    /// own subscript selects the element every later step starts from.
+    pub(crate) fn readonly_field_term(
+        &self,
+        nominals: &[CheckedNominal],
+    ) -> Option<SubscriptedTerm> {
+        if !selects_readonly_fragment_field(nominals, self.root.element_type, &self.path) {
+            return None;
+        }
+        self.subscripted_term()
     }
 
     pub(crate) const fn element(&self) -> Option<CheckedElement> {
@@ -1773,6 +1830,149 @@ impl CheckedContainerRoot {
             CheckedType::Window { capacity, .. } => capacity,
             _ => None,
         }
+    }
+
+    /// [ENT-2] how this place's subscript offsets stand; a place with no
+    /// subscript has none to judge.
+    pub(crate) fn subscripted_term(&self) -> Option<SubscriptedTerm> {
+        SubscriptedTerm::of_offsets(subscript_offsets(&self.path))
+    }
+
+    /// [ENT-2] clause (b): whether this subscripted place is a term because
+    /// its final step selects a readonly field of one fragment type.
+    ///
+    /// Only the steps after the last subscript decide the final field; the
+    /// offsets of every subscript decide whether its identity is represented.
+    pub(crate) fn readonly_field_term(
+        &self,
+        nominals: &[CheckedNominal],
+    ) -> Option<SubscriptedTerm> {
+        let last = self
+            .path
+            .iter()
+            .rposition(|step| matches!(step, CheckedPlaceStep::Subscript(_)))?;
+        let CheckedPlaceStep::Subscript(index) = &self.path[last] else {
+            return None;
+        };
+        if !selects_readonly_fragment_field(nominals, index.element_type, &self.path[last + 1..]) {
+            return None;
+        }
+        self.subscripted_term()
+    }
+}
+
+impl CheckedBufferRoot {
+    /// [ENT-2] how this run's subscript offsets stand.
+    pub(crate) fn subscripted_term(&self) -> Option<SubscriptedTerm> {
+        SubscriptedTerm::of_offsets(subscript_offsets(&self.path))
+    }
+}
+
+/// Every subscript offset of a checked storage path with its captured value,
+/// in written order.
+fn subscript_offsets(
+    path: &[CheckedPlaceStep],
+) -> impl Iterator<Item = (&CheckedExpression, super::places::CapturedValue)> {
+    path.iter().filter_map(|step| match step {
+        CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
+        CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+    })
+}
+
+/// How one place's subscript offsets stand under [ENT-2]: every offset of a
+/// term is itself a clause (a) or clause (c) term.
+///
+/// A place with an offset of any other form is no term at all and has no
+/// value here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SubscriptedTerm {
+    /// Every offset is a captured literal, const or binding [REF-1], so the
+    /// place has the term identity the entailment fragment interns.
+    Represented,
+    /// An offset is a tracked place with projections, which ENT-2 admits but
+    /// no captured value names. This is a compiler capability limit, reported
+    /// as unsupported, not a language rejection [DIAG-1].
+    Unrepresented,
+}
+
+impl SubscriptedTerm {
+    /// Classifies the offsets of one place in written order.
+    fn of_offsets<'offset>(
+        offsets: impl IntoIterator<Item = (&'offset CheckedExpression, super::places::CapturedValue)>,
+    ) -> Option<Self> {
+        let mut term = Self::Represented;
+        for (offset, captured) in offsets {
+            if captured != super::places::CapturedValue::unknown() {
+                continue;
+            }
+            if !is_tracked_place_read(offset) {
+                return None;
+            }
+            term = Self::Unrepresented;
+        }
+        Some(term)
+    }
+}
+
+/// Whether `steps`, read from a value of type `start`, end by selecting a
+/// readonly field [TYPE-2] whose type is one fragment integer [ENT-2].
+fn selects_readonly_fragment_field(
+    nominals: &[CheckedNominal],
+    start: CheckedType,
+    steps: &[CheckedPlaceStep],
+) -> bool {
+    let struct_field = |ty: CheckedType, field: u32| {
+        let CheckedType::Nominal(nominal) = ty else {
+            return None;
+        };
+        let CheckedNominalKind::Struct { fields } = &nominals.get(nominal.0 as usize)?.kind else {
+            return None;
+        };
+        fields.get(field as usize)
+    };
+    let Some((CheckedPlaceStep::Field(last), prefix)) = steps.split_last() else {
+        return false;
+    };
+    let mut ty = start;
+    for step in prefix {
+        ty = match step {
+            CheckedPlaceStep::Subscript(index) => index.element_type,
+            CheckedPlaceStep::Field(field) => match struct_field(ty, *field) {
+                Some(field) => field.ty,
+                None => return false,
+            },
+            CheckedPlaceStep::BoxReferent(nominal) => {
+                match nominals
+                    .get(nominal.0 as usize)
+                    .map(|nominal| &nominal.kind)
+                {
+                    Some(CheckedNominalKind::Box { referent, .. }) => *referent,
+                    _ => return false,
+                }
+            }
+        };
+    }
+    struct_field(ty, *last)
+        .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_)))
+}
+
+/// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
+/// a binding, possibly below field selections, `deref` wrappings and `Box`
+/// content, with no subscript.
+fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
+    match offset {
+        CheckedExpression::Binding {
+            consume_root: false,
+            ..
+        }
+        | CheckedExpression::Project {
+            consume_root: false,
+            ..
+        }
+        | CheckedExpression::DerefAddressed { .. } => true,
+        CheckedExpression::BoxDeref { value, .. }
+        | CheckedExpression::ProjectValue { value, .. } => is_tracked_place_read(value),
+        _ => false,
     }
 }
 
@@ -2180,6 +2380,11 @@ pub(crate) struct CheckedMatchBinder {
 pub(crate) struct CheckedMatchArm {
     pub(crate) tag: u32,
     pub(crate) binders: Vec<CheckedMatchBinder>,
+    /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each
+    /// payload field a final `..` covers, taken on entry to the arm: one
+    /// whole-field drop, its path the field's ordinal, for every covered
+    /// field whose release is non-empty. A reference match releases nothing.
+    pub(crate) covered: Vec<CheckedProjectedDrop>,
     pub(crate) body: Vec<CheckedStatement>,
     pub(crate) fallthrough_drops: Vec<CheckedDrop>,
 }
@@ -2318,10 +2523,19 @@ pub(crate) enum CheckedStatement {
         /// a reference rebinding has no owned value to release either.
         displaces_live_value: bool,
     },
-    Evaluate(CheckedExpression),
+    /// [GRAM-4] an expression statement whose discarded result needs no
+    /// release: a copy value or a borrow-mode reference.
+    Evaluate {
+        /// The complete `expr_stmt`, the statement's own site for the
+        /// [PAR-1, PAR-2] footprint judgments, as a `let`'s is.
+        node_path: NodePath,
+        value: CheckedExpression,
+    },
     /// The discarded result of an expression statement, with the
     /// compiler-derived release it runs [STOR-3].
     DropExpression {
+        /// The complete `expr_stmt`, as for [`Self::Evaluate`].
+        node_path: NodePath,
         value: CheckedExpression,
         drops: Vec<CheckedProjectedDrop>,
     },
@@ -2464,8 +2678,16 @@ pub(crate) struct CheckedFunction {
     pub(crate) formal_hypothesis: bool,
     pub(crate) id: FunctionId,
     pub(crate) declaration: DeclarationId,
+    /// The module whose inventory declares it; the synthetic root module for
+    /// a PRE-1 function [MOD-3].
+    pub(crate) module: crate::ModuleId,
     pub(crate) name: String,
     pub(crate) symbol: String,
+    /// The concrete function-kind actuals this instance was built with, in
+    /// binding order; empty for a function without function-kind parameters.
+    /// [FN-9] forms a caller's component as though an instance of another
+    /// module's generic callable calls every one of them.
+    pub(crate) function_actuals: Vec<FunctionId>,
     /// Formal regions in the same declaration order `UserCall::goal_regions`
     /// uses. Retained for post-acceptance physical release specialization;
     /// semantic identity remains the canonical [`FunctionId`].
@@ -2477,6 +2699,12 @@ pub(crate) struct CheckedFunction {
     pub(crate) declared_state_writes: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
+    /// aligned with `requirements`: its own, and those of every definition
+    /// whose expansion it is the first requirement to reach. Each is formed
+    /// at body entry in the state holding the requirements before it, where
+    /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
+    pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
@@ -2501,6 +2729,10 @@ pub(crate) struct CheckedFunction {
     /// Finite optional [PAR-1] range questions planned from the complete
     /// structural footprints before entailment walks their first statements.
     pub(crate) permission_separation_queries: Vec<super::permission::PermissionSeparationQuery>,
+    /// Every mandatory obligation of the completed function, which the
+    /// analysis answers one by one and acceptance requires discharged.
+    /// Formed once the call requirements are installed; empty before.
+    pub(crate) obligations: Vec<super::obligations::ObligationRecord>,
     /// Retained [ENT] analysis summary [DIAG-2]. Semantic acceptance and
     /// diagnostics read it; lowering deliberately does not.
     #[allow(dead_code)]
@@ -2526,9 +2758,15 @@ pub(crate) struct CheckedCallSeparation {
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
+    /// The window a position beside one of its parts reads `r.len` of
+    /// [WIN-2]: the place both paths reach above the divergence.
+    pub(crate) window: Option<super::places::ResolvedPlace>,
     /// The two substituted paths as the diagnostic renders them.
     pub(crate) left_spelling: String,
     pub(crate) right_spelling: String,
+    /// Whether one reference argument supplies both paths [EFF-5], so that
+    /// passing only one of them is no repair [DIAG-1].
+    pub(crate) one_argument: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2542,6 +2780,18 @@ pub(crate) struct CheckedReferencePreservationUse {
 pub(crate) enum CheckedCallSeparationPositions {
     Indices(super::places::CapturedValue, super::places::CapturedValue),
     Ranges(super::places::CapturedRange, super::places::CapturedRange),
+    /// [WIN-2] an index beside the `next` or `free` part of the window it
+    /// indexes, which the pair's separation needs proved below that window's
+    /// length in the call's entry state.
+    Live(super::places::CapturedValue),
+    /// [OWN-7] an index beside a range under containing paths that are
+    /// identical step for step or differ only in index steps, which the
+    /// separation needs proved before the range's start or at or after its
+    /// end, or the range empty.
+    IndexOutsideRange(super::places::CapturedValue, super::places::CapturedRange),
+    /// [WIN-2] a range beside the window's `next` or `free`, which the
+    /// separation needs proved to end at or below `r.len`, or empty.
+    RangeWithinLength(super::places::CapturedRange),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2614,6 +2864,13 @@ pub(crate) struct CheckedProgramData {
     /// physical function specialization. Loan regions do not become
     /// specialization axes merely by occurring in this table.
     pub(crate) constants: Vec<CheckedConstant>,
+    /// [MOD-8] each nominal's stable spelling, by module-qualified
+    /// declaration names and arguments, when it has one; lowering names its
+    /// link-visible type by it, so a type keeps its name in every build that
+    /// has it, whatever other types that build has.
+    pub(crate) nominal_spellings: Vec<Option<String>>,
+    /// Each constant's module-qualified name, for the same purpose.
+    pub(crate) constant_spellings: Vec<String>,
     /// Immutable structural table for every symbolic const expression named
     /// by retained schema metadata. `DerivedConstId` is meaningful only
     /// relative to this checked-program-owned table.
@@ -2733,5 +2990,246 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         },
         CheckedExpression::ConstructStruct { fields, .. }
         | CheckedExpression::ConstructEnum { fields, .. } => fields.iter().collect(),
+    }
+}
+
+/// One call a checked body makes: its callee and the call's node path.
+#[derive(Clone)]
+pub(crate) struct MentionedCall {
+    pub(crate) callee: FunctionId,
+    pub(crate) path: NodePath,
+}
+
+/// What one checked function's own layout and body name: the type of each
+/// parameter, of the result and of every value the body evaluates, binds or
+/// releases, the interned elements its range places read, and every call it
+/// makes. The [STOR-8] heap judgment and lowering's executable inventory read
+/// the same walk.
+#[derive(Default)]
+pub(crate) struct FunctionMentions {
+    pub(crate) types: Vec<CheckedType>,
+    pub(crate) elements: Vec<CheckedElement>,
+    pub(crate) calls: Vec<MentionedCall>,
+}
+
+impl FunctionMentions {
+    pub(crate) fn collect(function: &CheckedFunction) -> Self {
+        let mut dependencies = Self::default();
+        dependencies.types.push(function.result);
+        dependencies
+            .types
+            .extend(function.parameters.iter().map(|parameter| parameter.ty));
+        if matches!(function.body_disposition, CheckedBodyDisposition::Inhabited) {
+            dependencies.statements(function.body.as_deref().unwrap_or_default());
+        }
+        dependencies
+    }
+
+    fn statements(&mut self, statements: &[CheckedStatement]) {
+        for statement in statements {
+            match statement {
+                CheckedStatement::Let { value, .. }
+                | CheckedStatement::Evaluate { value, .. }
+                | CheckedStatement::DropExpression { value, .. } => self.expression(value),
+                CheckedStatement::DestructuringLet {
+                    bindings,
+                    nominal,
+                    value,
+                    ..
+                } => {
+                    self.types.push(CheckedType::Nominal(*nominal));
+                    self.types.extend(bindings.iter().map(|(_, ty, _)| *ty));
+                    self.expression(value);
+                }
+                CheckedStatement::PropagateLet {
+                    scrutinee,
+                    result_nominal,
+                    return_nominal,
+                    ok_type,
+                    error_type,
+                    error_drops,
+                    ..
+                } => {
+                    self.types.extend([
+                        CheckedType::Nominal(*result_nominal),
+                        CheckedType::Nominal(*return_nominal),
+                        *ok_type,
+                        *error_type,
+                    ]);
+                    self.types.extend(error_drops.iter().map(|drop| drop.ty));
+                    self.expression(scrutinee);
+                }
+                CheckedStatement::Set { target, value, .. } => {
+                    self.target(target);
+                    self.expression(value);
+                }
+                CheckedStatement::Proof(_) => {}
+                CheckedStatement::Return { value, drops, .. }
+                | CheckedStatement::Give { value, drops, .. } => {
+                    self.expression(value);
+                    self.types.extend(drops.iter().map(|drop| drop.ty));
+                }
+                CheckedStatement::Match {
+                    scrutinee,
+                    enum_type,
+                    arms,
+                    ..
+                }
+                | CheckedStatement::ValueMatchLet {
+                    scrutinee,
+                    enum_type,
+                    arms,
+                    ..
+                } => {
+                    if let CheckedStatement::ValueMatchLet {
+                        result_type,
+                        result_range_element,
+                        ..
+                    } = statement
+                    {
+                        self.types.push(*result_type);
+                        self.elements.extend(result_range_element.iter().copied());
+                    }
+                    if let CheckedEnumType::Nominal(nominal) = enum_type {
+                        self.types.push(CheckedType::Nominal(*nominal));
+                    }
+                    self.expression(scrutinee);
+                    for arm in arms {
+                        self.types
+                            .extend(arm.binders.iter().map(|binder| binder.ty));
+                        self.types.extend(arm.covered.iter().map(|drop| drop.ty));
+                        self.types
+                            .extend(arm.fallthrough_drops.iter().map(|drop| drop.ty));
+                        self.statements(&arm.body);
+                    }
+                }
+                CheckedStatement::Loop {
+                    body,
+                    backedge_drops,
+                    ..
+                }
+                | CheckedStatement::CountedRange {
+                    body,
+                    backedge_drops,
+                    ..
+                } => {
+                    if let CheckedStatement::CountedRange { lower, upper, .. } = statement {
+                        self.expression(lower);
+                        self.expression(upper);
+                    }
+                    self.types.extend(backedge_drops.iter().map(|drop| drop.ty));
+                    self.statements(body);
+                }
+                CheckedStatement::Break { drops, .. } => {
+                    self.types.extend(drops.iter().map(|drop| drop.ty));
+                }
+            }
+        }
+    }
+
+    fn expression(&mut self, expression: &CheckedExpression) {
+        self.types.push(expression.ty());
+        match expression {
+            CheckedExpression::UserCall {
+                function,
+                call,
+                goal_regions,
+                ..
+            } => {
+                debug_assert!(
+                    goal_regions.is_empty(),
+                    "[STOR-8] no call carries a region argument"
+                );
+                self.calls.push(MentionedCall {
+                    callee: *function,
+                    path: call.clone(),
+                });
+            }
+            CheckedExpression::BoxDeref { nominal, .. }
+            | CheckedExpression::ProjectValue { nominal, .. } => {
+                self.types.push(CheckedType::Nominal(*nominal));
+            }
+            CheckedExpression::BoxTake { path, cleanup, .. } => {
+                self.steps(path);
+                for action in cleanup {
+                    match action {
+                        CheckedOwnedTakeCleanup::Drop { path, ty } => {
+                            self.types.push(*ty);
+                            self.steps(path);
+                        }
+                        CheckedOwnedTakeCleanup::BoxShell {
+                            path,
+                            nominal,
+                            referent,
+                        } => {
+                            self.types
+                                .extend([CheckedType::Nominal(*nominal), *referent]);
+                            self.steps(path);
+                        }
+                    }
+                }
+            }
+            CheckedExpression::Project { residual_drops, .. } => {
+                self.types.extend(residual_drops.iter().map(|drop| drop.ty));
+            }
+            CheckedExpression::ContainerMeasure { root, .. }
+            | CheckedExpression::ReadStorage { root, .. }
+            | CheckedExpression::BorrowAddressed { root, .. } => self.root_types(root),
+            CheckedExpression::BorrowRangeIndex { place, .. }
+            | CheckedExpression::RangeIndex { place, .. } => {
+                self.types.push(place.root.element_type);
+                self.steps(&place.path);
+            }
+            CheckedExpression::RangeElementMeasure { place, .. } => {
+                self.types.push(place.root.element_type);
+                self.types.push(place.ty);
+                self.steps(&place.path);
+            }
+            _ => {}
+        }
+        for child in expression_children(expression) {
+            self.expression(child);
+        }
+    }
+
+    fn target(&mut self, target: &CheckedSetTarget) {
+        self.types.push(target.ty());
+        match target {
+            CheckedSetTarget::Place(_) => {}
+            CheckedSetTarget::RangeIndex(target) => {
+                self.types.push(target.root.element_type);
+                for offset in target.offsets() {
+                    self.expression(offset);
+                }
+                self.steps(&target.path);
+            }
+            CheckedSetTarget::Storage(root) => {
+                self.root_types(root);
+                for offset in root.offsets() {
+                    self.expression(offset);
+                }
+            }
+        }
+    }
+
+    fn root_types(&mut self, root: &CheckedContainerRoot) {
+        self.types.push(root.ty);
+        self.steps(&root.path);
+    }
+
+    fn steps(&mut self, steps: &[CheckedPlaceStep]) {
+        for step in steps {
+            match step {
+                CheckedPlaceStep::Field(_) => {}
+                CheckedPlaceStep::BoxReferent(nominal) => {
+                    self.types.push(CheckedType::Nominal(*nominal));
+                }
+                CheckedPlaceStep::Subscript(subscript) => {
+                    self.types
+                        .extend([subscript.base_type, subscript.element_type]);
+                    self.expression(&subscript.offset);
+                }
+            }
+        }
     }
 }

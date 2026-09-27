@@ -1,0 +1,9 @@
+public struct Node {
+  public readonly count: u64;
+  public weight: u64;
+}
+
+public fn sum_after_reset(rows: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(kids), writes(rows) contract {
+  requires i < deref(rows).len;
+  requires deref(rows)[i].count <= deref(kids).len;
+} doc "Resets element i's readonly count, which only this module may assign, and then reads that many children.";

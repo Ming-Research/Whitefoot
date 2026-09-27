@@ -1,4 +1,4 @@
-//! Ordinary prelude TCP functions over loopback peers.
+//! Ordinary std::net TCP functions over loopback peers.
 //!
 //! The same linked implementation may use the native engine or file adapter.
 //! These private choices preserve bytes and outcomes. C2 removed PAR-3, so
@@ -167,11 +167,11 @@ fn tcp_calls_use_ordinary_linked_declarations() {
         "close_send",
     ] {
         assert!(
-            llvm.contains(&format!("call void @wf_{name}(")),
+            llvm.contains(&format!("call void @wf_std.net.{name}(")),
             "missing ordinary call {name}"
         );
         assert!(
-            llvm.contains(&format!("declare void @wf_{name}(")),
+            llvm.contains(&format!("declare void @wf_std.net.{name}(")),
             "missing ordinary declaration {name}"
         );
     }
@@ -298,12 +298,25 @@ fn four_connections_reach_one_listener_on_both_routes() {
 #[test]
 fn the_fanout_loop_has_only_ordinary_counted_permission() {
     // PAR-2 checks the explicit ordinary close/serve statements under its
-    // normal body-shape rule. Deleted PAR-3 supplies no second judgment.
+    // normal conditions. Deleted PAR-3 supplies no second judgment.
+    //
+    // The serve loop's `close_listener` expression statement is judged by its
+    // call's row, exactly as a let-bound call is, so the loop is no longer
+    // refused for that spelling. It is refused for what it does: the first
+    // condition it fails is the reported one, the `outcome` it carries between
+    // iterations, and `serve_one` also writes the shared listener and factory.
     let ledger = program_permission_ledger("tcp_fanout.wf");
     assert!(
         ledger.iter().any(|line| line.starts_with("PAR loop")
             && line.contains("denied")
-            && line.contains("condition 2: the body contains an expression statement")),
+            && line.contains("condition 1:")
+            && line.contains("set outcome = reported;")),
+        "{ledger:?}"
+    );
+    assert!(
+        !ledger
+            .iter()
+            .any(|line| line.contains("the body contains an expression statement")),
         "{ledger:?}"
     );
     assert!(
@@ -412,26 +425,26 @@ fn the_fanout_loop_keeps_denied_calls_on_the_current_stack() {
 // its own `writes` entry [EFF-1]. The exchange, the four close orders and
 // every status code the test reads are unchanged.
 #[cfg(unix)]
-const CROSSED_CONNECTIONS: &str = r#"fn cross(first: TcpConnection, second: TcpConnection) -> (a: TcpConnection, b: TcpConnection) pure {
-  let TcpConnection(receive: first_receive, send: first_send) = move first;
-  let TcpConnection(receive: second_receive, send: second_send) = move second;
-  let a = TcpConnection(receive: move first_receive, send: move second_send);
-  let b = TcpConnection(receive: move second_receive, send: move first_send);
+const CROSSED_CONNECTIONS: &str = r#"fn cross(first: std::net::TcpConnection, second: std::net::TcpConnection) -> (a: std::net::TcpConnection, b: std::net::TcpConnection) pure {
+  let std::net::TcpConnection(receive: first_receive, send: first_send) = move first;
+  let std::net::TcpConnection(receive: second_receive, send: second_send) = move second;
+  let a = std::net::TcpConnection(receive: move first_receive, send: move second_send);
+  let b = std::net::TcpConnection(receive: move second_receive, send: move first_send);
   return move a, move b;
 }
 
-fn close_pair(factory: &HandleFactory, connection: TcpConnection, receive_first: Bool) -> result: u8 writes(factory) {
-  let TcpConnection(receive: receive, send: send) = move connection;
+fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnection, receive_first: Bool) -> result: u8 writes(factory) {
+  let std::net::TcpConnection(receive: receive, send: send) = move connection;
   let failed = 0_u8;
   if receive_first {
-    match close_receive(factory: factory, receive: move receive) {
+    match std::net::close_receive(factory: factory, receive: move receive) {
       Ok(value: done) => {
       }
       Err(error: problem) => {
         set failed = 1_u8;
       }
     }
-    match close_send(factory: factory, send: move send) {
+    match std::net::close_send(factory: factory, send: move send) {
       Ok(value: done) => {
       }
       Err(error: problem) => {
@@ -439,14 +452,14 @@ fn close_pair(factory: &HandleFactory, connection: TcpConnection, receive_first:
       }
     }
   } else {
-    match close_send(factory: factory, send: move send) {
+    match std::net::close_send(factory: factory, send: move send) {
       Ok(value: done) => {
       }
       Err(error: problem) => {
         set failed = 3_u8;
       }
     }
-    match close_receive(factory: factory, receive: move receive) {
+    match std::net::close_receive(factory: factory, receive: move receive) {
       Ok(value: done) => {
       }
       Err(error: problem) => {
@@ -457,11 +470,11 @@ fn close_pair(factory: &HandleFactory, connection: TcpConnection, receive_first:
   return failed;
 }
 
-fn remaining(connection: &TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) {
+fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) {
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
-  match receive_next(receive: &deref(connection).receive, destination: destination, start: 0_u64, end: 1_u64) {
+  match std::net::receive_next(receive: &deref(connection).receive, destination: destination, start: 0_u64, end: 1_u64) {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -476,7 +489,7 @@ fn remaining(connection: &TcpConnection) -> result: u8 writes(connection.receive
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match send_once(send: &deref(connection).send, source: source, start: 0_u64, end: 1_u64) {
+  match std::net::send_once(send: &deref(connection).send, source: source, start: 0_u64, end: 1_u64) {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;
@@ -489,12 +502,12 @@ fn remaining(connection: &TcpConnection) -> result: u8 writes(connection.receive
   return 0_u8;
 }
 
-fn exercise(factory: &HandleFactory, address: &SocketAddress) -> result: u8 reads(address), writes(factory) {
+fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) {
   let receive_first = True();
   let send_first = False();
-  match tcp_connect(factory: factory, address: address) {
+  match std::net::tcp_connect(factory: factory, address: address) {
     Ok(value: first) => {
-      match tcp_connect(factory: factory, address: address) {
+      match std::net::tcp_connect(factory: factory, address: address) {
         Ok(value: second) => {
           let (a, b) = cross(first: move first, second: move second);
           let first_status = close_pair(factory: factory, connection: move a, receive_first: receive_first);
@@ -509,7 +522,7 @@ fn exercise(factory: &HandleFactory, address: &SocketAddress) -> result: u8 read
           if exchange_status != 0_u8 {
             return exchange_status;
           }
-          match tcp_connect(factory: factory, address: address) {
+          match std::net::tcp_connect(factory: factory, address: address) {
             Ok(value: checkpoint) => {
               let checkpoint_status = remaining(connection: &checkpoint);
               let closed = close_pair(factory: factory, connection: move checkpoint, receive_first: receive_first);
@@ -535,12 +548,12 @@ fn exercise(factory: &HandleFactory, address: &SocketAddress) -> result: u8 read
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: handles, stdin: input) = move inputs;
-  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
-  close_directory(factory: &handles, directory: move cwd);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: handles, stdin: input) = move inputs;
+  let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
   let outcome = exercise(factory: &handles, address: &address);
-  return exit_status(code: outcome);
+  return std::process::exit_status(code: outcome);
 }
 "#;
 

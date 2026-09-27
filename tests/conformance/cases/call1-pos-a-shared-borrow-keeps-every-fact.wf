@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inspect<const n: u64>(source: &Slots<u8, n>, i: u64) -> seen: u8 reads(source) contract {
   define spare = deref(source).len;
   requires i < spare;

@@ -1,0 +1,4 @@
+pkg::frames: [];
+pkg: [pkg::frames, std::process];
+
+entry main = pkg::main;

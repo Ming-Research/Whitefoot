@@ -1,3 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Slab = std::collections::slab::Slab;
+alias SlabHandle = std::collections::slab::SlabHandle;
+alias exit_status = std::process::exit_status;
+alias priority_queue_free = std::collections::priority_queue::priority_queue_free;
+alias priority_queue_heapify_indexed = std::collections::priority_queue::priority_queue_heapify_indexed;
+alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
+alias priority_queue_peek_at = std::collections::priority_queue::priority_queue_peek_at;
+alias priority_queue_remove_at_indexed = std::collections::priority_queue::priority_queue_remove_at_indexed;
+alias slab_edit = std::collections::slab::slab_edit;
+alias slab_free = std::collections::slab::slab_free;
+alias slab_insert = std::collections::slab::slab_insert;
+alias slab_new = std::collections::slab::slab_new;
+alias slab_remove = std::collections::slab::slab_remove;
+
 interface IndexedPayload<T> {
   fn make(serial: u64) -> value: T pure;
   fn read(value: &T) -> serial: u64 reads(value);

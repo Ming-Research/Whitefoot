@@ -133,7 +133,10 @@ fn different_sufficient_limits_produce_identical_partitions() {
                 (
                     lexeme.span().start().value(),
                     lexeme.span().end().value(),
-                    lexeme.span().bytes().to_vec(),
+                    source
+                        .span_bytes(lexeme.span())
+                        .expect("a lexeme of this bundle")
+                        .to_vec(),
                 )
             })
             .collect::<Vec<_>>(),

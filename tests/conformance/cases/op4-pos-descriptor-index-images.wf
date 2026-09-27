@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn window_last<const n: u64>(buf: Slots<u8, n>, start: u64, end: u64) -> value: u8 pure contract {
   define spare = buf.len;
   requires start < end;

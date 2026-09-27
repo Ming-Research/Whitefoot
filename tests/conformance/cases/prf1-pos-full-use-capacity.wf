@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn combine(a0: u64, b0: u64, a1: u64, b1: u64, a2: u64, b2: u64) -> result: unit pure contract {
   requires a0 <= b0;
   requires a1 <= b1;

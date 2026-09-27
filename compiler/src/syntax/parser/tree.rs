@@ -5,9 +5,9 @@ use crate::{ByteOffset, SourceId};
 
 /// One private typed postorder element.
 #[derive(Debug)]
-pub(crate) enum DerivationElement<'source> {
+pub(crate) enum DerivationElement {
     Terminal {
-        token: Token<'source>,
+        token: Token,
         predicate: TerminalPredicate,
     },
     Production {
@@ -29,8 +29,8 @@ pub(crate) enum DerivationExtent {
 }
 
 #[derive(Debug)]
-pub(crate) struct DerivationTree<'source> {
-    pub(crate) elements: Vec<DerivationElement<'source>>,
+pub(crate) struct DerivationTree {
+    pub(crate) elements: Vec<DerivationElement>,
     pub(crate) terminal_count: u64,
     pub(crate) production_count: u64,
 }

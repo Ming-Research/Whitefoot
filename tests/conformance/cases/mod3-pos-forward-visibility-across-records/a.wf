@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "Uses a struct, a const and a function that a later record declares.";
+  let p = Point(x: limit);
+  let code = narrow(value: p.x);
+  return exit_status(code: code);
+}

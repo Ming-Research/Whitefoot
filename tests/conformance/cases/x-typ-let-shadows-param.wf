@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn shadow_param(x: i32) -> function_result: unit pure {
   doc "A let redeclaring the live parameter name x shadows it [TYPE-6].";
   let x = 9_i32;

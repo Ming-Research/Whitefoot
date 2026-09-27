@@ -1,8 +1,8 @@
 use core::fmt;
 
-/// The build-time hash implementation is tested against independent vectors.
-#[cfg(test)]
-mod sha256;
+/// The build-time hash implementation, tested against independent vectors,
+/// also addresses the build cache's records.
+pub(crate) mod sha256;
 
 /// The SHA-256 identity of one exact kernel specification.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]

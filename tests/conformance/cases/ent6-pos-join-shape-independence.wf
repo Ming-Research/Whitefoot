@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Lane {
   A();
   B();
@@ -10,17 +13,17 @@ fn pick(at: u64) -> lane: Lane pure {
   let which = at % 4_u64;
   let first = which == 0_u64;
   if first {
-    return A();
+    return Lane::A();
   }
   let second = which == 1_u64;
   if second {
-    return B();
+    return Lane::B();
   }
   let third = which == 2_u64;
   if third {
-    return C();
+    return Lane::C();
   }
-  return D();
+  return Lane::D();
 }
 
 fn flat(count: u64, ba: u64, bb: u64, bc: u64, bd: u64) -> done: u64 pure contract {

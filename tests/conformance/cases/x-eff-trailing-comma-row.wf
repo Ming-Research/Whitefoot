@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f(cell: &Box<i32>, x: i32) -> function_result: i32 reads(cell), {
   doc "A trailing comma after an effect entry is rejected because EFF-1 permits commas only between effects.";
   return x;

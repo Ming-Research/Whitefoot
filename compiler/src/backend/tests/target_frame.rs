@@ -1,12 +1,12 @@
-use crate::backend::target::{
+use crate::target::{
     TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout, TargetLayoutFailure,
     TargetObject, TargetStorageType, plan_target_frame, validate_static_storage,
 };
 
 use super::system::with_ir;
 
-const FRAME_CONTEXT: &[u8] = br#"fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+const FRAME_CONTEXT: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 

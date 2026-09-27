@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Pair {
+  first: u8;
+  second: u8;
+}
+
+fn reset(pair: &Pair) -> result: unit writes(pair), writes(pair.first) {
+  doc "EFF-1: writes(pair) states every access at or below pair, so writes(pair.first) states one of them twice.";
+  set deref(pair).first = 7_u8;
+  set deref(pair) = Pair(first: 0_u8, second: 0_u8);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The malformed declaration above is rejected before this entry calls it.";
+  let pair = Pair(first: 1_u8, second: 2_u8);
+  reset(pair: &pair);
+  return exit_status(code: 0_u8);
+}

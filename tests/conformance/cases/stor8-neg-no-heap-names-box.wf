@@ -1,5 +1,8 @@
 program no_heap;
 
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Cell {
   content: Box<u64>;
 }

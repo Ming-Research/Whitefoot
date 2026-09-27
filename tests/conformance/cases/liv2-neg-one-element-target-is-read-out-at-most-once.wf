@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-3: there is no take operation and no hole, so a move out of a window slot is refused wherever it is written, including in the right-hand side of a commit whose target is another slot of the same window. The restructuring names take_back, remove_at and swap; the exchange this program wants is swap(first: &grid[0_u64], second: &grid[1_u64]).";
   let grid = slots_new::<Box<Slots<u8>>, 2>();

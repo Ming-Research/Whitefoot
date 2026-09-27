@@ -102,6 +102,15 @@ const ENUM_ORDER: &[&str] = &[
     "epbase",
     "epsuffix",
     "erange",
+    "use_premise",
+    // v0.70 [GRAM-2, GRAM-3, GRAM-5, MOD-1]: the module grammar.
+    "alias_decl",
+    "graph_file",
+    "module_row",
+    "module_path",
+    "entry_decl",
+    "type_path",
+    "callee_path",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.
@@ -176,9 +185,9 @@ pub fn generate(path: &str, specification: &str) -> String {
     grammar.assign_decisions(&historical_decisions);
     let grammar = grammar;
 
-    let start = index["program"];
+    let starts = [index["program"], index["graph_file"]];
     let first = model::first_sets(&grammar);
-    let follow = model::follow_sets(&grammar, &first, start);
+    let follow = model::follow_sets(&grammar, &first, &starts);
     let decisions = build_decisions(&grammar, &first, &follow, &index);
     emit(path, &grammar, &raw, &names, &decisions)
 }

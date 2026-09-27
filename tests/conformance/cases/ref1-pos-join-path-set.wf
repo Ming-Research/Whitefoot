@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-1: a let binder whose initializer is a value_if every branch of which delivers a reference is itself a reference variable, and at the join its target is the union of the path sets the incoming edges may name.";
   let a = array_filled::<u64, 4>(value: 0_u64);

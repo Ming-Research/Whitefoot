@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Packet {
   Data(bytes: Box<Slots<u8>>);
   Empty();
@@ -24,7 +27,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &bytes.inner, value: 7_u8);
   place_back(window: &bytes.inner, value: 7_u8);
   place_back(window: &bytes.inner, value: 7_u8);
-  let packet = Data(bytes: move bytes);
+  let packet = Packet::Data(bytes: move bytes);
   let envelope = Envelope(packet: move packet);
   let observed = inspect(envelope: &envelope);
   if observed != 3_u64 {

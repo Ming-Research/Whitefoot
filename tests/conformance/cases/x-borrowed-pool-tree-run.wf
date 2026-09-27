@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum PoolError {
   LeftOutOfBounds();
   RightOutOfBounds();
@@ -23,7 +26,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
       let left_ok = slot < left_room;
       if left_ok {
       } else {
-        let error = LeftOutOfBounds();
+        let error = PoolError::LeftOutOfBounds();
         return Err<u64, PoolError>(error: error);
       }
       set deref(left)[slot] = 0_u64;
@@ -31,7 +34,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
       let right_ok = slot < right_room;
       if right_ok {
       } else {
-        let error = RightOutOfBounds();
+        let error = PoolError::RightOutOfBounds();
         return Err<u64, PoolError>(error: error);
       }
       set deref(right)[slot] = 0_u64;
@@ -56,7 +59,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
           let parent_halvable = parent <= 9223372036854775807_u64;
           if parent_halvable {
           } else {
-            let error = ArithmeticOverflow();
+            let error = PoolError::ArithmeticOverflow();
             return Err<u64, PoolError>(error: error);
           }
           let doubled = parent * 2_u64;
@@ -64,13 +67,13 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
           let left_child = if left_child_defined {
             give start + doubled;
           } else {
-            let error = ArithmeticOverflow();
+            let error = PoolError::ArithmeticOverflow();
             return Err<u64, PoolError>(error: error);
           }
           let left_child_incrementable = left_child <= 18446744073709551614_u64;
           if left_child_incrementable {
           } else {
-            let error = ArithmeticOverflow();
+            let error = PoolError::ArithmeticOverflow();
             return Err<u64, PoolError>(error: error);
           }
           let right_child = left_child + 1_u64;
@@ -79,7 +82,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
           let left_ok = slot < left_room;
           if left_ok {
           } else {
-            let error = LeftOutOfBounds();
+            let error = PoolError::LeftOutOfBounds();
             return Err<u64, PoolError>(error: error);
           }
           set deref(left)[slot] = left_child;
@@ -87,7 +90,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
           let right_ok = slot < right_room;
           if right_ok {
           } else {
-            let error = RightOutOfBounds();
+            let error = PoolError::RightOutOfBounds();
             return Err<u64, PoolError>(error: error);
           }
           set deref(right)[slot] = right_child;
@@ -108,7 +111,7 @@ fn checksum(left: &[u64], right: &[u64], root: u64) -> function_result: Result<u
   let left_ok = root < left_room;
   if left_ok {
   } else {
-    let error = LeftOutOfBounds();
+    let error = PoolError::LeftOutOfBounds();
     return Err<u64, PoolError>(error: error);
   }
   let left_child = deref(left)[root];
@@ -120,7 +123,7 @@ fn checksum(left: &[u64], right: &[u64], root: u64) -> function_result: Result<u
   let right_ok = root < right_room;
   if right_ok {
   } else {
-    let error = RightOutOfBounds();
+    let error = PoolError::RightOutOfBounds();
     return Err<u64, PoolError>(error: error);
   }
   let right_child = deref(right)[root];
@@ -130,14 +133,14 @@ fn checksum(left: &[u64], right: &[u64], root: u64) -> function_result: Result<u
   let children = if child_sum_defined {
     give left_count + right_count;
   } else {
-    let error = ArithmeticOverflow();
+    let error = PoolError::ArithmeticOverflow();
     return Err<u64, PoolError>(error: error);
   }
   let children_countable = children <= 18446744073709551614_u64;
   let total = if children_countable {
     give children + 1_u64;
   } else {
-    let error = ArithmeticOverflow();
+    let error = PoolError::ArithmeticOverflow();
     return Err<u64, PoolError>(error: error);
   }
   return Ok<u64, PoolError>(value: total);

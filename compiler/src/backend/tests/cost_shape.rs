@@ -335,16 +335,67 @@ fn call_target(line: &str) -> Option<&str> {
     rest[end..].starts_with('(').then(|| &rest[..end])
 }
 
+/// Follows a pointer through its local `getelementptr` definitions to the
+/// value it was derived from.
+fn pointer_root<'module>(function: &'module str, mut pointer: &'module str) -> &'module str {
+    let mut seen = Vec::new();
+    while !seen.contains(&pointer) {
+        seen.push(pointer);
+        let prefix = format!("  {pointer} = ");
+        let Some(base) = function
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(getelementptr_base)
+        else {
+            break;
+        };
+        pointer = base;
+    }
+    pointer
+}
+
+/// Recognize an allocation that remakes an existing run instead of taking a
+/// new one. `grow` [OP-10] allocates the larger block, copies the old window
+/// into it, and frees the old block, so the allocation is the destination of a
+/// bulk copy whose source block the same function frees. A take may also be a
+/// copy destination, as `walk`'s child path is for the prefix it copies in,
+/// but its source is never a block the function releases.
+fn remakes_a_run(function: &str, allocation: &str) -> bool {
+    let Some(register) = allocation.trim_start().split(" = ").next() else {
+        return false;
+    };
+    let freed: Vec<_> = function
+        .lines()
+        .filter(|line| call_target(line) == Some("free"))
+        .filter_map(|line| call_argument(line, "free", 0))
+        .filter_map(|argument| argument.split_whitespace().next_back())
+        .collect();
+    function.lines().any(|line| {
+        let Some(callee) = call_target(line)
+            .filter(|name| name.starts_with("llvm.memmove") || name.starts_with("llvm.memcpy"))
+        else {
+            return false;
+        };
+        let operand = |ordinal| {
+            call_argument(line, callee, ordinal)
+                .and_then(|argument| argument.split_whitespace().next_back())
+                .map(|pointer| pointer_root(function, pointer))
+        };
+        operand(0) == Some(register) && operand(1).is_some_and(|source| freed.contains(&source))
+    })
+}
+
 #[test]
 fn the_reused_buffers_are_initialized_once_at_allocation() {
     // `wfgrep` asks for exactly eleven runs, and gets exactly eleven store
     // takes. The numbers here are payload capacities; each runtime `Slots`
     // allocation also contains its 16-byte `len`/`cap` descriptor. Derived
-    // from source, function by function: `main` takes the
-    // pattern (4096), the root name (256), the root path (1024), and the
-    // diagnostic report (1280); `walk` takes its enumeration batch (8192),
-    // its collected names (65664), its visit order (64 u64 slots, 512
-    // bytes), one child path (1024), and its own report (1280);
+    // from source, function by function: `main` takes the pattern (4096), the
+    // root name (4096), the root path (4096), and the diagnostic report
+    // (4352); `walk` takes its enumeration batch (8192), its record store
+    // (4096 bytes, empty), its offset store (512 u64 slots, 4096 bytes,
+    // empty), one child path and its own report, both sized from the display
+    // prefix it was handed and so the two takes without a constant extent;
     // `search_file` takes the read input (4096) and the publication batch
     // (8192).
     //
@@ -353,7 +404,11 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // files allocates 5D + 2F + 4 times, where the argv-list version allocated
     // four times for the whole run. That is a measured property of the new
     // shape, recorded here rather than hidden — it is one of the numbers the
-    // flagship re-attribution has to explain.
+    // flagship re-attribution has to explain. Growth is extra and is not a
+    // take: `widen_window` remakes the read input for a line longer than it,
+    // and `push_byte` and `push_word` remake a store for a directory whose
+    // names pass 4096 bytes or whose entries pass 512. Each remake allocates
+    // the larger block, copies the old run into it and frees the old block.
     //
     // The source still owns initialization. With exclusive run rows LLVM can
     // fold malloc plus the zero-fill loop into calloc. Count either optimized
@@ -361,92 +416,96 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // source-site and per-size counts, and one allocation per retained helper.
     let mut expanded = 0;
     let mut out_of_line = 0;
-    let mut helper_takes = std::collections::BTreeMap::new();
-    let mut helper_definitions = std::collections::BTreeSet::new();
-    let mut retained_helpers = std::collections::BTreeSet::new();
+    let mut prefix_sized = 0;
+    let mut remakes = 0;
+    let mut helper_takes = 0;
+    let mut helper_defined = false;
+    let mut helper_retained = false;
     let mut sizes = std::collections::BTreeMap::new();
     for function in program_functions() {
         let signature = function.lines().next().unwrap_or_default();
-        let helper = ["wf_zeroed_bytes", "wf_zeroed_words"]
-            .into_iter()
-            .find(|name| signature.contains(&format!(" @{name}(")));
-        if let Some(helper) = helper {
-            helper_definitions.insert(helper);
-        }
+        let helper = signature.contains(" @wf_zeroed_bytes(");
+        helper_defined |= helper;
         for line in function.lines() {
             if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
-                if let Some(helper) = helper {
-                    *helper_takes.entry(helper).or_insert(0) += 1;
+                if helper {
+                    helper_takes += 1;
+                    continue;
+                }
+                let factor = |ordinal| {
+                    call_argument(line, callee, ordinal)
+                        .and_then(|argument| argument.split_whitespace().next_back())
+                        .and_then(|value| value.parse::<u64>().ok())
+                };
+                let extent = if callee == "calloc" {
+                    factor(0).zip(factor(1)).map(|(count, size)| count * size)
                 } else {
-                    expanded += 1;
-                    let size = |ordinal| {
-                        call_argument(line, callee, ordinal)
-                            .and_then(|argument| argument.split_whitespace().next_back())
-                            .and_then(|value| value.parse::<u64>().ok())
-                            .expect("an expanded source allocation has a constant extent")
-                    };
-                    let bytes = if callee == "calloc" {
-                        size(0) * size(1)
-                    } else {
-                        size(0)
-                    };
-                    *sizes.entry(bytes).or_insert(0) += 1;
+                    factor(0)
+                };
+                match extent {
+                    Some(bytes) => {
+                        expanded += 1;
+                        *sizes.entry(bytes).or_insert(0) += 1;
+                    }
+                    None if remakes_a_run(function, line) => remakes += 1,
+                    None => {
+                        expanded += 1;
+                        prefix_sized += 1;
+                    }
                 }
             }
-            if let Some(callee @ ("wf_zeroed_bytes" | "wf_zeroed_words")) = call_target(line) {
+            if call_target(line) == Some("wf_zeroed_bytes") {
                 out_of_line += 1;
-                retained_helpers.insert(callee);
+                helper_retained = true;
                 // Capacity is the helper's final source argument. Optimizers
                 // can remove its unused provider argument but do not change
                 // that value. The observed allocation also contains the
                 // runtime Slots descriptor before its payload.
                 let count = (0..)
-                    .map_while(|ordinal| call_argument(line, callee, ordinal))
+                    .map_while(|ordinal| call_argument(line, "wf_zeroed_bytes", ordinal))
                     .last()
                     .and_then(|argument| argument.split_whitespace().next_back())
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .expect("a retained initialization call has its constant source extent");
-                let bytes = 16 + count * if callee == "wf_zeroed_words" { 8 } else { 1 };
-                *sizes.entry(bytes).or_insert(0) += 1;
+                    .and_then(|value| value.parse::<u64>().ok());
+                match count {
+                    Some(count) => *sizes.entry(16 + count).or_insert(0) += 1,
+                    None => prefix_sized += 1,
+                }
             }
         }
     }
     assert_eq!(
         helper_takes,
-        helper_definitions
-            .iter()
-            .copied()
-            .map(|helper| (helper, 1))
-            .collect(),
-        "every retained initialization helper has exactly one allocation"
+        usize::from(helper_defined),
+        "the retained initialization helper has exactly one allocation"
     );
     // Ordinary public definitions survive even when all of their calls have
-    // been inlined. Validate definitions and remaining calls independently.
-    assert!(retained_helpers.is_subset(&helper_definitions));
+    // been inlined. Validate the definition and remaining calls independently.
+    assert!(!helper_retained || helper_defined);
     assert_eq!(
         expanded + out_of_line,
         11,
         "eleven source runs, eleven store takes"
     );
     assert_eq!(
-        sizes,
-        std::collections::BTreeMap::from([
-            (4112, 2),
-            (8208, 2),
-            (1040, 2),
-            (1296, 2),
-            (65680, 1),
-            (528, 1),
-            (272, 1),
-        ]),
-        "all eleven source takes retain their exact descriptor-plus-payload byte extents"
+        prefix_sized, 2,
+        "only walk's child path and its report take a run sized from the prefix"
     );
-    // Nothing reallocates, and nothing re-initializes. That the fill runs once
-    // per take is a source fact under this surface rather than an allocator
-    // guarantee: the fill loop is inside `zeroed_bytes` and `zeroed_words`,
-    // between the take and the hand-back, so a caller cannot reach a filled
-    // run without having taken it and cannot re-reach the fill without taking
-    // another. LLVM may retain that first fill as a memset after malloc and
+    assert_eq!(
+        sizes,
+        std::collections::BTreeMap::from([(4112, 6), (8208, 2), (4368, 1)]),
+        "all nine constant source takes retain their exact descriptor-plus-payload byte extents"
+    );
+    assert!(
+        remakes >= 3,
+        "widen_window, push_byte and push_word each remake a run by copying it: {remakes}"
+    );
+    // Nothing reallocates in place, and nothing re-initializes. That the fill
+    // runs once per take is a source fact under this surface rather than an
+    // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
+    // take and the hand-back, so a caller cannot reach a filled run without
+    // having taken it and cannot re-reach the fill without taking another. A
+    // remake fills only the slots it added, and only once, after its copy.
+    // LLVM may retain that first fill as a memset after malloc and
     // its null check, instead of a calloc. The provenance/control-flow oracle
     // permits one such fill per allocation and refuses repeated fills, fills
     // reached again without allocation, and fills through incoming pointers.
@@ -476,24 +535,22 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // fallback file or `walk` opens a child. Its two allocations are per file,
     // not per read. The per-buffer count above carries "one allocation per
     // source buffer"; this ordering check additionally requires allocation to
-    // begin before that function's first emitted transfer.
+    // begin before that function's first emitted transfer. A remake of the
+    // read input necessarily follows a read, since only a read shows a line
+    // longer than the window, so the check constrains the first allocation.
     for function in program_functions() {
-        let Some(first_allocation) = [
-            "@malloc(",
-            "@calloc(",
-            "@wf_zeroed_bytes(",
-            "@wf_zeroed_words(",
-        ]
-        .iter()
-        .filter_map(|site| function.find(site))
-        .min() else {
+        let Some(first_allocation) = ["@malloc(", "@calloc(", "@wf_zeroed_bytes("]
+            .iter()
+            .filter_map(|site| function.find(site))
+            .min()
+        else {
             continue;
         };
         for transfer in [
-            "@wf_open_read(",
-            "@wf_read_at(",
-            "@wf_write_once(",
-            "@wf_directory_next(",
+            "@wf_std.fs.open_read(",
+            "@wf_std.fs.read_at(",
+            "@wf_std.io.write_once(",
+            "@wf_std.fs.directory_next(",
         ] {
             let Some(first) = function.find(transfer) else {
                 continue;

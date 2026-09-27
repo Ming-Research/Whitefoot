@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Inner {
   InnerValue();
 }
@@ -8,6 +11,6 @@ enum Outer {
 
 fn main () -> return_value: ExitStatus pure {
   doc "GRAM-9: a constructor in a constructor-field atom position does not derive; bind the inner constructed value with a preceding let.";
-  let outer = OuterValue(value: InnerValue());
+  let outer = Outer::OuterValue(value: Inner::InnerValue());
   return exit_status(code: 0_u8);
 }

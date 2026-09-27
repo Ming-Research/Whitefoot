@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Sign = pkg::data::Sign;
+alias exit_status = std::process::exit_status;
+
+fn code_of(sign: Sign) -> code: u8 pure {
+  doc "Zero for a positive sign.";
+  match sign {
+    Neg() => {
+      return 1_u8;
+    }
+    Zero() => {
+      return 2_u8;
+    }
+    Pos() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn quiet() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias fs = std::fs;
+alias process = std::process;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure {
+  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in) = move inputs;
+  fs::close_directory(factory: &factory, directory: move unused_cwd);
+  let written = pkg::report::say(factory: &factory, output: &out);
+  match cvt.checked::<u64, u8>(written) {
+    Ok(value: code) => {
+      return process::exit_status(code: code);
+    }
+    Err(error: overflowed) => {
+      return process::exit_status(code: 200_u8);
+    }
+  }
+}

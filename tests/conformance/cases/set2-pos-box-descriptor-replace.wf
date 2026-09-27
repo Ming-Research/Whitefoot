@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "swap admits two owning cell descriptors: a Box<u64> is affine and holds no reference, so exchanging the two descriptors leaves both roots live, each the sole owner of the cell the other held, and the previous content is read back through the second binding.";
   let first = box_new::<u64>(value: 1_u64);

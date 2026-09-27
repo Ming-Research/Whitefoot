@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bump(x: i32) -> function_result: i32 pure {
   doc "A pure helper that allocates nothing and calls no writing callee.";
   return x +wrap 1_i32;

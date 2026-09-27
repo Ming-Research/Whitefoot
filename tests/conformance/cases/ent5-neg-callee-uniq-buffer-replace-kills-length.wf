@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn shrink(handle: &Box<Array<u8>>) -> result: unit writes(handle) {
   doc "Exchanges the whole referent of its reference parameter for a two-slot allocation.";
   let smaller = box_array_filled::<u8>(count: 2_u64, value: 0_u8);

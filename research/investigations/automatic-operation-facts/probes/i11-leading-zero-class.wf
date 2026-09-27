@@ -1,0 +1,12 @@
+fn size_class(size: u64) -> result: u64 pure {
+  let classes = array_filled::<u64, 65>(value: 0_u64);
+  let leading = iclz(size);
+  let width = 64_u32 - leading;
+  let index = cvt::<u32, u64>(width);
+  let class = classes[index];
+  return class;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

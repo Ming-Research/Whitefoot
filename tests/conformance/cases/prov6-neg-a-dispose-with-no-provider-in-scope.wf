@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn drop_it<T>(run: T) -> code: u8 pure {
   doc "PROV-6: the compiler never releases a linear value, and there is no release statement to write. A binding whose value is linear and which is live on the edge leaving its scope is refused at that edge, with the written bound that made it linear rendered and exactly the two remaining routes offered.";
   return 0_u8;

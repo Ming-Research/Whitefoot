@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clear(part: &[u64]) -> result: unit writes(part) {
+  doc "Writes 9 to every element of the range part names.";
+  let i = 0_u64;
+  loop {
+    if deref(part).len <= i {
+      break;
+    }
+    set deref(part)[i] = 9_u64;
+    set i = i +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn write_run(window: &Slots<u64, 4>, lo: u64, hi: u64) -> result: unit reads(window.len), writes(window[lo..hi]) contract {
+  requires lo <= hi;
+  requires hi <= deref(window).len;
+} {
+  doc "Clears the run from 0 to hi of the window.";
+  set lo = 0_u64;
+  if hi <= deref(window).len {
+    clear(part: &deref(window)[lo..hi]);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-1, EFF-2: a range endpoint is an index parameter too. After set lo = 0_u64 the range deref(window)[lo..hi] starts at 0, not at the row's lo, so the call's write reaches window and the declared row writes(window[lo..hi]) is refused with the repair writes(window).";
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  let p = &r[0_u64];
+  write_run(window: &r, lo: 1_u64, hi: 2_u64);
+  let seen = deref(p);
+  if seen == 1_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit reads(values[start..end]), writes(values[slot]) contract {
+  requires start <= end;
+  requires end <= 4_u64;
+  requires slot < 4_u64;
+} {
+  doc "Writes the length of the run values[start..end] into values[slot]. EFF-5: one argument supplies both entries, and whether an index step overlaps a range step depends on the values, so every call compares them.";
+  let run = &deref(values)[start..end];
+  let length = deref(run).len;
+  set deref(values)[slot] = length;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call passes slot 1 inside the run 0..2, so the substituted writes(values[1_u64]) overlaps reads(values[0_u64..2_u64]) and no OWN-7 ordering separates them.";
+  let values = array_filled::<u64, 4>(value: 9_u64);
+  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 1_u64);
+  return exit_status(code: 0_u8);
+}

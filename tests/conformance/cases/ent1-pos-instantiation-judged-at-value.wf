@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn element<const n: u64>(values: Slots<u8, n>) -> result: u8 pure {
   doc "Every generic source body first receives the source-schema ordinary judgment [ENT-1]. Executed control supplies the symbolic length bound required by the subscript, and the n = 4 concrete instance is then rechecked independently.";
   let spare = values.len;

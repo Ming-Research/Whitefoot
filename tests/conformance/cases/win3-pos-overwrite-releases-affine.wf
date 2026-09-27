@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-3: assigning over an owned place releases the old value when it is affine, and the new value occupies the same place.";
   let b = box_new::<u64>(value: 1_u64);

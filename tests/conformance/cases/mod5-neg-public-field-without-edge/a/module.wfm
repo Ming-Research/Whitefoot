@@ -1,0 +1,6 @@
+public struct Point {
+  public x: u8;
+  public y: u8;
+}
+
+public fn origin() -> point: Point pure doc "The point at the origin.";

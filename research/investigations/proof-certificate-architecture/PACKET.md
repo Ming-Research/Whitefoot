@@ -164,10 +164,10 @@ The repository's live design memory fixes two important boundaries:
 
 - check removal requires a deterministic machine proof, and unproved source
   obligations do not silently acquire implicit runtime checks
-  (`mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md`);
+  ([mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md));
 - the private checked in-memory program is the sole lowering authority, with no
   current serialized or replayed authority
-  (`mcts_mem/whitefoot/toolchain/semantic-artifact-authority.md`).
+  ([mcts_mem/whitefoot/toolchain/semantic-artifact-authority.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/toolchain/semantic-artifact-authority.md)).
 
 An earlier independent *production semantic verifier* was rejected because it
 duplicated the complete language while still requiring producer-to-artifact

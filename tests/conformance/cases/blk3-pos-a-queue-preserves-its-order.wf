@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "place_back moves the back boundary and take_front moves the front one, so a ring is a queue with no Option anywhere; the exit code observes the order the three elements come back in. Each front removal replaces the whole window state, so the next requirement is discharged from a reread length.";
   let run = ring_new::<u8, 4>();

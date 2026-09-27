@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Overflow via `.checked` is classified recoverable and delivered as a typed Err value [ERR-4].";
   let v = match 2147483647_i32 +checked 1_i32 {

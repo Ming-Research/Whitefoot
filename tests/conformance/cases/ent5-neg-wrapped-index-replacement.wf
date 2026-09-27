@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scan_pair_bad(data: Array<i16, 8>, start: u64) -> result: i16 pure contract {
   requires start < 8_u64;
 } {

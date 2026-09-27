@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn reset(stats: &Stats) -> result: u64 reads(stats.count), writes(stats) {
+  doc "EFF-1: writes(stats) states every access at or below stats, so reads(stats.count) states one of them twice.";
+  let old = deref(stats).count;
+  set deref(stats) = Stats(count: 0_u64, total: 0_u64);
+  return old;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The malformed declaration above is rejected before this entry calls it.";
+  let stats = Stats(count: 3_u64, total: 4_u64);
+  let old = reset(stats: &stats);
+  return exit_status(code: 0_u8);
+}

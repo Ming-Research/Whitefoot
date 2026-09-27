@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn push_one(window: &Slots<u64, 4>) -> result: unit writes(window.next), writes(window.len) contract {
   requires deref(window).len < deref(window).cap;
 } {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn capacity_of<const n: u64>(fill: u64) -> size: u64 pure {
   doc "A const generic read as a value.";
   return n;

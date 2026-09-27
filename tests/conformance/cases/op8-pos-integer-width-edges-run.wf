@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "All four unsigned widths check masked wrapping shifts, rotation, zero leading and trailing counts, full-width population, saturating multiplication and the admitted byte-swap widths.";
   let shifted8 = ishl.wrap(1_u8, 9_u32);

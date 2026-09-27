@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "SET-1 admits a target path reached through a range reference whose root is a live own binding. The program forms a range reference over a heap-resident array, writes two of its elements, reads all three positions back through the cell, and observes the two written values and the one untouched one.";
   let table = box_array_filled::<u8>(count: 4_u64, value: 7_u8);

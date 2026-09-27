@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const values: Array<u8, 4> =[10_u8, 20_u8, 30_u8, 40_u8];
 
 fn captured(index: u64) -> result: u8 pure contract {

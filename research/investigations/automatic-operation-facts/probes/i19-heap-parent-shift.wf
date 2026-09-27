@@ -1,0 +1,11 @@
+fn parent_key(keys: &[u64], at: u64) -> result: u64 reads(keys) contract {
+  requires at < deref(keys).len;
+} {
+  let parent = ishr(at, 1_u32);
+  let key = deref(keys)[parent];
+  return key;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

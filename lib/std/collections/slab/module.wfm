@@ -1,0 +1,55 @@
+public struct SlabHandle {
+  public index: u64;
+  public generation: u64;
+}
+
+public struct SlabCell<T> {
+  public readonly storage: Slots<T, 1>;
+  public readonly generation: u64;
+  public readonly next: u64;
+}
+
+public struct Slab<T, const ceiling: u64, const generation_limit: u64> {
+  public readonly cells: Box<Slots<SlabCell<T>>>;
+  public readonly free_head: u64;
+}
+
+public interface SlabVisit<T, E, R> {
+  fn visit(env: &E, value: &T) -> result: R reads(value), writes(env);
+}
+
+public interface SlabEdit<T, E, R> {
+  fn edit(env: &E, value: &T) -> result: R writes(env), writes(value);
+}
+
+public interface SlabConsume<T, E> {
+  fn consume(env: &E, value: T) -> result: unit writes(env);
+}
+
+public fn slab_new<T, const ceiling: u64, const generation_limit: u64>(capacity: u64) -> result: Slab<T, ceiling, generation_limit> pure contract {
+  requires capacity <= ceiling;
+} doc "Reserves one backing for at most capacity stable slots, materializing each cell only on its first insertion. The ceiling is the caller's allocation-size domain, not an allocation refusal. A handle is relative to this slab; its integers do not authenticate another slab. Allocation is total under STOR-8.";
+
+public fn slab_insert<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, value: T) -> result: Result<SlabHandle, T> writes(slab) contract {
+  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
+  ensures deref(slab).cells.inner.len >= deref(entry(slab)).cells.inner.len;
+  ensures deref(slab).cells.inner.len <= deref(entry(slab)).cells.inner.len + 1_u64;
+} doc "Reuses the free-list head, or materializes the next reserved cell, in constant work. The one-slot window is an ordinary ownership-visible vacancy: its empty state never holds a dummy T and its filled state owns exactly one T. Err returns the offered owner unchanged when no available slot remains. Direct mutation of the slab's bookkeeping is outside this library protocol; malformed bookkeeping is still checked before any access.";
+
+public fn slab_find_index<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle) -> found: Result<u64, unit> reads(slab) contract {
+  ensures when Ok(value: index): index < deref(slab).cells.inner.len;
+} doc "Checks materialization, occupancy and generation. The resulting index carries its outer bound; FN-9 does not publish a variant or an indexed cell's occupancy. A caller selecting the payload must re-read that cell's one-slot length, or use slab_visit to perform the complete borrowed access within one helper.";
+
+public fn slab_visit<interface SlabVisit<T, E, R>, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle, env: &E) -> result: Result<R, unit> reads(slab), writes(env) doc "Borrows a present value only for the supplied monomorphized member call. REF-3 forbids returning a reference; R is ordinary owned data. A missing, deleted, reused or retired handle returns Err without invoking the member.";
+
+public fn slab_edit<interface SlabEdit<T, E, R>, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle, env: &E) -> result: Result<R, unit> writes(slab.cells), writes(env) contract {
+  ensures deref(slab).cells.inner.len == deref(entry(slab)).cells.inner.len;
+  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
+} doc "Validates materialization, generation and occupancy before lending a writable payload to the supplied member. Missing, deleted, reused and retired handles return Err without invoking it. The payload argument supplies no containing-cell or free-list access. The member preserves ordinary ownership and returns owned data only; its environment must be disjoint from slab.cells. Successful payload edits preserve the outer storage extents and handle generation.";
+
+public fn slab_remove<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle) -> result: Option<T> writes(slab) contract {
+  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
+  ensures deref(slab).cells.inner.len == deref(entry(slab)).cells.inner.len;
+} doc "Returns exactly the matching owner. Below generation_limit the empty cell is linked at the free-list head with the next generation; at the limit it is permanently retired instead of wrapping. Retired cells remain materialized, so a handle's index never shifts or moves another payload.";
+
+public fn slab_free<interface SlabConsume<T, E>, const ceiling: u64, const generation_limit: u64>(slab: Slab<T, ceiling, generation_limit>, env: &E) -> result: unit writes(env) doc "Consumes live payloads in reverse materialized-slot order, then releases the backing. Never-materialized capacity holds no cells and needs no cleanup. Every must-consume T reaches the supplied member exactly once; empty one-slot windows and the final outer backing use ordinary free_empty.";

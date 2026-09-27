@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const appended_bytes: Array<u8, 5> =[33_u8, 33_u8, 33_u8, 33_u8, 33_u8];
 
 fn release_run(run: Box<Slots<u8>>) -> result: unit pure {

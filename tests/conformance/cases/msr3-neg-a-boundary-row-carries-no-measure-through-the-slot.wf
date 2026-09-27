@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-3: the element placement reaches a written element position and no other. place_back stores its value at the entry length of its referent and take_back takes one from the exit length, and a measure term is not an offset a place relation may name, so a window put into a slot by a window operation and taken back out by one arrives with no measures of its own and the next window operation's requirement is undischarged.";
   let blocks = slots_new::<Box<Slots<u8>>, 2>();

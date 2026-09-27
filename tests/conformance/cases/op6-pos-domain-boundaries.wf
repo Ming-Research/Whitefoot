@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Exact domain boundaries are observed without host rounding: inexact large integers, float integer endpoints, fractional and nonfinite inputs, cross-format NaN canonicalization and signed zero.";
   if cvt.defined::<u32, f32>(16777217_u32) {

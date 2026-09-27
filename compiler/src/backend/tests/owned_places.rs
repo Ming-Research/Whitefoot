@@ -122,32 +122,32 @@ fn repeat(value: Row, count: u64) -> result: Row pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let input = Row(left: 11_u64, right: 29_u64);
   let result = relay(value: move input, bias: 5_u64);
   if result.left != 19_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if result.right != 32_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let empty_input = Row(left: 41_u64, right: 53_u64);
   let empty = repeat(value: move empty_input, count: 0_u64);
   if empty.left != 41_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if empty.right != 53_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let loop_input = Row(left: 41_u64, right: 53_u64);
   let loop_result = repeat(value: move loop_input, count: 3_u64);
   if loop_result.left != 56_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if loop_result.right != 62_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -183,7 +183,7 @@ fn update(points: &Array<Point, 2>, index: u64) -> result: unit writes(points) c
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = Point(x: 17_u64, y: 29_u64);
   let second = Point(x: 41_u64, y: 53_u64);
   let loaded = slots_new::<Point, 2>();
@@ -192,18 +192,18 @@ fn main() -> status: ExitStatus pure {
   let points = slots_into_array::<Point, 2>(values: move loaded);
   update(points: &points, index: 1_u64);
   if points[0_u64].x != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if points[0_u64].y != 29_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if points[1_u64].x != 7_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if points[1_u64].y != 53_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -244,7 +244,7 @@ fn adjust(rows: &Box<Array<Row>>, index: u64, amount: u64) -> result: unit write
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let pair = Pair(left: 3_u64, right: 5_u64);
   let seed = Row(pair: pair, guard: 7_u64);
   let rows = box_array_filled::<Row>(count: 2_u64, value: seed);
@@ -254,38 +254,38 @@ fn main() -> status: ExitStatus pure {
   add_to(value: selected, amount: before);
   adjust(rows: &rows, index: 1_u64, amount: before);
   if rows.inner.len != 2_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if rows.inner[0_u64].pair.left != 3_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if rows.inner[0_u64].pair.right != 5_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if rows.inner[1_u64].pair.left != 3_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if rows.inner[1_u64].pair.right != 18_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if rows.inner[1_u64].guard != 7_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let owners = slots_new::<Box<Array<Row>>, 1>();
   place_back(window: &owners, value: move rows);
   let nested = slots_into_array::<Box<Array<Row>>, 1>(values: move owners);
   if nested[0_u64].inner.len != 2_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let nested_value = &nested[0_u64].inner[1_u64].pair.right;
   add_to(value: nested_value, amount: 2_u64);
   if nested[0_u64].inner[1_u64].pair.right != 20_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   if nested[0_u64].inner[0_u64].pair.right != 5_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -323,7 +323,7 @@ fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
   return held;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = box_new::<u64>(value: 17_u64);
   let b = box_new::<u64>(value: 29_u64);
   let zero = rotate(first: move a, second: move b, count: 0_u64);
@@ -337,18 +337,18 @@ fn main() -> status: ExitStatus pure {
   let h = box_new::<u64>(value: 29_u64);
   let ordinary = once(first: move g, second: move h);
   if zero != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if one != 29_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if two != 17_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if ordinary != 29_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -381,38 +381,38 @@ fn relay(seed: u64) -> result: Result<Record, u8> pure {
   return make_record(seed: seed);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let reserved = box_slots_new::<Record>(capacity: 1_u64);
   match relay(seed: 0_u64) {
     Err(error: code) => {
       if code != 1_u8 {
-        return exit_status(code: 2_u8);
+        return std::process::exit_status(code: 2_u8);
       }
     }
     Ok(value: unexpected) => {
-      return exit_status(code: 3_u8);
+      return std::process::exit_status(code: 3_u8);
     }
   }
   match relay(seed: 17_u64) {
     Err(error: code) => {
-      return exit_status(code: 4_u8);
+      return std::process::exit_status(code: 4_u8);
     }
     Ok(value: made) => {
       place_back(window: &reserved.inner, value: move made);
       let observed = take_back(window: &reserved.inner);
       if observed.words[0_u64] != 17_u64 {
-        return exit_status(code: 5_u8);
+        return std::process::exit_status(code: 5_u8);
       }
       if observed.words[511_u64] != 17_u64 {
-        return exit_status(code: 6_u8);
+        return std::process::exit_status(code: 6_u8);
       }
       if observed.first.inner != 17_u64 {
-        return exit_status(code: 7_u8);
+        return std::process::exit_status(code: 7_u8);
       }
       if observed.second.inner != 29_u64 {
-        return exit_status(code: 8_u8);
+        return std::process::exit_status(code: 8_u8);
       }
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
   }
 }
@@ -463,36 +463,36 @@ fn choose_referenced(seed: u64) -> result: Array<u64, 512> pure {
   return candidate;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = choose_live(seed: 0_u64);
   let second = choose_live(seed: 17_u64);
   let third = choose_referenced(seed: 0_u64);
   let fourth = choose_referenced(seed: 19_u64);
   if first[0_u64] != 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if first[511_u64] != 0_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if second[0_u64] != 37_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if second[511_u64] != 37_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if third[0_u64] != 0_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if third[511_u64] != 0_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if fourth[0_u64] != 43_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   if fourth[511_u64] != 43_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -523,7 +523,7 @@ fn extend(items: Row, value: u64, watch: &u64) -> updated: Row reads(watch) {
   return move items;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let watch = 5_u64;
   let payload = array_filled::<u64, 16>(value: 41_u64);
   let same = Row(payload: payload, value: 0_u64);
@@ -532,21 +532,21 @@ fn main() -> status: ExitStatus pure {
   let vacant = Row(payload: other_payload, value: 0_u64);
   let distinct = extend(items: move vacant, value: 24_u64, watch: &watch);
   if same.value != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if distinct.value != 29_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if same.payload[15_u64] != 41_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if distinct.payload[15_u64] != 43_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if watch != 5_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = super::emit_lowered(source, super::OverlapLowering::Off);
@@ -604,22 +604,22 @@ fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   return choose(left: move fresh.row, right: move held, watch: watch);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64);
   let second_input = Row(value: 31_u64);
   let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
   let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if second.value != 99_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if watch != 29_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -649,22 +649,22 @@ fn install_empty(target: &Envelope, value: Array<u64, 0>) -> result: unit writes
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let envelope = Envelope(before: 17_u64, empty: empty, after: 29_u64);
   let replacement = array_filled::<u64, 0>(value: 43_u64);
   install_empty(target: &envelope, value: replacement);
   if envelope.before != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if envelope.after != 29_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let size = envelope.empty.len;
   if size != 0_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -695,18 +695,18 @@ fn observe(owner: Box<u64>, incoming: Box<u64>) -> result: Observed pure {
   return Observed(previous: previous_value, current: current_value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 11_u64);
   let incoming_value = owner.inner +wrap 11_u64;
   let incoming = box_new::<u64>(value: incoming_value);
   let seen = observe(owner: move owner, incoming: move incoming);
   if seen.previous != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if seen.current != 22_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -738,15 +738,15 @@ fn box_assignment_updates_the_owner_and_releases_each_cell_once() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let cell = box_new::<u64>(value: 11_u64);
   let incoming = box_new::<u64>(value: 22_u64);
   install(slot: &cell, incoming: move incoming);
   let seen = cell.inner;
   if seen != 22_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -804,23 +804,23 @@ fn read_child(tree: &Box<Node>) -> result: u64 reads(tree) {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = box_new::<u64>(value: 11_u64);
   let incoming_value = first.inner +wrap 11_u64;
   let incoming = box_new::<u64>(value: incoming_value);
   let sibling_value = incoming.inner +wrap 11_u64;
   let sibling = box_new::<u64>(value: sibling_value);
-  let node = HasChildren(left: move sibling, right: move first);
+  let node = Node::HasChildren(left: move sibling, right: move first);
   let tree = box_new::<Node>(value: move node);
   let kept = exchange_child(tree: &tree, incoming: move incoming);
   if kept != 33_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let observed = read_child(tree: &tree);
   if observed != 22_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -859,7 +859,7 @@ fn indexed_targets_are_captured_before_disjoint_rhs_effects() {
   return 41_u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let left = slots_new::<u64, 2>();
   place_back(window: &left, value: 3_u64);
   place_back(window: &left, value: 5_u64);
@@ -868,47 +868,47 @@ fn main() -> status: ExitStatus pure {
   invariant single_target_bound: offset < left.len;
   set left[offset] = advance(offset: &offset, trace: &trace);
   if left[0_u64] != 41_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if left[1_u64] != 5_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if offset != 1_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if trace != 1_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let fixed = array_filled::<u64, 2>(value: 7_u64);
   set offset = 0_u64;
   invariant fixed_target_bound: offset < fixed.len;
   set fixed[offset] = advance(offset: &offset, trace: &trace);
   if fixed[0_u64] != 41_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if fixed[1_u64] != 7_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if offset != 1_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let runtime = box_array_filled::<u64>(count: 2_u64, value: 11_u64);
   set offset = 0_u64;
   invariant runtime_target_bound: offset < runtime.inner.len;
   set runtime.inner[offset] = advance(offset: &offset, trace: &trace);
   if runtime.inner[0_u64] != 41_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   if runtime.inner[1_u64] != 11_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
   if offset != 1_u64 {
-    return exit_status(code: 10_u8);
+    return std::process::exit_status(code: 10_u8);
   }
   if trace != 111_u64 {
-    return exit_status(code: 11_u8);
+    return std::process::exit_status(code: 11_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -935,7 +935,7 @@ fn replacement(offset: &u64) -> result: Row writes(offset) {
   return Row(left: 19_u64, right: 23_u64);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let rows = slots_new::<Row, 2>();
   let first = Row(left: 3_u64, right: 5_u64);
   place_back(window: &rows, value: first);
@@ -945,21 +945,21 @@ fn main() -> status: ExitStatus pure {
   invariant target_bound: offset < rows.len;
   set rows[offset] = replacement(offset: &offset);
   if rows[0_u64].left != 19_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if rows[0_u64].right != 23_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if rows[1_u64].left != 11_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if rows[1_u64].right != 13_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if offset != 1_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -988,7 +988,7 @@ struct Table {
   tag: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = Row(left: 1_u64, right: 10_u64);
   let second = Row(left: 2_u64, right: 20_u64);
   for (round in 0_u64..5_u64) {
@@ -997,16 +997,16 @@ fn main() -> status: ExitStatus pure {
     set second.right = second.right +wrap 1_u64;
   }
   if first.left != 302_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if first.right != 22_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if second.left != 201_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if second.right != 13_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let loaded = slots_new::<Row, 2>();
   place_back(window: &loaded, value: move first);
@@ -1018,21 +1018,21 @@ fn main() -> status: ExitStatus pure {
   set table.rows[0_u64].left = table.rows[1_u64].right;
   set table.rows[1_u64].right = saved_left;
   if table.rows[0_u64].left != 22_u64 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if table.rows[0_u64].right != 13_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   if table.rows[1_u64].left != 302_u64 {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   if table.rows[1_u64].right != 201_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   if table.tag != 41_u64 {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1074,7 +1074,7 @@ fn same(values: &Ring<Row, 3>, index: u64) -> result: unit writes(values) contra
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = ring_new::<Row, 3>();
   let first = make_row(value: 11_u64);
   place_back(window: &values, value: move first);
@@ -1087,26 +1087,26 @@ fn main() -> status: ExitStatus pure {
   exchange(values: &values, first: 0_u64, second: 2_u64);
   same(values: &values, index: 1_u64);
   if values[0_u64].owner.inner != 11_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if values[1_u64].owner.inner != 33_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if values[2_u64].owner.inner != 22_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   for (index in 0_u64..32_u64) {
     if values[0_u64].words[index] != 11_u64 {
-      return exit_status(code: 4_u8);
+      return std::process::exit_status(code: 4_u8);
     }
     if values[1_u64].words[index] != 33_u64 {
-      return exit_status(code: 5_u8);
+      return std::process::exit_status(code: 5_u8);
     }
     if values[2_u64].words[index] != 22_u64 {
-      return exit_status(code: 6_u8);
+      return std::process::exit_status(code: 6_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1142,7 +1142,7 @@ struct Table {
   tag: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let loaded = slots_new::<Row, 2>();
   let first = Row(left: 3_u64, right: 5_u64);
   place_back(window: &loaded, value: first);
@@ -1160,24 +1160,24 @@ fn main() -> status: ExitStatus pure {
   let sibling = &table.tag;
   set deref(sibling) = 29_u64;
   if table.rows[0_u64].left != 3_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if table.rows[0_u64].right != 5_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   if table.rows[1_u64].left != 7_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if table.rows[1_u64].right != 22_u64 {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   if table.bytes[0_u64] != 23_u8 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if table.tag != 29_u64 {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1206,7 +1206,7 @@ fn choose(left: Cell, right: Cell, flag: Bool) -> result: u64 pure {
   return held;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for (round in 0_u64..2_u64) {
     let first_cell = box_new::<u64>(value: 11_u64);
     let second_cell = box_new::<u64>(value: 22_u64);
@@ -1220,10 +1220,10 @@ fn main() -> status: ExitStatus pure {
       give 22_u64;
     }
     if value != expected {
-      return exit_status(code: 3_u8);
+      return std::process::exit_status(code: 3_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1275,7 +1275,7 @@ fn release(value: Holder, early: Bool) -> result: u8 pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for (round in 0_u64..2_u64) {
     let cell = box_new::<u64>(value: 17_u64);
     let bytes = box_slots_new::<u8>(capacity: 3_u64);
@@ -1283,10 +1283,10 @@ fn main() -> status: ExitStatus pure {
     let early = round == 0_u64;
     let status = release(value: move holder, early: early);
     if status != 0_u8 {
-      return exit_status(code: status);
+      return std::process::exit_status(code: status);
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1330,7 +1330,7 @@ fn hold_packet() -> result: unit pure {
   let second = box_new::<u64>(value: 22_u64);
   let pair = Pair(first: move first, second: move second);
   let extra = box_new::<u64>(value: 33_u64);
-  let packet = Held(pair: move pair, extra: move extra);
+  let packet = Packet::Held(pair: move pair, extra: move extra);
   return unit;
 }
 
@@ -1347,10 +1347,10 @@ fn hold_triple() -> result: u8 pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   hold_packet();
   let code = hold_triple();
-  return exit_status(code: code);
+  return std::process::exit_status(code: code);
 }
 "#,
     );
@@ -1385,7 +1385,7 @@ struct Outer {
   other: Box<u8>;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let payload = Payload(value: 7_u8);
   let selected = box_new::<Payload>(value: move payload);
   let tail = box_new::<u8>(value: 2_u8);
@@ -1395,9 +1395,9 @@ fn main() -> status: ExitStatus pure {
   let outer = Outer(head: move head, other: move other);
   let taken = move outer.head.inner.selected.inner;
   if taken.value != 7_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -1515,17 +1515,17 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
         r#"  let empty = ring_new::<Box<u64>, 3>();
   let ring = box_new::<Ring<Box<u64>, 3>>(value: move empty);
   if ring.inner.len != 0_u64 {
-    return exit_status(code: 12_u8);
+    return std::process::exit_status(code: 12_u8);
   }
   if ring.inner.head != 0_u64 {
-    return exit_status(code: 13_u8);
+    return std::process::exit_status(code: 13_u8);
   }"#,
     );
     assert_ne!(fixed, source);
     let (partial, _) = fixed
         .split_once("  let second_owner = take_front(window: &ring.inner);")
         .expect("the original control drains a second element");
-    let partial = format!("{partial}  return exit_status(code: 0_u8);\n}}\n");
+    let partial = format!("{partial}  return std::process::exit_status(code: 0_u8);\n}}\n");
     let host = allocation_observer(5, 0).replace(
         "held[id] = allocation;",
         "memset(allocation, 0xa5, size);\n    held[id] = allocation;",
@@ -1626,20 +1626,20 @@ fn exercise(storage: Box<Slots<Box<u64>, 2>>) -> result: Checked pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let empty = slots_new::<Box<u64>, 2>();
   let cell = box_new::<Slots<Box<u64>, 2>>(value: move empty);
   if cell.inner.len != 0_u64 {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   let result = exercise(storage: move cell);
   let Checked(storage: storage, code: code) = move result;
   if code != 0_u8 {
-    return exit_status(code: code);
+    return std::process::exit_status(code: code);
   }
   let values = move storage.inner;
   let inspected = inspect(values: move values);
-  return exit_status(code: inspected);
+  return std::process::exit_status(code: inspected);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1733,23 +1733,23 @@ fn read(value: &u64) -> result: u64 reads(value) {
   return deref(value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let pair = Pair(left: 11_u64, right: 29_u64);
   let owner = box_new::<Pair>(value: pair);
   write(value: &owner.inner.left, fresh: 37_u64);
   let observed = read(value: &owner.inner.right);
   if observed != 29_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if owner.inner.left != 37_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let held = &owner.inner.right;
   write(value: held, fresh: 43_u64);
   if owner.inner.right != 43_u64 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1774,7 +1774,7 @@ fn boxed_window_contracts_keep_the_content_projection_through_a_holder() {
   return deref(values)[0_u64];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let initial = array_filled::<u64, 2>(value: 29_u64);
   let values = slots_from_array::<u64, 2>(values: initial);
   let owner = box_new::<Slots<u64, 2>>(value: move values);
@@ -1783,11 +1783,11 @@ fn main() -> status: ExitStatus pure {
     let held = &owner.inner;
     let observed = first(values: held);
     if observed == 29_u64 {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 2_u8);
+  return std::process::exit_status(code: 2_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1842,12 +1842,12 @@ fn a_commit_over_a_named_binding_releases_exactly_the_owner_it_displaces() {
 {body}
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let total = probe();
   if total != {expected} {{
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }}
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         )
@@ -1945,9 +1945,9 @@ fn make() -> result: Outer pure {{
   return Outer(first: move first, inner: move inner);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   {statement}
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         );
@@ -1987,19 +1987,19 @@ struct Holder {
   residual: Residual;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let selected = box_new::<u64>(value: 17_u64);
   let other = box_new::<u64>(value: 29_u64);
-  let residual_tag = Present();
+  let residual_tag = Tag::Present();
   let residual = Residual(tag: move residual_tag, cell: move other);
-  let tag = Present();
+  let tag = Tag::Present();
   let holder = Holder(stamp: 43_u64, selected: move selected, tag: move tag, residual: move residual);
   let owner = box_new::<Holder>(value: move holder);
   let taken = move owner.inner.selected;
   if taken.inner != 17_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {

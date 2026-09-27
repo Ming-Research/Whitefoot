@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Accepted: parses, satisfies every rule, and discharges every static obligation [SCOPE-2].";
   let a = 7_i32;

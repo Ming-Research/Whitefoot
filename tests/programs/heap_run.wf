@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn total(run: Box<Slots<u8>>) -> sum: u8 pure contract {
   requires run.inner.len >= 4_u64;
 } {

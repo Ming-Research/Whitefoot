@@ -1,0 +1,15 @@
+fn swap_pair(values: &[u64], left: u64, right: u64) -> result: unit writes(values) {
+  let room = deref(values).len;
+  let top = imax(left, right);
+  if top < room {
+    let first = deref(values)[left];
+    let second = deref(values)[right];
+    set deref(values)[left] = second;
+    set deref(values)[right] = first;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

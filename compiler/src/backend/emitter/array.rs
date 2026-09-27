@@ -194,7 +194,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let array_type = llvm_type(self.program, root_type)?;
         let root_pointer = match root {
             IrArrayRoot::Value(value) => self.value_place(value)?,
-            IrArrayRoot::Constant(id) => constant_symbol(id),
+            IrArrayRoot::Constant(id) => {
+                constant_symbol(self.program.constant(id).ok_or(BackendFailure::InvalidIr)?)
+            }
         };
         let element_pointer = self.next_temporary()?;
         writeln!(

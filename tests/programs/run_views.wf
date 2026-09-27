@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn view_total(window: &[u8]) -> total: u64 reads(window) {
   doc "The run is reached through one range reference, whose one measure is len [REF-4, MSR-1].";
   let width = deref(window).len;

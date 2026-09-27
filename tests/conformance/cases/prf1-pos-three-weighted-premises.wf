@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn combined_ports(p: u32, p_cap: u32, q: u32, q_cap: u32, r: u32, r_cap: u32) -> result: unit pure contract {
   requires p <= p_cap;
   requires q <= q_cap;

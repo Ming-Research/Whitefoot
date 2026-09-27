@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn leak(x: i32) -> function_result: i32 pure {
   doc "A reference never escapes the function that formed it [REF-3]: it may be bound to a local and passed as an argument, but never returned. The restructuring is to return an index or other owned data and let the caller form the reference.";
   let local = x +wrap 1_i32;

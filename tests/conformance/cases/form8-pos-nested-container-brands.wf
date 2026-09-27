@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn read(values: &Slots<Box<Slots<Box<u8>>>, 2>) -> result: u64 reads(values.len) {
   doc "A measure read is a place form, and one read through a reference parameter exhibits reads(p.len) on the declared row [OP-15, EFF-1].";
   return deref(values).len;

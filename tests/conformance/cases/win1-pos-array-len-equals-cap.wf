@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-1: an Array has no window; every slot always holds a value, and its one measure len is the type constant.";
   let a = array_filled::<u64, 5>(value: 2_u64);

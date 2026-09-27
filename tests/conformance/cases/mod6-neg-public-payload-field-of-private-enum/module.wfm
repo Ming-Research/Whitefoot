@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+
+enum Signal {
+  Level(public value: u8);
+  Quiet();
+}
+
+public fn main() -> status: ExitStatus pure doc "Exits with status zero.";

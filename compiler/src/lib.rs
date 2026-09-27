@@ -12,7 +12,10 @@
 
 mod backend;
 mod driver;
+mod graph;
+mod ir;
 mod lexer;
+mod library;
 mod lowering;
 mod prelude;
 mod resolution;
@@ -25,6 +28,7 @@ pub mod spec_identity {
     include!(concat!(env!("OUT_DIR"), "/spec_identity.rs"));
 }
 mod syntax;
+mod target;
 
 // Unit and integration tests use the same immutable native-object builder.
 // This alias lets the shared test module name the existing exported inputs.
@@ -48,11 +52,16 @@ pub use backend::{
     SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SCHED_PRIM_HOST_SOURCE, SCHED_PRIM_WINDOWS_SOURCE,
     WINDOWS_RUNTIME_HEADER, WINDOWS_RUNTIME_SOURCE, module_requires_parallel_runtime, stack_ledger,
 };
+pub use backend::{FragmentGranularity, SplitFailure, split_module};
 pub use driver::*;
+pub use graph::*;
+/// Where one call into an actualized recursive component starts counting the
+/// levels that may still hand work out.
+pub use ir::RecursionBudget;
 pub use lexer::*;
 /// The compile-time choice of whether the backend actualizes the permission
 /// judgment's overlap groups.
-pub use lowering::{OverlapLowering, RecursionBudget};
+pub use lowering::OverlapLowering;
 pub use resolution::*;
 pub use source::*;
 pub use spec::*;
@@ -61,5 +70,6 @@ pub use syntax::terminal::*;
 pub use syntax::*;
 
 pub(crate) use backend::*;
+pub(crate) use ir::*;
 pub(crate) use lowering::*;
 pub(crate) use semantic::*;

@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let values = pkg::vec::grow_vector_new::<u64, 8>();
+  let total = pkg::wrap::fill::<fn pkg::wrap::push_one::<u64, 8>>(values: &values, count: 7_u64);
+  set values.tag = 5_u64;
+  let sum = 0_u64;
+  loop @drain {
+    if values.storage.inner.len <= 0_u64 {
+      break @drain;
+    }
+    let taken = pkg::vec::grow_vector_swap_remove::<u64, 8>(values: &values, index: 0_u64);
+    set sum = sum +wrap taken;
+  }
+  let tagged = values.tag;
+  pkg::vec::grow_vector_free_empty::<u64, 8>(values: move values);
+  let counted = total +wrap sum;
+  let code = counted +wrap tagged;
+  let low = iand(code, 255_u64);
+  match cvt.checked::<u64, u8>(low) {
+    Ok(value: byte) => {
+      return exit_status(code: byte);
+    }
+    Err(error: refused) => {
+      return exit_status(code: 255_u8);
+    }
+  }
+}

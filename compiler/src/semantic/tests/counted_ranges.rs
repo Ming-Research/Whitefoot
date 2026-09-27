@@ -37,10 +37,10 @@ fn assert_only_rule(source: &[u8], rule: SemanticRule) {
 
 #[test]
 fn counted_range_retains_checked_inputs_binder_and_real_exhaustion() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 2_u64..1_u64) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -80,10 +80,10 @@ fn counted_range_retains_checked_inputs_binder_and_real_exhaustion() {
     });
 
     assert_checks(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 18446744073709551614_u64..18446744073709551615_u64) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -92,10 +92,10 @@ fn counted_range_retains_checked_inputs_binder_and_real_exhaustion() {
 #[test]
 fn counted_endpoints_require_exact_own_u64_with_type7_exclusive() {
     assert_rule_kind(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u32..1_u64) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type5,
@@ -109,8 +109,8 @@ fn counted_endpoints_require_exact_own_u64_with_type7_exclusive() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type7,
@@ -126,12 +126,12 @@ fn main() -> status: ExitStatus pure {
     // a candidate here — its content is the field `inner` [TYPE-9] and
     // `deref` of a cell is itself a TYPE-7 rejection.
     assert_rule(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let origin = 0_u64;
   let start = &origin;
   for @items (i in start..1_u64) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type7,
@@ -141,7 +141,7 @@ fn main() -> status: ExitStatus pure {
     );
 
     assert_rule(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let origin = 0_u64;
   let start = &origin;
   loop @outer {
@@ -149,7 +149,7 @@ fn main() -> status: ExitStatus pure {
     }
     break @outer;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type7,
@@ -165,8 +165,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -182,8 +182,8 @@ fn probe() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -210,11 +210,148 @@ fn probe(bounds: Bounds, upper: &u64) -> result: unit reads(upper) {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
+}
+
+/// A client module of `pkg::records`, whose interface declares the readonly
+/// fields these offset tests read: a source readonly field is written only on
+/// a public field of an interface record, and it withholds writes only from
+/// the modules that do not declare it [TYPE-2, MOD-6].
+fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
+    super::check_module_sources(
+        b"pkg::records: [];\npkg: [pkg::records, std::process];\n",
+        &[
+            (
+                "records/module.wfm",
+                b"public struct Entry {\n  public readonly width: u64;\n}\n\npublic struct Node {\n  public readonly count: u64;\n}\n"
+                    .as_slice(),
+            ),
+            ("module.wfm", b"\n".as_slice()),
+            ("main.wf", main),
+        ],
+    )
+}
+
+fn assert_unsupported_composite(result: Result<(), crate::CompilationFailure>) {
+    let failure = result.expect_err("an unrepresented offset stops the check");
+    assert_eq!(
+        failure.kind(),
+        crate::CompilationFailureKind::Unsupported,
+        "{failure}"
+    );
+    assert!(failure.to_string().contains("CompositeValues"), "{failure}");
+}
+
+/// [ENT-2] clause (b): a readonly field below a subscript is an endpoint term
+/// exactly when every offset in its place is itself a clause (a) or clause
+/// (c) term.
+///
+/// A bare binding offset is represented and admitted. An array-element offset
+/// is no term, so the place is no term and the endpoint is ENT-2's rejection.
+/// A tracked field place is an admitted offset that this compiler captures no
+/// value for, so the place is the compiler capability it is and never a
+/// source verdict [DIAG-1]; the conformance corpus cannot pin that, because a
+/// case declares the specification's verdict, which is acceptance.
+#[test]
+fn a_readonly_field_endpoint_follows_its_offset_forms() {
+    let program = |offset: &str| {
+        format!(
+            r#"alias Entry = pkg::records::Entry;
+
+struct Cursor {{
+  at: u64;
+}}
+
+fn probe(entries: Array<Entry, 4>, slots: Array<u64, 2>, i: u64) -> result: u64 pure contract {{
+  requires i < 4_u64;
+}} {{
+  let cursor = Cursor(at: 0_u64);
+  let seen = 0_u64;
+  for @items (c in 0_u64..entries[{offset}].width) {{
+    set seen = seen +wrap 1_u64;
+  }}
+  return seen;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    check_records_client(program("i").as_bytes()).expect("a bare binding offset is admitted");
+    let failure = check_records_client(program("slots[0_u64]").as_bytes())
+        .expect_err("an element offset is no term");
+    assert_eq!(failure.rule_id(), Some("ENT-2"), "{failure}");
+    assert!(
+        failure.to_string().contains("InvalidCountedEndpoint"),
+        "{failure}"
+    );
+    assert_unsupported_composite(check_records_client(program("cursor.at").as_bytes()));
+}
+
+/// [ENT-2, DIAG-1] an admitted offset the compiler cannot capture stops the
+/// read itself, in a body and in a contract clause alike, so no missing fact
+/// can later surface as a source rejection. A measure over such a place is
+/// the same capability.
+#[test]
+fn an_unrepresented_offset_is_unsupported_wherever_the_place_is_read() {
+    let body = br#"alias Entry = pkg::records::Entry;
+
+struct Cursor {
+  at: u64;
+}
+
+fn probe(entries: Array<Entry, 4>, cursor: Cursor) -> result: u64 pure contract {
+  requires cursor.at < 4_u64;
+} {
+  let width = entries[cursor.at].width;
+  return width;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_unsupported_composite(check_records_client(body));
+    let clause = br#"alias Node = pkg::records::Node;
+
+struct Cursor {
+  at: u64;
+}
+
+fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
+  requires cursor.at < deref(nodes).len;
+  requires deref(nodes)[cursor.at].count <= 8_u64;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_unsupported_composite(check_records_client(clause));
+    let measure = br#"struct Cursor {
+  at: u64;
+}
+
+fn probe(grid: Array<Slots<u8, 4>, 4>, cursor: Cursor) -> result: u64 pure contract {
+  requires cursor.at < 4_u64;
+} {
+  let width = grid[cursor.at].len;
+  return width;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::assert_unsupported(measure, crate::UnsupportedSemanticFeature::CompositeValues);
 }
 
 /// [OWN-11] a counted binder may be copied and may have a reference formed to
@@ -227,11 +364,11 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn counted_binder_is_not_source_writable_and_is_not_written_through() {
     assert_rule(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u64..1_u64) {
     set i = 1_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Set1,
@@ -247,13 +384,13 @@ fn counted_binder_is_not_source_writable_and_is_not_written_through() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u64..1_u64) {
     let copied = i;
     let shared = &i;
     observe(value: shared);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -264,11 +401,11 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u64..1_u64) {
     overwrite(target: &i);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Own11,
@@ -278,13 +415,13 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn a_counted_binders_reference_does_not_make_it_writable() {
     assert_only_rule(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for (i in 0_u64..2_u64) {
     let held = &i;
-    let alias = held;
-    set deref(alias) = 9_u64;
+    let aliased = held;
+    set deref(aliased) = 9_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Set1,
@@ -322,12 +459,12 @@ fn counted_body_inherits_own11_and_accepts_body_local_ownership() {
   value: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let token = Token(value: 1_u64);
   for @items (i in 0_u64..1_u64) {
     let consumed = move token;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Own11,
@@ -350,13 +487,13 @@ fn main() -> status: ExitStatus pure {
   value: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u64..1_u64) {
     let shared = &i;
     let token = Token(value: i);
     let consumed = move token;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -364,12 +501,12 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn counted_cleanup_is_attached_only_to_taken_body_exits() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for @items (i in 0_u64..1_u64) {
     let values = box_new::<u64>(value: 1_u64);
     break @items;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -419,8 +556,8 @@ fn forward() -> result: Result<unit, Fail> pure {
   return Ok<unit, Fail>(value: unit);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -475,7 +612,7 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn optional_labels_preserve_structural_break_targets_and_invariant_parentage() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   loop @outer {
     loop {
       break;
@@ -488,7 +625,7 @@ fn optional_labels_preserve_structural_break_targets_and_invariant_parentage() {
     }
     break @outer;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -556,7 +693,7 @@ fn optional_labels_preserve_structural_break_targets_and_invariant_parentage() {
 #[test]
 fn an_unlabeled_break_requires_an_enclosing_loop() {
     assert_rule(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   break;
 }
 "#,

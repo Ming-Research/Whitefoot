@@ -1,0 +1,36 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Node = pkg::kinds::Node;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn child_sum(nodes: &[Node], kids: &[u64], i: u64) -> total: u64 reads(nodes), reads(kids) contract {
+  requires i < deref(nodes).len;
+  requires deref(nodes)[i].count <= deref(kids).len;
+} {
+  doc "The requirement names the element's readonly count as a clause (b) term; S4 establishes it at entry, and the counted endpoint over the same term discharges every child read.";
+  let acc = 0_u64;
+  for (c in 0_u64..deref(nodes)[i].count) {
+    let kid = deref(kids)[c];
+    set acc = acc +wrap kid;
+  }
+  return acc;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller discharges the instantiated requirement from its own guard over the same subscripted readonly field [FN-8].";
+  let leaf = kinds::make_node(first: 0_u64, count: 0_u64, weight: 1_u64);
+  let arena = array_filled::<Node, 3>(value: leaf);
+  set arena[1_u64] = kinds::make_node(first: 0_u64, count: 2_u64, weight: 5_u64);
+  let kids = array_filled::<u64, 4>(value: 3_u64);
+  let nodes = &arena[0_u64..3_u64];
+  let children = &kids[0_u64..4_u64];
+  let i = 1_u64;
+  if deref(nodes)[i].count <= deref(children).len {
+    let total = child_sum(nodes: nodes, kids: children, i: i);
+    if total == 6_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 1_u8);
+}

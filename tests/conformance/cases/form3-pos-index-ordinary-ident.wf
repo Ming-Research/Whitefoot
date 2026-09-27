@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "FORM-3: `index` is not a fixed grammar atom, so it is an ordinary IDENT, declarable as a binding and usable as a subscript offset. The eight measure and window-part names are the spellings FORM-3 now reserves, and `index` is not one of them.";
   let index = 1_u64;

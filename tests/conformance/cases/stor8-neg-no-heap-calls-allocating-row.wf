@@ -1,5 +1,8 @@
 program no_heap;
 
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "STOR-8: a program whose compilation unit carries the no-heap declaration cannot call an allocating prelude row; calling such a row is a hard error at the complete call.";
   let b = box_slots_new::<u64>(capacity: 4_u64);

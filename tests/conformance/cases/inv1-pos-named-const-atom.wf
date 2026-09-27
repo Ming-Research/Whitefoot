@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const cap: u64 = 255_u64;
 
 fn walk(count: u64) -> last: u64 pure contract {

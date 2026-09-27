@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn pop(values: &Slots<u64, 4>) -> (value: u64, count: u64) writes(values) contract {
   requires deref(values).len > 0_u64;
   ensures deref(values).len == deref(entry(values)).len - 1_u64;

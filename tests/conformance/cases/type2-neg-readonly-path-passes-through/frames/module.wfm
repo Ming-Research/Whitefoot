@@ -1,0 +1,10 @@
+public struct Header {
+  public version: u64;
+}
+
+public struct Frame {
+  public readonly header: Header;
+  public size: u64;
+}
+
+public fn make(version: u64) -> frame: Frame pure doc "Builds a frame whose header its module alone replaces.";

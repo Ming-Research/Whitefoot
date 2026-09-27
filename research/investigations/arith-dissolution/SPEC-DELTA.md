@@ -10,8 +10,7 @@ approval.
 
 ## Basis
 
-Recorded measurements, `mcts_mem/whitefoot/checks-and-proofs/
-obligation-discharge.md` Facts, 2026-08-08 entries:
+Recorded measurements, [mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge.md) Facts, 2026-08-08 entries:
 
 - An overflow goal is expressible in the existing L0 fragment whenever one
   operand is a literal: it folds to a difference bound on the other operand

@@ -1,5 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn open_read_alias(root: u64, path: u64) -> result: u64 pure {
-  doc "PRE-1 ordinary declarations reserve their exact ordinary names. A near-lookalike remains a distinct source function and executes normally.";
+  doc "A source function whose name extends a host function's is an ordinary distinct function; the host function enters no inventory of a source that does not name it [MOD-10].";
   return root;
 }
 

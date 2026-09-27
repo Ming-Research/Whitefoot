@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn sink(cell: Box<Slots<u8>>) -> result: unit pure {
   doc "Consumes the cell and ends, which is how an affine value is released early.";
   return unit;

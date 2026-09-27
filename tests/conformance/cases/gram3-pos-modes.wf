@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn use3(a: i32, b: &i32, part: &[i32]) -> return_value: i32 reads(b), reads(part) contract {
   requires 0_u64 < deref(part).len;
 } {

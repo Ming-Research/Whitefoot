@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An unrelated binding after the replacement does not change the delivered run length judgment: the REBIND placement datum has empty support, so no later binding can retarget or remove it [MSR-3, ENT-5], and the subscript still discharges [OP-4].";
   let base = array_filled::<u32, 4>(value: 1_u32);

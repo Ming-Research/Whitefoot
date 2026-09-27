@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn open_read(root: u64, path: u64) -> function_result: u64 pure {
+  doc "A program function with a host function's name: the host function is std::fs::open_read, which this source never names, so nothing collides.";
+  return root +wrap path;
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = open_read(root: 2_u64, path: 3_u64);
+  let narrowed = cvt.checked::<u64, u8>(total);
+  match narrowed {
+    Ok(value: code) => {
+      return exit_status(code: code);
+    }
+    Err(error: overflowed) => {
+      return exit_status(code: 200_u8);
+    }
+  }
+}

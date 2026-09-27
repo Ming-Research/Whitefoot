@@ -41,10 +41,10 @@ fn pack<T: drop>(value: T) -> result: Wrap<T> pure {
   return Wrap<T>(payload: move value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = Mark(value: 9_u64);
   let wrapped = pack::<Mark>(value: value);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -78,8 +78,8 @@ fn recur<T: drop, const n: u64>(value: T) -> result: Mark<T> pure {
   return recur::<T, n>(value: move value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -109,10 +109,10 @@ fn explicit_int_generic_function_builds_each_reachable_concrete_instance() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = identity::<u32>(value: 7_u32);
   let second = identity::<i64>(value: -9_i64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -130,10 +130,10 @@ fn int_bound_selects_the_same_operation_row_for_every_concrete_instance() {
   return imax(left, right);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = maximum::<u8>(left: 4_u8, right: 9_u8);
   let signed = maximum::<i64>(left: -7_i64, right: -2_i64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -153,10 +153,10 @@ fn float_bound_selects_operations_and_identities_for_every_concrete_instance() {
   return fadd.strict(zero, shifted);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let single = nudge::<f32>(value: 2.0_f32);
   let double = nudge::<f64>(value: 4.0_f64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -173,9 +173,9 @@ fn float_bound_rejects_a_non_float_explicit_argument_under_fn3() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let invalid = identity::<u32>(value: 7_u32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Fn3, |kind| {
@@ -189,8 +189,8 @@ fn numeric_identity_requires_an_int_or_float_bound() {
   return 0_T;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Form5, |kind| {
@@ -204,9 +204,9 @@ fn int_bound_identity_is_concretized_before_lowering() {
   return 1_T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = one::<u16>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -227,8 +227,8 @@ fn unused_generic_exact_conversion_requires_the_complete_bound_domain() {
   return cvt::<T, u64>(value);
 }}
 
-fn main() -> status: ExitStatus pure {{
-{call}  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+{call}  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -268,10 +268,10 @@ fn forward<A: {source_bound}, B: {destination_bound}>(value: A) -> result: B pur
   return convert::<A, B>(value: value);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let attempted = attempt::<{source_type}, {destination_type}>(value: {literal});
   let result = forward::<{source_type}, {destination_type}>(value: {literal});
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -305,14 +305,14 @@ fn small_float<T: Float>(value: u8) -> result: T pure {
   return cvt::<u8, T>(value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let integer = same_integer::<i64>(value: -1_i64);
   let floating = same_float::<f32>(value: -0.0_f32);
   let wide = widen_float::<f32>(value: floating);
   let same = widen_float::<f64>(value: wide);
   let small = small_float::<f32>(value: 255_u8);
   let large = small_float::<f64>(value: 255_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -378,7 +378,7 @@ fn forward_exact<D: Float>() -> result: unit pure {
   return require_exact::<D>(value: 16777218_u32);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let integer = integer_identities::<u64, i8>();
   let integer_float = integer_float_identities::<i64, f32>();
   let float_integer = float_integer_identities::<f64, u8>();
@@ -388,7 +388,7 @@ fn main() -> status: ExitStatus pure {
   let integral = integral_float::<u8>();
   let half_value = fractional_float::<f32>();
   let forwarded = forward_exact::<f32>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -406,8 +406,8 @@ fn mixed_generic_constant_domains_prove_neither_truth_sign() {
   return cvt::<u32, D>(16777217_u32);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(exact, SemanticRule::Op6, |kind| {
@@ -425,8 +425,8 @@ fn main() -> status: ExitStatus pure {
   return cvt::<f64, i32>(value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(positive_requirement, SemanticRule::Op6, |kind| {
@@ -446,8 +446,8 @@ fn invalid<D: Float>() -> result: unit pure {
   return require_inexact::<D>();
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(negative_requirement, SemanticRule::Fn8, |kind| {
@@ -466,9 +466,9 @@ fn distinct_generic_numeric_parameters_keep_their_domain_identity() {
   return cvt::<S, D>(value);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let result = invalid::<{source_type}, {destination_type}>(value: {literal});
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -488,9 +488,9 @@ fn numeric_conversion_does_not_grant_an_unbounded_type_numeric_capability() {
   return cvt::<T, u64>(value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = invalid::<u8>(value: 7_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -506,8 +506,8 @@ fn generic_reinterpret_keeps_its_existing_capability_boundary() {
   return reinterpret::<T, u32>(value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_unsupported(source, UnsupportedSemanticFeature::Generics);
@@ -527,9 +527,9 @@ fn forward<const value: u32>() -> result: u8 pure contract {
   return convert::<value>();
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = forward::<7>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -562,10 +562,10 @@ fn small<T: Float>(value: u8) -> result: T pure contract {
   return cvt::<u8, T>(value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let same_value = same::<f64>(value: 1.0_f64);
   let converted = small::<f32>(value: 7_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -588,8 +588,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -609,8 +609,8 @@ fn conversion_defined_does_not_extend_the_postcondition_relation_fragment() {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(
@@ -626,10 +626,10 @@ fn int_bound_rejects_a_non_integer_explicit_argument_under_fn3() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let input = True();
   let invalid = identity::<Bool>(value: input);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Fn3, |kind| {
@@ -649,9 +649,9 @@ fn a_generic_call_cycle_at_the_callers_own_parameters_monomorphizes() {
   return recursive::<T>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let seen = recursive::<u16>(value: 1_u16);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -677,9 +677,9 @@ fn a_generic_cycle_varying_a_const_argument_stops_before_instance_enumeration() 
   return rest +wrap 1_u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let total = expand_count::<1>(at: 3_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // D7 extends FN-6 from type-only forwarding to the complete parameter
@@ -717,8 +717,8 @@ fn polymorphic_recursion_is_rejected_at_the_call_that_leaves_the_caller_paramete
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn6,
@@ -737,8 +737,8 @@ fn right<A: drop, B: drop>(first: A, second: B) -> result: A pure {
   return first;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn6,
@@ -763,8 +763,8 @@ fn trampoline() -> result: i32 pure {
   return forward;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // D7's whole-component rule includes the edge that drops T. No instance
@@ -785,8 +785,8 @@ fn unused_int_generic_body_is_checked_for_the_complete_bound_domain() {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(source, SemanticRule::Fn1, SemanticIssueKind::ReturnMismatch);
@@ -815,11 +815,11 @@ fn transfer<T: drop>(value: T) -> result: T pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let copied = transfer::<u8>(value: 7_u8);
   let payload = Payload(value: 3_u8);
   let held = transfer::<Payload>(value: move payload);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -850,11 +850,11 @@ fn forward<T: drop>(value: T) -> result: T pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<u64>(value: 7_u64);
   let payload = Payload(value: 3_u64);
   let held = forward::<Payload>(value: move payload);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -875,9 +875,9 @@ fn forward<const n: u64>() -> result: Result<unit, unit> pure {
   return package_value::<unit, n>(value: unit);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<3>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -906,9 +906,9 @@ fn make_unit() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<fn make_unit>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -923,7 +923,7 @@ fn main() -> status: ExitStatus pure {
 fn the_canonical_generic_body_still_rejects_copy_moves_and_repeated_consumes() {
     for (parameters, value_type) in [("T: copy", "T"), ("T: drop", "u64")] {
         let source = format!(
-            "fn invalid<{parameters}>(value: {value_type}) -> result: {value_type} pure {{\n  return move value;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn invalid<{parameters}>(value: {value_type}) -> result: {value_type} pure {{\n  return move value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_kind(source.as_bytes(), SemanticRule::Own1, |kind| {
             matches!(kind, SemanticIssueKind::MoveOfCopy { .. })
@@ -938,9 +938,9 @@ fn forward<T: drop>() -> result: Result<unit, unit> pure {
   return invalid::<T, unit>(value: unit);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<u64>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Own1, |kind| {
@@ -958,10 +958,10 @@ fn forward<T: Int>(value: T) -> result: T pure {
   return select::<T>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = forward::<u8>(value: 7_u8);
   let signed = forward::<i64>(value: -9_i64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -983,7 +983,7 @@ fn forward<const n: u64>(value: Slots<u8, n>) -> result: Slots<u8, n> pure {
   return preserve::<n>(value: move value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small_input = slots_new::<u8, 2>();
   let small = forward::<2>(value: move small_input);
   let large_input = slots_new::<u8, 5>();
@@ -996,7 +996,7 @@ fn main() -> status: ExitStatus pure {
   if 4_u64 < large_held {
     let second = large[4_u64];
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1044,9 +1044,9 @@ fn forward<const limit: {ty}>(value: {ty}) -> result: {ty} pure {{
   return decrement::<limit>(value: increased);
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   let value = forward::<0>(value: 0_{ty});
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -1071,9 +1071,9 @@ fn const_generic_affine_images_keep_every_declared_integer_domain() {
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   bounded::<0>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -1109,9 +1109,9 @@ fn forward<const n: u8>(value: u64) -> result: u64 pure {
   return increment::<n>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = forward::<3>(value: 0_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1135,8 +1135,8 @@ fn const_generic_bounds_do_not_prove_a_narrower_domain() {
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
-{call}  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+{call}  return std::process::exit_status(code: 0_u8);
 }}
 "
                 );
@@ -1160,8 +1160,8 @@ fn const_generic_type_bounds_do_not_make_inclusive_arithmetic_guards_strict() {
   return value;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
             );
@@ -1181,10 +1181,10 @@ fn unbounded_type_parameters_build_only_explicit_reachable_instances() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   marker::<u8>();
   marker::<Bool>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1209,9 +1209,9 @@ fn generic_argument_kinds_and_const_parameter_types_are_checked() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   marker::<4>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn2,
@@ -1222,9 +1222,9 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   sized::<u8>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Fn2,
@@ -1235,8 +1235,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Const1,
@@ -1255,12 +1255,12 @@ fn duplicate<T: Int>(value: T) -> result: Pair<T> pure {
   return Pair<T>(left: value, right: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = duplicate::<u8>(value: 7_u8);
   let wide = duplicate::<i64>(value: -9_i64);
   let small_left = small.left;
   let wide_right = wide.right;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1286,8 +1286,8 @@ fn source_generic_enums_use_the_concrete_instance_member_table() {
   Present(value: T);
 }
 
-fn main() -> status: ExitStatus pure {
-  let small = Present<u8>(value: 3_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  let small = Choice<u8>::Present(value: 3_u8);
   match small {
     Missing() => {
       let ignored = unit;
@@ -1296,7 +1296,7 @@ fn main() -> status: ExitStatus pure {
       let retained = observed;
     }
   }
-  let wide = Present<i64>(value: -5_i64);
+  let wide = Choice<i64>::Present(value: -5_i64);
   match wide {
     Missing() => {
       let ignored = unit;
@@ -1305,7 +1305,7 @@ fn main() -> status: ExitStatus pure {
       let retained = observed;
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1334,13 +1334,13 @@ struct Holder<T: drop> {
   value: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let short_bytes = slots_new::<u8, 2>();
   let short = Packet<2>(bytes: move short_bytes);
   let long_bytes = slots_new::<u8, 5>();
   let long = Packet<5>(bytes: move long_bytes);
   let held = Holder<Packet<2>>(value: move short);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1402,9 +1402,9 @@ fn source_nominal_argument_arity_and_kinds_are_exact() {
   value: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let invalid = Pair<u8, u16>(value: 1_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type5,
@@ -1415,10 +1415,10 @@ fn main() -> status: ExitStatus pure {
   bytes: Slots<u8, n>;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let bytes = slots_new::<u8, 1>();
   let invalid = Packet<u8>(bytes: move bytes);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type5,
@@ -1433,7 +1433,7 @@ fn constructor_only_generic_instances_still_reach_normal_type_diagnostics() {
   value: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   return Holder<u8>(value: 1_u8);
 }
 "#,
@@ -1449,8 +1449,8 @@ fn recursive_generic_nominal_layouts_stop_before_concrete_enumeration() {
   next: Recursive<T>;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         UnsupportedSemanticFeature::RecursiveNominalLayout,
@@ -1464,10 +1464,10 @@ fn checked_integer_results_are_available_during_template_and_concrete_rechecking
   return left +checked right;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let small = checked_sum::<u8>(left: 1_u8, right: 2_u8);
   let wide = checked_sum::<i64>(left: -3_i64, right: 5_i64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1513,14 +1513,14 @@ fn filled_float_run<T: Float, const n: u64>(value: T) -> result: Slots<T, n> pur
   return move built;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let bytes = filled_run::<u8, 2>(value: 7_u8);
   let words = filled_run::<i64, 3>(value: -5_i64);
   let byte = bytes[1_u64];
   let word = words[2_u64];
   let samples = filled_float_run::<f32, 2>(value: 1.5_f32);
   let sample = samples[1_u64];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1557,8 +1557,8 @@ fn wrapper<U: drop>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1605,8 +1605,8 @@ fn wrapper<U: drop>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1669,8 +1669,8 @@ fn middle<A: Int>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1718,12 +1718,12 @@ fn later(values: Slots<u8, 4>, index: u64) -> result: u8 pure {
   return values[index];
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first_values = slots_new::<u8, 4>();
   let second_values = slots_new::<u8, 4>();
   earlier::<u8>(values: move first_values, index: 5_u64);
   later(values: move second_values, index: 5_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1753,8 +1753,8 @@ fn renamed(value: Wrapped<Box<u64>>, spare: Box<u64>) -> (other: Wrapped<Box<u64
   return move value, move spare;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1808,8 +1808,8 @@ fn declaration(value: AlternateMarker<u8, 1>) -> back: AlternateMarker<u8, 1> pu
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1851,7 +1851,7 @@ fn nominal_physical_families_complete_deep_finite_type_graphs() {
     source.push_str(
         "fn first(value: Layer80) -> back: Layer80 pure {\n  return move value;\n}\n\n\
          fn second(value: Layer80) -> back: Layer80 pure {\n  return move value;\n}\n\n\
-         fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+         fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -1896,8 +1896,8 @@ fn second(value: Tree) -> back: Tree pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1946,8 +1946,8 @@ fn relay(cell: Box<u64>) -> result: Box<u64> pure {
   return pass::<Box<u64>>(value: move cell);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1991,7 +1991,7 @@ fn pass<T: drop>(value: T) -> result: T pure {
   return move value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let empty_leaf = slots_new::<u64, 2>();
   place_back(window: &empty_leaf, value: 7_u64);
   let leaf = move empty_leaf;
@@ -2004,7 +2004,7 @@ fn main() -> status: ExitStatus pure {
   let returned = pass::<Slots<Slots<Slots<u64, 2>, 2>, 2>>(value: move outer);
   let wrapped = Wrapped(values: move returned);
   let retained = pass::<Wrapped>(value: move wrapped);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2061,8 +2061,8 @@ fn wrapper<U: drop>() -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2152,9 +2152,9 @@ fn a_generic_boxed_window_constructor_establishes_its_loop_preheader() {
   return move built;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let built = build::<u8>(count: 4_u64, value: 7_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     // The ordinary path checks the symbolic body as well as the concrete

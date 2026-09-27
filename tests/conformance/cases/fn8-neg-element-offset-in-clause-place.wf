@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(table: &Array<Array<u64, 4>, 4>, idx: &Array<u64, 2>, k: u64) -> result: u64 reads(table), reads(idx) contract {
+  requires k < deref(table)[deref(idx)[0_u64]].len;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone exercises the clause admission; no call is needed.";
+  return exit_status(code: 0_u8);
+}

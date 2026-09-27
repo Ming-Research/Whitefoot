@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OWN-1: a reference owns nothing and contributes no release-graph node, so it is not a place rooted in a live own-mode binding and no consuming use reaches it. The ownership routes reach the value the reference names, never the name itself.";
   let values = array_filled::<u8, 4>(value: 0_u8);

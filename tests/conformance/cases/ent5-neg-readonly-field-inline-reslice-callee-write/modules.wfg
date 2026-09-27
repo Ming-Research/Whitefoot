@@ -1,0 +1,4 @@
+pkg::kinds: [];
+pkg: [pkg::kinds, std::process];
+
+entry main = pkg::main;

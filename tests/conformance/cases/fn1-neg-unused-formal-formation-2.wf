@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inspect(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) {
   doc "Formation is checked with no caller anywhere in the program: the declaration writes one result ordinal and the return writes two expressions, which FN-1 refuses at the `return_stmt`. A formal member can no longer carry this defect, because the grammar admits only an owned result and every result count comes from a written `return`.";
   let a = deref(left);

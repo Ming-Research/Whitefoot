@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main () -> return_value: ExitStatus pure {
   doc "GRAM-9: a call in an atom position (nested op) does not derive; it must be a hard error citing GRAM-9.";
   let p = imul.wrap::<i32>(iadd.wrap::<i32>(3_i32, 4_i32), 2_i32);

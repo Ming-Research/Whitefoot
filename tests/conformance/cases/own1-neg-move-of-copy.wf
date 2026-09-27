@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1: move of a copy value is a hard error - one spelling per meaning; copies are used bare.";
   let flag = 1_u64 == 1_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Node {
   value: u64;
   next: Option<Box<Node>>;
@@ -16,8 +19,8 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
       }
     }
   }
-  let alias = cursor;
-  set deref(alias).next = None<Box<Node>>();
+  let aliased = cursor;
+  set deref(aliased).next = None<Box<Node>>();
   return deref(cursor).value;
 }
 

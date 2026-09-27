@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let pair = data::make(left: 1_u8, right: 2_u8);
+  let right = pair.right;
+  return exit_status(code: right);
+}

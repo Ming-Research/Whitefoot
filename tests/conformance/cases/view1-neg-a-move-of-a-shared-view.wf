@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A move of a copy value is OWN-1's refusal. A reference variable denotes the reference and its referent is reached through deref [REF-1, TYPE-7], so move deref(window) resolves to the copy u64 the reference names. The rejection is at the use rather than at the formation, and its restructuring is to drop the move spelling.";
   let count = 13_u64;

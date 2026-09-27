@@ -1,3 +1,23 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias host_bytes_len = std::text::host_bytes_len;
+alias host_copy_bytes = std::text::host_copy_bytes;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias host_utf8_len = std::text::host_utf8_len;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+alias write_once = std::io::write_once;
+
 fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) {
   doc "The argument bytes, their UTF-8 encoding, the file pages and both output channels all travel through caller-formed range references over two frame-resident arrays; writes subsumes the read of the same path, so no path is named twice [EFF-1].";
   let echo = array_filled::<u8, 64>(value: 0_u8);
@@ -20,6 +40,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
       }
       match host_utf8_len(value: &text) {
         Ok(value: measured) => {
+          if measured == name_length {
+          } else {
+            return exit_status(code: 14_u8);
+          }
         }
         Err(error: invalid) => {
           return exit_status(code: 4_u8);
@@ -94,17 +118,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
               match write_once(factory: files, output: err, source: echo_window, start: 0_u64, end: name_length) {
                 Ok(value: written) => {
                   let masked = iand(total, 255_u64);
-                  let narrowed = cvt.checked::<u64, u8>(masked);
-                  match narrowed {
-                    Ok(value: code) => {
-                      close_read(factory: files, file: move file);
-                      return exit_status(code: code);
-                    }
-                    Err(error: overflowed) => {
-                      close_read(factory: files, file: move file);
-                      return exit_status(code: 200_u8);
-                    }
-                  }
+                  let code = cvt::<u64, u8>(masked);
+                  close_read(factory: files, file: move file);
+                  return exit_status(code: code);
                 }
                 Err(error: problem) => {
                   close_read(factory: files, file: move file);

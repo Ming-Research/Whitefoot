@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn cross_index<const n_small: u64, const n_big: u64>(small: Slots<u8, n_small>, big: Slots<u8, n_big>, n: u64) -> found: u8 pure contract {
   define big_room = big.len;
   requires big_room > 0_u64;

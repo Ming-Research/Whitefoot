@@ -1,5 +1,8 @@
+use whitefoot::FragmentGranularity;
+
 use super::support::{
-    build_program, compile_and_run, compile_program, compile_program_with_overlap, emitted_function,
+    build_program, build_program_from_fragments, compile_and_run, compile_program,
+    compile_program_with_overlap, emitted_function,
 };
 
 #[test]
@@ -39,6 +42,20 @@ fn utf8_parser_executes_through_the_ordinary_pipeline() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+/// The parser linked from the link fragments a modular build splits it into
+/// [MOD-8] runs as the whole module does: each release helper keeps one
+/// definition, including one that only another helper names.
+#[test]
+fn recursive_prefix_parser_linked_from_its_fragments_runs_as_one_module() {
+    let llvm = compile_program("prefix_expression.wf");
+    for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
+        let output = build_program_from_fragments(&llvm, granularity).run_with_workers(None);
+        assert!(output.status.success(), "{granularity:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{granularity:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{granularity:?}: {output:?}");
+    }
 }
 
 #[test]

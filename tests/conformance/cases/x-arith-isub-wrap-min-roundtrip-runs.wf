@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "-wrap underflow round-trips [OP-1]: wrapping i32::MAX + 1 yields i32::MIN, and i32::MIN -wrap 1 returns i32::MAX; ordinary equality control maps a mismatch to a nonzero status.";
   let hi = 2147483647_i32;

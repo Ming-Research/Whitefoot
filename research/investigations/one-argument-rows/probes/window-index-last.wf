@@ -1,0 +1,15 @@
+fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {
+  requires i < deref(window).len;
+} {
+  let observed = deref(window)[i];
+  let taken = take_back(window: window);
+  return observed +wrap taken;
+}
+
+fn main() -> status: ExitStatus pure {
+  let window = slots_new::<u64, 4>();
+  place_back(window: &window, value: 5_u64);
+  place_back(window: &window, value: 6_u64);
+  let sum = take_after_read(window: &window, i: 0_u64);
+  return exit_status(code: 0_u8);
+}

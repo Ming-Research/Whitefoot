@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn top_byte(word: u64, amount: u32) -> result: u8 pure {
+  if 56_u32 <= amount {
+    if amount <= 64_u32 {
+      let top = ishr.wrap(word, amount);
+      let narrow = cvt::<u64, u8>(top);
+      return narrow;
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

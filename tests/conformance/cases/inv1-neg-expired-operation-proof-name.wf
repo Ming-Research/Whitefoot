@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn probe(limit: u64) -> result: unit pure {
   let sum = 0_u64;
   for (

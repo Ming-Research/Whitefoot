@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn last_chunk_status<const n_buf: u64, const n_status: u64>(buf: Slots<u8, n_buf>, status: Slots<u8, n_status>) -> value: u8 pure contract {
   define status_len = status.len;
   requires status_len > 0_u64;

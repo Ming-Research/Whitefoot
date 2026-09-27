@@ -173,6 +173,13 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         // x1 [GRAM-2, TYPE-2]: the field modifier that makes a field never a
         // write target.
         ("readonly", "Readonly"),
+        // v0.70 [GRAM-2, MOD-1]: the module interface marker, the file alias
+        // header and the package root qualifier.
+        ("public", "Public"),
+        ("alias", "Alias"),
+        ("pkg", "Pkg"),
+        // v0.72 [MOD-10]: the standard library qualifier.
+        ("std", "Std"),
     ];
     if spelling == "[0-9]+" {
         return Pred::Digits;
@@ -525,16 +532,19 @@ pub struct Follow {
     pub production: Vec<WordSet>,
 }
 
-pub fn follow_sets(grammar: &Grammar, first: &First, start: usize) -> Follow {
+pub fn follow_sets(grammar: &Grammar, first: &First, starts: &[usize]) -> Follow {
     let count = grammar.nodes.len();
     let mut follow = Follow {
         node: vec![WordSet::new(); count],
         production: vec![WordSet::new(); grammar.roots.len()],
     };
-    // The start production is followed by end of source.
-    let mut initial = WordSet::new();
-    initial.insert(Vec::new());
-    follow.production[start] = initial;
+    // Each start production is followed by end of source: `program` for
+    // interface and implementation sources, `graph_file` for the module graph.
+    for start in starts {
+        let mut initial = WordSet::new();
+        initial.insert(Vec::new());
+        follow.production[*start] = initial;
+    }
     // PRE-1 supplies ordinary signature records independently of writer
     // items. Their record terminator is a semicolon followed by source end;
     // the same fn_sig production checks the declaration itself. This root

@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pop_at(part: &[Slots<u64, 4>], i: u64) -> result: u64 writes(part[i].last), writes(part[i].len) contract {
+  requires i < deref(part).len;
+} {
+  doc "Takes the last element of deref(part)[i] back when there is one. Its row writes part[i].last through the range the caller passes.";
+  if 0_u64 < deref(part)[i].len {
+    let taken = take_back(window: &deref(part)[i]);
+    return taken;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10, REF-2, REF-4: the call passes part: &outer[0_u64..2_u64] and i: 1_u64, so its substituted row writes outer[0_u64..2_u64][1_u64].last, the last slot of outer[1_u64]. That ends the bound held = &outer[1_u64][0_u64] was formed under, so reading held afterwards is refused.";
+  let outer = slots_new::<Slots<u64, 4>, 3>();
+  let a = slots_new::<u64, 4>();
+  let b = slots_new::<u64, 4>();
+  place_back(window: &b, value: 5_u64);
+  place_back(window: &outer, value: move a);
+  place_back(window: &outer, value: move b);
+  if outer.len == 2_u64 {
+    if outer[1_u64].len == 1_u64 {
+      let held = &outer[1_u64][0_u64];
+      let got = pop_at(part: &outer[0_u64..2_u64], i: 1_u64);
+      let seen = deref(held);
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

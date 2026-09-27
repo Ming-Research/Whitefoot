@@ -7,7 +7,7 @@ use super::{assert_rule, assert_rule_kind, with_semantics};
 
 #[test]
 fn retains_the_complete_nonfloating_integer_family() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = 8_i32 / 2_i32;
   let b = 9_i32 % 2_i32;
   let c = iand(a, b);
@@ -32,7 +32,7 @@ fn retains_the_complete_nonfloating_integer_family() {
   let t = a *sat b;
   let u = imin(a, b);
   let v = imax(a, b);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -63,12 +63,12 @@ fn retains_the_complete_nonfloating_integer_family() {
     });
 
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = ibswap(1_i8);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ibswap(1_i8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
         SemanticIssueKind::InvalidOperation,
     );
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let value = ishl.wrap(1_i8, 1_i8);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ishl.wrap(1_i8, 1_i8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );
@@ -91,8 +91,8 @@ fn exhaustion_invariant_proves_exact_shift_counts_below_the_value_width() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

@@ -1,0 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias frames = pkg::frames;
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2: outside its declaring module a set target whose path passes through a readonly field is refused as well, because writing below the field changes the field's value.";
+  let f = frames::make(version: 1_u64);
+  set f.header.version = 2_u64;
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Signal {
   Ready();
   Busy();
@@ -5,7 +8,7 @@ enum Signal {
 
 fn main() -> status: ExitStatus pure {
   doc "An arm naming a variant outside the scrutinee enum resolves in the constructor domain but is foreign to the matched nominal [TYPE-6].";
-  let s = Ready();
+  let s = Signal::Ready();
   match s {
     Some(value: v) => {
     }

@@ -1,0 +1,11 @@
+fn main() -> status: ExitStatus pure {
+  let b = cvt.checked::<u32, u8>(256_u32);
+  match b {
+    Ok(value: v) => {
+      return exit_status(code: v);
+    }
+    Err(error: e) => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "split_off's second requirement is deref(destination).cap - deref(destination).len >= deref(source).len - index, and a destination this small cannot discharge it; the undischarged requirement of an ordinary PRE-1 record is an FN-8 call-site rejection naming the clause and rendering the residual under MSR-4.";
   let source = slots_new::<u64, 8>();

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "Op names carry a domain prefix and a .mode suffix iff on a mode axis [OP-7]: ineg.checked (i-prefix, checked mode), while the integer comparison `==` is a prefix-free integer-only operator row.";
   let r = match 40_i32 +checked 2_i32 {

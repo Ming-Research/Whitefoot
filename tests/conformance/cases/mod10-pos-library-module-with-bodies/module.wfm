@@ -1,0 +1,1 @@
+public fn main() -> status: std::process::ExitStatus pure doc "Sums two appended values through the standard library vector and exits with the sum.";

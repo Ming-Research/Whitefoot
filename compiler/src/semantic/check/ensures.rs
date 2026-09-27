@@ -64,7 +64,7 @@ fn parameter_has_exit_state(function: &FunctionSignature, parameter: &ParameterS
             .any(|path| path.root == parameter.declaration)
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn with_postcondition_context<T>(
         &self,
         record: &PostconditionResolutionRecord,
@@ -237,20 +237,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
 
         let eligible = self.eligible_postcondition_functions(&[])?;
+        let by_function = self.eligible_signatures_by_function(&eligible);
         let mut admitted_records = Vec::new();
         for record in &records {
-            let concrete = self
-                .signatures
-                .iter()
-                .filter(|signature| {
-                    eligible.contains(&signature.id)
-                        && self
-                            .tree
-                            .path(signature.node)
-                            .is_ok_and(|path| path == &record.function)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
+            let concrete = self.signatures_of(&by_function, &record.function);
             if concrete.is_empty() {
                 let symbolic = match self.symbolic_postcondition_signature(record) {
                     Ok(symbolic) => symbolic,
@@ -275,6 +265,43 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
         }
         self.forward_delayed_postcondition_issue(&admitted_records)
+    }
+
+    /// The table positions of the signatures `eligible` names, by the path
+    /// of the function each one instantiates, in table order.
+    ///
+    /// Admitting a selector may append signatures, whose fresh ids `eligible`
+    /// never names, and changes no signature it already holds, so one index
+    /// taken before the admissions serves every record of one pass.
+    fn eligible_signatures_by_function(
+        &self,
+        eligible: &[FunctionId],
+    ) -> HashMap<crate::NodePath, Vec<usize>> {
+        let eligible: std::collections::HashSet<FunctionId> = eligible.iter().copied().collect();
+        let mut by_function: HashMap<crate::NodePath, Vec<usize>> = HashMap::new();
+        for (index, signature) in self.signatures.iter().enumerate() {
+            if !eligible.contains(&signature.id) {
+                continue;
+            }
+            if let Ok(path) = self.tree.path(signature.node) {
+                by_function.entry(path.clone()).or_default().push(index);
+            }
+        }
+        by_function
+    }
+
+    /// The indexed signatures of the function at `function`, cloned.
+    fn signatures_of(
+        &self,
+        by_function: &HashMap<crate::NodePath, Vec<usize>>,
+        function: &crate::NodePath,
+    ) -> Vec<FunctionSignature> {
+        by_function
+            .get(function)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.signatures.get(*index).cloned())
+            .collect()
     }
 
     fn prepare_postcondition_selector_preflight(
@@ -558,19 +585,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 eligible.push(*function);
             }
         }
+        let by_function = self.eligible_signatures_by_function(&eligible);
         for record in &records {
-            let concrete = self
-                .signatures
-                .iter()
-                .filter(|signature| {
-                    eligible.contains(&signature.id)
-                        && self
-                            .tree
-                            .path(signature.node)
-                            .is_ok_and(|path| path == &record.function)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
+            let concrete = self.signatures_of(&by_function, &record.function);
             for signature in concrete {
                 // A schema instance is judged as a schema instance here too:
                 // its type arguments are symbolic and the clause typing that
@@ -733,7 +750,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 let CheckedStatement::Let { binding, value, .. } = &checked.statement else {
                     return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                 };
-                self.validate_clause_conversion_domains(
+                self.validate_clause_checked_forms(
                     ClauseKind::Postcondition(record),
                     definition,
                     value,
@@ -757,7 +774,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             self.validate_clause_condition(ClauseKind::Postcondition(record), clause, expression)?;
             let condition = self.check_expression(function, expression, bindings, 0)?;
-            self.validate_clause_conversion_domains(
+            self.validate_clause_checked_forms(
                 ClauseKind::Postcondition(record),
                 clause,
                 &condition.expression,
@@ -793,22 +810,38 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             if !self.has_fixed(base, FixedTerminal::Entry)? {
                 continue;
             }
+            // A function-kind formal's own contract names that formal's
+            // parameters [FN-3]; its signature is judged as its own
+            // declaration, so an enclosing declaration skips it here.
+            let mut owner = self.tree.parent(base)?;
+            let mut nested = false;
+            while let Some(node) = owner {
+                if node == function.node {
+                    break;
+                }
+                if self.tree.production(node)? == Production::FnSig {
+                    nested = true;
+                    break;
+                }
+                owner = self.tree.parent(node)?;
+            }
+            if nested {
+                continue;
+            }
             // Clause uses remain provisional until selector admission. This
             // whole-function position check runs outside an active clause.
             let path = self.tree.path(base)?;
             let usage = self
                 .resolved
-                .lexical_uses()
-                .iter()
+                .lexical_uses_at(base)
                 .chain(
                     self.resolved
                         .postconditions()
                         .iter()
-                        .flat_map(|record| &record.provisional_uses),
+                        .flat_map(|record| &record.provisional_uses)
+                        .filter(|usage| usage.origin().node() == path),
                 )
-                .find(|usage| {
-                    usage.role() == LexicalUseRole::PlaceBase && usage.origin().node() == path
-                })
+                .find(|usage| usage.role() == LexicalUseRole::PlaceBase)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let parameter = function.parameters.iter().find(|parameter| {
                 matches!(usage.target(), ResolvedTarget::Source { declaration, .. }
@@ -1109,6 +1142,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 ordinal: *ordinal,
                 ty: *ty,
             }),
+            // [FN-9] a parameter or named-const datum carries field and
+            // `deref` projections only: a subscripted readonly field is an
+            // [ENT-2] clause (b) term a requirement may name, but no relation
+            // datum in this version, and only a measure member of a formal
+            // place reaches a relation through a subscript (the arm below).
+            ExpandedClauseExpression::Datum(
+                ExpandedClauseDatum::Parameter { projections, .. }
+                | ExpandedClauseDatum::NamedConst { projections, .. },
+            ) if projections.iter().any(|projection| {
+                matches!(
+                    projection,
+                    GoalProjection::Subscript(_) | GoalProjection::FormalSubscript { .. }
+                )
+            }) =>
+            {
+                None
+            }
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
                 projections,
@@ -1259,7 +1309,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // length at all.
         let measured_result = selector.result_type.measured().is_some()
             || match selector.result_type {
-                CheckedType::Nominal(nominal) => self.boxed_measured_content(nominal)?,
+                CheckedType::Nominal(nominal) => self.measured_descendant(nominal)?,
                 _ => false,
             };
         let measured_result_only = measured_result
@@ -2217,20 +2267,62 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             // which reports the offending result type; anchor it at ordinal
             // zero and let `validate_postcondition_selector` speak.
             [] => Ok(0),
-            _ => self.issue_selector(record, SemanticIssueKind::AmbiguousResultRoute),
+            _ => {
+                // [CALL-4] the repair names the results that could carry the
+                // route, so the writer picks the one it means.
+                let binders = carriers
+                    .iter()
+                    .filter_map(|ordinal| record.result_binders.get(*ordinal))
+                    .map(|binder| format!("`{}`", binder.spelling))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.issue_selector(
+                    record,
+                    SemanticIssueKind::AmbiguousResultRoute {
+                        mechanical_fix: format!(
+                            "more than one result can carry this route: name the one it applies to, writing `when r is` before its variant with `r` one of {binders}"
+                        ),
+                    },
+                )
+            }
         }
     }
 
     /// Whether this nominal is a `Box` whose content the measure table gives
     /// a row [TYPE-9, MSR-1].
-    fn boxed_measured_content(
+    /// [CALL-4] whether a result of this nominal type reaches a measured
+    /// place through an owned descendant projection made of struct-field
+    /// selections and `Box` `inner` steps [MSR-3]: `made.storage.len`, or
+    /// the `result.inner.len` every boxed construction record publishes. An
+    /// enum payload step reaches none, because no route selects a variant of
+    /// an unrouted result.
+    fn measured_descendant(
         &self,
         nominal: super::super::model::NominalId,
     ) -> Result<bool, CheckStop> {
-        let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
-            return Ok(false);
-        };
-        Ok(referent.measured().is_some())
+        let mut pending = vec![nominal];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(nominal) = pending.pop() {
+            if !seen.insert(nominal) {
+                continue;
+            }
+            let children = match &self.nominal(nominal)?.kind {
+                CheckedNominalKind::Box { referent, .. } => vec![*referent],
+                CheckedNominalKind::Struct { fields } => {
+                    fields.iter().map(|field| field.ty).collect()
+                }
+                _ => Vec::new(),
+            };
+            for child in children {
+                if child.measured().is_some() {
+                    return Ok(true);
+                }
+                if let CheckedType::Nominal(inner) = child {
+                    pending.push(inner);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether one declared result type can carry a route in this version:
@@ -2246,7 +2338,20 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         )
     }
 
+    /// [FN-9, CALL-4] admits one clause's selector for one signature; a
+    /// rejection raised for a requested concrete instance names its requester
+    /// [FN-2, MOD-8].
     fn admit_postcondition_selector(
+        &self,
+        record: &PostconditionResolutionRecord,
+        signature: &FunctionSignature,
+        symbolic: bool,
+    ) -> Result<CheckedPostconditionSelector, CheckStop> {
+        self.admit_postcondition_selector_unattributed(record, signature, symbolic)
+            .map_err(|stop| self.attribute_to_request(signature.id, stop))
+    }
+
+    fn admit_postcondition_selector_unattributed(
         &self,
         record: &PostconditionResolutionRecord,
         signature: &FunctionSignature,
@@ -2294,11 +2399,12 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 }
                 // [MSR-1] admits a measure place formed with field-selection
                 // steps, and [TYPE-9] reaches a `Box`'s content by exactly
-                // one such step, `b.inner`. A `Box` result whose content is
-                // measured therefore supplies the same measured datum a
-                // directly measured result does, which is what every boxed
-                // construction record's `ensures result.inner.len` reads.
-                _ if self.boxed_measured_content(nominal)? => {
+                // one such step, `b.inner`. A result whose owned descendant
+                // reached by such steps is measured therefore supplies the
+                // same measured datum a directly measured result does: every
+                // boxed construction record's `ensures result.inner.len`,
+                // and a constructor's `ensures made.storage.len` [CALL-4].
+                _ if self.measured_descendant(nominal)? => {
                     (SelectorAdmissionType::Measured, declared.ty)
                 }
                 _ => (SelectorAdmissionType::Invalid, declared.ty),
@@ -2472,7 +2578,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     ) -> Result<T, CheckStop> {
         // [CALL-4] owns the result ordinal and the route's ambiguity; every
         // other selector rejection is [FN-9]'s admission.
-        let rule = if matches!(kind, SemanticIssueKind::AmbiguousResultRoute) {
+        let rule = if matches!(kind, SemanticIssueKind::AmbiguousResultRoute { .. }) {
             SemanticRule::Call4
         } else {
             SemanticRule::Fn9
@@ -2494,6 +2600,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             rule,
             location: SemanticLocation::SourceNode(origin.node().clone(), origin.coordinate()),
             kind,
+            request: None,
         }))
     }
 

@@ -28,8 +28,16 @@ fn store(counter: &Counter, next: u64) -> result: unit writes(counter.value) {
 ```
 
 An effect path is rooted at the bare parameter: write `writes(counter.value)`,
-never `writes(deref(counter).value)`. Use the narrowest truthful path. Two
-reads may overlap; a read/write or write/write pair must be proved disjoint.
+never `writes(deref(counter).value)`. Use the narrowest truthful path. A body
+that reads a whole parameter and writes one field of it declares both,
+`reads(stats), writes(stats.count)`, so a call kills only the caller facts
+whose support overlaps that field. An entry another entry already states is
+never listed: a write states every access at or below its path and a read
+every read below it, so `reads(stats.count)` beside `reads(stats)` or
+`writes(stats)` is refused [EFF-1]. Two reads may overlap; a read/write or
+write/write pair must be proved disjoint when two arguments supply it, or when
+one argument supplies it at positions such as `values[i]` and `values[j]`
+[EFF-5].
 For long call chains, compute owned commands in `pure` or read-only helpers and
 apply them in one shallow writer. This keeps the mutation boundary visible in
 signatures without an interior-mutability mechanism.
@@ -58,12 +66,23 @@ Read measures as readonly fields: `fixed.len`, `fixed.cap`, and, for a ring,
 `ring.head` [MSR-1, OP-15]. There is no `room` measure; write the needed
 relation over `len` and `cap`. `Array` has only `len`.
 
+A readonly integer field reached through subscripts is a term just as a
+measure is [ENT-2]. In an index-based tree, declare per-node structure such as
+`readonly count: u64;` and use `deref(nodes)[i].count` directly as a counted
+endpoint, in a `requires`, or as a `let` source equal to its copy. Mark a
+field readonly when only whole-element replacement should change it; an
+ordinary field below a subscript is no term, so copy it with `let` before
+relying on it. Replacing or exchanging the element, a window operation that
+moves elements, a call whose row writes the storage, and a write to the index
+binding each end the facts about it; bind a computed or field-valued index
+with `let` so the place's offset is a plain binding.
+
 Use `take_back`, `remove_at`, `insert_at`, `append`, `split_off`, `grow`,
 `place_front`, and `take_front` for their declared transformations [OP-10]. A
 source subscript always owes `index < run.len` [OP-4].
 
 Growth policy can be ordinary source. The maintained
-[grow-vector library](../lib/containers/grow-vector.wf) wraps
+[grow-vector library](../lib/std/collections/vector/grow-vector.wf) wraps
 `Box<Slots<T>>` in `GrowVector<T, const ceiling: u64>`. The selected ceiling
 supplies each concrete growth call's OP-9 bound; the policy doubles capacity
 while it fits and otherwise saturates at that ceiling. A zero ceiling admits
@@ -95,7 +114,7 @@ equality goal. An ordinary-loop header hypothesis itself expires at loop
 exit. Publish the required outer conclusion as a local `invariant` before
 `break` when the continuation needs it [ENT-5, INV-1].
 
-The [deque library](../lib/containers/deque.wf) uses `Box<Ring<T>>` directly.
+The [deque library](../lib/std/collections/deque/deque.wf) uses `Box<Ring<T>>` directly.
 Endpoint helpers take a reference and require the caller to prove room or
 nonemptiness. `deque_rebase` consumes the old owner and returns a genuinely new
 backing, with the same logical length and head zero; it can grow or shrink to
@@ -107,7 +126,7 @@ non-wrap test. The [caller](../tests/programs/containers/deque-program.wf)
 also shows an existing filled-slot reference surviving a back append whose
 row writes only the next slot and length.
 
-The [slab library](../lib/containers/slab.wf) reserves one bounded backing and
+The [slab library](../lib/std/collections/slab/slab.wf) reserves one bounded backing and
 materializes cells lazily. Each cell has an inline `Slots<T, 1>` for its
 zero-or-one occupant, a generation and a free-list link. An exhausted insert
 returns the offered owner; removal returns its occupant and retires the slot
@@ -119,7 +138,7 @@ distinguishes an index that may expire from a composite protocol that refuses
 deletion while another index retains the object; ordinary public bookkeeping
 does not prove that arbitrary client functions preserve that protocol.
 
-The [owning hash map](../lib/containers/hash-map.wf) stores keys and values
+The [owning hash map](../lib/std/collections/hash_map/hash-map.wf) stores keys and values
 inline in ordinary enum buckets, including `nodrop` values. Supply hashing
 and equality through `HashMapKey`. `hash_map_try_put` uses existing capacity;
 `hash_map_put` may grow up to the written ceiling. Replacement installs the
@@ -327,7 +346,7 @@ The member's parameter kinds, result types, effects, requirements, and postcondi
 the generic caller's boundary. A binding may refine that boundary only as
 [FN-4] permits. Calls retain their ordinary syntax; `interface` and `binding`
 replace the retired group-declaration keywords, not the call form. See
-[grow-vector.wf](../lib/containers/grow-vector.wf) and
+[grow-vector.wf](../lib/std/collections/vector/grow-vector.wf) and
 [grow-vector-program.wf](../tests/programs/containers/grow-vector-program.wf) for a behavior
 that consumes owned elements while updating an environment.
 
@@ -429,9 +448,14 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
-close_directory(factory: &factory, directory: move cwd);
+let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+std::fs::close_directory(factory: &factory, directory: move cwd);
 ```
+
+The host declarations belong to the standard library modules `std::io`,
+`std::text`, `std::fs`, `std::net` and `std::process` [PRE-2]. Write their
+`std` paths, or give a record an alias header for the names it uses often
+[MOD-4, MOD-10].
 
 Host failures are ordinary `Result` values. Match them or use `propagate` in a
 function returning the same error type [ERR-1, ERR-3]. A helper that acquires a
@@ -560,11 +584,24 @@ identity pairs. Use `cvt.defined::<Src, Dst>(value)` when the program needs a
 Boolean domain answer. Its true branch proves a bare conversion of that same
 value and type pair; calculating and ignoring the Bool proves nothing.
 
-Integer bounds can prove narrowing or signedness changes. For conversion to
-f32, the interval from -2^24 through 2^24 is a sufficient automatic proof;
-larger exactly representable constants also work. A float's integer range
-alone does not prove integrality: branch on the exact domain query or declare
-that query as a requirement. Generic helpers can use `Int` or `Float` endpoint
-bounds and a `cvt.defined` requirement without changing their return type when
-the selected pair changes. Same-type conversion copies bits, while conversion
-between float formats uses the destination's canonical quiet NaN [OP-6].
+Integer bounds can prove narrowing or signedness changes. An integer operation
+bound by a `let` already carries the interval its operation row gives from its
+operands' bounds, so a shift, mask, minimum or remainder whose result fits the
+destination converts with bare `cvt` and needs no mask or `cvt.checked` added
+only for the proof [ENT-3]:
+
+```whitefoot
+fn high_half(word: u64) -> result: u32 pure {
+  let high = ishr(word, 32_u32);
+  return cvt::<u64, u32>(high);
+}
+```
+
+For conversion to f32, the interval from -2^24 through 2^24 is a sufficient
+automatic proof; larger exactly representable constants also work. A float's
+integer range alone does not prove integrality: branch on the exact domain
+query or declare that query as a requirement. Generic helpers can use `Int` or
+`Float` endpoint bounds and a `cvt.defined` requirement without changing their
+return type when the selected pair changes. Same-type conversion copies bits,
+while conversion between float formats uses the destination's canonical quiet
+NaN [OP-6].

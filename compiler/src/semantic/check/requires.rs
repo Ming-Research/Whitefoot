@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::syntax::terminal::FixedTerminal;
@@ -12,14 +12,146 @@ use super::super::goal::{
 };
 use super::super::model::{
     BindingId, CheckedConst, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
-    CheckedIntegerOperation, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedStatement,
-    CheckedType, CheckedValue, expression_children,
+    CheckedIntegerOperation, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedPlaceStep,
+    CheckedStatement, CheckedType, CheckedValue, expression_children,
 };
+use super::super::places::{CapturedTerm, CapturedValue};
 use super::super::postcondition::PostconditionConstantOrigin;
 use super::{CheckStop, Checker, ControlCounters, ControlScope, FunctionSignature, LocalBinding};
 
 pub(super) struct CheckedRequires {
     pub(super) requirements: Vec<CheckedRequirement>,
+    /// The [ENT-2] clause (b) places each requirement forms, index-aligned
+    /// with `requirements` [`super::super::model::CheckedFunction::requirement_places`].
+    pub(super) places: Vec<Vec<CheckedExpression>>,
+}
+
+/// One checked definition's contribution to the requirements that expand it.
+struct ClauseDefinition {
+    binding: BindingId,
+    /// The clause (b) places its own initializer writes.
+    places: Vec<CheckedExpression>,
+    /// The earlier definitions its initializer reads.
+    uses: Vec<BindingId>,
+}
+
+/// [ENT-2] every clause (b) place one checked clause expression writes, in
+/// source order: a measure of a subscripted place and a subscripted read,
+/// the two forms whose subscripts owe [OP-4] where the place is formed.
+fn collect_clause_places(expression: &CheckedExpression, places: &mut Vec<CheckedExpression>) {
+    let subscripted = |path: &[CheckedPlaceStep]| {
+        path.iter()
+            .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+    };
+    match expression {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. }
+            if subscripted(&root.path) =>
+        {
+            places.push(expression.clone());
+        }
+        CheckedExpression::RangeElementMeasure { .. } | CheckedExpression::RangeIndex { .. } => {
+            places.push(expression.clone());
+        }
+        _ => {}
+    }
+    for child in expression_children(expression) {
+        collect_clause_places(child, places);
+    }
+}
+
+/// Each definition whose value can stand as an offset of a clause (b) place,
+/// with that value and the captured term it reads: a binding read, an integer
+/// literal or named const, or a const generic, followed through earlier
+/// definitions [ENT-2].
+type DefinitionOffsets = HashMap<BindingId, (CheckedExpression, CapturedTerm)>;
+
+/// The offset a definition's value supplies after expansion, when it is one.
+fn definition_offset(
+    value: &CheckedExpression,
+    definitions: &[ClauseDefinition],
+    offsets: &DefinitionOffsets,
+) -> Option<(CheckedExpression, CapturedTerm)> {
+    match value {
+        CheckedExpression::Binding {
+            binding,
+            consume_root: false,
+            ..
+        } => match offsets.get(binding) {
+            Some(expanded) => Some(expanded.clone()),
+            None if definitions
+                .iter()
+                .any(|definition| definition.binding == *binding) =>
+            {
+                None
+            }
+            None => Some((value.clone(), CapturedTerm::Binding(*binding))),
+        },
+        CheckedExpression::Constant(CheckedValue::Integer { bits, .. })
+        | CheckedExpression::NamedConstant {
+            value: CheckedValue::Integer { bits, .. },
+            ..
+        } => Some((value.clone(), CapturedTerm::Literal(*bits))),
+        CheckedExpression::Constant(CheckedValue::ConstGeneric { declaration, .. }) => {
+            Some((value.clone(), CapturedTerm::Const(*declaration)))
+        }
+        _ => None,
+    }
+}
+
+/// One subscript offset of a clause place, read through a definition, is the
+/// definition's own offset after expansion [FN-8].
+fn expand_definition_offset(
+    offset: &mut CheckedExpression,
+    captured: &mut CapturedValue,
+    offsets: &DefinitionOffsets,
+) {
+    if let CheckedExpression::Binding { binding, .. } = offset
+        && let Some((value, term)) = offsets.get(binding)
+    {
+        *offset = value.clone();
+        captured.term = *term;
+    }
+}
+
+fn expand_definition_path_offsets(path: &mut [CheckedPlaceStep], offsets: &DefinitionOffsets) {
+    for step in path {
+        if let CheckedPlaceStep::Subscript(subscript) = step {
+            let subscript = subscript.as_mut();
+            expand_definition_offset(&mut subscript.offset, &mut subscript.captured, offsets);
+        }
+    }
+}
+
+/// [FN-8] a definition is erased by expansion, so a clause (b) place is formed
+/// with every offset it reads through a definition replaced by the offset
+/// that definition expands to; its subscripts then owe [OP-4] over the same
+/// terms the expanded requirement establishes.
+fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &DefinitionOffsets) {
+    match place {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. } => {
+            expand_definition_path_offsets(&mut root.path, offsets);
+        }
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. } => {
+            expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
+            expand_definition_path_offsets(&mut place.path, offsets);
+        }
+        _ => {}
+    }
+}
+
+/// The bindings one checked clause expression reads by name.
+fn collect_clause_reads(expression: &CheckedExpression, reads: &mut Vec<BindingId>) {
+    if let CheckedExpression::Binding { binding, .. } | CheckedExpression::Project { binding, .. } =
+        expression
+    {
+        reads.push(*binding);
+    }
+    for child in expression_children(expression) {
+        collect_clause_reads(child, reads);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -191,7 +323,7 @@ impl ExpandedClauseExpression {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_requires(
         &self,
         function: &FunctionSignature,
@@ -200,6 +332,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         counters: &mut ControlCounters<'_>,
     ) -> Result<CheckedRequires, CheckStop> {
         let mut expanded_bindings = HashMap::new();
+        let mut definitions: Vec<ClauseDefinition> = Vec::new();
+        let mut definition_offsets = DefinitionOffsets::new();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             let local = bindings
                 .get(&parameter.declaration)
@@ -246,13 +380,37 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let CheckedStatement::Let { binding, value, .. } = &checked.statement else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
-            self.validate_clause_conversion_domains(ClauseKind::Requires, definition, value)?;
+            self.validate_clause_checked_forms(ClauseKind::Requires, definition, value)?;
             self.validate_clause_copy_local(ClauseKind::Requires, definition, *binding, bindings)?;
             let expanded =
                 self.build_clause_expression(expression, value, bindings, &expanded_bindings)?;
             expanded_bindings.insert(*binding, expanded);
+            let mut places = Vec::new();
+            collect_clause_places(value, &mut places);
+            for place in &mut places {
+                expand_definition_offsets(place, &definition_offsets);
+            }
+            if let Some(offset) = definition_offset(value, &definitions, &definition_offsets) {
+                definition_offsets.insert(*binding, offset);
+            }
+            let mut uses = Vec::new();
+            collect_clause_reads(value, &mut uses);
+            uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
+            definitions.push(ClauseDefinition {
+                binding: *binding,
+                places,
+                uses,
+            });
         }
 
+        // [ENT-2, FN-8] a requirement forms its places at body entry, in the
+        // state holding the requirements written before it. A definition is
+        // erased by expansion, so its places are formed in the first
+        // requirement whose expansion reaches it; the state only grows along
+        // the requirements, so a later expansion owes nothing the first did
+        // not.
+        let mut expanded_definitions = HashSet::new();
+        let mut requirement_places = Vec::new();
         let mut requirements = Vec::new();
         for clause in self.tree.children_with(block, Production::RequiresClause)? {
             let expression = self
@@ -263,7 +421,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let condition = self
                 .check_expression(function, expression, bindings, 0)
                 .map_err(Self::clause_conditional_repair)?;
-            self.validate_clause_conversion_domains(
+            self.validate_clause_checked_forms(
                 ClauseKind::Requires,
                 clause,
                 &condition.expression,
@@ -289,8 +447,37 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 template: GoalTemplate::new(root),
                 clause: self.tree.path(clause)?.clone(),
             });
+            let mut reached = HashSet::new();
+            let mut pending = Vec::new();
+            collect_clause_reads(&condition.expression, &mut pending);
+            while let Some(read) = pending.pop() {
+                if let Some(definition) = definitions
+                    .iter()
+                    .find(|definition| definition.binding == read)
+                    && reached.insert(read)
+                {
+                    pending.extend(definition.uses.iter().copied());
+                }
+            }
+            let mut places = Vec::new();
+            for definition in &definitions {
+                if reached.contains(&definition.binding)
+                    && expanded_definitions.insert(definition.binding)
+                {
+                    places.extend(definition.places.iter().cloned());
+                }
+            }
+            let own = places.len();
+            collect_clause_places(&condition.expression, &mut places);
+            for place in &mut places[own..] {
+                expand_definition_offsets(place, &definition_offsets);
+            }
+            requirement_places.push(places);
         }
-        Ok(CheckedRequires { requirements })
+        Ok(CheckedRequires {
+            requirements,
+            places: requirement_places,
+        })
     }
 
     /// The contract-conditional OWN-1 bare-affine repair [#35]. OWN-1's
@@ -906,6 +1093,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let (projections, measured_type) = self.clause_member_projections(
             &suffixes[..suffixes.len() - 1],
             datum_type,
+            false,
             bindings,
             expanded_bindings,
         )?;
@@ -932,24 +1120,34 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// is the box content itself, so the goal place below it is the same
     /// dereference a `deref` former used to write. Every other member is the
     /// ordinary struct field step and is judged by the ordinary walk.
+    ///
+    /// `range_referent` says the datum is the run a range reference names,
+    /// whose type is its element type [TYPE-8]: its first subscript selects
+    /// an element of that type rather than indexing a value of it.
     fn clause_member_projections(
         &self,
         suffixes: &[NodeId],
         mut ty: CheckedType,
+        mut range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(Vec<GoalProjection>, CheckedType), CheckStop> {
         let mut projections = Vec::with_capacity(suffixes.len());
         for suffix in suffixes {
-            // [MSR-1] "An admitted measure place is a `place` formed with any
-            // number of field-selection and enum-payload `psuffix`es, `deref`
-            // wrappings, and subscripts. The subscript admission is what makes
-            // `table[i].len` a term." A clause reads that place exactly as the
+            let range_step = std::mem::replace(&mut range_referent, false);
+            // [ENT-2] clause (b) forms a place with field selections,
+            // `deref` wrappings and subscripts, which is what makes
+            // `table[i].len` and `nodes[i].count` terms. A clause reads that place exactly as the
             // body does, so a subscript written here is one projection and not
             // a composite value this version cannot represent.
             if self.subscript_offset(*suffix)?.is_some() {
-                let (projection, element) =
-                    self.clause_subscript_projection(*suffix, ty, bindings, expanded_bindings)?;
+                let (projection, element) = self.clause_subscript_projection(
+                    *suffix,
+                    ty,
+                    range_step,
+                    bindings,
+                    expanded_bindings,
+                )?;
                 projections.push(projection);
                 ty = element;
                 continue;
@@ -982,31 +1180,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok((projections, ty))
     }
 
-    /// One written subscript inside a clause measure place [MSR-1].
+    /// One written subscript inside a clause (b) place [ENT-2].
     ///
-    /// [MSR-1] fixes what may stand there: "An offset occurring inside a
-    /// measure place is a written integer literal, a live `own`
-    /// fragment-integer place, or an in-scope const generic [MSR-6], because
-    /// the place's identity is decided over it." A clause is no evaluation,
-    /// so the offset carries no occurrence of its own: [ENT-2] makes two
-    /// places one term when "their canonical source spellings are
+    /// [ENT-2] fixes what may stand there: "Each offset occurring inside a
+    /// clause (b) place is itself a clause (a) or clause (c) term, because the
+    /// place's identity is decided over its offsets." A clause is no
+    /// evaluation, so the offset carries no occurrence of its own: [ENT-2]
+    /// makes two places one term when "their canonical source spellings are
     /// byte-identical", which is exactly what keys this projection, and
-    /// [MSR-2] puts the offset's own support into every enclosing measure
-    /// term so a write to it kills them all.
+    /// [ENT-5] puts the offset's own support into every enclosing term so a
+    /// write to it kills them all.
     ///
     /// A parameter offset is kept as the formal it names, because a caller
     /// substitutes its own actual there [FN-8, CALL-6]; a literal and a const
-    /// are values and need no substitution. "An offset of any other form in a
-    /// measure place is not this rule's rejection: it is a place this version
-    /// does not represent, reported as the compiler capability it is."
+    /// are values and need no substitution. Any other tracked-place offset,
+    /// one with projections or a definition, is admitted but not represented
+    /// here and is reported as the compiler capability it is [DIAG-1]; an
+    /// element read never reaches here, because a subscript that ends a
+    /// clause place is refused first.
     fn clause_subscript_projection(
         &self,
         suffix: NodeId,
         base: CheckedType,
+        range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(GoalProjection, CheckedType), CheckStop> {
         let element = match base {
+            // [REF-4] a range reference's referent is the run of its element
+            // type, which is the type its checked datum carries.
+            _ if range_referent => base,
             CheckedType::Buffer { element } => self.element_type(element)?,
             CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
                 self.element_type(element)?
@@ -1286,6 +1489,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let (projections, final_ty) = self.clause_member_projections(
                 fields_only,
                 expression.ty(),
+                range_referent,
                 bindings,
                 expanded_bindings,
             )?;
@@ -1327,11 +1531,18 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok((expression, holder_pending, range_referent))
     }
 
-    /// [FN-8] an erased exact conversion is admitted by the whole endpoint
-    /// types, not by another clause or a particular operand's value. Numeric
-    /// bounds remain symbolic here and use the same finite-domain totality
-    /// judgment as executable conversion obligations.
-    pub(super) fn validate_clause_conversion_domains(
+    /// The typed half of [FN-8]'s admission, judged on the checked clause.
+    ///
+    /// An erased exact conversion is admitted by the whole endpoint types,
+    /// not by another clause or a particular operand's value. Numeric bounds
+    /// remain symbolic here and use the same finite-domain totality judgment
+    /// as executable conversion obligations.
+    ///
+    /// A subscript is admitted only inside an [ENT-2] clause (b) place: a
+    /// measure read, or a read whose final step selects a readonly field of
+    /// one fragment type. Any other subscripted read names an element value,
+    /// which a clause cannot.
+    pub(super) fn validate_clause_checked_forms(
         &self,
         clause: ClauseKind<'_>,
         entry: NodeId,
@@ -1347,8 +1558,25 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         {
             return self.invalid_clause(clause, entry);
         }
+        let subscripted_field = match expression {
+            CheckedExpression::ReadStorage { root, .. } => root
+                .path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+                .then(|| root.readonly_field_term(&self.nominals)),
+            CheckedExpression::RangeIndex { place, .. } => {
+                Some(place.readonly_field_term(&self.nominals))
+            }
+            CheckedExpression::ArrayIndex { .. }
+            | CheckedExpression::BufferIndex { .. }
+            | CheckedExpression::BorrowRangeIndex { .. } => Some(None),
+            _ => None,
+        };
+        if subscripted_field == Some(None) {
+            return self.invalid_clause(clause, entry);
+        }
         for child in expression_children(expression) {
-            self.validate_clause_conversion_domains(clause, entry, child)?;
+            self.validate_clause_checked_forms(clause, entry, child)?;
         }
         Ok(())
     }
@@ -1538,26 +1766,23 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .tree
             .first_child_with(call, Production::Callee)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let callee_path = self.tree.path(callee)?;
+        let is_callee = |usage: &&crate::LexicalUseRecord| {
+            matches!(
+                usage.role(),
+                LexicalUseRole::IdentifierCallee | LexicalUseRole::OperationCallee
+            )
+        };
         let usage = match clause {
-            ClauseKind::Requires => self.resolved.lexical_uses().iter().find(|usage| {
-                usage.origin().node() == callee_path
-                    && matches!(
-                        usage.role(),
-                        LexicalUseRole::IdentifierCallee | LexicalUseRole::OperationCallee
-                    )
-            }),
-            ClauseKind::Postcondition(record) => record
-                .provisional_uses
-                .iter()
-                .chain(self.resolved.lexical_uses())
-                .find(|usage| {
-                    usage.origin().node() == callee_path
-                        && matches!(
-                            usage.role(),
-                            LexicalUseRole::IdentifierCallee | LexicalUseRole::OperationCallee
-                        )
-                }),
+            ClauseKind::Requires => self.resolved.lexical_uses_at(callee).find(is_callee),
+            ClauseKind::Postcondition(record) => {
+                let callee_path = self.tree.path(callee)?;
+                record
+                    .provisional_uses
+                    .iter()
+                    .filter(|usage| usage.origin().node() == callee_path)
+                    .chain(self.resolved.lexical_uses_at(callee))
+                    .find(is_callee)
+            }
         };
         let Some(usage) = usage else {
             return self.invalid_clause(clause, entry);
@@ -1650,19 +1875,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        // x1 [ENT-2] clause (b), [MSR-1]: an admitted measure place is
-        // "formed with any number of field-selection and enum-payload
-        // `psuffix`es, `deref` wrappings, and subscripts", which is what
-        // makes `deref(rows)[i].len` a term of the clause language. A
-        // subscript below the measure is therefore admitted here; every
-        // other subscript in a clause is still this rule's refusal, because
-        // a clause names no element value.
+        // [ENT-2] clause (b): a place formed with field selections,
+        // `deref` wrappings and at least one subscript whose final step
+        // selects a readonly field is a term of the clause language,
+        // `deref(rows)[i].len` and `deref(nodes)[i].count` alike. A clause names no element value, so
+        // a subscript that ends the place is this rule's refusal here; one
+        // followed by a further step is judged against the selected field's
+        // declaration once the place is typed [`validate_clause_checked_forms`].
         let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        let measure_place = self.trailing_measure_member(&suffixes)?.is_some();
         for (position, &suffix) in suffixes.iter().enumerate() {
-            if self.subscript_offset(suffix)?.is_some()
-                && !(measure_place && position + 1 < suffixes.len())
-            {
+            if self.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
                 return self.invalid_clause(clause, entry);
             }
         }

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn select(data: &[u8]) -> result: u8 reads(data) {
   doc "Exhaustion exports count <= length for a conditional counter, not the strict bound required to index the same input after the loop.";
   let count = 0_u64;

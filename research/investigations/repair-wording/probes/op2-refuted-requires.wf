@@ -1,0 +1,11 @@
+fn add() -> result: u8 pure contract {
+  requires 255_u8 +defined 1_u8;
+} {
+  let y = 255_u8 + 1_u8;
+  return y;
+}
+
+fn main() -> status: ExitStatus pure {
+  let r = add();
+  return exit_status(code: r);
+}

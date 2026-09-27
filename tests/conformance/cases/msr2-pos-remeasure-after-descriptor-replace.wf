@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-2, OP-11: a Slots keeps capacity ten while its initialized length changes from four to ten on a whole-descriptor exchange. The swap writes the window's own descriptor storage and kills every measure of it, so a fresh length observation and guard are what prove the new last slot; the pre-exchange length is not reused.";
   let line = slots_new::<u8, 10>();

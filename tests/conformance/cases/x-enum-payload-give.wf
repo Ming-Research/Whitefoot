@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Cell {
   Item(n: i32);
   Empty();
@@ -5,7 +8,7 @@ enum Cell {
 
 fn main() -> status: ExitStatus pure {
   doc "A payload-carrying variant is constructed, matched, and its bound payload feeds arithmetic delivered by give; the value-match round-trips the payload through codegen [TYPE-2, GRAM-8, GRAM-10, GIVE-1].";
-  let b = Item(n: 7_i32);
+  let b = Cell::Item(n: 7_i32);
   let r = match b {
     Item(n: v) => {
       give v +wrap 35_i32;

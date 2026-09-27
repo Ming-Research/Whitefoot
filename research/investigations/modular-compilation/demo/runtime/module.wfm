@@ -1,0 +1,11 @@
+alias Queue = pkg::runtime::queue::Queue;
+alias Job = pkg::data::Job;
+alias Report = pkg::data::Report;
+
+public fn run_two<fn take(queue: &Queue) -> job: Job writes(queue.storage) contract {
+  requires deref(queue).storage.len > 0_u64;
+  ensures deref(queue).storage.len + 1_u64 == deref(entry(queue)).storage.len;
+}>(queue: &Queue) -> report: Report writes(queue.storage) contract {
+  requires deref(queue).storage.len >= 2_u64;
+  ensures deref(queue).storage.len + 2_u64 == deref(entry(queue)).storage.len;
+} doc "Takes two jobs through the supplied function and reports their tags in order, the eight-bit sum of their payloads and the length left.";

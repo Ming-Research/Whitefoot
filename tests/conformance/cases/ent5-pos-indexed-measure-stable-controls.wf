@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn unchanged(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
   requires index < deref(rows).len;
 } {

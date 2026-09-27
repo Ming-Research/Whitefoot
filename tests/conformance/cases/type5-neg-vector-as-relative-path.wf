@@ -1,3 +1,6 @@
+alias HostString = std::text::HostString;
+alias relative_path = std::fs::relative_path;
+
 fn make_path(name: Slots<u8, 4>) -> result: unit pure {
   doc "Attempts to construct a path from run bytes rather than the declared HostString parameter.";
   match relative_path(value: move name) {

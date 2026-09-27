@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Redeclaring a live name shadows it, which TYPE-6 forbids.";
   let a = 1_i32;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "REF-4: a range reference over a Ring is a hard error, because a wrapped window is two extents and the range-reference kind has one len.";
   let r = ring_new::<u64, 4>();

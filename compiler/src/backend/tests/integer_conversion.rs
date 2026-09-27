@@ -96,7 +96,7 @@ const CONVERSION_CLASSES: [(IntegerType, IntegerType); 17] = [
 
 #[test]
 fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
-    let mut source = String::from("fn main() -> status: ExitStatus pure {\n");
+    let mut source = String::from("fn main() -> status: std::process::ExitStatus pure {\n");
     let mut total_count = 0;
     let mut checked_count = 0;
     for (source_type, destination_type) in CONVERSION_CLASSES {
@@ -104,14 +104,14 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
             let value = total_value(source_type);
             writeln!(
                 source,
-                "  let total{total_count} = cvt::<{source_type}, {destination}>({value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return exit_status(code: 1_u8);\n  }}",
+                "  let total{total_count} = cvt::<{source_type}, {destination}>({value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return std::process::exit_status(code: 1_u8);\n  }}",
                 destination = destination_type.spelling,
                 source_type = source_type.spelling,
             )
             .expect("write total conversion");
             writeln!(
                 source,
-                "  if cvt.defined::<{source_type}, {destination}>({value}_{source_type}) {{\n  }} else {{\n    return exit_status(code: 2_u8);\n  }}\n  match cvt.checked::<{source_type}, {destination}>({value}_{source_type}) {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return exit_status(code: 4_u8);\n    }}\n  }}",
+                "  if cvt.defined::<{source_type}, {destination}>({value}_{source_type}) {{\n  }} else {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  match cvt.checked::<{source_type}, {destination}>({value}_{source_type}) {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return std::process::exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return std::process::exit_status(code: 4_u8);\n    }}\n  }}",
                 destination = destination_type.spelling,
                 source_type = source_type.spelling,
             )
@@ -123,21 +123,21 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
         let failure = failing_value(source_type, destination_type);
         writeln!(
             source,
-            "  let success{checked_count} = cvt.checked::<{source_type}, {destination}>(1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = cvt.checked::<{source_type}, {destination}>({failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
+            "  let success{checked_count} = cvt.checked::<{source_type}, {destination}>(1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = cvt.checked::<{source_type}, {destination}>({failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
         .expect("write checked conversion");
         writeln!(
             source,
-            "  if cvt.defined::<{source_type}, {destination}>(1_{source_type}) {{\n    let exact{checked_count} = cvt::<{source_type}, {destination}>(1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return exit_status(code: 6_u8);\n  }}\n  if cvt.defined::<{source_type}, {destination}>({failure}_{source_type}) {{\n    return exit_status(code: 7_u8);\n  }}",
+            "  if cvt.defined::<{source_type}, {destination}>(1_{source_type}) {{\n    let exact{checked_count} = cvt::<{source_type}, {destination}>(1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return std::process::exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 6_u8);\n  }}\n  if cvt.defined::<{source_type}, {destination}>({failure}_{source_type}) {{\n    return std::process::exit_status(code: 7_u8);\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
         .expect("write conversion domain agreement");
         checked_count += 1;
     }
-    source.push_str("  return exit_status(code: 0_u8);\n}\n");
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
     assert_eq!(total_count, 5);
     assert_eq!(checked_count, 12);
 

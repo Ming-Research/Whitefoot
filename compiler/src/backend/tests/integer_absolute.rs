@@ -2,48 +2,48 @@ use super::{compile, compile_and_run};
 
 #[test]
 fn executes_every_absolute_mode_for_every_signed_width() {
-    let template = r#"fn main() -> status: ExitStatus pure {
+    let template = r#"fn main() -> status: std::process::ExitStatus pure {
   let wrapped = iabs.wrap($MIN_$TYPE);
   if wrapped == $MIN_$TYPE {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let exact = iabs(-42_$TYPE);
   if exact == 42_$TYPE {
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let ordinary_defined = iabs.defined(-42_$TYPE);
   if ordinary_defined {
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let minimum_defined = iabs.defined($MIN_$TYPE);
   if bnot(minimum_defined) {
   } else {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let safe_result = iabs.checked(-42_$TYPE);
   match safe_result {
     Ok(value: safe_value) => {
       if safe_value == 42_$TYPE {
       } else {
-        return exit_status(code: 5_u8);
+        return std::process::exit_status(code: 5_u8);
       }
     }
     Err(error: safe_error) => {
-      return exit_status(code: 6_u8);
+      return std::process::exit_status(code: 6_u8);
     }
   }
   let overflow_result = iabs.checked($MIN_$TYPE);
   match overflow_result {
     Ok(value: overflow_value) => {
-      return exit_status(code: 7_u8);
+      return std::process::exit_status(code: 7_u8);
     }
     Err(error: overflow_error) => {
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for (ty, width, minimum) in [
@@ -77,13 +77,13 @@ fn executes_every_absolute_mode_for_every_signed_width() {
 
 #[test]
 fn defined_minimum_reports_false_without_executing_absolute_value() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let is_defined = iabs.defined(-128_i8);
   if bnot(is_defined) {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);

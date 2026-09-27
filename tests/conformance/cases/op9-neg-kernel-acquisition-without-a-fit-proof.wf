@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn make(n: u64) -> made: Box<Slots<i32>> pure {
   doc "The count is a completely unconstrained runtime value, so the construction's allocation-size obligation has nothing to discharge it [OP-9, OP-13].";
   let taken = box_slots_new::<i32>(capacity: n);

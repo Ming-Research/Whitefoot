@@ -1,0 +1,1 @@
+public fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure doc "Says hi and reports how many bytes were written.";

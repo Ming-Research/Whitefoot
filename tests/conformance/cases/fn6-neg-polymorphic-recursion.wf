@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn poly<T: drop>(x: T) -> result: T pure {
   doc "Polymorphic recursion: the call instantiates the callee at a different type parameter [FN-6 violated].";
   let y = poly::<i32>(x: 0_i32);

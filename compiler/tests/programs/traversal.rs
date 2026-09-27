@@ -1,4 +1,4 @@
-//! Ordinary directory values and prelude functions, end to end.
+//! Ordinary directory values and std::fs functions, end to end.
 //!
 //! Every case here compiles a real corpus program against the declared
 //! inventory, links it, and runs it against a real directory tree the harness
@@ -32,9 +32,9 @@ fn the_traversal_program_walks_a_real_tree_and_publishes_it_sorted() {
     // C2 deletes QUAL-1 and the compiler-owned native wrapper. All three
     // operations use the ordinary callable ABI; the native engine is linked
     // separately and contributes no compiler declaration or permission.
-    assert!(llvm.contains("@wf_open_directory_source("));
-    assert!(llvm.contains("@wf_directory_next("));
-    assert!(llvm.contains("@wf_open_directory("));
+    assert!(llvm.contains("@wf_std.fs.open_directory_source("));
+    assert!(llvm.contains("@wf_std.fs.directory_next("));
+    assert!(llvm.contains("@wf_std.fs.open_directory("));
     assert!(!llvm.contains("@wf__completion_directory_next_submit("));
 
     let program = build_program(&llvm);

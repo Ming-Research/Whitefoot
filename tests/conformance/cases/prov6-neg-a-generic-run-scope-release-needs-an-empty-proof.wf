@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn release_unproved<T, const n: u64>(run: Slots<T, n>) -> result: unit pure {
   doc "PROV-6: a window whose element type is linear is itself linear, so no compiler-derived release carries it off the return edge. The route is to take every element out, consume each one, and then call free_empty with the window's zero length established.";
   return unit;

@@ -240,7 +240,7 @@ item:
 > ordinary-let/final-check subset (FN-8 — semantics selected, spelling not yet
 > compared)
 
-and `mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md` records:
+and [mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md) records:
 
 > 2026-07-11 statement: the semantics (existence, callee-entry execution,
 > always-retained check, concrete-only scope) are evidence-selected; the

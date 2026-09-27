@@ -1,0 +1,26 @@
+public struct GrowVector<T, const ceiling: u64> {
+  doc "A growable vector whose backing every holder may read; only this module's operations write it.";
+  public readonly storage: Box<Slots<T>>;
+  public tag: u64;
+}
+
+public fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure contract {
+  ensures made.storage.inner.len == 0_u64;
+} doc "One empty vector over a zero-capacity backing window.";
+
+public fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < ceiling;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+} doc "Appends one value, doubling the backing within the ceiling.";
+
+public fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64) -> removed: T writes(values.storage) contract {
+  requires index < deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len + 1_u64 == deref(entry(values)).storage.inner.len;
+  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+} doc "Returns the value at a proved index and fills its place with the last value.";
+
+public fn grow_vector_free_empty<T, const ceiling: u64>(values: GrowVector<T, ceiling>) -> result: unit pure contract {
+  requires values.storage.inner.len <= 0_u64;
+} doc "Consumes and frees an empty vector.";

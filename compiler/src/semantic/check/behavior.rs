@@ -91,7 +91,7 @@ impl WrittenArgument {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Diagnostic provenance is not part of function or nominal instance
     /// identity. Stabilize its type axis because discovery rolls back scratch
     /// nominal IDs; an independently attached region vector is not an argument
@@ -432,7 +432,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
     }
 
-    fn function_reference_instance(
+    pub(super) fn function_reference_instance(
         &self,
         id: FunctionReferenceId,
     ) -> Result<Option<FunctionId>, CheckStop> {
@@ -468,7 +468,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .tree
             .first_child_with(call, Production::Callee)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if let Some(application) = self.tree.first_child_with(callee, Production::PackUse)? {
+        if let Some(application) = self.tree.callee_application(callee)? {
             if self.tree.is_constructor_call(call)? {
                 return Ok(None);
             }
@@ -496,9 +496,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 member: *declaration,
             }));
         }
-        let path = self.tree.path(callee)?;
-        Ok(self.resolved.lexical_uses().iter().find_map(|usage| {
-            if usage.origin().node() != path || usage.role() != LexicalUseRole::IdentifierCallee {
+        Ok(self.resolved.lexical_uses_at(callee).find_map(|usage| {
+            if usage.role() != LexicalUseRole::IdentifierCallee {
                 return None;
             }
             match usage.target() {
@@ -527,10 +526,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             for parameter in
                                 self.tree.children_with(generics, Production::Gparam)?
                             {
-                                if self
-                                    .tree
-                                    .first_child_with(parameter, Production::PackUse)?
-                                    .is_some()
+                                if self.tree.group_application(parameter)?.is_some()
                                     || self
                                         .tree
                                         .first_child_with(parameter, Production::FnSig)?
@@ -577,7 +573,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         let declaration = self.declaration_at(node, DeclarationRole::Binding)?.id();
                         let application = self
                             .tree
-                            .first_child_with(node, Production::PackUse)?
+                            .group_application(node)?
                             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                         let usage = self.use_at(application, LexicalUseRole::FormalGroup)?;
                         let ResolvedTarget::Source {
@@ -700,11 +696,17 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         requirement: &str,
     ) -> Result<T, CheckStop> {
-        self.issue_node(
-            rule,
-            node,
-            SemanticIssueKind::type_mismatch(requirement, "a nonmatching behavior argument"),
-        )
+        // [FN-4] a binding mismatch carries its repair [DIAG-1]; FN-2's
+        // argument-kind refusals keep the plain two-sided payload.
+        let kind = if rule == SemanticRule::Fn4 {
+            SemanticIssueKind::BehaviorArgumentMismatch {
+                expected: requirement.to_owned(),
+                mechanical_fix: "supply a function whose signature, row and contract meet the formal interface, or weaken the formal interface to what the supplied function declares",
+            }
+        } else {
+            SemanticIssueKind::type_mismatch(requirement, "a nonmatching behavior argument")
+        };
+        self.issue_node(rule, node, kind)
     }
 
     pub(super) fn expand_formal_parameters(
@@ -833,7 +835,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .tree
             .first_child_with(node, Production::Callee)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if let Some(application) = self.tree.first_child_with(callee, Production::PackUse)? {
+        if let Some(application) = self.tree.callee_application(callee)? {
             if self.tree.argument_list(node)?.is_some() {
                 return self.behavior_mismatch(
                     SemanticRule::Fn2,
@@ -891,7 +893,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     fn application_formal(&self, node: NodeId) -> Result<DeclarationId, CheckStop> {
-        let usage = if self.tree.production(node)? == Production::PackUse {
+        let usage = if matches!(
+            self.tree.production(node)?,
+            Production::PackUse | Production::TypePath
+        ) {
             self.use_at(node, LexicalUseRole::FormalGroup)?
         } else {
             self.use_at(node, LexicalUseRole::TypeArgument)?
@@ -949,8 +954,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let mut candidates = Vec::new();
         if let Some(generics) = self.tree.first_child_with(owner, Production::Generics)? {
             for parameter in self.tree.children_with(generics, Production::Gparam)? {
-                if let Some(application) =
-                    self.tree.first_child_with(parameter, Production::PackUse)?
+                if let Some(application) = self.tree.group_application(parameter)?
                     && self.application_formal(application)? == formal
                 {
                     candidates.push(application);
@@ -1117,10 +1121,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 expanded.push(WrittenArgument::Source(*argument));
                 continue;
             };
-            let Some(_) = self
-                .tree
-                .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-            else {
+            if !self.tree.names_nominal(ty)? {
                 expanded.push(WrittenArgument::Source(*argument));
                 continue;
             };
@@ -1201,11 +1202,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         ty: NodeId,
         visiting: &mut Vec<DeclarationId>,
     ) -> Result<Vec<NodeId>, CheckStop> {
-        if self
-            .tree
-            .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-            .is_none()
-        {
+        if !self.tree.names_nominal(ty)? {
             return Ok(vec![ty]);
         }
         let application = match self.use_at(ty, LexicalUseRole::Type)?.target() {

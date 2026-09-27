@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A loop folds a running product with checked multiplication [OP-1]. Overflow is an expected typed Err handled by ordinary control.";
   let i = 0_i32;

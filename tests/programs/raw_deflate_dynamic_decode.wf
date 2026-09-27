@@ -13,7 +13,7 @@ fn store_dynamic_length(literal_lengths: &[u8], distance_lengths: &[u8], literal
     let distance_ok = distance_index < distance_room;
     if distance_ok {
     } else {
-      let error = InvalidHuffmanTree();
+      let error = InflateError::InvalidHuffmanTree();
       return Err<unit, InflateError>(error: error);
     }
     set deref(distance_lengths)[distance_index] = value;
@@ -26,13 +26,7 @@ fn ordered_code_symbol(index: u64) -> result: Result<u64, InflateError> pure {
   let unchanged = bounded == index;
   if unchanged {
   } else {
-    let error = InvalidHuffmanTree();
-    return Err<u64, InflateError>(error: error);
-  }
-  let order_ok = bounded < 19_u64;
-  if order_ok {
-  } else {
-    let error = InvalidHuffmanTree();
+    let error = InflateError::InvalidHuffmanTree();
     return Err<u64, InflateError>(error: error);
   }
   let ordered_symbol_byte = code_length_order[bounded];
@@ -71,21 +65,14 @@ fn read_dynamic_code_lengths(state: &InflateState, input: &[u8], code_lengths: &
           return Err<unit, InflateError>(error: length_error);
         }
       }
-      match cvt.checked::<u64, u8>(length_bits) {
-        Ok(value: length) => {
-          let code_room = deref(code_lengths).len;
-          let ordered_ok = ordered_symbol < code_room;
-          if ordered_ok {
-            set deref(code_lengths)[ordered_symbol] = length;
-          } else {
-            let error = InvalidHuffmanTree();
-            return Err<unit, InflateError>(error: error);
-          }
-        }
-        Err(error: conversion_error) => {
-          let error = InvalidHuffmanTree();
-          return Err<unit, InflateError>(error: error);
-        }
+      let length = cvt::<u64, u8>(length_bits);
+      let code_room = deref(code_lengths).len;
+      let ordered_ok = ordered_symbol < code_room;
+      if ordered_ok {
+        set deref(code_lengths)[ordered_symbol] = length;
+      } else {
+        let error = InflateError::InvalidHuffmanTree();
+        return Err<unit, InflateError>(error: error);
       }
       set code_index = code_index +wrap 1_u64;
     }
@@ -107,7 +94,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let literal_count = literal_count_bits +wrap 257_u64;
   let too_many_literals = literal_count > 286_u64;
   if too_many_literals {
-    let error = InvalidHuffmanTree();
+    let error = InflateError::InvalidHuffmanTree();
     return Err<unit, InflateError>(error: error);
   }
   let distance_count_bits = 0_u64;
@@ -130,18 +117,6 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
     }
   }
   let code_count = code_count_bits +wrap 4_u64;
-  let code_count_fits = code_count <= 19_u64;
-  if code_count_fits {
-  } else {
-    let error = InvalidHuffmanTree();
-    return Err<unit, InflateError>(error: error);
-  }
-  let distance_count_fits = distance_count <= 32_u64;
-  if distance_count_fits {
-  } else {
-    let error = InvalidHuffmanTree();
-    return Err<unit, InflateError>(error: error);
-  }
   let code_lengths = slots_new::<u8, 19>();
   for @reserve_code_lengths (
     at in 0_u64..19_u64,
@@ -189,23 +164,16 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
       }
       let direct_length = length_symbol <= 15_u64;
       if direct_length {
-        match cvt.checked::<u64, u8>(length_symbol) {
-          Ok(value: length) => {
-            let stored = propagate store_dynamic_length(literal_lengths: literal_window, distance_lengths: distance_window, literal_count: literal_count, position: position, value: length);
-            set previous_length = length;
-            set position = position +wrap 1_u64;
-          }
-          Err(error: conversion_error) => {
-            let error = InvalidHuffmanTree();
-            return Err<unit, InflateError>(error: error);
-          }
-        }
+        let length = cvt::<u64, u8>(length_symbol);
+        let stored = propagate store_dynamic_length(literal_lengths: literal_window, distance_lengths: distance_window, literal_count: literal_count, position: position, value: length);
+        set previous_length = length;
+        set position = position +wrap 1_u64;
       } else {
         let repeat_previous = length_symbol == 16_u64;
         if repeat_previous {
           let no_previous = position == 0_u64;
           if no_previous {
-            let error = InvalidHuffmanTree();
+            let error = InflateError::InvalidHuffmanTree();
             return Err<unit, InflateError>(error: error);
           }
           let repeat_bits = 0_u64;
@@ -221,7 +189,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
           let remaining = total_lengths -wrap position;
           let overrun = repeat_count > remaining;
           if overrun {
-            let error = InvalidHuffmanTree();
+            let error = InflateError::InvalidHuffmanTree();
             return Err<unit, InflateError>(error: error);
           }
           let repeated = 0_u64;
@@ -253,7 +221,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
             let long_zero = length_symbol == 18_u64;
             if long_zero {
             } else {
-              let error = InvalidHuffmanTree();
+              let error = InflateError::InvalidHuffmanTree();
               return Err<unit, InflateError>(error: error);
             }
             match read_bits(state: state, input: input, count: 7_u32, mask: 127_u64) {
@@ -270,7 +238,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
           let remaining = total_lengths -wrap position;
           let overrun = repeat_count > remaining;
           if overrun {
-            let error = InvalidHuffmanTree();
+            let error = InflateError::InvalidHuffmanTree();
             return Err<unit, InflateError>(error: error);
           }
           let repeated = 0_u64;
@@ -294,7 +262,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let end_length = deref(literal_window)[256_u64];
   let missing_end = end_length == 0_u8;
   if missing_end {
-    let error = InvalidHuffmanTree();
+    let error = InflateError::InvalidHuffmanTree();
     return Err<unit, InflateError>(error: error);
   }
   let literal_distance_allow_single = True();
@@ -313,19 +281,12 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
     }
     let literal = symbol <= 255_u64;
     if literal {
-      match cvt.checked::<u64, u8>(symbol) {
-        Ok(value: byte) => {
-          match emit_byte(state: state, out: out, value: byte) {
-            Ok(value: emitted) => {
-            }
-            Err(error: emit_error) => {
-              return Err<unit, InflateError>(error: emit_error);
-            }
-          }
+      let byte = cvt::<u64, u8>(symbol);
+      match emit_byte(state: state, out: out, value: byte) {
+        Ok(value: emitted) => {
         }
-        Err(error: conversion_error) => {
-          let error = InvalidHuffmanCode();
-          return Err<unit, InflateError>(error: error);
+        Err(error: emit_error) => {
+          return Err<unit, InflateError>(error: emit_error);
         }
       }
     } else {
@@ -345,7 +306,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
         let distance_symbol = 0_u64;
         let distance_tree_empty = distance_table.used_symbols == 0_u64;
         if distance_tree_empty {
-          let error = InvalidDistance();
+          let error = InflateError::InvalidDistance();
           return Err<unit, InflateError>(error: error);
         }
         match decode_table_symbol(state: state, input: input, table: &distance_table) {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(table: Slots<u8, 4>, symbol: u64) -> result: u8 pure contract {
   requires 4_u64 <= table.len;
 } {

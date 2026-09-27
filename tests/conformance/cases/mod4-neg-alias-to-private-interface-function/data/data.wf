@@ -1,0 +1,8 @@
+fn secret() -> result: u8 pure {
+  return 3_u8;
+}
+
+fn seven() -> result: u8 pure {
+  let three = secret();
+  return three +wrap 4_u8;
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const pixel_input: Array<u8, 24> =[0_u8, 0_u8, 0_u8, 255_u8, 255_u8, 255_u8, 255_u8, 0_u8, 0_u8, 0_u8, 255_u8, 0_u8, 0_u8, 0_u8, 255_u8, 255_u8, 255_u8, 0_u8, 1_u8, 2_u8, 3_u8, 254_u8, 253_u8, 252_u8];
 
 fn grayscale_value(red: u8, green: u8, blue: u8) -> result: Result<u8, NarrowError> pure {

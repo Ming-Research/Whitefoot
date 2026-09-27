@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn split(taken: Slots<u8, 8>) -> (kept: u64, spare: u64) pure contract {
   ensures kept == taken.len;
   ensures spare == taken.len;

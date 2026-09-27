@@ -66,15 +66,15 @@
 
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::backend::target::parallel_lane_frame_layout;
 use crate::semantic::{
     BindingId, CheckedDrop, CheckedLoopId, CheckedStatement, LoopActualization, LoopCombine,
     LoopPermission,
 };
+use crate::target::{LANE_FRAME_BYTES, parallel_lane_frame_layout};
 use crate::{
     IrAddressed, IrBlock, IrBlockId, IrBooleanOperation, IrConstant, IrEnumType, IrFunction,
     IrInstruction, IrIntegerOperation, IrMatchTarget, IrNominalKind, IrOperation, IrOverlap,
-    IrSynthesis, IrTerminator, IrType, IrValueId, LANE_FRAME_BYTES, LoweringFailure, NodePath,
+    IrSynthesis, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
 };
 
 use super::loops::U64;
@@ -164,6 +164,9 @@ pub(crate) struct Synthesis {
     /// they are appended after every source function.
     base: u32,
     functions: Vec<Option<IrFunction>>,
+    /// How many functions each source function's splits have synthesized,
+    /// which numbers the next one's symbol within that function alone.
+    local: HashMap<String, u32>,
     ledger: Vec<String>,
     /// Observe construction, including work a later refusal used to discard.
     #[cfg(test)]
@@ -171,23 +174,33 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
-    pub(crate) const fn new(base: u32) -> Self {
+    pub(crate) fn new(base: u32) -> Self {
         Self {
             base,
             functions: Vec::new(),
+            local: HashMap::new(),
             ledger: Vec::new(),
             #[cfg(test)]
             candidate_constructions: 0,
         }
     }
 
-    fn reserve(&mut self) -> Result<u32, LoweringFailure> {
+    /// Reserves one synthesized function of `parent`'s splits: its ordinal,
+    /// and the stable part of its symbol, which numbers it among `parent`'s
+    /// own, so that an unchanged function's helpers keep their symbols when
+    /// another function gains or loses a split [MOD-8].
+    fn reserve(&mut self, parent: &str) -> Result<(u32, String), LoweringFailure> {
         let ordinal = u32::try_from(self.functions.len())
             .ok()
             .and_then(|offset| self.base.checked_add(offset))
             .ok_or(LoweringFailure::CounterOverflow)?;
+        let local = self.local.entry(parent.to_owned()).or_insert(0);
+        let name = format!("{parent}.{local}");
+        *local = local
+            .checked_add(1)
+            .ok_or(LoweringFailure::CounterOverflow)?;
         self.functions.push(None);
-        Ok(ordinal)
+        Ok((ordinal, name))
     }
 
     fn file(&mut self, ordinal: u32, function: IrFunction) -> Result<(), LoweringFailure> {
@@ -347,7 +360,10 @@ impl IrBuilder<'_> {
             None
         } else {
             let mut synthesis = self.synthesis.borrow_mut();
-            Some((synthesis.reserve()?, synthesis.reserve()?))
+            Some((
+                synthesis.reserve(self.function_name)?,
+                synthesis.reserve(self.function_name)?,
+            ))
         };
         let ledger_start = self.synthesis.borrow().ledger.len();
         let mut candidate = self.build_chunk(
@@ -391,14 +407,17 @@ impl IrBuilder<'_> {
         // A chunk does not call itself. Delay the enclosing pair's ordinals
         // until it fits, retaining every nested helper without reservation
         // holes or a function-ordinal relocation pass on refusal.
-        let (splitter, chunk) = match reserved {
+        let ((splitter, splitter_name), (chunk, chunk_name)) = match reserved {
             Some(pair) => pair,
             None => {
                 let mut synthesis = self.synthesis.borrow_mut();
-                (synthesis.reserve()?, synthesis.reserve()?)
+                (
+                    synthesis.reserve(self.function_name)?,
+                    synthesis.reserve(self.function_name)?,
+                )
             }
         };
-        candidate.function.name = chunk_symbol(chunk);
+        candidate.function.name = chunk_symbol(&chunk_name);
         let capture_types = captures
             .iter()
             .map(|capture| capture.ty)
@@ -424,8 +443,13 @@ impl IrBuilder<'_> {
             Some(seed) => seed,
             None => self.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?,
         };
-        let splitter_function =
-            self.build_splitter(splitter, chunk, actualization, result_type, &capture_types)?;
+        let splitter_function = self.build_splitter(
+            (splitter, &splitter_name),
+            chunk,
+            actualization,
+            result_type,
+            &capture_types,
+        )?;
         {
             let mut synthesis = self.synthesis.borrow_mut();
             synthesis.file(chunk, candidate.function)?;
@@ -702,7 +726,9 @@ impl IrBuilder<'_> {
         let (continuation, results) = self.new_block(&[function.result])?;
         let block_offset = self.blocks.len();
         let blocks = (0..function.blocks.len())
-            .map(|index| IrBlockId::from_index(block_offset + index))
+            .map(|index| {
+                IrBlockId::from_index(block_offset + index).ok_or(LoweringFailure::CounterOverflow)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let block = |original: IrBlockId| blocks[original.index()];
         for mut original in function.blocks {
@@ -802,7 +828,7 @@ impl IrBuilder<'_> {
     /// the machinery a permitted pair already uses, unchanged.
     fn build_splitter(
         &self,
-        ordinal: u32,
+        (ordinal, name): (u32, &str),
         chunk: u32,
         actualization: LoopActualization,
         result_type: IrType,
@@ -989,7 +1015,7 @@ impl IrBuilder<'_> {
         })?;
 
         builder.finish(
-            splitter_symbol(ordinal),
+            splitter_symbol(name),
             vec![IrOverlap {
                 members: vec![left, right],
             }],
@@ -1215,17 +1241,18 @@ const fn identity(combine: LoopCombine, ty: IrType) -> Option<IrConstant> {
     })
 }
 
-/// The symbols the two synthesized halves are emitted under.
+/// The symbols the two synthesized halves are emitted under, by the source
+/// function they came from and their number among its helpers.
 ///
 /// Both live in the `wf__par_` namespace [FORM-3] puts out of reach of every
 /// source IDENT, so a synthesized function can never collide with a declared
 /// one.
-fn splitter_symbol(ordinal: u32) -> String {
-    format!("_par_split_{ordinal}")
+fn splitter_symbol(name: &str) -> String {
+    format!("_par_split_{name}")
 }
 
-fn chunk_symbol(ordinal: u32) -> String {
-    format!("_par_chunk_{ordinal}")
+fn chunk_symbol(name: &str) -> String {
+    format!("_par_chunk_{name}")
 }
 
 /// A conservative upper bound on what one value of this type costs in a lane

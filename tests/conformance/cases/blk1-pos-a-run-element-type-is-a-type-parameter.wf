@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn only<T: drop>(value: T) -> made: Slots<T, 4> pure contract {
   ensures made.len >= 1_u64;
 } {

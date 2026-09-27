@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn selected(data: &[u8], table: Array<u8, 255>) -> result: u8 reads(data) {
   doc "The byte type interval includes 255, which is not an index into a 255-element array; widening must not lose that endpoint.";
   let peak = 0_u8;

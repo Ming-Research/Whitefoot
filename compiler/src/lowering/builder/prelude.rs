@@ -2,7 +2,7 @@
 //!
 //! Nine construction functions [OP-13], nine window operations [OP-10],
 //! `swap` [OP-11] and `free_empty` [OP-14] are declared body-less exactly as
-//! a host row is, but no trusted-base object defines them: the compiler emits
+//! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
 //! instance, so one monomorphized instance serves every call of that row with
 //! those type arguments and the ordinary call ABI carries the operands.
@@ -19,9 +19,9 @@ use super::*;
 
 /// Which compiler-owned [PRE-1] record a body-less function is.
 ///
-/// The host rows are deliberately absent: those are body-less because the
-/// trusted base defines them, and calling one emits an ordinary external
-/// call.
+/// The host functions [PRE-2] are deliberately absent: those are body-less
+/// because the trusted base defines them, and calling one emits an ordinary
+/// external call.
 pub(super) fn compiler_owned_row(name: &str) -> bool {
     crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&name)
 }

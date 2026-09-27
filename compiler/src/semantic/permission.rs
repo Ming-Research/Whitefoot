@@ -92,13 +92,13 @@
 
 use super::loop_permission::LoopPermission;
 use super::model::{
-    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction, CheckedMode,
-    CheckedPlaceStep, CheckedSetTarget, CheckedStatePath, CheckedStatement, FunctionId,
-    expression_children,
+    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction,
+    CheckedMeasure, CheckedMode, CheckedPlaceStep, CheckedSetTarget, CheckedStatePath,
+    CheckedStatement, FunctionId, expression_children,
 };
 use super::places::{
-    CapturedRange, CapturedValue, PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle,
-    UnprovedSeparations, places_overlap, range_separation_candidate,
+    CaptureId, CapturedRange, CapturedValue, PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace,
+    SeparationOracle, UnprovedSeparations, named_place, places_overlap, range_separation_candidate,
 };
 use crate::NodePath;
 
@@ -121,6 +121,24 @@ pub(crate) struct PermissionSeparationQuery {
     pub(crate) second: NodePath,
     pub(crate) left: CapturedRange,
     pub(crate) right: CapturedRange,
+    /// Those of `left` and `right` that one of the pair's two calls forms as
+    /// an actual. Such a range has no image in the state before `first`,
+    /// because its formation runs with its call, so the flow evaluates these
+    /// endpoints in that state and judges the range exactly as it judges one
+    /// bound immediately before `first` [PAR-1, REF-4].
+    pub(crate) formations: Vec<PermissionRangeFormation>,
+}
+
+/// A range one statement forms as an actual of its own call [REF-4]: the
+/// captured pair its footprint's range step carries and the two endpoint
+/// atoms that formation evaluates when its call's actuals are evaluated.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PermissionRangeFormation {
+    /// The formation node, which a range image names as its source.
+    pub(crate) carrier: NodePath,
+    pub(crate) captured: CapturedRange,
+    pub(crate) start: CheckedExpression,
+    pub(crate) end: CheckedExpression,
 }
 
 /// The retained optional proof of one pair-scoped range question.
@@ -425,6 +443,7 @@ impl<'check> Program<'check> {
                 .iter()
                 .map(|statement| self.classify(&places, statement))
                 .collect::<Vec<_>>();
+            let formations = block.iter().map(call_range_formations).collect::<Vec<_>>();
             for (first_index, first) in classified.iter().enumerate() {
                 let (Some(first_site), Ok(first_footprint)) = (&first.site, &first.footprint)
                 else {
@@ -433,7 +452,7 @@ impl<'check> Program<'check> {
                 if first_footprint.unresolved.is_some() {
                     continue;
                 }
-                for second in classified.iter().skip(first_index + 1) {
+                for (second_index, second) in classified.iter().enumerate().skip(first_index + 1) {
                     let (Some(second_site), Ok(second_footprint)) =
                         (&second.site, &second.footprint)
                     else {
@@ -444,11 +463,16 @@ impl<'check> Program<'check> {
                     if second_footprint.unresolved.is_some() {
                         break;
                     }
+                    let evaluable = formations_before_first(
+                        &places,
+                        &classified[first_index..second_index],
+                        &formations[first_index],
+                        &formations[second_index],
+                    );
                     collect_footprint_range_queries(
-                        first_site,
-                        second_site,
-                        first_footprint,
-                        second_footprint,
+                        (first_site, first_footprint),
+                        (second_site, second_footprint),
+                        &evaluable,
                         &mut queries,
                     );
                 }
@@ -604,6 +628,7 @@ impl<'check> Program<'check> {
             first: &first_site.statement,
             second: &second_site.statement,
             proofs,
+            before_second: vec![left],
         };
         match footprint_conflict(&oracle, left, right) {
             Some(denial) => PermissionVerdict::Denied(denial),
@@ -661,10 +686,16 @@ impl<'check> Program<'check> {
                 else {
                     return true;
                 };
+                // A run is contiguous, so the statements between this pair
+                // are the run members between them, each with a footprint.
                 let oracle = PairSeparationOracle {
                     first: &first_site.statement,
                     second: &second_site.statement,
                     proofs,
+                    before_second: classified[*earlier..index]
+                        .iter()
+                        .filter_map(|member| member.footprint.as_ref().ok())
+                        .collect(),
                 };
                 footprint_conflict(&oracle, first_footprint, footprint).is_some()
             });
@@ -826,22 +857,24 @@ impl<'check> Program<'check> {
                     "a statement that binds an ordered result list",
                 )),
             ),
-            // An expression statement's reach is projected by no row, and a
-            // discarded result carries its own [STOR-3] release walk.
-            CheckedStatement::Evaluate(_) => (
-                None,
-                None,
-                None,
-                "an expression statement",
-                Err(Refusal::Form("an expression statement")),
-            ),
-            CheckedStatement::DropExpression { .. } => (
-                None,
-                None,
-                None,
-                "a discarded expression statement",
-                Err(Refusal::Form("a discarded expression statement")),
-            ),
+            // [GRAM-4] an expression statement is one call whose result is
+            // discarded. Its footprint is that call's, formed exactly as a
+            // `let` right-hand side's is: the substituted row [EFF-5], its
+            // operand reads, and its by-value consumptions. It defines no
+            // binding, so it has no binding write path, and the release a
+            // discarded affine result runs contributes no path [STOR-8].
+            CheckedStatement::Evaluate { node_path, value }
+            | CheckedStatement::DropExpression {
+                node_path, value, ..
+            } => {
+                let footprint = self.value_footprint(places, value, node_path);
+                let projection = call_projection(value);
+                let label = projection
+                    .as_ref()
+                    .map_or("an expression statement", |_| "a call statement");
+                let call = projection.map(|projection| projection.call.clone());
+                (Some(node_path), None, call, label, Ok(footprint))
+            }
         };
         let callee_name = statement_value(statement)
             .and_then(call_projection)
@@ -977,7 +1010,9 @@ impl<'check> Program<'check> {
 /// read the callee's name back out of it.
 fn statement_value(statement: &CheckedStatement) -> Option<&CheckedExpression> {
     match statement {
-        CheckedStatement::Let { value, .. } => Some(value),
+        CheckedStatement::Let { value, .. }
+        | CheckedStatement::Evaluate { value, .. }
+        | CheckedStatement::DropExpression { value, .. } => Some(value),
         CheckedStatement::Match { scrutinee, .. } => Some(scrutinee),
         _ => None,
     }
@@ -1063,10 +1098,9 @@ fn canonical_range_pair(
 }
 
 fn push_range_query(
-    first: &PermissionSite,
-    second: &PermissionSite,
-    left: &ResolvedPlace,
-    right: &ResolvedPlace,
+    (first, second): (&PermissionSite, &PermissionSite),
+    (left, right): (&ResolvedPlace, &ResolvedPlace),
+    evaluable: &[&PermissionRangeFormation],
     queries: &mut Vec<PermissionSeparationQuery>,
 ) {
     if !places_overlap(&UnprovedSeparations, left, right) {
@@ -1076,11 +1110,17 @@ fn push_range_query(
         return;
     };
     let (left, right) = canonical_range_pair(left, right);
+    let formations = evaluable
+        .iter()
+        .filter(|formation| formation.captured == left || formation.captured == right)
+        .map(|formation| (*formation).clone())
+        .collect();
     queries.push(PermissionSeparationQuery {
         first: first.statement.clone(),
         second: second.statement.clone(),
         left,
         right,
+        formations,
     });
 }
 
@@ -1088,10 +1128,9 @@ fn push_range_query(
 /// multi-target pair needs every such query: finding one separated access
 /// never hides a later overlapping access.
 fn collect_footprint_range_queries(
-    first: &PermissionSite,
-    second: &PermissionSite,
-    earlier: &Footprint,
-    later: &Footprint,
+    (first, earlier): (&PermissionSite, &Footprint),
+    (second, later): (&PermissionSite, &Footprint),
+    evaluable: &[&PermissionRangeFormation],
     queries: &mut Vec<PermissionSeparationQuery>,
 ) {
     for write in &earlier.writes {
@@ -1101,23 +1140,145 @@ fn collect_footprint_range_queries(
             .chain(later.reads.iter())
             .chain(&later.operand_reads)
         {
-            push_range_query(first, second, &write.place, &access.place, queries);
+            push_range_query(
+                (first, second),
+                (&write.place, &access.place),
+                evaluable,
+                queries,
+            );
         }
     }
     for write in &later.writes {
         for access in earlier.reads.iter().chain(&earlier.operand_reads) {
-            push_range_query(first, second, &write.place, &access.place, queries);
+            push_range_query(
+                (first, second),
+                (&write.place, &access.place),
+                evaluable,
+                queries,
+            );
         }
     }
+}
+
+/// The ranges one statement forms as actuals of the call it evaluates on
+/// entry [REF-4]: a `let`, `set` or expression statement's call, or a
+/// call-rooted match's scrutinee call. A range formed inside a match arm is
+/// formed after that statement's entry and is not one of them.
+///
+/// The flow's range images are named by the start endpoint's capture, and
+/// every range endpoint carries the source occurrence that evaluated it, so
+/// every formation is listed; the filter only keeps a capture that names no
+/// single formation from ever reaching the flow [OWN-7].
+fn call_range_formations(statement: &CheckedStatement) -> Vec<PermissionRangeFormation> {
+    let value = match statement {
+        CheckedStatement::Let { value, .. }
+        | CheckedStatement::Set { value, .. }
+        | CheckedStatement::Evaluate { value, .. }
+        | CheckedStatement::DropExpression { value, .. }
+        | CheckedStatement::Match {
+            scrutinee: value, ..
+        } => value,
+        _ => return Vec::new(),
+    };
+    let Some(call) = call_projection(value) else {
+        return Vec::new();
+    };
+    call.arguments
+        .iter()
+        .filter_map(|argument| match argument {
+            CheckedExpression::RangeOf {
+                carrier,
+                start,
+                end,
+                captured,
+                ..
+            } if matches!(captured.start.capture, CaptureId::Source(_)) => {
+                Some(PermissionRangeFormation {
+                    carrier: carrier.clone(),
+                    captured: *captured,
+                    start: start.as_ref().clone(),
+                    end: end.as_ref().clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The pair's call formations whose endpoints hold, in the state before the
+/// first statement, the values their formation reads [PAR-1].
+///
+/// "The paths of both statements are interpreted in the state before the
+/// first statement." The first statement forms its ranges from that state.
+/// The second forms its ranges only after `before_second` — the first
+/// statement and every statement up to the second — has run, so its endpoint
+/// values are the values of that earlier state only when none of those
+/// statements writes what the endpoint expressions read. An endpoint that the
+/// first statement defines, or any earlier write reaches, therefore has no
+/// value there, and its formation is not evaluated before the first.
+fn formations_before_first<'formation>(
+    places: &PlaceMap,
+    before_second: &[Classified],
+    first: &'formation [PermissionRangeFormation],
+    second: &'formation [PermissionRangeFormation],
+) -> Vec<&'formation PermissionRangeFormation> {
+    let unwritten = |formation: &PermissionRangeFormation| {
+        let mut endpoints = Footprint::default();
+        for endpoint in [&formation.start, &formation.end] {
+            collect_operand_reads(places, endpoint, &formation.carrier, &mut endpoints);
+        }
+        endpoints.unresolved.is_none()
+            && before_second
+                .iter()
+                .map(|statement| statement.footprint.as_ref().ok())
+                .all(|footprint| {
+                    footprint.is_some_and(|footprint| {
+                        footprint.unresolved.is_none()
+                            && footprint.writes.iter().all(|write| {
+                                endpoints.operand_reads.iter().all(|read| {
+                                    !places_overlap(&UnprovedSeparations, &write.place, &read.place)
+                                })
+                            })
+                    })
+                })
+    };
+    first
+        .iter()
+        .chain(second.iter().filter(|formation| unwritten(formation)))
+        .collect()
 }
 
 struct PairSeparationOracle<'proof> {
     first: &'proof NodePath,
     second: &'proof NodePath,
     proofs: &'proof [PermissionSeparationProof],
+    /// The footprints of the first statement and of every statement between
+    /// the two: what runs from the state both paths are interpreted in up to
+    /// the second statement's own entry [PAR-1].
+    before_second: Vec<&'proof Footprint>,
 }
 
 impl SeparationOracle for PairSeparationOracle<'_> {
+    /// "The paths of both statements are interpreted in the state before the
+    /// first statement; the first statement's `ensures` maps the second's
+    /// indices into that state, so an index that is live only after an append
+    /// is not distinct from the append slot" [PAR-1, WIN-2]. This judgment
+    /// performs no such mapping, so a window whose `r.len` any statement
+    /// before the second writes has no length the two paths share.
+    fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {
+        let mut path = window.path.clone();
+        path.push(PlaceStep::Measure(CheckedMeasure::Length));
+        let length = ResolvedPlace {
+            root: window.root,
+            path,
+        };
+        !self
+            .before_second
+            .iter()
+            .flat_map(|footprint| &footprint.writes)
+            .any(|write| places_overlap(&UnprovedSeparations, &write.place, &length))
+    }
+
     fn indices_distinct(&self, _left: CapturedValue, _right: CapturedValue) -> bool {
         false
     }
@@ -1133,8 +1294,29 @@ impl SeparationOracle for PairSeparationOracle<'_> {
         })
     }
 
-    fn index_is_not_last(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+    /// A subscript either statement forms is live in the state before the
+    /// first [WIN-2]: the first's discharged [OP-4] there, and the second's
+    /// discharged it against the same `r.len` wherever the guard above lets
+    /// this question be asked. An index an effect row supplies is substituted
+    /// as an unknown value here [EFF-5], as is an offset no captured value
+    /// names, and no bound is read for either, so an unknown index is not
+    /// live.
+    fn index_is_live(&self, _window: &ResolvedPlace, index: CapturedValue) -> bool {
+        index != CapturedValue::unknown()
+    }
+
+    /// No [PAR-1] query asks this family, so the pair overlaps, which
+    /// selects the sequential lowering and is always sound.
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
         false
+    }
+
+    /// A range either statement forms lies within the length of the state
+    /// before the first, as a subscript either forms is live there [WIN-2]:
+    /// its [REF-4] bound `hi <= r.len` was discharged against that length. An
+    /// endpoint an effect row supplies is an unknown value here [EFF-5].
+    fn range_within_length(&self, _window: &ResolvedPlace, range: CapturedRange) -> bool {
+        range.start != CapturedValue::unknown() && range.end != CapturedValue::unknown()
     }
 }
 
@@ -1188,6 +1370,24 @@ pub(super) fn set_target_place(
     node: &NodePath,
     footprint: &mut Footprint,
 ) {
+    // A `set` whose whole target is a reference variable rebinds it and so
+    // writes that variable [REF-1]; every other target through one reads it
+    // to find the place it writes [PAR-1].
+    let (holder, rebinding) = match target {
+        CheckedSetTarget::Place(target) => (Some(target.binding), target.fields.is_empty()),
+        CheckedSetTarget::RangeIndex(target) => (Some(target.root.binding), false),
+        CheckedSetTarget::Storage(target) => (target.binding(), false),
+    };
+    if let Some(binding) = holder {
+        if rebinding && let Some(place) = places.reference_holder(binding) {
+            footprint.writes.push(Access {
+                place,
+                argument: node.clone(),
+            });
+        } else {
+            push_reference_holder_read(places, binding, node, footprint);
+        }
+    }
     let resolved = match target {
         CheckedSetTarget::Place(target) => places.resolve(
             PlaceRoot::Binding(target.binding),
@@ -1291,7 +1491,7 @@ fn push_nested_blocks<'check>(
         | CheckedStatement::Set { .. }
         | CheckedStatement::Proof(_)
         | CheckedStatement::DropExpression { .. }
-        | CheckedStatement::Evaluate(_)
+        | CheckedStatement::Evaluate { .. }
         | CheckedStatement::Return { .. }
         | CheckedStatement::Give { .. }
         | CheckedStatement::Break { .. } => {}
@@ -1300,38 +1500,80 @@ fn push_nested_blocks<'check>(
 
 /// Every binding one expression tree mentions, for the counted judgment's
 /// accumulator count.
+///
+/// A range formation's source is left out: neither consumer asks about a
+/// binding a range is formed over.
 pub(super) fn visit_read_bindings(
     expression: &CheckedExpression,
     note: &mut impl FnMut(BindingId),
 ) {
+    if !matches!(expression, CheckedExpression::RangeOf { .. })
+        && let Some(binding) = named_binding(expression)
+    {
+        note(binding);
+    }
+    for child in expression_children(expression) {
+        visit_read_bindings(child, note);
+    }
+}
+
+/// The binding one expression's own place is written at, leaving its child
+/// expressions to the caller.
+///
+/// The match is exhaustive so that a new expression form decides whether it
+/// names a binding.
+fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
     match expression {
         CheckedExpression::Binding { binding, .. }
         | CheckedExpression::Project { binding, .. }
         | CheckedExpression::BoxTake { binding, .. }
-        | CheckedExpression::DerefAddressed { binding, .. } => note(*binding),
+        | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
-        | CheckedExpression::ReadStorage { root, .. } => {
-            if let Some(binding) = root.binding() {
-                note(binding);
-            }
-        }
+        | CheckedExpression::ReadStorage { root, .. } => root.binding(),
         CheckedExpression::BufferMeasure { root, .. }
-        | CheckedExpression::BufferIndex { root, .. } => note(root.binding),
-        CheckedExpression::RangeMeasure { root, .. } => note(root.binding),
+        | CheckedExpression::BufferIndex { root, .. } => Some(root.binding),
+        CheckedExpression::RangeMeasure { root, .. } => Some(root.binding),
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
-        | CheckedExpression::BorrowRangeIndex { place, .. } => note(place.root.binding),
+        | CheckedExpression::BorrowRangeIndex { place, .. } => Some(place.root.binding),
+        CheckedExpression::RangeOf { source, .. } => source.binding(),
         CheckedExpression::ArrayMeasure { root, .. }
-        | CheckedExpression::ArrayIndex { root, .. } => {
-            if let CheckedArrayRoot::Binding { binding, .. } = root {
-                note(*binding);
-            }
-        }
-        _ => {}
+        | CheckedExpression::ArrayIndex { root, .. } => match root {
+            CheckedArrayRoot::Binding { binding, .. } => Some(*binding),
+            CheckedArrayRoot::Constant(_) => None,
+        },
+        CheckedExpression::Constant(_)
+        | CheckedExpression::NamedConstant { .. }
+        | CheckedExpression::UserCall { .. }
+        | CheckedExpression::IntegerOperation { .. }
+        | CheckedExpression::FloatOperation { .. }
+        | CheckedExpression::NumericConversion { .. }
+        | CheckedExpression::Reinterpret { .. }
+        | CheckedExpression::BooleanOperation { .. }
+        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::BoxDeref { .. }
+        | CheckedExpression::ConstructStruct { .. }
+        | CheckedExpression::ConstructEnum { .. }
+        | CheckedExpression::ProjectValue { .. } => None,
     }
-    for child in expression_children(expression) {
-        visit_read_bindings(child, note);
+}
+
+/// [PAR-1] a `let`'s defined binding is a write path, and a statement that
+/// uses a local reference variable reads that binding, which holds what the
+/// reference's formation captured; the path the reference names is read or
+/// written separately, as the use requires [REF-1].
+fn push_reference_holder_read(
+    places: &PlaceMap,
+    binding: BindingId,
+    node: &NodePath,
+    footprint: &mut Footprint,
+) {
+    if let Some(place) = places.reference_holder(binding) {
+        footprint.operand_reads.push(Access {
+            place,
+            argument: node.clone(),
+        });
     }
 }
 
@@ -1343,7 +1585,9 @@ pub(super) fn visit_read_bindings(
 /// reference names a path and reads no content beyond its own index and
 /// endpoint atoms [REF-1, REF-4], so it contributes nothing here — the
 /// callee's declared row already covers whatever it reaches through that
-/// reference.
+/// reference. Naming a local reference variable, to pass it, read through
+/// it or form a range from it, reads that variable's own binding as well,
+/// which the `let` that formed it or a `set` that rebinds it writes [PAR-1].
 ///
 /// The match is exhaustive on purpose. A future expression form that reads
 /// caller storage must be classified here rather than silently contributing
@@ -1366,6 +1610,9 @@ fn collect_operand_reads(
                 argument: node.clone(),
             }));
     };
+    if let Some(binding) = named_binding(expression) {
+        push_reference_holder_read(places, binding, node, footprint);
+    }
     match expression {
         // Reads no caller storage of its own.
         CheckedExpression::Constant(_)
@@ -1459,33 +1706,10 @@ fn collect_operand_reads(
 /// A reference argument names a path, so its actual resolves to the path the
 /// reference names rather than to any storage of its own; at a join a
 /// reference names a set, and every check on it must hold for every member.
-fn argument_places(places: &PlaceMap, argument: &CheckedExpression) -> Option<Vec<ResolvedPlace>> {
-    let resolved = match argument {
-        CheckedExpression::Binding { binding, .. }
-        | CheckedExpression::DerefAddressed { binding, .. } => {
-            places.resolve(PlaceRoot::Binding(*binding), &[])
-        }
-        CheckedExpression::Project {
-            binding, fields, ..
-        } => places.resolve(PlaceRoot::Binding(*binding), &field_steps(fields)),
-        CheckedExpression::BoxTake { binding, .. } => {
-            places.resolve(PlaceRoot::Binding(*binding), &[])
-        }
-        CheckedExpression::BorrowAddressed { root, .. } => {
-            places.resolve(root.root, &container_steps(root))
-        }
-        CheckedExpression::BorrowRangeIndex { place, .. } => places
-            .resolve(PlaceRoot::Binding(place.root.binding), &[])
-            .into_iter()
-            .map(|mut resolved| {
-                resolved.path.push(PlaceStep::Index(place.captured));
-                resolved
-                    .path
-                    .extend(place.path.iter().map(CheckedPlaceStep::place_step));
-                resolved
-            })
-            .collect(),
-        _ => return None,
-    };
+pub(super) fn argument_places(
+    places: &PlaceMap,
+    argument: &CheckedExpression,
+) -> Option<Vec<ResolvedPlace>> {
+    let resolved = named_place(argument)?.resolve(places, false);
     (!resolved.is_empty()).then_some(resolved)
 }

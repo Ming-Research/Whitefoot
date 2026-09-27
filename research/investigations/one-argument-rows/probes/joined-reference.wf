@@ -1,0 +1,30 @@
+struct Cell {
+  count: u64;
+  total: u64;
+}
+
+fn record(cell: &Cell) -> result: unit reads(cell), writes(cell.count) {
+  let whole = deref(cell);
+  set deref(cell).count = whole.total;
+  return unit;
+}
+
+fn pick(values: &Array<Cell, 4>, i: u64, j: u64, choose: Bool) -> result: unit reads(values[i]), reads(values[j]), writes(values[i].count), writes(values[j].count) contract {
+  requires i < 4_u64;
+  requires j < 4_u64;
+} {
+  let selected = &deref(values)[i];
+  if choose {
+    set selected = &deref(values)[j];
+  }
+  record(cell: selected);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let initial = Cell(count: 0_u64, total: 3_u64);
+  let values = array_filled::<Cell, 4>(value: initial);
+  let choose = True();
+  pick(values: &values, i: 0_u64, j: 1_u64, choose: choose);
+  return exit_status(code: 0_u8);
+}

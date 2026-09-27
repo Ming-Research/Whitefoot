@@ -1,0 +1,61 @@
+alias HandleFactory = pkg::io::HandleFactory;
+alias IoError = pkg::io::IoError;
+alias ReadStop = pkg::io::ReadStop;
+alias HostString = pkg::text::HostString;
+
+public opaque nocopy struct RelativePath {
+}
+
+public opaque nodrop struct DirectoryRead {
+}
+
+public opaque nodrop struct ReadFile {
+}
+
+public opaque nodrop struct DirectorySource {
+}
+
+public enum PathError {
+  PathInvalid();
+}
+
+public enum ListStop {
+  ListEnd();
+  ListFailed(public error: IoError);
+}
+
+public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
+
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) doc "Opens the file at path below root for reading.";
+
+public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Reads bytes of file at file_offset into destination from start toward end with one host read; Ok carries the index after the last byte read, and ReadEnd reports the end of the file.";
+
+public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
+  requires start <= end;
+  requires end <= deref(name).len;
+} doc "Opens the directory that the bytes of name from start to end name below root.";
+
+public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) doc "Opens the listing of the entries of directory.";
+
+public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures start <= next;
+  ensures next <= end;
+} doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
+
+public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) contract {
+  requires start <= end;
+  requires end <= deref(name).len;
+} doc "Opens the file that the bytes of name from start to end name below root for reading.";
+
+public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) doc "Closes file.";
+
+public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) doc "Closes directory.";
+
+public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) doc "Closes the directory listing source.";

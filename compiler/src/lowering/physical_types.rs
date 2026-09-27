@@ -1,4 +1,4 @@
-//! Contextual storage types for already accepted region-polymorphic functions.
+//! The IR nominals and elements the checked program's types lower to.
 //!
 //! Nominal identity is the checked source family plus its complete reclamation
 //! graph. Equal layouts alone never merge types. Pair visitation makes cyclic
@@ -6,12 +6,10 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::semantic::{CheckedNominalKind, CheckedProgramData, CheckedReleaseClass};
-use crate::{DeclarationId, NominalId};
+use crate::NominalId;
+use crate::semantic::{CheckedNominalKind, CheckedProgramData};
 
 use super::*;
-
-type Releases = Vec<(DeclarationId, CheckedReleaseClass)>;
 
 pub(super) struct PhysicalTypeMap {
     pub(super) nominals: Vec<IrNominalId>,
@@ -92,7 +90,6 @@ pub(super) fn base_elements(
             TypeLowering {
                 nominals,
                 elements: &map,
-                releases: &[],
             },
             data.elements[index],
         )?;
@@ -118,7 +115,6 @@ fn intern_element(
 
 struct Instance {
     source: NominalId,
-    releases: Releases,
     id: IrNominalId,
 }
 
@@ -128,7 +124,7 @@ pub(super) struct PhysicalTypes<'a> {
     pub(super) elements: Vec<IrType>,
     base_elements: Vec<Option<IrElement>>,
     interned_elements: HashMap<IrType, IrElement>,
-    element_instances: HashMap<(CheckedElement, Releases), IrElement>,
+    element_instances: HashMap<CheckedElement, IrElement>,
     instances: Vec<Instance>,
 }
 
@@ -147,7 +143,6 @@ impl<'a> PhysicalTypes<'a> {
             .filter(|(index, alias)| *index == alias.0 as usize)
             .map(|(_, alias)| Instance {
                 source: *alias,
-                releases: Vec::new(),
                 id: IrNominalId(alias.0),
             })
             .collect();
@@ -166,39 +161,27 @@ impl<'a> PhysicalTypes<'a> {
         }
     }
 
-    pub(super) fn map(
-        &mut self,
-        releases: &[(DeclarationId, CheckedReleaseClass)],
-    ) -> Result<PhysicalTypeMap, LoweringFailure> {
+    pub(super) fn map(&mut self) -> Result<PhysicalTypeMap, LoweringFailure> {
         let nominals = (0..self.data.executable_nominal_count)
             .map(|index| {
-                self.nominal(
-                    NominalId(u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?),
-                    releases,
-                )
+                self.nominal(NominalId(
+                    u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
+                ))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut elements = vec![None; self.data.elements.len()];
         for (index, mapped) in elements.iter_mut().enumerate() {
             if self.base_elements[index].is_some() {
-                *mapped = Some(self.element(
-                    CheckedElement(
-                        u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
-                    ),
-                    releases,
-                )?);
+                *mapped = Some(self.element(CheckedElement(
+                    u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
+                ))?);
             }
         }
         Ok(PhysicalTypeMap { nominals, elements })
     }
 
-    fn element(
-        &mut self,
-        source: CheckedElement,
-        releases: &[(DeclarationId, CheckedReleaseClass)],
-    ) -> Result<IrElement, LoweringFailure> {
-        let key = (source, releases.to_vec());
-        if let Some(id) = self.element_instances.get(&key) {
+    fn element(&mut self, source: CheckedElement) -> Result<IrElement, LoweringFailure> {
+        if let Some(id) = self.element_instances.get(&source) {
             return Ok(*id);
         }
         let ty = *self
@@ -206,9 +189,9 @@ impl<'a> PhysicalTypes<'a> {
             .elements
             .get(source.index())
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        let ty = self.ty(ty, releases)?;
+        let ty = self.ty(ty)?;
         let id = intern_element(&mut self.elements, &mut self.interned_elements, ty)?;
-        self.element_instances.insert(key, id);
+        self.element_instances.insert(source, id);
         Ok(id)
     }
 
@@ -220,15 +203,11 @@ impl<'a> PhysicalTypes<'a> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)
     }
 
-    fn nominal(
-        &mut self,
-        source: NominalId,
-        releases: &[(DeclarationId, CheckedReleaseClass)],
-    ) -> Result<IrNominalId, LoweringFailure> {
+    fn nominal(&mut self, source: NominalId) -> Result<IrNominalId, LoweringFailure> {
         let family = self.family(source)?;
         for candidate in &self.instances {
             if self.family(candidate.source)? == family
-                && self.same_graph(source, releases, candidate.source, &candidate.releases)?
+                && self.same_graph(source, candidate.source)?
             {
                 return Ok(candidate.id);
             }
@@ -245,11 +224,7 @@ impl<'a> PhysicalTypes<'a> {
         // Publish the identity before visiting children, so recursive fields
         // refer to this same instance. The placeholder is closed before use.
         self.nominals.push(nominal);
-        self.instances.push(Instance {
-            source,
-            releases: releases.to_vec(),
-            id,
-        });
+        self.instances.push(Instance { source, id });
         let kind = self
             .data
             .nominals
@@ -263,7 +238,7 @@ impl<'a> PhysicalTypes<'a> {
                     .iter()
                     .map(|field| {
                         Ok(IrField {
-                            ty: self.ty(field.ty, releases)?,
+                            ty: self.ty(field.ty)?,
                         })
                     })
                     .collect::<Result<_, LoweringFailure>>()?,
@@ -279,7 +254,7 @@ impl<'a> PhysicalTypes<'a> {
                                 .iter()
                                 .map(|field| {
                                     Ok(IrField {
-                                        ty: self.ty(field.ty, releases)?,
+                                        ty: self.ty(field.ty)?,
                                     })
                                 })
                                 .collect::<Result<_, LoweringFailure>>()?,
@@ -288,12 +263,10 @@ impl<'a> PhysicalTypes<'a> {
                     .collect::<Result<_, LoweringFailure>>()?,
             },
             CheckedNominalKind::Box {
-                referent,
-                region,
-                release,
+                referent, release, ..
             } => IrNominalKind::Box {
-                referent: self.ty(referent, releases)?,
-                release: lower_release_class(effective_release(releases, region, release)),
+                referent: self.ty(referent)?,
+                release: lower_release_class(release),
             },
             CheckedNominalKind::Opaque => self.nominals[id.index()].kind.clone(),
         };
@@ -301,20 +274,16 @@ impl<'a> PhysicalTypes<'a> {
         Ok(id)
     }
 
-    fn ty(
-        &mut self,
-        ty: CheckedType,
-        releases: &[(DeclarationId, CheckedReleaseClass)],
-    ) -> Result<IrType, LoweringFailure> {
+    fn ty(&mut self, ty: CheckedType) -> Result<IrType, LoweringFailure> {
         match ty {
             CheckedType::Buffer { element } => {
                 return Ok(IrType::Buffer {
-                    element: self.element(element, releases)?,
+                    element: self.element(element)?,
                 });
             }
             CheckedType::Array { element, length } => {
                 return Ok(IrType::Array {
-                    element: self.element(element, releases)?,
+                    element: self.element(element)?,
                     length: length
                         .value()
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?,
@@ -327,7 +296,7 @@ impl<'a> PhysicalTypes<'a> {
             } => {
                 return Ok(IrType::Window {
                     shape: lower_window_shape(shape),
-                    element: self.element(element, releases)?,
+                    element: self.element(element)?,
                     capacity: capacity
                         .map(|capacity| {
                             capacity
@@ -346,25 +315,18 @@ impl<'a> PhysicalTypes<'a> {
             .map(|id| IrNominalId(id.0))
             .collect::<Vec<_>>();
         if let CheckedType::Nominal(id) = ty {
-            map[id.0 as usize] = self.nominal(id, releases)?;
+            map[id.0 as usize] = self.nominal(id)?;
         }
         lower_type(
             TypeLowering {
                 nominals: &map,
                 elements: &[],
-                releases,
             },
             ty,
         )
     }
 
-    fn same_graph(
-        &self,
-        left: NominalId,
-        left_releases: &[(DeclarationId, CheckedReleaseClass)],
-        right: NominalId,
-        right_releases: &[(DeclarationId, CheckedReleaseClass)],
-    ) -> Result<bool, LoweringFailure> {
+    fn same_graph(&self, left: NominalId, right: NominalId) -> Result<bool, LoweringFailure> {
         let mut pending = vec![(CheckedType::Nominal(left), CheckedType::Nominal(right))];
         let mut visited = HashSet::new();
         while let Some((left, right)) = pending.pop() {
@@ -392,18 +354,16 @@ impl<'a> PhysicalTypes<'a> {
                         (
                             CheckedNominalKind::Box {
                                 referent: lt,
-                                region: lr,
                                 release: lc,
+                                ..
                             },
                             CheckedNominalKind::Box {
                                 referent: rt,
-                                region: rr,
                                 release: rc,
+                                ..
                             },
                         ) => {
-                            if effective_release(left_releases, *lr, *lc)
-                                != effective_release(right_releases, *rr, *rc)
-                            {
+                            if lc != rc {
                                 return Ok(false);
                             }
                             pending.push((*lt, *rt));
@@ -509,19 +469,4 @@ impl<'a> PhysicalTypes<'a> {
         }
         Ok(true)
     }
-}
-
-fn effective_release(
-    releases: &[(DeclarationId, CheckedReleaseClass)],
-    region: Option<DeclarationId>,
-    fallback: CheckedReleaseClass,
-) -> CheckedReleaseClass {
-    region.map_or(fallback, |region| {
-        TypeLowering {
-            nominals: &[],
-            elements: &[],
-            releases,
-        }
-        .release(region, fallback)
-    })
 }

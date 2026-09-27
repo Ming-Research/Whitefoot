@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The row lists pkg::b alone, so the variants of pkg::a's public Shape are not accessible here.";
+  let shape = pkg::b::shape();
+  match shape {
+    Dot(size: measured) => {
+      return exit_status(code: measured);
+    }
+    Blank() => {
+    }
+  }
+  return exit_status(code: 0_u8);
+}

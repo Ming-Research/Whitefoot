@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Color {
   Red();
   Green();
@@ -6,7 +9,7 @@ enum Color {
 
 fn paint(x: &i32, y: &i32) -> function_result: Color pure {
   doc "Each type and parameter kind has a finite canonical source spelling requiring no compiler execution; the type and reference marker determine the kind.";
-  return Red();
+  return Color::Red();
 }
 
 fn main() -> status: ExitStatus pure {

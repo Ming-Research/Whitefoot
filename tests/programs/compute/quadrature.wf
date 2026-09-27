@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn density(x: f64, center: f64, width: f64) -> result: f64 pure {
   let offset = fsub.strict(x, center);
   let scaled = fdiv.strict(offset, width);

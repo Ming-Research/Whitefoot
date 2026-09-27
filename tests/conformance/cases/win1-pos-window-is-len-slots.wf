@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-1: a Slots window is exactly the len slots beginning at slot zero, every other slot holds nothing, and a subscript r[i] carries the obligation i < r.len.";
   let r = slots_new::<u64, 4>();

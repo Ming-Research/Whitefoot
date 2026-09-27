@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn width_of<T>(blocks: &Slots<T, 4>) -> taken: Option<T> writes(blocks.last), writes(blocks.len) contract {
   requires deref(blocks).len > 0_u64;
 } {

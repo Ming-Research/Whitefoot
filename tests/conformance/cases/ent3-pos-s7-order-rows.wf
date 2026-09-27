@@ -1,0 +1,55 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn at_least(value: u64, floor: u64) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn within(value: i32, low: i32, high: i32) -> result: unit pure contract {
+  requires low <= value;
+  requires value <= high;
+} {
+  return unit;
+}
+
+fn at_most_word(value: u32, limit: u32) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn rows(count: u64, limit: u64, delta: i32, first: u32, second: u32) -> result: unit pure {
+  let fewer = imin(count, limit);
+  at_most(value: fewer, limit: count);
+  at_most(value: fewer, limit: limit);
+  let clamped = imin(count, 16_u64);
+  at_most(value: clamped, limit: 16_u64);
+  let more = imax(count, 16_u64);
+  at_least(value: more, floor: 16_u64);
+  at_least(value: more, floor: count);
+  if -100_i32 <= delta {
+    if delta <= 50_i32 {
+      let magnitude = iabs(delta);
+      within(value: magnitude, low: 0_i32, high: 100_i32);
+      let negated = ineg(delta);
+      within(value: negated, low: -50_i32, high: 100_i32);
+    }
+  }
+  let top = imulhi(first, second);
+  at_most_word(value: top, limit: 4294967294_u32);
+  at_most_word(value: top, limit: first);
+  at_most_word(value: top, limit: second);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

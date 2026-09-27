@@ -3,6 +3,8 @@ name = "whitefoot"
 version = "0.1.0"
 edition = "2024"
 publish = false
+# The oldest stable that builds the compiler (let chains, slice::as_chunks).
+rust-version = "1.88"
 
 [lib]
 doctest = false
@@ -24,7 +26,15 @@ all = "deny"
 # and changes only code generation, so no test's identity or meaning moves.
 # Used by the Makefile `test` target; a bare `cargo test <filter>` during
 # development still uses the default profile.
+#
+# Local builds are incremental: without it every edit rebuilds the whole
+# crate, once for the binary and once for the test harness (83 s and 141 s on
+# four cores), where measured edits take 10 to 25 s with it. CI builds from a
+# fresh checkout and sets CARGO_INCREMENTAL=0, since there incremental state
+# only slows the build and the tests; the measurements are F9 in
+# research/investigations/compiler-architecture/DESIGN.md.
 [profile.gate]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
+incremental = true

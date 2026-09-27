@@ -1,0 +1,6 @@
+fn main() -> status: ExitStatus pure {
+  let v = 256_u32;
+  invariant fits: v <= 255_u32;
+  let b = cvt::<u32, u8>(v);
+  return exit_status(code: b);
+}

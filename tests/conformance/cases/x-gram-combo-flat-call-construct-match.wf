@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Parity {
   Even(n: i32);
   Odd(n: i32);
@@ -13,7 +16,7 @@ fn main() -> status: ExitStatus pure {
   let b = 4_i32;
   let s = a +wrap b;
   let d = double(x: s);
-  let p = Even(n: d);
+  let p = Parity::Even(n: d);
   match p {
     Even(n: v) => {
       if d == 14_i32 {

@@ -1,0 +1,3 @@
+fn main() -> result: u64 pure {
+  return 0_u64;
+}

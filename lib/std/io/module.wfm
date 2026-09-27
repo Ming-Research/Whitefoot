@@ -1,0 +1,58 @@
+public opaque nocopy struct HandleFactory {
+}
+
+public opaque nocopy struct OutputStream {
+}
+
+public opaque nocopy struct InputStream {
+}
+
+public enum IoError {
+  NotFound(public code: u32, public origin: u8);
+  PermissionDenied(public code: u32, public origin: u8);
+  AlreadyExists(public code: u32, public origin: u8);
+  NotDirectory(public code: u32, public origin: u8);
+  IsDirectory(public code: u32, public origin: u8);
+  DirectoryNotEmpty(public code: u32, public origin: u8);
+  ReadOnly(public code: u32, public origin: u8);
+  ResourceBusy(public code: u32, public origin: u8);
+  InvalidInput(public code: u32, public origin: u8);
+  InvalidPath(public code: u32, public origin: u8);
+  Unsupported(public code: u32, public origin: u8);
+  TimedOut(public code: u32, public origin: u8);
+  BrokenPipe(public code: u32, public origin: u8);
+  WriteZero(public code: u32, public origin: u8);
+  UnexpectedEnd(public code: u32, public origin: u8);
+  ConnectionRefused(public code: u32, public origin: u8);
+  ConnectionReset(public code: u32, public origin: u8);
+  ConnectionAborted(public code: u32, public origin: u8);
+  NotConnected(public code: u32, public origin: u8);
+  AddressInUse(public code: u32, public origin: u8);
+  AddressUnavailable(public code: u32, public origin: u8);
+  ResourceExhausted(public code: u32, public origin: u8);
+  FileTooLarge(public code: u32, public origin: u8);
+  NoSpace(public code: u32, public origin: u8);
+  QuotaExceeded(public code: u32, public origin: u8);
+  CrossDevice(public code: u32, public origin: u8);
+  DeviceFailure(public code: u32, public origin: u8);
+  Other(public code: u32, public origin: u8);
+}
+
+public enum ReadStop {
+  ReadEnd();
+  ReadFailed(public error: IoError);
+}
+
+public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) contract {
+  requires start <= end;
+  requires end <= deref(source).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written.";
+
+public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) contract {
+  requires start <= end;
+  requires end <= deref(destination).len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, and ReadEnd reports the end of the input.";

@@ -63,7 +63,7 @@ include three explicit premises beyond the automatic pair family, a midpoint
 certificate, integer tightening, redundant-block rejection and invalid-source
 controls. They document executable witnesses of the selected behavior, not
 comparative evidence that it is the best authoring contract. The
-[certificate-fold decision](../../../mcts_mem/whitefoot/checks-and-proofs/certificate-fold.md)
+[certificate-fold decision](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/certificate-fold.md)
 retains dated comparisons of declaration identity against expanded operand
 images. That evidence is specific to folding; it does not validate every
 aspect of PRF-1.

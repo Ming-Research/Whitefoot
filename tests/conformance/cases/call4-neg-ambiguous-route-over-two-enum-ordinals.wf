@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn probe(taken: Slots<u8, 8>) -> (outcome: Result<u64, Overflow>, other: Result<u64, Overflow>) pure contract {
   ensures when Ok(value: reported): reported == taken.len;
 } {

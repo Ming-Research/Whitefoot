@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-3: there is no take operation and no hole, so a move out of a window slot is a hard error; the restructuring is take_back, remove_at, or swap.";
   let r = slots_new::<Box<u64>, 2>();

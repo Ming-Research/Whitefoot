@@ -62,7 +62,11 @@
 //! A **proved range reference** is `&r[s*i+b..s*i+b+s]` [REF-4] passed as an
 //! ordinary argument, whose discharged endpoint domain retains the exact
 //! images `[s*i+b, s*i+b+s)` with `s` and `b` fixed throughout L and both
-//! proved nonnegative. For distinct indices `i < j`, discreteness gives
+//! proved nonnegative, formed over an indexable place or range reference
+//! declared outside B, so that every iteration's range is relative to one
+//! origin. A range formed inside B from anything else is no proved range of
+//! its own; it inherits one only by lying within it. For distinct indices
+//! `i < j`, discreteness gives
 //! `i+1 <= j` and nonnegative `s` gives `s*i+b+s <= s*j+b`, so the half-open
 //! ranges do not overlap under [OWN-7]. Proved range references reached by
 //! writes and whose origins overlap must name the same origin and carry
@@ -119,8 +123,8 @@ use super::model::{
     CheckedType, WindowShape, expression_children,
 };
 use super::permission::{
-    Footprint, Program, call_projection, collect_consumed_places, container_steps, field_steps,
-    set_target_place, visit_read_bindings,
+    Footprint, Program, argument_places, call_projection, collect_consumed_places, container_steps,
+    field_steps, set_target_place, visit_read_bindings,
 };
 use super::places::{PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations};
 use crate::NodePath;
@@ -567,12 +571,17 @@ impl<'check> Survey<'check, '_> {
                 self.expression(upper);
             }
             CheckedStatement::Loop { .. } => {}
-            // An expression statement is a call [GRAM-4] whose reach no row
-            // projects onto an actual, and a discarded one carries its own
-            // [STOR-3] release.
-            CheckedStatement::Evaluate(_) => self.refuse_form("an expression statement"),
-            CheckedStatement::DropExpression { .. } => {
-                self.refuse_form("a discarded expression statement");
+            // [GRAM-4] an expression statement is one call whose result is
+            // discarded, judged exactly as a `let` binding that call is: its
+            // row's projection, its operand reads, and its by-value
+            // consumptions. It introduces no binding, and the release a
+            // discarded affine result runs contributes no path [STOR-8].
+            CheckedStatement::Evaluate { node_path, value }
+            | CheckedStatement::DropExpression {
+                node_path, value, ..
+            } => {
+                self.moved_places(value, node_path);
+                self.expression(value);
             }
         }
     }
@@ -711,7 +720,57 @@ impl<'check> Survey<'check, '_> {
         value: &CheckedExpression,
         node: &NodePath,
     ) {
+        if !matches!(value, CheckedExpression::RangeOf { .. }) {
+            return;
+        }
+        let resolved = self.places.resolve(PlaceRoot::Binding(binding), &[]);
+        self.record_range_formation(&resolved, value, node);
+    }
+
+    /// Every range one call forms at its own arguments [REF-4, PAR-2].
+    ///
+    /// "A range reference `&r[s*i+b..s*i+b+s]` passed as an ordinary
+    /// argument" is the family's formation whether a `let` names it first or
+    /// the argument forms it at the call; the argument then names the same
+    /// path the bound reference would [EFF-5]. An argument whose places do
+    /// not resolve records nothing here: the call's own footprint carries it
+    /// as unresolved, which is condition 3's denial.
+    fn record_range_arguments(&mut self, arguments: &[CheckedExpression]) {
+        for argument in arguments {
+            if !matches!(argument, CheckedExpression::RangeOf { .. }) {
+                continue;
+            }
+            let Some(resolved) = argument_places(self.places, argument) else {
+                continue;
+            };
+            let node = self.cite.clone();
+            self.record_range_formation(&resolved, argument, &node);
+        }
+    }
+
+    /// One range formation whose resolved places are `resolved`, against the
+    /// proved-range family.
+    ///
+    /// "The indexable place or range reference it is formed from is declared
+    /// outside B and retains its resolved origin" [PAR-2]. The partition
+    /// `[s*i+b, s*i+b+s)` is relative to that origin, so only an origin fixed
+    /// throughout L makes two iterations' ranges disjoint: a source bound
+    /// inside B may carry a range step whose endpoints change with i, and
+    /// [OWN-7] leaves two different frames overlapping whatever lies below
+    /// them. A formation over such a source is recorded as nothing of its
+    /// own. "A range reference formed inside B instead inherits an existing
+    /// proved range reference only when its complete origin path is a
+    /// descendant of that range reference", which is the containment
+    /// `record_range_write` asks of every write; anything else it writes is
+    /// a shared write.
+    fn record_range_formation(
+        &mut self,
+        resolved: &[ResolvedPlace],
+        value: &CheckedExpression,
+        node: &NodePath,
+    ) {
         let CheckedExpression::RangeOf {
+            source,
             obligation,
             captured,
             ..
@@ -719,8 +778,13 @@ impl<'check> Survey<'check, '_> {
         else {
             return;
         };
-        let resolved = self.places.resolve(PlaceRoot::Binding(binding), &[]);
-        let [place] = resolved.as_slice() else {
+        if source
+            .binding()
+            .is_some_and(|binding| self.introduced.contains(&binding))
+        {
+            return;
+        }
+        let [place] = resolved else {
             self.shared.get_or_insert(node.clone());
             return;
         };
@@ -1047,6 +1111,7 @@ impl<'check> Survey<'check, '_> {
     /// footprint by the shape of the statement that holds it.
     fn calls(&mut self, expression: &CheckedExpression) {
         if let Some(projection) = call_projection(expression) {
+            self.record_range_arguments(projection.arguments);
             let footprint = self.program.footprint(self.places, &projection);
             self.record_writes(&footprint);
         }
@@ -1299,11 +1364,11 @@ const fn statement_node(statement: &CheckedStatement) -> Option<&NodePath> {
         | CheckedStatement::Return { node_path, .. }
         | CheckedStatement::ValueMatchLet { node_path, .. }
         | CheckedStatement::Give { node_path, .. }
-        | CheckedStatement::CountedRange { node_path, .. } => Some(node_path),
+        | CheckedStatement::CountedRange { node_path, .. }
+        | CheckedStatement::Evaluate { node_path, .. }
+        | CheckedStatement::DropExpression { node_path, .. } => Some(node_path),
         CheckedStatement::Proof(proof) => Some(&proof.node_path),
-        CheckedStatement::Evaluate(_)
-        | CheckedStatement::DropExpression { .. }
-        | CheckedStatement::Match { .. }
+        CheckedStatement::Match { .. }
         | CheckedStatement::Loop { .. }
         | CheckedStatement::Break { .. } => None,
     }

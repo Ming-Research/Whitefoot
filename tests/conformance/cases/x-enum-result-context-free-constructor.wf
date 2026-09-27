@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Flag {
   First();
   Second();
 }
 
 fn main() -> status: ExitStatus pure {
-  let first_atom_0001 = First();
+  let first_atom_0001 = Flag::First();
   match Err(error: first_atom_0001) {
     Ok(value: ok_value) => {
     }

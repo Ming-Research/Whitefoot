@@ -1,0 +1,65 @@
+public interface DequeVisit<T, E> {
+  fn accept(env: &E, value: &T) -> result: unit reads(value), writes(env);
+}
+
+public interface DequeDrain<T, E> {
+  fn accept(env: &E, value: T) -> result: unit writes(env);
+}
+
+public fn deque_new<T, const ceiling: u64>(capacity: u64) -> made: Box<Ring<T>> pure contract {
+  requires capacity <= ceiling;
+  ensures made.inner.len == 0_u64;
+  ensures made.inner.cap == capacity;
+  ensures made.inner.head == 0_u64;
+} doc "Constructs an empty ring with the requested capacity. The explicit ceiling bounds this concrete allocation instance under OP-9; it is not a hidden invariant on an owning Box<Ring<T>>. Allocation is total under STOR-8, including zero capacity.";
+
+public fn deque_push_back<T>(values: &Box<Ring<T>>, value: T) -> length: u64 writes(values.inner.next), writes(values.inner.len) contract {
+  requires deref(values).inner.len < deref(values).inner.cap;
+  ensures length == deref(values).inner.len;
+  ensures deref(values).inner.len == deref(entry(values)).inner.len + 1_u64;
+  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+  ensures deref(values).inner.head == deref(entry(values)).inner.head;
+} doc "Appends into existing capacity. The caller proves room or explicitly rebases to a newly allocated backing; this operation does not allocate. Its row preserves existing filled-slot references across the length increase.";
+
+public fn deque_push_front<T>(values: &Box<Ring<T>>, value: T) -> length: u64 writes(values.inner) contract {
+  requires deref(values).inner.len < deref(values).inner.cap;
+  ensures length == deref(values).inner.len;
+  ensures deref(values).inner.len == deref(entry(values)).inner.len + 1_u64;
+  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+} doc "Prepends into existing capacity, wrapping the physical head. Logical indexing and the Ring operation own the wrap; every reference into this ring is invalidated by the front operation [REF-2, OP-10].";
+
+public fn deque_pop_back<T>(values: &Box<Ring<T>>) -> removed: T writes(values.inner.last), writes(values.inner.len) contract {
+  requires deref(values).inner.len > 0_u64;
+  ensures deref(values).inner.len + 1_u64 == deref(entry(values)).inner.len;
+  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+  ensures deref(values).inner.head == deref(entry(values)).inner.head;
+} doc "Removes and returns the value at the back of a proved nonempty deque; capacity and head stay.";
+
+public fn deque_pop_front<T>(values: &Box<Ring<T>>) -> removed: T writes(values.inner) contract {
+  requires deref(values).inner.len > 0_u64;
+  ensures deref(values).inner.len + 1_u64 == deref(entry(values)).inner.len;
+  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+} doc "Removes and returns the value at the front of a proved nonempty deque; capacity stays.";
+
+public fn deque_visit_at<interface DequeVisit<T, E>>(values: &Box<Ring<T>>, index: u64, env: &E) -> result: unit reads(values.inner), writes(env) contract {
+  requires index < deref(values).inner.len;
+} doc "Borrows one logical element for the supplied direct-call visitor. A returned reference is unavailable under REF-3; callers may also form an element reference themselves after proving its logical index bound.";
+
+public fn deque_visit<interface DequeVisit<T, E>>(values: &Box<Ring<T>>, env: &E) -> result: unit reads(values.inner), writes(env) doc "Visits every element in logical order without moving an owner. This is per-slot visitation, not a two-span interface: REF-4 refuses range references over Ring. EFF-5 keeps the writable environment disjoint from the storage read through this boundary.";
+
+public fn deque_rebase<T, const ceiling: u64>(values: Box<Ring<T>>, capacity: u64) -> made: Box<Ring<T>> pure contract {
+  requires capacity >= values.inner.len;
+  requires capacity <= ceiling;
+  ensures made.inner.len == values.inner.len;
+  ensures made.inner.cap == capacity;
+  ensures made.inner.head == 0_u64;
+} doc "Consumes the old owner and produces a newly allocated backing with head zero, preserving logical order and exact length. The operation can grow or shrink to any proved sufficient capacity. Each element is taken from the source once and placed into the destination once; the source is proved empty before free_empty consumes its backing, including a nodrop element instance. This is an explicit conversion, not a by-value mutation round trip or an automatically growing endpoint helper. The per-element loop supplies the exact length relation that append's current lower-bound-only contract does not publish.";
+
+public fn deque_drain<interface DequeDrain<T, E>>(values: &Box<Ring<T>>, env: &E) -> result: unit writes(values.inner), writes(env) contract {
+  ensures deref(values).inner.len == 0_u64;
+  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+} doc "Consumes elements in original logical order, retaining capacity for reuse. The supplied direct-call consumer must consume a nodrop element; its writable environment is disjoint from this backing under EFF-5. No scratch allocation or spare-slot initialization occurs.";
+
+public fn deque_free_empty<T>(values: Box<Ring<T>>) -> result: unit pure contract {
+  requires values.inner.len == 0_u64;
+} doc "Consumes and frees a proved empty deque. Its element type needs no drop bound because OP-14 consumes the empty boxed window explicitly.";

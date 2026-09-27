@@ -1,0 +1,26 @@
+struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn accumulate(stats: &Stats, rounds: u64) -> result: unit reads(stats), writes(stats.count) {
+  if rounds == 0_u64 {
+    return unit;
+  }
+  let whole = deref(stats);
+  set deref(stats).count = whole.count +wrap whole.total;
+  let next = rounds -wrap 1_u64;
+  accumulate(stats: stats, rounds: next);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let stats = Stats(count: 0_u64, total: 3_u64);
+  accumulate(stats: &stats, rounds: 4_u64);
+  let seen = stats.count;
+  if seen == 12_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

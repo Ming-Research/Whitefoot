@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn weighted_sum(weights: &[u8]) -> result: u32 reads(weights) {
   doc "A per-byte accumulator invariant scales with the captured length; without an incoming length ceiling it cannot prove that the next exact u32 addition fits.";
   let sum = 0_u32;

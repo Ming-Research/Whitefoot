@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The same storage at the other placement: a constant-capacity window is frame-resident, so it derives no storage reclamation of its own and its slots are released with the frame. The pair with the heap-cell case is what makes the release class a property of the placement rather than of the type.";
   let workspace = slots_new::<u8, 16>();

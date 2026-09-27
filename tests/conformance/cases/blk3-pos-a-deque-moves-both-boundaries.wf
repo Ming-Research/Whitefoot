@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The other two boundary operations. place_front moves the front boundary backwards, so the window wraps to the high slots of the ring, and take_back moves the back boundary, so the ring is a deque; with the queue case this exercises all four boundary operations and the wrap in both directions. A front operation replaces the whole window state, so each following requirement is discharged from a reread measure.";
   let run = ring_new::<u8, 4>();

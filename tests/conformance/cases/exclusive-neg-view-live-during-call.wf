@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn blend(target: &[u8], source: &[u8]) -> result: unit reads(source), writes(target) contract {
   requires deref(target).len > 0_u64;
   requires deref(source).len > 0_u64;

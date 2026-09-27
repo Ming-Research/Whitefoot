@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn increment(x: u8, middle: u8, replacement: u8) -> result: u8 pure contract {
   requires x <= middle;
   requires middle <= 254_u8;

@@ -1,0 +1,450 @@
+fn shr_32(x: u64) -> result: u64 pure contract {
+  ensures result <= 4294967295_u64;
+} {
+  let r = ishr(x, 32_u32);
+  if r <= 4294967295_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_01(x: u64) -> result: u32 pure {
+  let hi = shr_32(x: x);
+  let narrow = cvt::<u64, u32>(hi);
+  return narrow;
+}
+
+fn shr_wrap_24(word: u32) -> result: u32 pure contract {
+  ensures result <= 255_u32;
+} {
+  let r = ishr.wrap(word, 24_u32);
+  if r <= 255_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_02(word: u32) -> result: u8 pure {
+  let top = shr_wrap_24(word: word);
+  let byte = cvt::<u32, u8>(top);
+  return byte;
+}
+
+fn shr_byte_2(byte: u8) -> result: u8 pure contract {
+  ensures result <= 63_u8;
+} {
+  let r = ishr(byte, 2_u32);
+  if r <= 63_u8 {
+    return r;
+  }
+  return 0_u8;
+}
+
+fn idiom_03(byte: u8) -> result: u8 pure {
+  let alphabet = array_filled::<u8, 64>(value: 65_u8);
+  let sextet = shr_byte_2(byte: byte);
+  let index = cvt::<u8, u64>(sextet);
+  let digit = alphabet[index];
+  return digit;
+}
+
+fn shr_field_8(field: u32) -> result: u32 pure contract {
+  ensures result <= 15_u32;
+} {
+  let r = ishr(field, 8_u32);
+  if r <= 15_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_04(word: u32) -> result: u8 pure {
+  let digits = array_filled::<u8, 16>(value: 48_u8);
+  let field = iand(word, 3840_u32);
+  let nibble = shr_field_8(field: field);
+  let index = cvt::<u32, u64>(nibble);
+  let digit = digits[index];
+  return digit;
+}
+
+fn shr_word_6(at: u64) -> result: u64 pure contract {
+  ensures result <= 3_u64;
+} {
+  let r = ishr(at, 6_u32);
+  if r <= 3_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_05(words: &[u64], at: u64) -> result: Bool reads(words) contract {
+  requires at < 256_u64;
+  requires 4_u64 <= deref(words).len;
+} {
+  let word_index = shr_word_6(at: at);
+  let word = deref(words)[word_index];
+  let bit = iand(at, 63_u64);
+  let amount = cvt::<u64, u32>(bit);
+  let selected = ishr.wrap(word, amount);
+  let low = iand(selected, 1_u64);
+  return low == 1_u64;
+}
+
+fn shr_wrap_58(hash: u64) -> result: u64 pure contract {
+  ensures result <= 63_u64;
+} {
+  let r = ishr.wrap(hash, 58_u32);
+  if r <= 63_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_06(hash: u64) -> result: u64 pure {
+  let heads = array_filled::<u64, 64>(value: 0_u64);
+  let index = shr_wrap_58(hash: hash);
+  let head = heads[index];
+  return head;
+}
+
+fn min_16(count: u64) -> result: u64 pure contract {
+  ensures result <= 16_u64;
+} {
+  let r = imin(count, 16_u64);
+  if r <= 16_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_07(values: &[u32], count: u64) -> result: u32 reads(values) contract {
+  requires 16_u64 <= deref(values).len;
+} {
+  let limit = min_16(count: count);
+  let total = 0_u32;
+  for (at in 0_u64..limit) {
+    let value = deref(values)[at];
+    set total = total +wrap value;
+  }
+  return total;
+}
+
+fn min_room(count: u64, room: u64) -> result: u64 pure contract {
+  ensures result <= room;
+} {
+  let r = imin(count, room);
+  if r <= room {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_08(destination: &[u8], source: &[u8], count: u64) -> result: u64 reads(source), writes(destination) contract {
+  requires deref(source).len <= deref(destination).len;
+} {
+  let room = deref(source).len;
+  let limit = min_room(count: count, room: room);
+  for (at in 0_u64..limit) {
+    set deref(destination)[at] = deref(source)[at];
+  }
+  return limit;
+}
+
+fn max_1(start: u64) -> result: u64 pure contract {
+  ensures result >= 1_u64;
+} {
+  let r = imax(start, 1_u64);
+  if r >= 1_u64 {
+    return r;
+  }
+  return 1_u64;
+}
+
+fn idiom_09(start: u64) -> result: u64 pure {
+  let first = max_1(start: start);
+  let previous = first - 1_u64;
+  return previous;
+}
+
+fn popcount_64(mask: u64) -> result: u32 pure contract {
+  ensures result <= 64_u32;
+} {
+  let r = ipopcount(mask);
+  if r <= 64_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_10(mask: u64) -> result: u8 pure {
+  let classes = array_filled::<u8, 65>(value: 0_u8);
+  let ones = popcount_64(mask: mask);
+  let index = cvt::<u32, u64>(ones);
+  let class = classes[index];
+  return class;
+}
+
+fn clz_64(size: u64) -> result: u32 pure contract {
+  ensures result <= 64_u32;
+} {
+  let r = iclz(size);
+  if r <= 64_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_11(size: u64) -> result: u64 pure {
+  let classes = array_filled::<u64, 65>(value: 0_u64);
+  let leading = clz_64(size: size);
+  let width = 64_u32 - leading;
+  let index = cvt::<u32, u64>(width);
+  let class = classes[index];
+  return class;
+}
+
+fn div_8(cell: u64) -> result: u64 pure contract {
+  ensures result <= 7_u64;
+} {
+  let r = cell / 8_u64;
+  if r <= 7_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_13(cell: u64) -> result: u64 pure contract {
+  requires cell < 64_u64;
+} {
+  let rows = array_filled::<u64, 8>(value: 0_u64);
+  let row = div_8(cell: cell);
+  let value = rows[row];
+  return value;
+}
+
+fn shl_field_4(field: u32) -> result: u32 pure contract {
+  ensures result <= 240_u32;
+} {
+  let r = ishl(field, 4_u32);
+  if r <= 240_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn or_byte(left: u32, right: u32) -> result: u32 pure contract {
+  ensures result <= 255_u32;
+} {
+  let r = ior(left, right);
+  if r <= 255_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_14(low: u32, high: u32) -> result: u8 pure {
+  let low_bits = iand(low, 15_u32);
+  let high_field = iand(high, 15_u32);
+  let high_bits = shl_field_4(field: high_field);
+  let packed = or_byte(left: low_bits, right: high_bits);
+  let byte = cvt::<u32, u8>(packed);
+  return byte;
+}
+
+fn xor_byte(left: u32, right: u32) -> result: u32 pure contract {
+  ensures result <= 255_u32;
+} {
+  let r = ixor(left, right);
+  if r <= 255_u32 {
+    return r;
+  }
+  return 0_u32;
+}
+
+fn idiom_15(left: u32, right: u32) -> result: u8 pure {
+  let low_left = iand(left, 255_u32);
+  let low_right = iand(right, 255_u32);
+  let mixed = xor_byte(left: low_left, right: low_right);
+  let byte = cvt::<u32, u8>(mixed);
+  return byte;
+}
+
+fn shl_byte_8(value: u64) -> result: u64 pure contract {
+  ensures result <= 65280_u64;
+} {
+  let r = ishl(value, 8_u32);
+  if r <= 65280_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn or_half(left: u64, right: u64) -> result: u64 pure contract {
+  ensures result <= 65535_u64;
+} {
+  let r = ior(left, right);
+  if r <= 65535_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_16(bytes: &[u8], at: u64) -> result: u16 reads(bytes) contract {
+  requires at + 1_u64 < deref(bytes).len;
+} {
+  let next = at + 1_u64;
+  let low = deref(bytes)[at];
+  let high = deref(bytes)[next];
+  let low_wide = cvt::<u8, u64>(low);
+  let high_wide = cvt::<u8, u64>(high);
+  let high_shifted = shl_byte_8(value: high_wide);
+  let value = or_half(left: low_wide, right: high_shifted);
+  let narrow = cvt::<u64, u16>(value);
+  return narrow;
+}
+
+fn add_wrap_ordered(start: u64, count: u64) -> result: u64 pure contract {
+  ensures result >= start;
+} {
+  let r = start +wrap count;
+  if r >= start {
+    return r;
+  }
+  return start;
+}
+
+fn idiom_17(start: u64, count: u64) -> result: u64 pure contract {
+  requires start <= 4096_u64;
+  requires count <= 65535_u64;
+} {
+  let end = add_wrap_ordered(start: start, count: count);
+  let length = end - start;
+  return length;
+}
+
+fn abs_nonnegative(delta: i32) -> result: i32 pure contract {
+  requires delta != -2147483648_i32;
+  ensures result >= 0_i32;
+} {
+  let r = iabs(delta);
+  if r >= 0_i32 {
+    return r;
+  }
+  return 0_i32;
+}
+
+fn idiom_18(delta: i32) -> result: u32 pure contract {
+  requires delta != -2147483648_i32;
+} {
+  let size = abs_nonnegative(delta: delta);
+  let wide = cvt::<i32, u32>(size);
+  return wide;
+}
+
+fn shr_at_1(at: u64) -> result: u64 pure contract {
+  ensures result <= at;
+} {
+  let r = ishr(at, 1_u32);
+  if r <= at {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_19(keys: &[u64], at: u64) -> result: u64 reads(keys) contract {
+  requires at < deref(keys).len;
+} {
+  let parent = shr_at_1(at: at);
+  let key = deref(keys)[parent];
+  return key;
+}
+
+fn max_both(left: u64, right: u64) -> result: u64 pure contract {
+  ensures result >= left;
+  ensures result >= right;
+} {
+  let r = imax(left, right);
+  if r >= left {
+    if r >= right {
+      return r;
+    }
+  }
+  return 18446744073709551615_u64;
+}
+
+fn idiom_20(values: &[u64], left: u64, right: u64) -> result: unit writes(values) {
+  let room = deref(values).len;
+  let top = max_both(left: left, right: right);
+  if top < room {
+    let first = deref(values)[left];
+    let second = deref(values)[right];
+    set deref(values)[left] = second;
+    set deref(values)[right] = first;
+  }
+  return unit;
+}
+
+fn shr_top_bits(hash: u64, shift: u32) -> result: u64 pure contract {
+  requires shift < 64_u32;
+  ensures result <= 65535_u64;
+} {
+  let r = ishr(hash, shift);
+  if r <= 65535_u64 {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_22(hash: u64, bits: u32) -> result: u16 pure contract {
+  requires 1_u32 <= bits;
+  requires bits <= 16_u32;
+} {
+  let shift = 64_u32 - bits;
+  let bucket = shr_top_bits(hash: hash, shift: shift);
+  let narrow = cvt::<u64, u16>(bucket);
+  return narrow;
+}
+
+fn shl_one(count: u32) -> result: u64 pure contract {
+  ensures result >= 1_u64;
+  ensures result <= 32_u64;
+} {
+  let r = ishl.wrap(1_u64, count);
+  if r >= 1_u64 {
+    if r <= 32_u64 {
+      return r;
+    }
+  }
+  return 1_u64;
+}
+
+fn idiom_23(value: u64, count: u32) -> result: u64 pure contract {
+  requires count <= 5_u32;
+} {
+  let table = array_filled::<u64, 32>(value: 0_u64);
+  let high = shl_one(count: count);
+  let mask = high - 1_u64;
+  let bits = iand(value, mask);
+  let slot = table[bits];
+  return slot;
+}
+
+fn sub_sat_below(budget: u64, cost: u64) -> result: u64 pure contract {
+  ensures result <= budget;
+} {
+  let r = budget -sat cost;
+  if r <= budget {
+    return r;
+  }
+  return 0_u64;
+}
+
+fn idiom_24(budget: u64, cost: u64) -> result: u64 pure {
+  let remaining = sub_sat_below(budget: budget, cost: cost);
+  let used = budget - remaining;
+  return used;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

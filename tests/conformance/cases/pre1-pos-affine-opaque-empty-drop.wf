@@ -1,3 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HostString = std::text::HostString;
+alias exit_status = std::process::exit_status;
+
 fn discard(value: HostString) -> result: unit pure {
   let local = move value;
   return unit;

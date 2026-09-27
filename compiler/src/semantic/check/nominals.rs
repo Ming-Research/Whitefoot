@@ -8,8 +8,28 @@ use super::super::model::{
 };
 use super::{CheckStop, Checker, PendingNominal, PreludeType};
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
+    /// Appends one nominal instance, a change to the table.
+    pub(super) fn push_nominal(&mut self, nominal: CheckedNominal) {
+        self.nominals.push(nominal);
+        self.nominal_table_changed();
+    }
+
+    /// Notes a change to the nominal table, which its layout recursion
+    /// judgment must see.
+    pub(super) fn nominal_table_changed(&mut self) {
+        self.nominal_generation = self.nominal_generation.wrapping_add(1);
+    }
+
+    /// Rejects a nominal whose layout contains itself other than through a
+    /// `Box`. The judgment reads only the table, so a table unchanged since
+    /// it last found no recursion holds none now; the whole table is walked
+    /// again only after an instance was appended or completed or a
+    /// checkpoint restored.
     pub(super) fn reject_recursive_nominal_layouts(&self) -> Result<(), CheckStop> {
+        if self.nominal_layouts_acyclic_at.get() == Some(self.nominal_generation) {
+            return Ok(());
+        }
         let mut colors = vec![0_u8; self.nominals.len()];
         for root in 0..self.nominals.len() {
             if colors[root] != 0 {
@@ -47,6 +67,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 }
             }
         }
+        self.nominal_layouts_acyclic_at
+            .set(Some(self.nominal_generation));
         Ok(())
     }
 
@@ -157,7 +179,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
         );
         let name = format!("box<{}>", self.checked_type_name(referent)?);
-        self.nominals.push(CheckedNominal {
+        self.push_nominal(CheckedNominal {
             id,
             name,
             kind: CheckedNominalKind::Box {
@@ -257,7 +279,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 readonly: false,
             });
         }
-        self.nominals.push(CheckedNominal {
+        self.push_nominal(CheckedNominal {
             id,
             name: format!("({})", rendered.join(", ")),
             kind: CheckedNominalKind::Struct { fields },
@@ -383,7 +405,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 }],
             ),
         };
-        self.nominals.push(CheckedNominal {
+        self.push_nominal(CheckedNominal {
             id,
             name,
             kind: CheckedNominalKind::Enum { variants },

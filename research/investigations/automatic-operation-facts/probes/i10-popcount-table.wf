@@ -1,0 +1,11 @@
+fn weight_class(mask: u64) -> result: u8 pure {
+  let classes = array_filled::<u8, 65>(value: 0_u8);
+  let ones = ipopcount(mask);
+  let index = cvt::<u32, u64>(ones);
+  let class = classes[index];
+  return class;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

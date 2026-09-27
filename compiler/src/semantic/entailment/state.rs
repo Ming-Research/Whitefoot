@@ -226,9 +226,6 @@ pub(crate) enum FlowEventKind {
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
-    /// [ENT-3.S14] the interval the fixed interval-product rule proved for one
-    /// admitted non-constant multiplication, published on the value it bound.
-    S14,
     Join,
     Snapshot,
     PostconditionEntryImageInvalidation,
@@ -346,6 +343,14 @@ pub(crate) enum DerivationNode {
         goal: GoalId,
         sign: GoalSign,
         event: FlowEventId,
+    },
+    /// One [ENT-3.S7] result bound, order relation or offset relation. Its
+    /// parents are the closed operand bounds its table row read, or the
+    /// discharged domain whose interval-product measurement it states.
+    OperationFact {
+        relation: Relation,
+        event: FlowEventId,
+        parents: Box<[DerivationId]>,
     },
     /// The canonical truth sign of a Bool literal in the finite goal
     /// universe. This is an ordinary ENT-4 ground, not a source event.
@@ -706,6 +711,11 @@ impl DerivationNode {
                 visit(*division);
                 visit(*domain);
             }
+            Self::OperationFact { parents, .. } => {
+                for parent in parents {
+                    visit(*parent);
+                }
+            }
             Self::TransitiveBound { first, second, .. } => {
                 visit(*first);
                 visit(*second);
@@ -847,6 +857,7 @@ impl DerivationNode {
                 }
             }
             Self::ContractCall { parents, .. } => parents.len(),
+            Self::OperationFact { parents, .. } => parents.len(),
             Self::SourceBound { .. }
             | Self::SourceDistinct { .. }
             | Self::SourceGoal { .. }
@@ -910,6 +921,7 @@ impl DerivationNode {
             Self::ContractCall { .. } => 38,
             Self::RangeSeparation { .. } => 39,
             Self::IndexSeparation { .. } => 40,
+            Self::OperationFact { .. } => 45,
         }
     }
 }
@@ -954,16 +966,11 @@ pub(crate) enum DerivationRootKind {
         query: u32,
         occurrence: u32,
     },
-    BitAndBound(u32),
-    ShiftOneNonzero(u32),
-    UnsignedDivisionBound(u32),
     UnsignedDivisionProduct(u32),
     RequirementAffineImage {
         requirement: u32,
         member: u32,
     },
-    UnsignedRemainderBound(u32),
-    SignedRemainderBound(u32),
     CountedS11 {
         occurrence: u32,
         atom: CountedRootAtom,
@@ -1263,6 +1270,7 @@ impl DerivationLedger {
         self.depths[id.0 as usize]
     }
 
+    #[cfg(test)]
     pub(crate) fn node_event(&self, id: DerivationId) -> Option<FlowEventId> {
         node_event(&self.nodes[id.0 as usize])
     }
@@ -1292,6 +1300,7 @@ impl DerivationLedger {
             node,
             DerivationNode::SourceBound { .. }
                 | DerivationNode::SourceDistinct { .. }
+                | DerivationNode::OperationFact { .. }
                 | DerivationNode::PostconditionCall { .. }
                 | DerivationNode::PostconditionDirectResult { .. }
                 | DerivationNode::PostconditionDirectReceiver { .. }
@@ -1644,6 +1653,9 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. } => (index == 0).then_some(event.0),
+        DerivationNode::OperationFact { event, parents, .. } => (index == 0)
+            .then_some(event.0)
+            .or_else(|| parents.get(index.checked_sub(1)?).map(|parent| parent.0)),
         DerivationNode::BooleanLiteral { goal, sign } => [
             goal.0,
             match sign {
@@ -1890,7 +1902,8 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
             target_event: event,
             ..
         }
-        | DerivationNode::PostconditionGive { event, .. } => Some(*event),
+        | DerivationNode::PostconditionGive { event, .. }
+        | DerivationNode::OperationFact { event, .. } => Some(*event),
         DerivationNode::PostconditionDeliveryJoin { detail } => Some(detail.event),
         _ => None,
     }
@@ -1913,7 +1926,8 @@ fn node_event_mut(node: &mut DerivationNode) -> Option<&mut FlowEventId> {
             target_event: event,
             ..
         }
-        | DerivationNode::PostconditionGive { event, .. } => Some(event),
+        | DerivationNode::PostconditionGive { event, .. }
+        | DerivationNode::OperationFact { event, .. } => Some(event),
         DerivationNode::PostconditionDeliveryJoin { detail } => Some(&mut detail.event),
         _ => None,
     }
@@ -1952,6 +1966,11 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
         } => {
             remap_id(division, remap);
             remap_id(domain, remap);
+        }
+        DerivationNode::OperationFact { parents, .. } => {
+            for parent in parents.iter_mut() {
+                remap_id(parent, remap);
+            }
         }
         DerivationNode::TransitiveBound { first, second, .. } => {
             remap_id(first, remap);
@@ -2205,28 +2224,6 @@ impl Relation {
             | Self::Distinct { left, right, .. } => [*left, *right],
         }
     }
-}
-
-/// What one match arm's value binder gains when the scrutinee is an
-/// checked arithmetic call [ENT-3] S7.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OutcomeRelation {
-    /// S7 checked arithmetic: the binder equals the base term shifted by this
-    /// constant.
-    Shifted(i128),
-}
-
-/// One pending arm fact: the relation the observing arm's value binder gains,
-/// against a base term whose support must survive the path to the match.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OutcomeFact {
-    /// The variant whose arm observes it: `Ok` for checked arithmetic.
-    /// Every other arm establishes nothing [ENT-3].
-    pub(crate) variant: &'static str,
-    /// The term the binder is related to under S7.
-    pub(crate) base: TermId,
-    pub(crate) relation: OutcomeRelation,
-    pub(crate) event_kind: FlowEventKind,
 }
 
 /// One live fact state on the structural flow [ENT-3].
@@ -2664,10 +2661,6 @@ pub(crate) struct FactState {
     /// [ENT-3] comparison origins (b): `own Bool` bindings whose initializer
     /// comparison is still valid on every path from initializer to here.
     pub(crate) origins: HashMap<BindingId, Relation>,
-    /// [ENT-3] S7/S10 outcome origins: bindings holding the outcome of a
-    /// checked-arithmetic or bounded boundary call, under the same no-kill,
-    /// no-`set` path discipline the comparison origins carry.
-    pub(crate) outcomes: HashMap<BindingId, OutcomeFact>,
     /// Live exact signed whole-goal facts [ENT-2..ENT-4].
     pub(crate) opaque: WordHashSet<(GoalId, GoalSign)>,
     pub(crate) opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
@@ -2699,7 +2692,6 @@ impl FactState {
             distinct_proofs: Rc::default(),
             distinct_candidates: Rc::default(),
             origins: HashMap::default(),
-            outcomes: HashMap::default(),
             opaque: HashSet::default(),
             opaque_proofs: HashMap::default(),
             goal_origins: HashMap::default(),
@@ -3165,7 +3157,6 @@ impl FactState {
             let [left, right] = relation.terms();
             !killed(left) && !killed(right)
         });
-        self.outcomes.retain(|_, outcome| !killed(outcome.base));
     }
 
     /// Removes only proof candidates invalidated by an S12-private holder
@@ -5652,7 +5643,6 @@ pub(crate) fn materialize_closure_at(
         distinct_proofs: Rc::new(distinct_proofs),
         distinct_candidates: Rc::new(distinct_candidates),
         origins: state.origins.clone(),
-        outcomes: state.outcomes.clone(),
         opaque: closed.opaque.clone(),
         opaque_proofs,
         goal_origins: state.goal_origins.clone(),
@@ -5969,7 +5959,6 @@ fn join_at_once(
     let contributing_states: Vec<&FactState> =
         contributing.iter().map(|index| &states[*index]).collect();
     let mut origins = contributing_states[0].origins.clone();
-    let mut outcomes = contributing_states[0].outcomes.clone();
     let mut goal_origins = contributing_states[0].goal_origins.clone();
     let mut ambiguous_goal_origins = contributing_states[0].ambiguous_goal_origins.clone();
     for state in contributing_states.iter().skip(1) {
@@ -5978,12 +5967,6 @@ fn join_at_once(
                 .origins
                 .get(binding)
                 .is_some_and(|other| other == relation)
-        });
-        outcomes.retain(|binding, outcome| {
-            state
-                .outcomes
-                .get(binding)
-                .is_some_and(|other| other == outcome)
         });
         goal_origins.retain(|binding, goal| {
             state
@@ -6015,7 +5998,6 @@ fn join_at_once(
         distinct_proofs: Rc::new(distinct_proofs),
         distinct_candidates: Rc::new(distinct_candidates),
         origins,
-        outcomes,
         opaque,
         opaque_proofs,
         goal_origins,

@@ -21,7 +21,7 @@ default-checker tests pin the v0.31 dispositions of the same sources.
 Builds on `research/investigations/reborrow-extension/SPEC-DELTA.md` (the
 v0.31 singleton-provenance machinery, superseded in place by activation) and
 on the recorded v0.17 rejection of a possible-provenance *set* over borrows
-(`mcts_mem/whitefoot/ownership/no-reborrow.md`). This delta does not
+([mcts_mem/whitefoot/ownership/no-reborrow.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/no-reborrow.md)). This delta does not
 re-derive either; it is the declaration-site surface of the same singleton
 invariant.
 
@@ -299,7 +299,7 @@ raw-DEFLATE, codegen, or `research/` program is affected.
 
 ## Appendix A — mcts_mem entry draft (apply at activation, not before)
 
-`mcts_mem/whitefoot/ownership/no-reborrow.md`. No node moves to `.alt/`:
+[mcts_mem/whitefoot/ownership/no-reborrow.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/no-reborrow.md). No node moves to `.alt/`:
 v0.31's singleton provenance is kept and relocated, not replaced.
 
 Edit the v0.31 decision item (Item 4) to end with the declaration-site

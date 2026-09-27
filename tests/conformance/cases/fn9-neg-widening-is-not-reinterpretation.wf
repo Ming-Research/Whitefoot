@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn widened_value(value: u8) -> result: i16 pure contract {
   requires value == 200_u8;
   ensures result == -56_i16;

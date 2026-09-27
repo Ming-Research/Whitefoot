@@ -59,8 +59,7 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
 };
 
 /// An ordinary function selected by executable fixtures.
-const PLAIN_ENTRY: &str =
-    "fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n";
+const PLAIN_ENTRY: &str = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
 
 #[test]
 fn a_split_captures_an_array_payload_but_keeps_owner_and_inline_storage_addressed() {
@@ -84,9 +83,9 @@ fn mapped() -> result: Box<Array<u8>> pure {
   return move output;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let output = mapped();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir_mode(source, OverlapLowering::On, |program| {
@@ -214,12 +213,7 @@ fn main() -> status: ExitStatus pure {
     });
 }
 
-fn with_ir<ResultValue>(
-    source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        &IrProgram<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
-) -> ResultValue {
+fn with_ir<ResultValue>(source: &[u8], run: impl FnOnce(&IrProgram) -> ResultValue) -> ResultValue {
     with_ir_mode(source, OverlapLowering::Off, run)
 }
 
@@ -245,8 +239,8 @@ fn write_work(input: &[u64], output: &[u64]) -> result: unit reads(input), write
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir_mode(source, OverlapLowering::On, |program| {
@@ -394,7 +388,8 @@ fn nested_wide_frame_source(depth: usize) -> String {
         .expect("write fixture");
         writeln!(source, "{indent}}}").expect("write fixture");
     }
-    source.push_str("  return total0;\n}\n\nfn main() -> status: ExitStatus pure {\n");
+    source
+        .push_str("  return total0;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n");
     source.push_str("  let input = box_array_filled::<u64>(count: 1_u64, value: 0_u64);\n");
     let arguments = (0..32)
         .map(|index| format!("a{index}: {index}_u64"))
@@ -406,7 +401,7 @@ fn nested_wide_frame_source(depth: usize) -> String {
     )
     .expect("write fixture");
     writeln!(source, "  if observed == {}_u64 {{", 497_u64 << depth).expect("write fixture");
-    source.push_str("    return exit_status(code: 0_u8);\n  } else {\n    return exit_status(code: 1_u8);\n  }\n}\n");
+    source.push_str("    return std::process::exit_status(code: 0_u8);\n  } else {\n    return std::process::exit_status(code: 1_u8);\n  }\n}\n");
     source
 }
 
@@ -467,7 +462,7 @@ fn a_fitting_loop_retains_its_interface_and_one_extra_field_triggers_rescue() {
             .collect::<Vec<_>>()
             .join(", ");
         let source = format!(
-            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..2_u64) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  let total = folded({arguments});\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..2_u64) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let total = folded({arguments});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             assert_eq!(program.loop_candidate_constructions, 1);
@@ -518,7 +513,8 @@ fn a_fitting_loop_retains_its_interface_and_one_extra_field_triggers_rescue() {
 /// lane exactly. One more byte needs alignment padding and makes 264 bytes.
 #[test]
 fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
-    use crate::backend::{emitter::emit_llvm_with_layout, target::TargetLayout};
+    use crate::backend::emitter::emit_llvm_with_layout;
+    use crate::target::TargetLayout;
 
     for target in [
         TargetLayout::host().expect("supported test target"),
@@ -526,7 +522,7 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
     ] {
         for (length, expected_bytes) in [(1, Some(48)), (216, Some(256)), (217, None)] {
             let source = format!(
-                "fn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    set total = total +wrap word;\n  }}\n  return total;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return exit_status(code: 0_u8);\n}}\n"
+                "fn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    set total = total +wrap word;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             with_checked(source.as_bytes(), |checked| {
                 let program =
@@ -597,9 +593,7 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
 fn with_ir_mode<ResultValue>(
     source: &[u8],
     overlap: OverlapLowering,
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        &IrProgram<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(&IrProgram) -> ResultValue,
 ) -> ResultValue {
     with_checked(source, |checked| {
         let ir = lower_checked(checked, overlap).expect("checked system program must lower");
@@ -625,9 +619,7 @@ fn with_ir_mode<ResultValue>(
 
 fn with_checked<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        crate::semantic::CheckedProgram<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(crate::semantic::CheckedProgram) -> ResultValue,
 ) -> ResultValue {
     let inputs = [SourceInput::new("test.wf", source)];
     let Ok(bundle) = SourceBundle::with_prelude(&inputs, SOURCE_LIMITS) else {
@@ -645,19 +637,20 @@ fn with_checked<ResultValue>(
     ) else {
         panic!("lowering test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("lowering test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("lowering test derivation must finalize");
     };
-    let CanonicalOutcome::Complete(canonical) = audit_canonical(finalized, CANONICAL_LIMITS) else {
+    let CanonicalOutcome::Complete(canonical) = audit_canonical(*finalized, CANONICAL_LIMITS)
+    else {
         panic!("lowering test source must be canonical");
     };
     let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
         panic!("lowering test source must resolve");
     };
-    let outcome = check_semantics(resolved);
+    let outcome = check_semantics(&resolved);
     let SemanticOutcome::Complete(checked) = outcome else {
         panic!("lowering test source must check: {outcome:?}");
     };
@@ -705,13 +698,13 @@ fn relay(cell: Box<u64>) -> result: Box<u64> pure {
   return pass::<Box<u64>>(value: move cell);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = box_new::<u64>(value: 1_u64);
   let second = box_new::<u64>(value: 2_u64);
   let ready = relay(cell: move first);
   observe(cell: &ready, witness: &second);
   observe(cell: &second, witness: &ready);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_checked(source, |checked| {
@@ -765,11 +758,11 @@ fn physical_call_inventory_closes_a_recursive_edge_on_its_own_variant() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let held = box_new::<u64>(value: 1_u64);
   let start = True();
   descend(cell: &held, again: start);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_checked(source, |checked| {
@@ -811,7 +804,7 @@ fn main() -> status: ExitStatus pure {
 }
 
 fn source_call<'program>(
-    program: &'program IrProgram<'_, '_, '_>,
+    program: &'program IrProgram,
     caller: &str,
     callee: &str,
 ) -> (&'program IrSourceCall, &'program [IrValueId]) {
@@ -826,10 +819,7 @@ fn source_call<'program>(
         .expect("the source call must have retained use metadata")
 }
 
-fn function<'program>(
-    program: &'program IrProgram<'_, '_, '_>,
-    name: &str,
-) -> &'program IrFunction {
+fn function<'program>(program: &'program IrProgram, name: &str) -> &'program IrFunction {
     program
         .functions()
         .iter()
@@ -995,14 +985,14 @@ fn select(stamp: u64, value: &Row) -> result: u64 reads(value) {
   return deref(value).value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let rows = slots_new::<Row, 2>();
   let first = Row(value: 3_u64);
   place_back(window: &rows, value: first);
   let second = Row(value: 5_u64);
   place_back(window: &rows, value: second);
   let observed = select(stamp: 7_u64, value: &rows[1_u64]);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1042,8 +1032,8 @@ fn counted_range_cfg_emits_with_distinct_header_update_and_exit_interfaces() {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1109,8 +1099,8 @@ fn leave_by_return(stop: Bool) -> result: u64 pure {
   return 7_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1205,8 +1195,8 @@ fn counted_range_carries_one_stable_binder_address_for_body_local_shared_borrows
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1248,8 +1238,8 @@ fn nested_counted_breaks_keep_each_exit_interface_local_to_its_range() {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1370,10 +1360,10 @@ fn ordinary_requires_is_not_lowered_as_a_callee_prologue() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = 4_u64;
   let result = bounded(value: value);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1413,8 +1403,8 @@ fn prove_only(left: u64, left_limit: u64, middle: u64, middle_limit: u64, right:
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1460,7 +1450,7 @@ fn stored_layout_ceilings_agree_across_lowering() {
         ("Layer66", 8, 8),
     ] {
         let source = format!(
-            "{declarations}fn main() -> status: ExitStatus pure {{\n  let cells = box_slots_new::<{stored}>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return exit_status(code: 0_u8);\n}}\n"
+            "{declarations}fn main() -> status: std::process::ExitStatus pure {{\n  let cells = box_slots_new::<{stored}>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir(source.as_bytes(), |program| {
             let expected = super::IrLayoutCeiling {
@@ -1528,10 +1518,10 @@ fn small(n: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   allocate(n: 4_u64);
   small(n: 3_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1633,8 +1623,8 @@ fn an_uninhabited_function_keeps_its_abi_and_lowers_to_one_unreachable_block() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
@@ -1669,8 +1659,8 @@ fn impossible(value: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_checked(source, |checked| {
@@ -1686,9 +1676,10 @@ fn main() -> status: ExitStatus pure {
         ));
         assert!(impossible.body.iter().flatten().any(|statement| matches!(
             statement,
-            crate::semantic::CheckedStatement::Evaluate(
-                crate::semantic::CheckedExpression::UserCall { .. }
-            )
+            crate::semantic::CheckedStatement::Evaluate {
+                value: crate::semantic::CheckedExpression::UserCall { .. },
+                ..
+            }
         )));
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("proof-closed functions retain their physical signature");
@@ -1701,7 +1692,6 @@ fn main() -> status: ExitStatus pure {
             variant.calls.is_empty(),
             "a proof-closed body has no executable calls"
         );
-        assert!(variant.releases.is_empty());
     });
 }
 
@@ -1711,7 +1701,7 @@ fn a_buffer_release_retains_its_owned_storage_type() {
     // A runtime-capacity `Array<u8>` exists only as `Box` content [TYPE-9],
     // so the owner released here is the cell.
     with_ir(
-        b"fn drop_buffer(values: Box<Array<u8>>) -> result: unit pure {\n  return unit;\n}\n\nfn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn drop_buffer(values: Box<Array<u8>>) -> result: unit pure {\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |program| {
             let [drop] = return_drops(function(program, "drop_buffer")) else {
                 panic!("the buffer owner must be released once");
@@ -1733,14 +1723,14 @@ fn a_buffer_release_retains_its_owned_storage_type() {
 /// and `{STEP}` varied per case.
 fn byte_walk_source(middle: &str, step: &str) -> Vec<u8> {
     format!(
-        "fn main() -> status: ExitStatus pure {{\n  let data = box_array_filled::<u8>(count: 64_u64, value: 97_u8);\n  let mark = 88_u8;\n  let seen = 0_u64;\n  let stop = data.inner.len;\n  let cursor = 0_u64;\n  loop @walk {{\n    let done = cursor >= stop;\n    if done {{\n      break @walk;\n    }}\n    let byte = data.inner[cursor];\n{middle}    set cursor = cursor +wrap {step};\n  }}\n  return exit_status(code: 0_u8);\n}}\n"
+        "fn main() -> status: std::process::ExitStatus pure {{\n  let data = box_array_filled::<u8>(count: 64_u64, value: 97_u8);\n  let mark = 88_u8;\n  let seen = 0_u64;\n  let stop = data.inner.len;\n  let cursor = 0_u64;\n  loop @walk {{\n    let done = cursor >= stop;\n    if done {{\n      break @walk;\n    }}\n    let byte = data.inner[cursor];\n{middle}    set cursor = cursor +wrap {step};\n  }}\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     )
     .into_bytes()
 }
 
 const NEUTRAL_MIDDLE: &str = "    let newline = byte == 10_u8;\n    if newline {\n      set seen = seen +wrap 1_u64;\n    }\n    let lead = byte == mark;\n    if lead {\n      set seen = seen +wrap 2_u64;\n    }\n";
 
-fn probe_needle_counts(program: &IrProgram<'_, '_, '_>) -> Vec<usize> {
+fn probe_needle_counts(program: &IrProgram) -> Vec<usize> {
     program
         .functions()
         .iter()

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn release_empty_fixed<T, const n: u64>(run: Slots<T, n>) -> result: unit pure contract {
   requires run.len == 0_u64;
 } {

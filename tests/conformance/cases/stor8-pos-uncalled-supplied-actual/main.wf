@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn allocate() -> result: u8 pure {
+  let cell = box_new::<u8>(value: 1_u8);
+  return 0_u8;
+}
+
+fn keep<fn work() -> result: u8 pure>() -> result: u8 pure {
+  doc "This body never calls `work`, so the allocating actual it is supplied never runs for the entry and imposes no heap requirement on it.";
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = keep::<fn allocate>();
+  return exit_status(code: code);
+}

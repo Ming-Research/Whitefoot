@@ -1,0 +1,34 @@
+alias ExitStatus = std::process::ExitStatus;
+alias VectorDrain = std::collections::vector::VectorDrain;
+alias exit_status = std::process::exit_status;
+alias grow_vector_append = std::collections::vector::grow_vector_append;
+alias grow_vector_drain = std::collections::vector::grow_vector_drain;
+alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
+alias grow_vector_new = std::collections::vector::grow_vector_new;
+
+fn add(env: &u64, value: u64) -> result: unit writes(env) {
+  set deref(env) = deref(env) +wrap value;
+  return unit;
+}
+
+binding Add : VectorDrain<u64, u64> {
+  accept = add;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = grow_vector_new::<u64, 4>();
+  let total = 0_u64;
+  grow_vector_drain::<Add, 4>(values: &values, env: &total);
+  let first = grow_vector_append::<u64, 4>(values: &values, value: 20_u64);
+  let second = grow_vector_append::<u64, 4>(values: &values, value: 22_u64);
+  grow_vector_drain::<Add, 4>(values: &values, env: &total);
+  grow_vector_free_empty::<u64, 4>(values: move values);
+  match cvt.checked::<u64, u8>(total) {
+    Ok(value: code) => {
+      return exit_status(code: code);
+    }
+    Err(error: refused) => {
+      return exit_status(code: 255_u8);
+    }
+  }
+}

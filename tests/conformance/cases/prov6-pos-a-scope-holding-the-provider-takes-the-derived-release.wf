@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn consume(run: Slots<u8, 2>) -> code: u8 pure contract {
   requires run.len > 0_u64;
 } {

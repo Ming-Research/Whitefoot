@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn mix(a: &Slots<u8, 4>, b: &Slots<u8, 4>) -> function_result: unit reads(b), writes(a) contract {
   requires 1_u64 <= deref(a).len;
   requires 1_u64 <= deref(b).len;

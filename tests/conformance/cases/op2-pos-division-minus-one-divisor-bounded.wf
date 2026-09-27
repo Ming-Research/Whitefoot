@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn negate(n: i32) -> return_value: i32 pure {
   doc "The same `-1` divisor with a dominating branch bounding the dividend above i32::MIN [ENT-3]. Both conjuncts of the division obligation discharge in the complete state [ENT-6], so the site keeps no runtime test and the row stays `pure`.";
   if n > -2147483648_i32 {

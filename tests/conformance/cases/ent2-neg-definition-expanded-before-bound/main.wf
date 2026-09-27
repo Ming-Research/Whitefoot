@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Node = pkg::kinds::Node;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn child_count(nodes: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(nodes), reads(kids) contract {
+  define width = deref(nodes)[i].count;
+  requires width <= deref(kids).len;
+  requires i < deref(nodes).len;
+} {
+  doc "ENT-2, FN-8, OP-4: the definition's place is formed in the first requirement that expands it, which precedes the bound, so its subscript owes an unproved i < deref(nodes).len there; the later requirement does not reach back.";
+  return deref(nodes).len +wrap deref(kids).len;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Declaration only.";
+  return exit_status(code: 0_u8);
+}

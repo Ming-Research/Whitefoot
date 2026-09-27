@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn touch_after_move(value: Slots<u8, 2>) -> result: u8 pure {
   doc "Accesses rooted only in local storage contribute no enclosing formal-rooted effect, so the row stays pure after the parameter has been moved into a local.";
   let moved = move value;

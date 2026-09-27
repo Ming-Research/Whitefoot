@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "After a front removal and a back placement the ring's window wraps and head is nonzero, and a subscript is still a logical offset whose OP-4 obligation is against len and never against cap or head. The free slots reread after the front removal is what discharges the next placement, because take_front replaces the whole window state.";
   let run = ring_new::<u8, 3>();

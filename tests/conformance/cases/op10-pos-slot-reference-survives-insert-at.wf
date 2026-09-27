@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10, REF-2: insert_at's ensures carries held = &w[1_u64]'s bound 1 < w.len across the call, and its content write of w.filled leaves a slot reference naming its slot, whose occupant has changed: after inserting 9 at index 0, slot 1 holds 1.";
+  let w = slots_new::<u64, 4>();
+  place_back(window: &w, value: 1_u64);
+  place_back(window: &w, value: 2_u64);
+  if w.len == 2_u64 {
+    let held = &w[1_u64];
+    insert_at(window: &w, index: 0_u64, value: 9_u64);
+    let seen = deref(held);
+    if seen == 1_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}

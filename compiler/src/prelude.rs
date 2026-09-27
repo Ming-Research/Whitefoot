@@ -1,12 +1,13 @@
 //! Ordinary PRE-1 declaration records, parsed by the same grammar as source declarations.
-//! An opaque record has a refused constructor [TYPE-2]; a host handle has no
-//! fields and the cell `Box` has one; function signatures have no body.
+//! An opaque record has a refused constructor [TYPE-2] and the cell `Box` has
+//! one field; function signatures have no body. The host declarations are
+//! the standard library's host modules [PRE-2], not prelude records.
 
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the three storage shapes first, then the cell, then the
-    // fourteen host handles. [TYPE-2] makes each of the four an opaque struct
+    // [PRE-1] writes the three storage shapes first, then the cell. [TYPE-2]
+    // makes each of the four an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -21,8 +22,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     // `slots_new<T, const n: u64>` of the same fence does.
     //
     // [OWN-1] `Array` carries no capability modifier, so an instance has the
-    // capabilities of its element; `Slots`, `Ring`, `Box` and the host
-    // handles are `nocopy`, or `nodrop` where the handle must be closed.
+    // capabilities of its element; `Slots`, `Ring` and `Box` are `nocopy`.
     (
         "prelude/Array.wf",
         PreludeSource::Opaque,
@@ -50,8 +50,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // [PRE-1] writes the cell after the three shapes and ahead of the fourteen
-    // [TYPE-2] makes it an opaque struct with one field and a constructor
+    // [PRE-1] writes the cell after the three shapes. [TYPE-2] makes it an
+    // opaque struct with one field and a constructor
     // entry that exists to be refused.
     //
     // [GRAM-2]'s `gparam := TYPEID (":" (TYPEID | capability_bound))?` makes
@@ -64,413 +64,6 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"opaque nocopy struct Box<T> {
   inner: T;
 }
-"#,
-    ),
-    (
-        "prelude/Args.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct Args {
-}
-"#,
-    ),
-    (
-        "prelude/HostString.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct HostString {
-}
-"#,
-    ),
-    (
-        "prelude/RelativePath.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct RelativePath {
-}
-"#,
-    ),
-    (
-        "prelude/DirectoryRead.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct DirectoryRead {
-}
-"#,
-    ),
-    (
-        "prelude/ReadFile.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct ReadFile {
-}
-"#,
-    ),
-    (
-        "prelude/OutputStream.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct OutputStream {
-}
-"#,
-    ),
-    (
-        "prelude/ExitStatus.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct ExitStatus {
-}
-"#,
-    ),
-    (
-        "prelude/DirectorySource.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct DirectorySource {
-}
-"#,
-    ),
-    (
-        "prelude/HandleFactory.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct HandleFactory {
-}
-"#,
-    ),
-    (
-        "prelude/InputStream.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct InputStream {
-}
-"#,
-    ),
-    (
-        "prelude/SocketAddress.wf",
-        PreludeSource::Opaque,
-        r#"opaque nocopy struct SocketAddress {
-}
-"#,
-    ),
-    (
-        "prelude/TcpListener.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct TcpListener {
-}
-"#,
-    ),
-    (
-        "prelude/TcpReceive.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct TcpReceive {
-}
-"#,
-    ),
-    (
-        "prelude/TcpSend.wf",
-        PreludeSource::Opaque,
-        r#"opaque nodrop struct TcpSend {
-}
-"#,
-    ),
-    (
-        "prelude/structs.wf",
-        PreludeSource::Items,
-        r#"struct TcpConnection {
-  receive: TcpReceive;
-  send: TcpSend;
-}
-
-struct AcceptedConnection {
-  connection: TcpConnection;
-  peer: SocketAddress;
-}
-
-struct Inputs {
-  args: Args;
-  cwd: DirectoryRead;
-  stdout: OutputStream;
-  stderr: OutputStream;
-  handles: HandleFactory;
-  stdin: InputStream;
-}
-"#,
-    ),
-    (
-        "prelude/types.wf",
-        PreludeSource::Items,
-        r#"enum ArgError {
-  InvalidIndex();
-}
-
-enum Utf8Error {
-  Utf8Invalid();
-}
-
-enum CopyError {
-  CopyTooSmall(required: u64);
-}
-
-enum Utf8CopyError {
-  Utf8CopyTooSmall(required: u64);
-  Utf8CopyInvalid();
-}
-
-enum PathError {
-  PathInvalid();
-}
-
-enum ReadStop {
-  ReadEnd();
-  ReadFailed(error: IoError);
-}
-
-enum IoError {
-  NotFound(code: u32, origin: u8);
-  PermissionDenied(code: u32, origin: u8);
-  AlreadyExists(code: u32, origin: u8);
-  NotDirectory(code: u32, origin: u8);
-  IsDirectory(code: u32, origin: u8);
-  DirectoryNotEmpty(code: u32, origin: u8);
-  ReadOnly(code: u32, origin: u8);
-  ResourceBusy(code: u32, origin: u8);
-  InvalidInput(code: u32, origin: u8);
-  InvalidPath(code: u32, origin: u8);
-  Unsupported(code: u32, origin: u8);
-  TimedOut(code: u32, origin: u8);
-  BrokenPipe(code: u32, origin: u8);
-  WriteZero(code: u32, origin: u8);
-  UnexpectedEnd(code: u32, origin: u8);
-  ConnectionRefused(code: u32, origin: u8);
-  ConnectionReset(code: u32, origin: u8);
-  ConnectionAborted(code: u32, origin: u8);
-  NotConnected(code: u32, origin: u8);
-  AddressInUse(code: u32, origin: u8);
-  AddressUnavailable(code: u32, origin: u8);
-  ResourceExhausted(code: u32, origin: u8);
-  FileTooLarge(code: u32, origin: u8);
-  NoSpace(code: u32, origin: u8);
-  QuotaExceeded(code: u32, origin: u8);
-  CrossDevice(code: u32, origin: u8);
-  DeviceFailure(code: u32, origin: u8);
-  Other(code: u32, origin: u8);
-}
-
-enum ListStop {
-  ListEnd();
-  ListFailed(error: IoError);
-}
-"#,
-    ),
-    (
-        "prelude/args_count.wf",
-        PreludeSource::Function,
-        r#"fn args_count(args: &Args) -> result: u64 reads(args);
-"#,
-    ),
-    (
-        "prelude/arg_get.wf",
-        PreludeSource::Function,
-        r#"fn arg_get(args: &Args, position: u64) -> result: Result<HostString, ArgError> reads(args);
-"#,
-    ),
-    (
-        "prelude/host_bytes_len.wf",
-        PreludeSource::Function,
-        r#"fn host_bytes_len(value: &HostString) -> result: u64 reads(value);
-"#,
-    ),
-    (
-        "prelude/host_copy_bytes.wf",
-        PreludeSource::Function,
-        r#"fn host_copy_bytes(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, CopyError> reads(value), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/host_utf8_len.wf",
-        PreludeSource::Function,
-        r#"fn host_utf8_len(value: &HostString) -> result: Result<u64, Utf8Error> reads(value);
-"#,
-    ),
-    (
-        "prelude/host_copy_utf8.wf",
-        PreludeSource::Function,
-        r#"fn host_copy_utf8(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, Utf8CopyError> reads(value), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/relative_path.wf",
-        PreludeSource::Function,
-        r#"fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure;
-"#,
-    ),
-    (
-        "prelude/open_read.wf",
-        PreludeSource::Function,
-        r#"fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory);
-"#,
-    ),
-    (
-        "prelude/read_at.wf",
-        PreludeSource::Function,
-        r#"fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/write_once.wf",
-        PreludeSource::Function,
-        r#"fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) contract {
-  requires start <= end;
-  requires end <= deref(source).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/exit_status.wf",
-        PreludeSource::Function,
-        r#"fn exit_status(code: u8) -> result: ExitStatus pure;
-"#,
-    ),
-    (
-        "prelude/open_directory.wf",
-        PreludeSource::Function,
-        r#"fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
-  requires start <= end;
-  requires end <= deref(name).len;
-};
-"#,
-    ),
-    (
-        "prelude/open_directory_source.wf",
-        PreludeSource::Function,
-        r#"fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory);
-"#,
-    ),
-    (
-        "prelude/directory_next.wf",
-        PreludeSource::Function,
-        r#"fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures start <= next;
-  ensures next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/open_file.wf",
-        PreludeSource::Function,
-        r#"fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) contract {
-  requires start <= end;
-  requires end <= deref(name).len;
-};
-"#,
-    ),
-    (
-        "prelude/close_read.wf",
-        PreludeSource::Function,
-        r#"fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory);
-"#,
-    ),
-    (
-        "prelude/close_directory.wf",
-        PreludeSource::Function,
-        r#"fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory);
-"#,
-    ),
-    (
-        "prelude/close_directory_source.wf",
-        PreludeSource::Function,
-        r#"fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory);
-"#,
-    ),
-    (
-        "prelude/read_next.wf",
-        PreludeSource::Function,
-        r#"fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/socket_address_v4.wf",
-        PreludeSource::Function,
-        r#"fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: SocketAddress pure;
-"#,
-    ),
-    (
-        "prelude/socket_address_v6.wf",
-        PreludeSource::Function,
-        r#"fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure;
-"#,
-    ),
-    (
-        "prelude/tcp_listen.wf",
-        PreludeSource::Function,
-        r#"fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory);
-"#,
-    ),
-    (
-        "prelude/tcp_accept.wf",
-        PreludeSource::Function,
-        r#"fn tcp_accept(factory: &HandleFactory, listener: &TcpListener) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener);
-"#,
-    ),
-    (
-        "prelude/tcp_connect.wf",
-        PreludeSource::Function,
-        r#"fn tcp_connect(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpConnection, IoError> reads(address), writes(factory);
-"#,
-    ),
-    (
-        "prelude/receive_next.wf",
-        PreludeSource::Function,
-        r#"fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(receive), writes(destination) contract {
-  requires start <= end;
-  requires end <= deref(destination).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/send_once.wf",
-        PreludeSource::Function,
-        r#"fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(send) contract {
-  requires start <= end;
-  requires end <= deref(source).len;
-  ensures when Ok(value: next): start <= next;
-  ensures when Ok(value: next): next <= end;
-};
-"#,
-    ),
-    (
-        "prelude/close_listener.wf",
-        PreludeSource::Function,
-        r#"fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory);
-"#,
-    ),
-    (
-        "prelude/close_receive.wf",
-        PreludeSource::Function,
-        r#"fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory);
-"#,
-    ),
-    (
-        "prelude/close_send.wf",
-        PreludeSource::Function,
-        r#"fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory);
 "#,
     ),
     (
@@ -674,9 +267,13 @@ mod tests {
     fn declarations_are_parsed_resolved_and_checked_as_ordinary_signatures() {
         let limits = CompilerLimits::default();
         let bundle = SourceBundle::with_prelude(
-            &[SourceInput::new("ordinary.wf", b"fn transfer(value: ReadFile) -> result: ReadFile pure {\n  return move value;\n}\n")],
+            &[SourceInput::new(
+                "ordinary.wf",
+                b"fn transfer(value: Bool) -> result: Bool pure {\n  return value;\n}\n",
+            )],
             limits.source,
-        ).expect("ordinary prelude source bundle");
+        )
+        .expect("ordinary prelude source bundle");
         let LexOutcome::Complete(lexed) = lex(&bundle, limits.lexer) else {
             panic!("ordinary prelude lexing");
         };
@@ -685,14 +282,14 @@ mod tests {
         else {
             panic!("ordinary prelude terminals");
         };
-        let parsed = parse(&classified, limits.parser);
+        let parsed = parse(classified, limits.parser);
         let ParseOutcome::Complete(parsed) = parsed else {
             panic!("ordinary prelude grammar: {parsed:?}");
         };
         let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
             panic!("ordinary prelude topology");
         };
-        let canonical = audit_canonical(finalized, limits.canonical);
+        let canonical = audit_canonical(*finalized, limits.canonical);
         let CanonicalOutcome::Complete(canonical) = canonical else {
             panic!("ordinary prelude canonical bytes: {canonical:?}");
         };
@@ -700,7 +297,7 @@ mod tests {
         let ResolutionOutcome::Complete(resolved) = resolved else {
             panic!("ordinary prelude resolution: {resolved:?}");
         };
-        let checked = check_semantics(resolved);
+        let checked = check_semantics(&resolved);
         let SemanticOutcome::Complete(checked) = checked else {
             panic!("ordinary declaration and owned transfer: {checked:?}");
         };
@@ -710,14 +307,14 @@ mod tests {
             .iter()
             .filter(|function| function.body.is_none())
             .count();
-        // [PRE-1]'s 29 host records are non-generic, so each one is checked as
-        // itself and is one body-less signature here. The twenty
-        // compiler-owned rows beside them — the nine construction functions
-        // [OP-13], the nine window operations [OP-10], `swap` [OP-11] and
-        // `free_empty` [OP-14] — are every one of them generic, so [FN-2]
-        // gives them a checked function only per concrete instance and this
-        // unit, which calls none of them, has no instance of any.
-        assert_eq!(signatures, 29);
+        // [PRE-1] keeps no host record: the host signatures are the standard
+        // library's [PRE-2], which this unit names none of. The twenty
+        // compiler-owned rows — the nine construction functions [OP-13], the
+        // nine window operations [OP-10], `swap` [OP-11] and `free_empty`
+        // [OP-14] — are every one of them generic, so [FN-2] gives them a
+        // checked function only per concrete instance and this unit, which
+        // calls none of them, has no instance of any.
+        assert_eq!(signatures, 0);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert!(
                 !checked
@@ -742,10 +339,40 @@ mod tests {
             .find(|function| function.name == "transfer")
             .expect("ordinary source function");
         assert!(transferred.body.is_some());
-        assert!(checked.data.nominals.iter().any(|nominal| {
-            nominal.name == "ReadFile"
-                && nominal.linear
-                && matches!(nominal.kind, crate::semantic::CheckedNominalKind::Opaque)
-        }));
+    }
+
+    /// [PRE-1] the records are the specification's text: the opaque struct
+    /// fence and the function fence, record for record and in order. The
+    /// fences write the capacity parameter as `const n: u64`, the spelling a
+    /// record parses with.
+    #[test]
+    fn the_records_are_the_specification_text() {
+        let section = crate::spec::ACTIVE_KERNEL_SPEC_TEXT
+            .split("\n[PRE-1] ")
+            .nth(1)
+            .and_then(|rest| rest.split("\n[PRE-2] ").next())
+            .expect("the specification states PRE-1");
+        let fences: Vec<&str> = section.split("```\n").skip(1).step_by(2).collect();
+        let [structs, _enums, functions] = fences.as_slice() else {
+            panic!("PRE-1 states its structs, enums and functions in three fences");
+        };
+        let mut stated: Vec<String> = structs
+            .split("\n\n")
+            .map(|record| format!("{}\n", record.trim_end()))
+            .collect();
+        let mut function = String::new();
+        for line in functions.lines() {
+            if line.starts_with("fn ") && !function.is_empty() {
+                stated.push(std::mem::take(&mut function));
+            }
+            function.push_str(line);
+            function.push('\n');
+        }
+        stated.push(function);
+        let carried: Vec<&str> = super::DECLARATIONS
+            .iter()
+            .map(|(_, _, source)| *source)
+            .collect();
+        assert_eq!(carried, stated);
     }
 }

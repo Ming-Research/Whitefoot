@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Block {
+  bytes: Slots<u8, 4>;
+}
+
+fn pass_block(block: Block) -> result: Block pure contract {
+  ensures result.bytes.cap == block.bytes.cap;
+  ensures result.bytes.len == block.bytes.len;
+} {
+  doc "A measure reached from the result place through a struct field is an admitted operand, and returning the moved parameter proves both relations.";
+  return move block;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The relation over `result.bytes.len` is instantiated at the binder `made`, so the caller reads `made.bytes[0_u64]` with the length the construction established; without that ensures the read's bounds obligation has no premise.";
+  let run = slots_new::<u8, 4>();
+  place_back(window: &run, value: 7_u8);
+  let block = Block(bytes: move run);
+  let made = pass_block(block: move block);
+  let first = made.bytes[0_u64];
+  return exit_status(code: first);
+}

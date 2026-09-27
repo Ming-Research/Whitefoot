@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const percent_input: Array<u8, 11> =[65_u8, 37_u8, 52_u8, 50_u8, 37_u8, 52_u8, 97_u8, 37_u8, 122_u8, 122_u8, 37_u8];
 
 fn decode(out: &[u8], src: &[u8]) -> result: u64 reads(src), writes(out) contract {
