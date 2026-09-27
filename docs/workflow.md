@@ -67,6 +67,32 @@ branch. [AGENTS.md](../AGENTS.md#branch-and-main-boundary) holds the rules.
 | Review scope | `make review-scope` | At completion | — | What a review covers, and at what depth |
 | Archive hooks | `make install-hooks` | At commit, optional | — | Released specification archives unchanged |
 
+Focused commands for a compiler change, before `make static`:
+
+```sh
+make -C compiler format lint
+make -C compiler build        # optimized compiler only
+make -C compiler test-build   # construct test executables without running cases
+perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib <filter>
+```
+
+- `make check` also needs `python3`, LLD on Linux (`ld.lld`) and the `time`
+  utility.
+- Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
+  as the `make` targets already do. It holds one host-wide lock across
+  worktrees, prints wall, user and system time with a report every 30
+  seconds, and stops a command after 30 minutes unless
+  `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. After an
+  uncatchable stop, inspect the recorded PID and command before removing a
+  stale lock.
+- The `gate` Cargo profile builds the Rust compiler with optimization, debug
+  assertions and overflow checks; it does not change how WF source is
+  compiled. Local builds of it are incremental; CI sets
+  `CARGO_INCREMENTAL=0`.
+- For a slow compiler test, set `WHITEFOOT_TEST_TIMINGS` to a scratch TSV
+  path to record the phases of the shared test helpers; see the
+  [build and test investigation](../research/investigations/test-economy/build-and-test.md).
+
 ## Document roles
 
 Use the row for the file being edited. A brief summary or relevant technical

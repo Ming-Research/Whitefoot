@@ -269,9 +269,10 @@ revising compiler code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
 exploratory timing runs only when requested. Use the guarded verification
-targets in README, or wrap other local heavy builds, suites and benchmarks
-with `perl .github/run-check.pl <label> <command> ...`, including commands
-from other worktrees. Inspect an existing owner's PID instead of starting
+targets in the [workflow map](docs/workflow.md#checks), or wrap other local
+heavy builds, suites and benchmarks with
+`perl .github/run-check.pl <label> <command> ...`, including commands from
+other worktrees. Inspect an existing owner's PID instead of starting
 another heavy command. Separate build time from test/program execution,
 investigate a stage that exceeds its observed cost, and preserve the full gate
 before merge.
