@@ -53,7 +53,7 @@ pub(super) struct MatchResult {
 /// read to decide whether the match goes through a reference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScrutineeSpelling {
-    /// `&x`: a `borrow_expr` naming the enum's own path [REF-1]. No `deref`
+    /// `&x`: a `borrow_expr` naming the enum's own path [REF-1]. No `^`
     /// step stands between the expression and the enum it names.
     Borrowed,
     /// `p^` and anything selected below it: the storage a reference

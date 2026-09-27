@@ -120,7 +120,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// [TYPE-9, WIN-3] `let n = move b.inner;` consumes the cell, yields its
 /// content and frees the cell.
 ///
-/// This replaces the retired `move owner^` capability stop: the v0.59
+/// This replaces the retired `move deref(owner)` capability stop: the v0.59
 /// checker answered an affine referent move with
 /// `UnsupportedSemanticFeature::BoxReferentMove`, and v0.60 states the
 /// unboxing outright. The one remaining refusal — a move of a

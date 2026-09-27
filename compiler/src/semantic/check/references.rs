@@ -81,7 +81,7 @@ pub(super) const REF4_RING: &str = "a ring hands out single slots; take the elem
 /// [WIN-3]'s restructuring for a move out of a window slot or array element.
 pub(super) const WIN3_NO_TAKE: &str = "use take_back, remove_at, or swap [OP-10, OP-11]";
 
-/// [OWN-1]'s restructuring for a `move` of a place reached through a `deref`.
+/// [OWN-1]'s restructuring for a `move` of a place reached through a `^`.
 pub(super) const OWN1_ROOTED_CONSUME: &str =
     "consume a place rooted in a live own-mode binding of this function";
 
@@ -762,7 +762,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(place_node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        // `deref` is an ordinary path step [TYPE-7], so a `borrow_expr` over
+        // `^` is an ordinary source path step [TYPE-7], so a `borrow_expr` over
         // one is an ordinary formation; the root of the complete path is what
         // decides the judgment.
         //
@@ -1073,7 +1073,7 @@ impl<'unit> Checker<'_, 'unit> {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
         // [REF-4] re-slicing: the base is the run another range names, whose
-        // element type the `deref` already selected [TYPE-7].
+        // element type the `^` already selected [TYPE-7].
         let range_base =
             written_deref && root_binding.is_some_and(|local| local.mode == CheckedMode::Range);
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
@@ -1254,7 +1254,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// callable boundary declares [EFF-1, EFF-2].
     ///
     /// The path is complete wherever [EFF-1] can express it: field
-    /// selections, `deref`, payload steps, window parts and measures map one
+    /// selections, Box-content steps, payload steps, window parts and measures map one
     /// for one, and an index or range position maps only when the value it
     /// captured is a value parameter of the same callable, which is the only
     /// index spelling a signature admits. Anything else is a dynamic element
@@ -1562,7 +1562,7 @@ impl<'unit> TypeContext<'unit> {
             },
             // [OP-4, TYPE-9] a storage shape is an indexable base, so a shape
             // holder written where its referent is required is the same
-            // [TYPE-7] missing `deref`.
+            // [TYPE-7] missing `^`.
             RequiredReferent::IndexableStorage => matches!(
                 ty,
                 CheckedType::Array { .. } | CheckedType::Buffer { .. } | CheckedType::Window { .. }

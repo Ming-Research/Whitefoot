@@ -1570,7 +1570,7 @@ impl CheckedBufferRoot {
 /// [TYPE-8] makes `&[T]` a reference kind and not a type, so no storage ever
 /// holds one and no field path reaches one, and the root is that binding
 /// alone. The element type travels beside it because [TYPE-7] makes the
-/// referent a `deref` selects the element type, so [MSR-1]'s one `len` row
+/// referent a `^` selects the element type, so [MSR-1]'s one `len` row
 /// cannot be recovered from the selected type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedRangeRoot {
@@ -1733,14 +1733,13 @@ pub(crate) struct CheckedContainerRoot {
 }
 
 /// One step below a storage place's root [REF-1]: a field selection, one
-/// `deref` of `Box` content [TYPE-7], or one [OP-4] subscript together with
+/// `Box.inner` selection [TYPE-9], or one [OP-4] subscript together with
 /// the obligation that subscript owes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
-    /// One explicit dereference of `Box` content [TYPE-7]. It is an ordinary
-    /// path step of the resolved place, so `h^.value` and
-    /// `h.value^` are two places [REF-1].
+    /// One `Box.inner` selection [TYPE-9]. It is an ordinary path step
+    /// whose position is preserved in the resolved place [REF-1].
     BoxReferent(NominalId),
     Subscript(Box<CheckedPlaceSubscript>),
 }
@@ -1980,10 +1979,9 @@ fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
 impl CheckedPlaceStep {
     /// The [REF-1] path step this selection is.
     ///
-    /// `deref` is a step of its own here, where v0.59 erased it: [REF-1]
-    /// continues a path through `Box` content, and [OWN-7] reads the complete
-    /// resolved path, so erasing the step would make `h^.value` and
-    /// `h.value` one place.
+    /// The internal `Deref` step preserves `Box.inner` selection [TYPE-9]:
+    /// [REF-1] continues a path through the cell's content, and [OWN-7]
+    /// compares the complete resolved path, including that step.
     /// The [FN-9] clause-side projection this step is, for a goal place.
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
         match self {
@@ -2641,7 +2639,7 @@ pub(crate) struct CheckedStatePath {
     pub(crate) steps: Vec<CheckedEffectStep>,
 }
 
-/// One `epsuffix`, or one `deref`, of a declared effect path [EFF-1].
+/// One resolved selector of a declared effect path [EFF-1].
 ///
 /// This is the formal twin of [`super::places::PlaceStep`]: the same five
 /// storage selectors plus the two name families [TYPE-10] admits in a row,
@@ -2654,7 +2652,7 @@ pub(crate) struct CheckedStatePath {
 pub(crate) enum CheckedEffectStep {
     /// `.IDENT` selecting a struct field, by source ordinal.
     Field(u32),
-    /// `path^`: `Box` content [TYPE-7].
+    /// `.inner`: `Box` content [TYPE-9].
     Deref,
     /// `.TYPEID.IDENT`: one enum payload step, by variant and field ordinal.
     Payload { variant: u32, field: u32 },

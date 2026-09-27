@@ -1090,8 +1090,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-8",
         // [OP-15] spells a measure read through a reference `names^.len`;
-        // the renderer currently drops the `deref`. The pinned sentence is the
-        // specification spelling and stays failing until the renderer is fixed.
+        // the pinned sentence preserves that explicit reference step.
         sentences: &["\n  instantiated_goal: 9_u64 <= names^.len\n"],
     },
     Probe {
@@ -1250,6 +1249,65 @@ fn main() -> status: std::process::ExitStatus pure {
             "an affine factor calls something other than a measure former",
             "write P.len, P.cap or P.head over a measured place",
         ],
+    },
+    // Typed reference, field and Box-content steps retain their source spelling.
+    Probe {
+        name: "entry-box-content.wf",
+        source: br#"fn clear(cell: &Box<Slots<u8, 4>>) -> result: unit writes(cell) contract {
+  ensures cell^.inner.len == entry(cell)^.inner.len;
+} {
+  let empty = slots_new::<u8, 4>();
+  let boxed = box_new::<Slots<u8, 4>>(value: move empty);
+  set cell^ = move boxed;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-9",
+        sentences: &["\n  relation: cell^.inner.len = entry(cell)^.inner.len\n"],
+    },
+    Probe {
+        name: "entry-field-box-content.wf",
+        source: br#"struct Holder {
+  storage: Box<Slots<u8, 4>>;
+}
+
+fn clear(cell: &Holder) -> result: unit writes(cell) contract {
+  ensures cell^.storage.inner.len == entry(cell)^.storage.inner.len;
+} {
+  let empty = slots_new::<u8, 4>();
+  let boxed = box_new::<Slots<u8, 4>>(value: move empty);
+  set cell^.storage = move boxed;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-9",
+        sentences: &["\n  relation: cell^.storage.inner.len = entry(cell)^.storage.inner.len\n"],
+    },
+    Probe {
+        name: "loop-invariant-box-content.wf",
+        source: br#"fn probe(cell: &Box<Slots<u8, 4>>) -> result: unit pure {
+  for (
+    i in 0_u64..1_u64,
+    invariant filled: cell^.inner.len == 1_u64
+  ) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "INV-1",
+        sentences: &["\n  required_relation: cell^.inner.len <= 1_u64\n"],
     },
     // Retired with the rules whose sentences they pinned. Each probe below
     // cited a rule v0.60 does not have, so the sentence it compared no longer

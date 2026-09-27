@@ -870,7 +870,7 @@ impl<'unit> Checker<'_, 'unit> {
                 ty: *ty,
             }),
             // [FN-9] a parameter or named-const datum carries field and
-            // `deref` projections only: a subscripted readonly field is an
+            // Box-content projections only: a subscripted readonly field is an
             // [ENT-2] clause (b) term a requirement may name, but no relation
             // datum in this version, and only a measure member of a formal
             // place reaches a relation through a subscript (the arm below).

@@ -485,7 +485,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_recursive_exchange_of_two_linear_owners_uses_swap() {
-    // v0.59 wrote `let previous = replace target^ = move incoming;` and
+    // v0.59 wrote `let previous = replace deref(target) = move incoming;` and
     // returned the displaced owner. [WIN-3] refuses an assignment over a
     // linear owned place because a linear value has no release, and [OP-11]
     // `swap` is the exchange that exists precisely because no source body can

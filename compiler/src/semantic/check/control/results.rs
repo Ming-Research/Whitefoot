@@ -736,7 +736,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `owned` when it names owned storage directly, with no reference and no
     /// element on its path, so that its parts can move out [OWN-1, WIN-3];
     /// and the spelling that reads it as a place, which steps through a
-    /// reference variable written bare with `deref` [TYPE-7].
+    /// reference variable followed by `^` [TYPE-7].
     pub(super) fn consumed_place(
         &self,
         check_context: &CheckContext<'_>,

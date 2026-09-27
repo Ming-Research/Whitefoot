@@ -82,7 +82,7 @@ pub(super) struct ElaboratedPlace {
     /// always the last written suffix and the place it is read over is the
     /// one this record otherwise describes.
     pub(super) measure: Option<super::super::super::model::CheckedMeasure>,
-    /// Whether the written base was `deref` of a `&[T]` range reference
+    /// Whether the written path starts with `^` on a `&[T]` range reference
     /// [REF-4]. [MSR-1] gives `&[T]` its own row, whose one cell is the
     /// range's element count, and the referent type the deref selects is the
     /// element type, so the row cannot be recovered from that type.
@@ -1309,7 +1309,7 @@ impl<'unit> TypeContext<'unit> {
     /// expression that names the same storage at this point of the body.
     ///
     /// A reference parameter roots every path that goes through it, and the
-    /// storage it names is written under `deref` [REF-1, TYPE-7]; a local
+    /// storage it names is written under `^` [REF-1, TYPE-7]; a local
     /// reference never roots a resolved place, because resolution replaced it
     /// by the path it names. A `Box` content step is the field `inner`
     /// [TYPE-9] and a payload step names its variant and field [FORM-2]. An

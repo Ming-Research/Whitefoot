@@ -48,7 +48,7 @@ impl CheckedArrayPlace {
 
 /// One indexable base reached through a `&[T]` range reference [REF-4].
 ///
-/// [TYPE-7] makes the referent a `deref` of a range reference selects the
+/// [TYPE-7] makes the referent a `^` of a range reference selects the
 /// element type, so the measure-table row [MSR-1] gives `&[T]` cannot be
 /// recovered from that type; this place carries the row by construction.
 #[derive(Clone)]
@@ -259,7 +259,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// Chooses the subscript that establishes the indexable base of a place.
     ///
     /// Ordinary nested storage is addressed inside-out, so its final
-    /// subscript selects the value read or written. A `deref` of a range
+    /// subscript selects the value read or written. A `^` of a range
     /// reference is different: its first subscript selects the range element,
     /// and every later subscript is a typed suffix below that element. Keep
     /// that distinction here so reads, writes and measures all form the same
@@ -1549,7 +1549,7 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// One indexable place written through an explicit `^` [TYPE-7].
     ///
-    /// The `deref` names a reference's referent, so the place is resolved by
+    /// The `^` names a reference's referent, so the place is resolved by
     /// the ordinary [REF-1] walk and the written suffixes continue it. The
     /// v0.59 companion of this function also had to answer for a view
     /// descriptor reached through a holder; views are gone, so one indexable

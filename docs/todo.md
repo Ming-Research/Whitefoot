@@ -1971,7 +1971,9 @@ condition under which it is taken up.
   `&strip^[i][1_u64..3_u64]`, where `strip` is a range reference, is
   refused as the unsupported capability `ReferenceFormation` by the v0.73
   and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
-  any step between the `deref` and the range. REF-4 admits the form, and
+  any step between the reference-access step and the range. The examples
+  here use the current caret spelling; the observations used the baseline
+  `deref` spelling and have not been remeasured on v0.76. REF-4 admits the form, and
   binding the row first, `let row = &strip^[i];` and then
   `&row^[1_u64..3_u64]`, is accepted. Validate with the direct form
   accepted and its separations and REF-2 invalidations matching the bound

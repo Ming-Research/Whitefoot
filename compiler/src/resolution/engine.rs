@@ -815,8 +815,7 @@ fn selector_spelling(
 }
 
 /// [SET-1, GRAM-4, GRAM-5] every `pbase` role that is a bare `set` target: the
-/// base of a target `place` of a `set_stmt`, written with no `psuffix` and no
-/// `deref`.
+/// base of a target `place` of a `set_stmt`, written with no `psuffix`.
 ///
 /// Each such role index maps to its `place` node, which is the location
 /// [SET-1] states for the rejection when the target name resolves to nothing.

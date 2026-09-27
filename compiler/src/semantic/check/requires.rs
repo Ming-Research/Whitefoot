@@ -920,7 +920,7 @@ impl<'unit> TypeContext<'unit> {
     /// [OP-15].
     ///
     /// A range referent carries its own row: [MSR-1] gives `&[T]` a row of
-    /// its own, and the referent type a `deref` of one selects is the
+    /// its own, and the referent type a `^` on one selects is the
     /// element type, so the row cannot be recovered from that type.
     fn clause_measure_row(
         &mut self,
@@ -1610,8 +1610,8 @@ impl<'unit> TypeContext<'unit> {
     /// datum of this type.
     ///
     /// [TYPE-9] gives a `Box` exactly one member, `inner`, and that member
-    /// is the box content itself, so the goal place below it is the same
-    /// dereference a `deref` former used to write. Every other member is the
+    /// is the box content itself, represented by a `GoalProjection::Deref`
+    /// step in the goal place. Every other member is the
     /// ordinary struct field step and is judged by the ordinary walk.
     ///
     /// `range_referent` says the datum is the run a range reference names,

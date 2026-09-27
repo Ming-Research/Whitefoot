@@ -58,10 +58,10 @@ new timing comparison or writer trial is part of this refresh.
    projection. Whole-referent access and forwarding a reference must remain
    distinct observations.
 
-## Current rule boundary
+## Pre-v0.76 rule boundary (v0.69 and v0.74 baselines)
 
-OWN-1 requires `move` for ordinary affine place expressions and rejects it on
-copy values. FN-2 checks that spelling against a generic body's bounds once;
+At these baselines, OWN-1 requires `move` for ordinary affine place expressions
+and rejects it on copy values. FN-2 checks that spelling against a generic body's bounds once;
 an unbounded generic `move` may denote copying at a copy instance. OWN-13 and
 ERR-3 independently supply consuming contexts for an own-place match and a
 bare affine Result propagation operand. Thus written `move` is neither every
@@ -90,8 +90,9 @@ however. Those are different proof contracts.
 ### Deque reference-rebuild probes
 
 The direct wrapper below is a checked research fragment, not a proposed
-library addition. On the current compiler, select the standard-library
-declaration with the alias below and compile the fragment with a main:
+library addition. On the v0.74 baseline compiler at `ad51e05df28644b3f1938c405f886d61b7426396`,
+select the standard-library declaration with the alias below and compile the
+fragment with a main. These historical fragments retain the pre-v0.76 syntax:
 
 ```wf
 alias deque_rebase = std::collections::deque::deque_rebase;
@@ -607,7 +608,10 @@ adaptations to the scratch probes were the `deque_rebase` alias and the
 use their current source, including enum-owned constructor qualification.
 These adaptations change name resolution, not a probe's proof contract.
 
-For baseline reproduction from the repository root:
+For baseline reproduction, use a separate checkout of
+`ad51e05df28644b3f1938c405f886d61b7426396` (v0.74) and run these commands
+from that checkout's root. The following commands and source-only probes
+reproduce the historical observations; they do not target the v0.76 compiler:
 
 ```sh
 make -C compiler build

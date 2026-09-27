@@ -210,9 +210,9 @@ compiler/target/release/whitefootc tests/conformance/cases/op4-neg-index-undisch
 构建编译器大约需要一分钟，编译这个 grep 大约需要四秒。最后一条命令展示了一次拒绝：位置、引用的规则及其类别、标出问题的源代码行，以及每个载荷字段，都带有固定的标签。
 
 ```text
-tests/conformance/cases/op4-neg-index-undischarged.wf:6:18: error[OP-4]: UndischargedBoundsObligation
+tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: UndischargedBoundsObligation
   source:   return b^[i];
-  marker:                  ^^^
+  marker:            ^^^
   residual: i < b^.len
   disposition: Unproved
   mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare

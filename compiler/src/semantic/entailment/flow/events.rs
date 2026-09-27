@@ -1320,11 +1320,11 @@ pub(super) fn record_continuing(continuing: &mut Vec<KillEvent>, events: &[KillE
 
 /// [REF-1] a reference variable is not storage of its own.
 ///
-/// v0.59 spelled a holder's referent by inserting a `^` step into
+/// v0.59 represented a holder's referent by inserting a `Deref` step into
 /// every term over it. v0.60 resolves the root instead: a place rooted at
 /// a reference variable is replaced by the path that reference names, so
-/// no step is synthesized here and the checked tree's own `deref` nodes
-/// are the only ones a path carries [TYPE-7].
+/// no step is synthesized here. The internal `Deref` steps a path carries
+/// select `Box.inner` [TYPE-9].
 pub(super) const fn is_holder(_binding: BindingId) -> bool {
     false
 }

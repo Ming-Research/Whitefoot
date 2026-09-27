@@ -96,7 +96,7 @@ impl ResolvedPlaceSet {
 pub(in crate::semantic::check) struct MutationTarget {
     /// The source declaration the written place is rooted at: the value
     /// binding for a bare, field or subscript target, and the reference
-    /// binding for a `deref` target, whose [REF-2] validity is rechecked at
+    /// binding for a `^` target, whose [REF-2] validity is rechecked at
     /// the commit.
     pub(in crate::semantic::check) declaration: DeclarationId,
     /// The exact-target identity and complete resolved path set this target writes
@@ -1108,7 +1108,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }
             }
             // [MSR-6] an in-scope const generic is a value wherever a named
-            // const is. It is one `pbase` with no suffix and no `deref`, its
+            // const is. It is one `pbase` with no suffix, its
             // exact type is the `gparam`'s written integer type, and reading
             // it performs no operation and has the empty effect row.
             DeclarationClass::ConstGeneric => {
@@ -1210,7 +1210,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// [SET-1] makes such a target writable exactly when `p` is a reference
     /// parameter whose declared row carries `writes` of that path
     /// [EFF-1, EFF-5], or a local reference variable whose named path is
-    /// itself writable. `deref` of anything that is not a reference — a
+    /// itself writable. `^` of anything that is not a reference — a
     /// `Box` included, whose content is its field `inner` — is [TYPE-7]'s
     /// rejection, raised by the place resolver.
     fn check_dereferenced_set_target(
@@ -1860,7 +1860,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// The source declaration a written place is rooted at, when its base is a
     /// bare name.
     ///
-    /// A `deref` base is rooted in a holder rather than in the storage the
+    /// A place with a `^` suffix is rooted in a holder rather than in the storage the
     /// place selects, so it answers `None`: the storage that place selects is
     /// the referent's, not the holder's. [SET-1] reads this to decide the one
     /// target shape it reinitializes from dead, the complete binding.

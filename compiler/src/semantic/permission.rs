@@ -1589,7 +1589,7 @@ fn push_reference_holder_read(
 /// with an unresolved read failing closed.
 ///
 /// This is the storage the *caller* touches while building an actual: a value
-/// read out of a binding, a field, a `deref` [TYPE-7], a subscript. Forming a
+/// read out of a binding, a field, a `^` [TYPE-7], a subscript. Forming a
 /// reference names a path and reads no content beyond its own index and
 /// endpoint atoms [REF-1, REF-4], so it contributes nothing here — the
 /// callee's declared row already covers whatever it reaches through that

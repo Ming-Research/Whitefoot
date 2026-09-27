@@ -192,7 +192,7 @@ fn a_writing_call_without_ensures_requires_a_runtime_reread() {
 
 #[test]
 fn whole_referent_assignment_kills_the_old_window_facts() {
-    // v0.59 wrote this as `let old = replace values^ = move empty;`.
+    // v0.59 wrote this as `let old = replace deref(values) = move empty;`.
     // [SET-1] with [WIN-3]'s disposition is the successor: the assignment
     // releases the displaced affine window instead of reading it out.
     let source = r#"fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {

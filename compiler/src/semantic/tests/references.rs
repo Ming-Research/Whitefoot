@@ -746,7 +746,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [EFF-5, FORM-2] the two substituted paths an EFF-5 rejection carries are
 /// spelled as the caller writes the places: a local by its name, the storage
-/// a reference parameter names under `deref`, and fields by their names —
+/// a reference parameter names under `^`, and fields by their names —
 /// never a checker binding number or field ordinal.
 #[test]
 fn overlapping_call_effects_carry_source_spelled_paths() {
@@ -837,7 +837,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [EFF-5, REF-4] a range formed at the call is the actual's path extended
 /// by its own range step, and that step spells the endpoints it captured:
-/// over a local array and, re-sliced, through a range parameter's `deref`.
+/// over a local array and, re-sliced, through a range parameter's `^`.
 #[test]
 fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
     let callee = r#"fn fill_two(first: &[u8], second: &[u8]) -> result: unit writes(first), writes(second) {

@@ -546,7 +546,7 @@ fn full_arrays_keep_their_inline_layout_boundaries() {
 /// follows the allocation rather than measuring the pointer slot or a copied
 /// window value.
 ///
-/// v0.59 wrote the same place as `len_of(block^)`. Both the former and
+/// v0.59 wrote the same place as `len_of(deref(block))`. Both the former and
 /// the `deref` route to a cell are retired [OP-15, TYPE-7].
 #[test]
 fn a_cell_content_is_an_admitted_measured_place() {
@@ -579,7 +579,7 @@ fn a_cell_content_is_an_admitted_measured_place() {
 
 // Retired with its subject: `a_bare_owned_box_still_requires_explicit_dereference_to_measure_its_referent`
 // asserted [TYPE-7]'s implicit read through a cell holder, `cap_of(block)`
-// against `cap_of(block^)`. v0.60 retires the `deref` route to a cell
+// against `cap_of(deref(block))`. v0.60 retires the `deref` route to a cell
 // outright — a cell's content is its field `inner` [TYPE-9] and `deref` of a
 // `Box` is itself a TYPE-7 rejection — so the successor case is
 // `cells::deref_of_a_cell_is_a_type7_rejection_naming_the_field_inner`, and

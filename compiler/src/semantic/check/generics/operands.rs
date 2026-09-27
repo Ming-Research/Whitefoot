@@ -482,7 +482,7 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        // [TYPE-7] `deref` names the referent of a reference, whose selected
+        // [TYPE-7] `^` names the referent of a reference, whose selected
         // type is the type the reference binding already carries [REF-1].
         let mut ty = {
             // `entry(IDENT)` is a contract-only `pbase` [GRAM-5, MSR-3] and

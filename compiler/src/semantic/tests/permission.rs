@@ -1621,7 +1621,7 @@ fn loud(node: Box<u64>) -> result: u64 pure {
 /// erased the borrow's shared-or-uniq mode and an unloaned borrow would widen
 /// permission. v0.60 has no mode to erase: forming the reference reads no
 /// content and is permitted beside a write of the same storage, while the
-/// later `deref` resolves to that storage and conflicts with it.
+/// later `^` resolves to that storage and conflicts with it.
 #[test]
 fn a_read_through_a_reference_is_a_read_of_the_path_it_names() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {

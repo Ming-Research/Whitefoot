@@ -1265,7 +1265,7 @@ pub(crate) enum TermRead {
     /// a named constant.
     Constant,
     /// A place, or a measure of one, rooted at this binding and reached by
-    /// field selections and `deref` alone, so a clause can spell it.
+    /// field and Box-content selections alone, so a clause can spell it.
     Binding(BindingId),
     /// An operand that is no term at all [ENT-2], such as an element read:
     /// no fact names its value until a `let` binds it.

@@ -42,8 +42,8 @@
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
 //! `a` nonzero. Distinct binder values therefore select distinct elements.
-//! The `deref` needs no rule of its own here: it is an ordinary step of the
-//! resolved path [REF-1, TYPE-7], so `b^[a*i + c]` is recognized
+//! The `^` needs no rule of its own here: it selects the reference
+//! root's resolved path [REF-1, TYPE-7], so `b^[a*i + c]` is recognized
 //! exactly as an inline subscript is, which is what keeps every
 //! runtime-capacity kernel in the family — [TYPE-9] admits a runtime-capacity
 //! shape only as `Box` content [checker-facts].

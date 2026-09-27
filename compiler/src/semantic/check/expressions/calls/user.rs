@@ -303,7 +303,7 @@ impl<'unit> Checker<'_, 'unit> {
             // against a parameter's type before the kind would report `u8`
             // where the source wrote `&[u8]`, and it would let a `&[T]` at an
             // `own T` parameter fall into the [TYPE-7] implicit read below,
-            // whose `p^` fix is wrong here: `deref` of a range names
+            // whose `p^` fix is wrong here: `^` of a range names
             // the whole run [TYPE-7, REF-4], never one element. Disagreement
             // about the range kind itself is therefore judged first, and it
             // is [TYPE-5]'s ordinary argument mismatch.

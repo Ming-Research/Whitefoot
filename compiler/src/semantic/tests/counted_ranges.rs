@@ -10,7 +10,7 @@ const ENDPOINT_TERM_FIX: &str =
 
 /// [SET-1]'s closed writability relation, as the diagnostic names it. There is
 /// no permission marker on a reference any more, so the required classes are a
-/// live own-mode binding and a path below `deref` of a reference whose row
+/// live own-mode binding and a path below `^` of a reference whose row
 /// declares that write [REF-1, EFF-1].
 const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below `^` of a \
                                    reference whose row declares that write";
@@ -122,9 +122,9 @@ fn main() -> status: std::process::ExitStatus pure {
     // The holder is a reference formed in the body rather than the retired
     // store cell. [TYPE-7] owns the same exclusive judgment there: the
     // endpoint names a reference where its referent `own u64` is required, so
-    // the missing `deref` is cited at the same operand. A `Box` is no longer
+    // the missing `^` is cited at the same operand. A `Box` is no longer
     // a candidate here — its content is the field `inner` [TYPE-9] and
-    // `deref` of a cell is itself a TYPE-7 rejection.
+    // `^` of a cell is itself a TYPE-7 rejection.
     assert_rule(
         br#"fn main() -> status: std::process::ExitStatus pure {
   let origin = 0_u64;

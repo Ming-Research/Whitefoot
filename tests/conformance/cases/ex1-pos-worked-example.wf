@@ -32,7 +32,7 @@ fn fill_eight() -> total: u64 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "let-initializer match with give and a reference read through postfix ^.";
+  doc "let-initializer match with give and a reference read through postfix access.";
   let a = 40_i32;
   let p = &a;
   let v = match p^ +checked 2_i32 {

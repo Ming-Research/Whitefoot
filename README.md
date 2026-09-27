@@ -397,9 +397,9 @@ rule and its kind, the marked source line, and every payload field under a
 stable label.
 
 ```text
-tests/conformance/cases/op4-neg-index-undischarged.wf:6:18: error[OP-4]: UndischargedBoundsObligation
+tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: UndischargedBoundsObligation
   source:   return b^[i];
-  marker:                  ^^^
+  marker:            ^^^
   residual: i < b^.len
   disposition: Unproved
   mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare

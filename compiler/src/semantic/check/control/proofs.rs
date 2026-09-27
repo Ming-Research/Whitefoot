@@ -564,7 +564,7 @@ impl<'unit> Checker<'_, 'unit> {
         // [INV-1] a measure place's root resolves in the same context a bare
         // IDENT does, except that it names a live own-mode value of measured
         // type *or a live reference whose referent is reached through*
-        // `deref` [REF-1, TYPE-7], which is how section 16's example writes
+        // `^` [REF-1, TYPE-7], which is how section 16's example writes
         // `p^.len`. A bare `p^` naming no measure is still no
         // affine atom, and the refusal for it stands below.
         let dereferenced = self.types.declarations.tree.place_has_dereference(place)?;

@@ -1333,7 +1333,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// TYPE-7 is definitionally earlier than both OWN-1's holder spelling and
     /// OWN-11's outer-affine move check. Inspect a live direct holder before
-    /// those generic place checks so an endpoint that plainly needs `deref`
+    /// those generic place checks so an endpoint that plainly needs `^`
     /// keeps the rule's exclusive attribution even inside another loop.
     fn direct_counted_endpoint_holder_requires_deref(
         &self,

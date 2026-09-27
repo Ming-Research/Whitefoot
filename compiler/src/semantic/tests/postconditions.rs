@@ -3646,7 +3646,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 /// kills the caller's measure image: the invariant stated before the call
 /// holds and the one restated after it does not.
 ///
-/// v0.59 spelled the replacement `let previous = replace values^ = move
+/// v0.59 spelled the replacement `let previous = replace deref(values) = move
 /// empty;`. The `replace` statement is retired [SET-2]; [SET-1] writes the
 /// same place and [WIN-3] releases the affine value the target held.
 #[test]
