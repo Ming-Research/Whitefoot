@@ -191,11 +191,9 @@ designed yet.
 
 ## A small language
 
-Whitefoot is close to a safe C with simple generics. Its syntax borrows from
-Rust, but a program has C's shape: functions, structs, enums, arrays and heap
-cells; a generic function takes its type arguments explicitly, as in
-`array_filled::<u8, 4>(value: 0_u8)`, and is compiled once per instance.
-Here is a cursor over a byte buffer:
+Whitefoot has C's structure and borrows Rust's syntax. A program is made of
+functions, structs, enums and arrays. This function returns the next byte of
+a buffer and advances a cursor:
 
 ```
 struct Cursor {
@@ -213,18 +211,36 @@ fn next_byte(input: &[u8], cursor: &Cursor) -> result: Option<u8> reads(input), 
 }
 ```
 
-A C programmer writes the same shape: a struct that holds a position, and a
-function that takes the buffer. A Rust cursor that borrows its buffer
-carries a lifetime, `struct Cursor<'a> { input: &'a [u8], position: usize }`,
-and a struct that stores one usually needs a lifetime parameter too. Whitefoot
-has no lifetimes at all. A reference can be bound to a local and passed to a
-call, but never stored in a struct or returned
-([REF-3](spec/kernel-spec.md)), so it cannot outlive what it points to; a
-function that finds something returns its index. Rust written in the C shape
-needs no lifetime annotations either; Whitefoot makes that shape the only
-one.
+A C programmer can read most of this at once. The differences are things
+Whitefoot asks you to write out:
 
-The language also leaves out:
+- `reads(input), writes(cursor)`: what the function may read and write,
+  stated in its signature;
+- `deref(cursor)` and `set`: every read through a reference, and every
+  assignment;
+- `1_u64` and `value: byte`: the type of every number, and the name of each
+  argument to a function or a constructor;
+- one operation per expression, with a `let` for each step of a longer
+  computation, so there is no operator precedence
+  ([GRAM-6](spec/kernel-spec.md)).
+
+Code comes out longer than the same C, and each construct has one spelling.
+
+There are no lifetimes. A reference can be bound to a local or passed to a
+call, but it is never stored in a struct or returned
+([REF-3](spec/kernel-spec.md)), so it cannot outlive what it points to. That
+is why `Cursor` holds a position rather than the buffer, and why a function
+that finds something returns an index, not a reference. Rust code written
+this way needs no lifetime annotations either. Rust also allows a cursor that
+holds its buffer, `struct Cursor<'a> { input: &'a [u8], position: usize }`,
+and then every struct that contains such a cursor needs a lifetime annotation
+too. Whitefoot has only the first way, so there are no lifetimes to learn.
+
+Generics are explicit: a generic function takes its type arguments at every
+call, as in `array_filled::<u8, 4>(value: 0_u8)`, and is compiled once for
+each set of arguments ([FN-2](spec/kernel-spec.md)).
+
+The language leaves out:
 
 - methods, traits and dynamic dispatch. A call names one function; generic
   code receives the functions it uses as explicit compile-time arguments, an
@@ -234,10 +250,6 @@ The language also leaves out:
 - exceptions, unwinding and null. An error is a `Result` value and absence is
   an `Option`;
 - closures and function values.
-
-The cost is spelling: an expression does one operation, literals carry their
-type (`1_u64`), arguments are named, and a reference is read through `deref`.
-Code is longer than C, and each construct has one spelling.
 
 ## Highlights
 
