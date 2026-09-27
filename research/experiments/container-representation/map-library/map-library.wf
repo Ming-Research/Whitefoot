@@ -6,6 +6,7 @@ alias HashMapPair = std::collections::hash_map::HashMapPair;
 alias HashMapPut = std::collections::hash_map::HashMapPut;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_reserve = std::collections::hash_map::hash_map_reserve;
@@ -460,6 +461,46 @@ fn map_cost_library_record_trace(capacity: u64, count: u64, rounds: u64, seed: u
     return map_cost_library_policy::<MapCostWide>(seed: seed, collide: collide);
   }
   return map_cost_library_trace::<MapCostWide>(capacity: capacity, count: count, rounds: rounds, seed: seed, path: path, collide: collide);
+}
+
+fn map_cost_library_geometry<interface MapCostElement<T>>(capacity: u64, count: u64, seed: u64) -> result: u64 pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  doc "Untimed filled-map capacity witness. The result combines the ordinary setup digest with capacity in the upper 32 bits and length in the lower 32 bits; the C caller decodes it with the independent setup oracle. This function is never called by timed traces.";
+  let salt = ixor(seed, 11400714819323198485_u64);
+  let colliding = 0_u64 != 0_u64;
+  let env = MapCostEnv(salt: salt, collide: colliding);
+  let map = hash_map_new::<u64, T, 16384>(capacity: capacity);
+  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  for (index in 0_u64..count) {
+    let key = map_cost_key(index: index);
+    let next = seed +wrap index;
+    let value = MapCostElement::make(seed: next);
+    let inserted = hash_map_put::<MapCostLibraryKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
+    map_cost_library_policy_result::<MapCostElement<T>>(outcome: move inserted, digest: &digest);
+  }
+  let actual_capacity = hash_map_capacity::<u64, T, 16384>(map: &map);
+  let actual_count = hash_map_len::<u64, T, 16384>(map: &map);
+  let high = actual_capacity *wrap 4294967296_u64;
+  let geometry = high +wrap actual_count;
+  hash_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
+  let checksum = map_cost_finish(digest: digest);
+  return ixor(checksum, geometry);
+}
+
+fn map_cost_library_word_geometry(capacity: u64, count: u64, seed: u64) -> result: u64 pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  return map_cost_library_geometry::<MapCostWord>(capacity: capacity, count: count, seed: seed);
+}
+
+fn map_cost_library_record_geometry(capacity: u64, count: u64, seed: u64) -> result: u64 pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  return map_cost_library_geometry::<MapCostWide>(capacity: capacity, count: count, seed: seed);
 }
 
 fn main() -> status: ExitStatus pure {

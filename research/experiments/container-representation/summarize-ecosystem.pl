@@ -5,7 +5,7 @@ use warnings;
 # Consumer: this experiment's ecosystem-summarize target. Retire with the
 # ecosystem comparison. These drivers emit unquoted, comma-free scalar fields;
 # this is deliberately not a general CSV package or a benchmark runner.
-# Usage: perl summarize-ecosystem.pl [--complete] vector=path.csv ...
+# Usage: perl summarize-ecosystem.pl [--complete] [--targets] vector=path.csv ...
 # Repeated family arguments can combine cohort files, but never different work.
 # Coverage is checked within observed cells against the input's variant, cohort
 # and sample unions. --complete also checks the driver matrix below for each
@@ -14,6 +14,9 @@ use warnings;
 # The paired minimum covers both implementations' ranked samples. Cohort spread
 # is 100 * (max ratio / min ratio - 1); above 10% is flagged. Ordered sample 0
 # is validated and counted as recorded warmup, then excluded from statistics.
+# --targets implies --complete and reports the owner target against the slower
+# Rust/C++ standard median, with both cohorts and observed sample bounds.
+# Its performance statuses are descriptive output, never a correctness gate.
 my %headers = (
     vector => 'contract,cohort,element_bytes,path,count,variant,sample,work,rounds,traces,elapsed_ns,checksum',
     deque => 'contract,cohort,element_bytes,path,count,variant,sample,work,rounds,traces,elapsed_ns,checksum',
@@ -40,6 +43,9 @@ my @output_fields = (
         minimum_ns median_ns maximum_ns whitefoot_median_ns wf_over_variant
         paired_minimum_ns sub_1ms cohort_ratio_spread_pct unstable),
 );
+my @target_fields = (@cell_fields, 'hash_series', @settings, qw(samples sample_ids),
+    (map { my $cohort = $_; map { "${_}_$cohort" } qw(slower_standard wf_median_ns rust_median_ns cpp_median_ns absl_median_ns wf_over_slower observed_upper observed_lower) } 0, 1),
+    qw(qualification_minimum_ns target_cohort_spread_pct selected_peer_spread_pct median_result status reason));
 
 sub key { return join "\x1e", @_; }
 sub median {
@@ -212,6 +218,90 @@ sub summarize {
     return \@output;
 }
 
+sub target_summary {
+    my ($summary) = @_;
+    my (%cells, @output);
+    for my $r (@$summary) {
+        $cells{key(@$r{@cell_fields}, $r->{hash_series})}{$r->{cohort}}{$r->{variant}} = $r;
+    }
+    for my $id (sort keys %cells) {
+        my $cell = $cells{$id};
+        die "target summary requires both cohorts\n" unless $cell->{0} && $cell->{1};
+        my (@wf, @rust, @cpp, @absl) = ();
+        @wf = grep /^whitefoot(?:-|$)/, keys %{$cell->{0}};
+        @rust = grep /^rust-/, keys %{$cell->{0}};
+        @cpp = grep /^cpp-/, keys %{$cell->{0}};
+        @absl = grep /^absl-/, keys %{$cell->{0}};
+        die "target summary requires one WF, Rust and C++ standard peer\n" unless @wf == 1 && @rust == 1 && @cpp == 1;
+        my ($wf, $rust, $cpp) = ($wf[0], $rust[0], $cpp[0]);
+        my %out = %{$cell->{0}{$wf}};
+        my (@ratios, @upper, @lower, %selected);
+        for my $cohort (0, 1) {
+            my ($w, $r, $c) = @{$cell->{$cohort}}{$wf, $rust, $cpp};
+            my @slower = $r->{median_ns} > $c->{median_ns} ? ($rust)
+                : $c->{median_ns} > $r->{median_ns} ? ($cpp) : ($rust, $cpp);
+            $selected{$_} = 1 for @slower;
+            my @minima = sort { $a <=> $b } map { $cell->{$cohort}{$_}{minimum_ns} } @slower;
+            my $denominator = $r->{median_ns} > $c->{median_ns} ? $r->{median_ns} : $c->{median_ns};
+            my $largest_native = $r->{maximum_ns} > $c->{maximum_ns} ? $r->{maximum_ns} : $c->{maximum_ns};
+            $ratios[$cohort] = $w->{median_ns} / $denominator;
+            # Observed sample bounds are sufficient separation, not confidence
+            # intervals. A tied standard median uses the less favorable minimum.
+            $upper[$cohort] = $w->{maximum_ns} / $minima[0];
+            $lower[$cohort] = $w->{minimum_ns} / $largest_native;
+            @out{map { "${_}_$cohort" } qw(slower_standard wf_median_ns rust_median_ns cpp_median_ns absl_median_ns)} =
+                (join(';', @slower), $w->{median_ns}, $r->{median_ns}, $c->{median_ns}, @absl ? $cell->{$cohort}{$absl[0]}{median_ns} : '');
+            @out{map { "${_}_$cohort" } qw(wf_over_slower observed_upper observed_lower)} =
+                map { sprintf '%.9f', $_ } ($ratios[$cohort], $upper[$cohort], $lower[$cohort]);
+        }
+        my @ratio_order = sort { $a <=> $b } @ratios;
+        my $spread = $ratio_order[1] / $ratio_order[0] - 1;
+        my ($peer_spread, $minimum) = (0, $cell->{0}{$wf}{minimum_ns});
+        # A denominator switch cannot conceal a selected peer's instability.
+        for my $peer (sort keys %selected) {
+            my @paired;
+            for my $cohort (0, 1) {
+                my ($w, $native) = @{$cell->{$cohort}}{$wf, $peer};
+                push @paired, $w->{median_ns} / $native->{median_ns};
+                for ($w->{minimum_ns}, $native->{minimum_ns}) { $minimum = $_ if $_ < $minimum; }
+            }
+            @paired = sort { $a <=> $b } @paired;
+            my $variation = $paired[1] / $paired[0] - 1;
+            $peer_spread = $variation if $variation > $peer_spread;
+        }
+        $out{qualification_minimum_ns} = $minimum;
+        $out{target_cohort_spread_pct} = sprintf '%.4f', 100 * $spread;
+        $out{selected_peer_spread_pct} = sprintf '%.4f', 100 * $peer_spread;
+        $out{median_result} = $ratios[0] < 1 && $ratios[1] < 1 ? 'win'
+            : $ratios[0] > 1 && $ratios[1] > 1 ? 'deficit' : 'inconclusive';
+        my @reasons;
+        push @reasons, 'short-selected-peer' if $minimum < 1_000_000;
+        push @reasons, 'selected-peer-unstable' if $peer_spread > 0.10;
+        push @reasons, 'target-cohort-unstable' if $spread > 0.10;
+        $out{status} = @reasons ? 'inconclusive' : $upper[0] < 1 && $upper[1] < 1 ? 'pass'
+            : $lower[0] > 1 && $lower[1] > 1 ? 'deficit' : 'inconclusive';
+        $out{reason} = @reasons ? join(';', @reasons)
+            : $out{status} eq 'inconclusive' ? 'sample-overlap-or-tie' : 'observed-sample-separation';
+        if ($out{comparison_class} =~ /\A(?:overhead|storage)-control\z/) {
+            @out{qw(status median_result reason)} = ('unranked', 'unranked', $out{comparison_class});
+        }
+        push @output, \%out;
+    }
+    return \@output;
+}
+
+sub take_flags {
+    my ($arguments) = @_;
+    my ($complete, $targets) = (0, 0);
+    while (@$arguments && $arguments->[0] =~ /^--/) {
+        my $flag = shift @$arguments;
+        if ($flag eq '--complete') { $complete = 1; }
+        elsif ($flag eq '--targets') { $targets = 1; }
+        else { die "unknown option: $flag\n"; }
+    }
+    return ($complete || $targets, $targets);
+}
+
 sub self_test {
     my $make_csv = sub {
         my ($family, $rows) = @_;
@@ -334,6 +424,44 @@ sub self_test {
     my @short = grep { $_->{sample} != 10 } @full;
     my $ok = eval { $run->('map', \@short, 1); 1 };
     $assert->(!$ok && $@ eq "complete map sample coverage mismatch\n", 'missing fixed final sample everywhere');
+    my @target_rows;
+    my %timings = ('whitefoot-hash-map' => 8_000_000, 'rust-hash-map' => 4_000_000,
+        'cpp-unordered-map' => 10_000_000, 'absl-flat-hash-map' => 100_000_000);
+    for my $cohort (0, 1) { for my $sample (0 .. 2) { for my $variant (sort keys %timings) {
+        push @target_rows, {%{$rows[0]}, contract => 'normal', path => 'hit', count => 56, requested_capacity => 64,
+            series => 'native-default', hash => 'default', cohort => $cohort, sample => $sample, variant => $variant, elapsed_ns => $timings{$variant}};
+    }}}
+    my $target_case = sub {
+        my ($mutate) = @_; my @input = map { +{%$_} } @target_rows;
+        $mutate->(\@input) if $mutate;
+        return target_summary($run->('map', \@input))->[0];
+    };
+    my $target = $target_case->();
+    $assert->($target->{status} eq 'pass' && $target->{slower_standard_0} eq 'cpp-unordered-map'
+        && $target->{wf_over_slower_0} == 0.8 && $target->{absl_median_ns_0} == 100_000_000, 'target selects slower standard and retains Abseil reference');
+    for my $case ([12_000_000, 'deficit'], [10_000_000, 'inconclusive']) {
+        $target = $target_case->(sub { $_->{elapsed_ns} = $case->[0] for grep { $_->{variant} =~ /^whitefoot/ } @{$_[0]} });
+        $assert->($target->{status} eq $case->[1], 'Abseil cannot rescue deficit and ties are not wins or deficits');
+    }
+    $target = $target_case->(sub { $_->{elapsed_ns} = 11_000_000 for grep { $_->{variant} =~ /^whitefoot/ && $_->{sample} == 2 } @{$_[0]} });
+    $assert->($target->{status} eq 'inconclusive' && $target->{median_result} eq 'win', 'overlap preserves descriptive median win');
+    $target = $target_case->(sub { for (@{$_[0]}) { next unless $_->{variant} =~ /^(?:rust|cpp)-/;
+        $_->{elapsed_ns} = (($_->{variant} =~ /^rust/) == $_->{cohort}) ? 10_100_000 : 10_000_000; } });
+    $assert->($target->{status} eq 'pass' && $target->{slower_standard_0} eq 'cpp-unordered-map'
+        && $target->{slower_standard_1} eq 'rust-hash-map', 'stable slower-peer switch');
+    $target = $target_case->(sub { for (@{$_[0]}) { next unless $_->{variant} =~ /^(?:rust|cpp)-/;
+        $_->{elapsed_ns} = (($_->{variant} =~ /^rust/) == $_->{cohort}) ? 10_000_000 : 4_000_000; } });
+    $assert->($target->{status} eq 'inconclusive' && $target->{target_cohort_spread_pct} == 0
+        && $target->{reason} eq 'selected-peer-unstable', 'max selection cannot conceal selected-peer instability');
+    push @overhead, map { +{%$_, variant => 'cpp-std-vector'} } grep { $_->{variant} eq 'rust-vec' } @overhead;
+    $assert->(target_summary($run->('vector', \@overhead))->[0]{status} eq 'unranked', 'target preserves overhead controls');
+    for my $variant (qw(rust-binary-heap cpp-std-heap)) {
+        push @priority, map { +{%$_, variant => $variant} } grep { $_->{variant} eq 'hole-c' } @priority;
+    }
+    $assert->(target_summary($run->('priority', \@priority))->[0]{status} eq 'unranked', 'target preserves storage controls');
+    my @flags = ('--targets', 'map=fixture'); my ($complete, $targets) = take_flags(\@flags);
+    $ok = eval { target_summary($run->('map', \@target_rows, $complete)); 1 };
+    $assert->($complete && $targets && !$ok && $@ eq "complete map variant coverage mismatch\n", 'target mode requires complete matrices');
     print "ecosystem summarizer self-test passed\n";
 }
 
@@ -341,8 +469,8 @@ if (@ARGV == 1 && $ARGV[0] eq '--self-test') {
     self_test();
     exit 0;
 }
-my $complete = @ARGV && $ARGV[0] eq '--complete' ? shift @ARGV : 0;
-die "usage: $0 [--complete] family=timing.csv ... | --self-test\n" unless @ARGV;
+my ($complete, $targets) = take_flags(\@ARGV);
+die "usage: $0 [--complete] [--targets] family=timing.csv ... | --self-test\n" unless @ARGV;
 my @sources;
 for my $argument (@ARGV) {
     my ($family, $path) = split /=/, $argument, 2;
@@ -352,5 +480,18 @@ for my $argument (@ARGV) {
 }
 my $result = summarize($complete, @sources);
 close $_->[2] or die "close $_->[1]: $!\n" for @sources;
-print join(',', @output_fields), "\n";
-print join(',', @{$_}{@output_fields}), "\n" for @$result;
+if ($targets) {
+    $result = target_summary($result);
+    my %totals;
+    for my $row (@$result) {
+        ++$totals{$_}{$row->{status}} for ($row->{family}, 'all');
+    }
+    for my $family (sort keys %totals) {
+        my $t = $totals{$family}; $t->{$_} //= 0 for qw(pass deficit inconclusive unranked);
+        $t->{eligible} = $t->{pass} + $t->{deficit} + $t->{inconclusive};
+        print STDERR "target totals: $family ", join(' ', map { "$_=$t->{$_}" } qw(eligible pass deficit inconclusive unranked)), "\n";
+    }
+}
+my @fields = $targets ? @target_fields : @output_fields;
+print join(',', @fields), "\n";
+print join(',', @{$_}{@fields}), "\n" for @$result;

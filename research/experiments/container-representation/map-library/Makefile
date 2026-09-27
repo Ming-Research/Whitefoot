@@ -256,8 +256,14 @@ ECO_FAMILY := map
 ECO_ABSL_PACKAGES := absl_flat_hash_map
 ECO_WORK ?= 262144
 include ../ecosystem.mk
+ECO_OCCUPANCY_WORK ?= 1048576
+ECO_GEOMETRY_FILE ?= $(ECO_BUILD)/geometry.csv
+ECO_GEOMETRY_METADATA ?= $(ECO_BUILD)/geometry-environment.txt
+ECO_OCCUPANCY_ACCOUNT ?= $(ECO_BUILD)/occupancy-accounting.csv
+ECO_OCCUPANCY_SAMPLES ?= $(ECO_BUILD)/occupancy-measurements.csv
 
-.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure \
+        ecosystem-occupancy-check ecosystem-geometry ecosystem-occupancy-account ecosystem-occupancy-measure
 
 $(ECO_BUILD)/map.raw.ll: map-library.wf $(WHITEFOOTC) $(ECO_CONFIG) Makefile | $(ECO_BUILD)
 	$(WHITEFOOTC) --emit-llvm $< -o $@
@@ -317,3 +323,50 @@ ecosystem-measure: ecosystem-build
 	  cat $(ECO_BUILD)/cohort-0.csv > '$(ECO_SAMPLE_FILE)'; \
 	  awk 'NR > 1' $(ECO_BUILD)/cohort-1.csv >> '$(ECO_SAMPLE_FILE)'; \
 	  echo 'Map raw samples: $(ECO_SAMPLE_FILE)'
+
+# The capacity discriminator is opt-in and preserves every practical output.
+# Its timed trace bodies are shared with ecosystem-measure; observers occur
+# only in the separate ACCOUNT_ONLY image and untimed filled-map witnesses.
+ecosystem-occupancy-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) occupancy-check
+	$(ECO_BUILD)/map-account$(EXE) occupancy-check
+	$(ECO_BUILD)/map-account$(EXE) geometry-check
+	@set -eu; \
+	  for control in missing population identity capacity allocation checksum diagnostic; do \
+	    case "$$control" in \
+	      missing) reason='one filled geometry snapshot' ;; \
+	      population) reason='filled geometry population' ;; \
+	      identity) reason='geometry implementation identity' ;; \
+	      capacity) reason='exposed capacity geometry' ;; \
+	      allocation) reason='filled geometry allocation snapshot' ;; \
+	      checksum) reason='geometry independent setup oracle' ;; \
+	      diagnostic) reason='diagnostic matches trace allocation' ;; \
+	    esac; \
+	    status=0; $(ECO_BUILD)/map-account$(EXE) negative-geometry "$$control" \
+	      > $(ECO_BUILD)/geometry-negative.stdout 2> $(ECO_BUILD)/geometry-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/geometry-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/geometry-negative.stderr)" = "map ecosystem: $$reason"; \
+	  done; \
+	  echo 'Map geometry: seven missing/corrupted-observation controls rejected'
+
+ecosystem-geometry: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) geometry > '$(ECO_GEOMETRY_FILE)'
+	@set -eu; \
+	  cat '$(ECO_CONFIG)' > '$(ECO_GEOMETRY_METADATA)'; \
+	  $(ECO_BUILD)/map-account$(EXE) geometry-identities >> '$(ECO_GEOMETRY_METADATA)'; \
+	  git -C '$(ROOT)' rev-parse HEAD >> '$(ECO_GEOMETRY_METADATA)'; \
+	  echo 'Map geometry: $(ECO_GEOMETRY_FILE); environment: $(ECO_GEOMETRY_METADATA)'
+
+ecosystem-occupancy-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) occupancy-account $(ECO_OCCUPANCY_WORK) > '$(ECO_OCCUPANCY_ACCOUNT)'
+	@echo 'Map occupancy accounting: $(ECO_OCCUPANCY_ACCOUNT)'
+
+ecosystem-occupancy-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) occupancy-measure $$cohort $(ECO_OCCUPANCY_WORK) \
+	      > $(ECO_BUILD)/occupancy-cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/occupancy-cohort-0.csv > '$(ECO_OCCUPANCY_SAMPLES)'; \
+	  awk 'NR > 1' $(ECO_BUILD)/occupancy-cohort-1.csv >> '$(ECO_OCCUPANCY_SAMPLES)'; \
+	  echo 'Map occupancy raw samples: $(ECO_OCCUPANCY_SAMPLES)'

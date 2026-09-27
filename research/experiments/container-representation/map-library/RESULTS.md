@@ -273,6 +273,240 @@ request. All are reclaimed. Native capacity rounding and node/table layout
 remain part of these practical outcomes; these bytes do not measure RSS or
 prove an allocation-time explanation for elapsed differences.
 
+### Preregistered capacity and memory discriminator
+
+This follow-up is recorded before its measurements, starting from source
+`c75520e9d59d74e19ba158e1cae5f394b3a2d874`. The practical comparison above is
+retained. Its 4096/3584 point means 4096 materialized Whitefoot slots, but a
+request to reserve 4096 entries in each native map. These requests do not
+establish equal occupancy or equal memory. No library or compiler change is
+part of this control.
+
+An untimed `ecosystem-geometry` target observes filled maps in the accounting
+image. It includes the original 3/2 and 64/56 shapes and population 3584 at
+requests 3584, 4096, 5120, 6144 and 8192, both value widths and hash series.
+Separate fields identify the quantities each API actually exposes:
+
+- Whitefoot's `hash_map_capacity` is the number of materialized probe slots;
+  a filled-map diagnostic also checks its public length. These slots can all
+  hold entries. A separate filled-map witness reads the direct sparse C
+  control's owned capacity and count fields.
+- Rust's `HashMap::capacity` is a public lower bound on the entries that fit
+  without reallocating. Physical slots and bucket count are left unknown.
+- Abseil's `capacity` counts assigned, deleted and empty element slots. Its
+  public API does not expose the current guaranteed usable entry capacity;
+  the original reserve request supplies only a known lower bound. Its
+  compatibility `max_load_factor` result is not treated as a usable-capacity
+  formula.
+- C++ unordered reports chaining `bucket_count`, `load_factor` and
+  `max_load_factor`. A bucket is not an element slot, and the product of
+  bucket count and maximum load is reported separately from a public
+  capacity accessor. Allocation requests, filled-map live requested bytes,
+  cumulative requested bytes and peak bytes are separate observations.
+
+Native observations are compiled only into the accounting image. The
+Whitefoot and direct-C capacity diagnostics are separate untimed callers;
+the timed trace body has no geometry observer. A missing snapshot, an
+incorrect population or implementation identity, inconsistent exposed geometry,
+an unmatched allocation, an incorrect setup digest or unreclaimed allocation
+must fail. Seven missing/corrupted-observation controls check the new failure
+paths; the existing leak control checks reclamation. Header/toolchain
+identities are recorded with the outputs; inaccessible native internals are
+not reverse-engineered from byte totals and labelled as measurements.
+
+The separate `ecosystem-occupancy-measure` target reuses the existing trace
+functions with population fixed at 3584 and requests 4096, 5120, 6144 and
+8192. It runs hit, miss, replacement and first-word edit for both payloads,
+with aligned hashing, identical seed sequence, `ECO_OCCUPANCY_WORK=1048576`,
+two checked warmups and eleven samples in each of two reversed order cohorts.
+The second cohort reverses both implementation and capacity order.
+All five implementations and all four capacity points are retained. The
+3584/3584 geometry witness is not timed: full occupancy creates a distinct
+full-table miss scan outside this first bounded discriminator. The original
+4096/3584 point is measured afresh in the same sweep image. Its requested
+work and complete-trace accounting match the larger-capacity points. Even an
+unused diagnostic can change emitted code layout, so this new image supplies
+every denominator for the capacity discriminator. Comparing it to the older
+practical image is not a causal same-source comparison.
+
+The primary hypothesis is that capacity policy materially contributes to the
+large miss cost. For each payload, compare Whitefoot's same-source 4096-slot
+and 8192-slot miss traces, with count, keys, hash calculation, seeds and work
+fixed. A reduction of at least 10% in both cohorts, with all samples at least
+1 ms and cohort ratio spread at most 10%, establishes sensitivity to this
+capacity change. Failure of that criterion leaves the proposed contribution
+unestablished. This changes occupancy, bucket placement, allocation size and
+setup/cleanup together; it cannot assign an isolated percentage to probing
+or emitted instructions. Intermediate points and other paths test whether
+the effect is specific to misses, without changing the primary criterion.
+
+For a memory comparison, hold each native peer at its original reserve
+request of 4096 and choose the Whitefoot sweep point with the smallest
+absolute difference in post-fill live requested bytes, separately by payload.
+Break a byte-distance tie toward the smaller Whitefoot request. Select these
+pairs from geometry before reading timings. A pair is labelled comparable
+requested memory only if the larger total is at most 1.10 times the smaller;
+otherwise report the mismatch and no matched-memory result. Preserve every
+point, the byte ratio, and all native policies. This comparison controls one
+resource budget, not table layout, collision behavior or allocation overhead.
+Native-default results above remain a separate practical question. A better
+controlled point cannot replace an earlier losing or unstable cell.
+
+The new geometry and occupancy outputs use a separate build directory and,
+after review, remain beside the existing raw files with their source identity
+and qualifications. These modes and their data are retained with this capacity
+discriminator, or removed when a maintained successor preserves its evidence.
+The untimed geometry and accounting stages have passed; their observations
+and the memory-pair selection are recorded below before timing.
+
+Build and run these opt-in stages separately under the repository host guard,
+with a frozen baseline `WHITEFOOTC` and the pinned `ABSEIL_PREFIX`:
+
+```sh
+for phase in build occupancy-check geometry occupancy-account; do
+  perl .github/run-check.pl "map-$phase" \
+    make -C research/experiments/container-representation/map-library "ecosystem-$phase" \
+      BUILD=.build/geometry WHITEFOOTC="$WHITEFOOTC" ABSEIL_PREFIX="$ABSEIL_PREFIX"
+done
+```
+
+After recording the closest-byte pairs from the geometry output, run timing:
+
+```sh
+perl .github/run-check.pl map-occupancy-measure \
+  make -C research/experiments/container-representation/map-library ecosystem-occupancy-measure \
+    BUILD=.build/geometry WHITEFOOTC="$WHITEFOOTC" ABSEIL_PREFIX="$ABSEIL_PREFIX"
+```
+
+`ECO_GEOMETRY_FILE`, `ECO_GEOMETRY_METADATA`, `ECO_OCCUPANCY_ACCOUNT` and
+`ECO_OCCUPANCY_SAMPLES` select distinct output files. The geometry matrix has
+140 data rows, occupancy accounting has 160, and occupancy timing has 3,520.
+The existing practical sample/accounting paths are not overwritten. The
+practical reducer's complete-matrix mode does not accept this separate
+capacity-sweep contract; reduce it by payload, request, path, variant and
+cohort while keeping all four requests visible.
+
+### Observed capacity geometry and selected memory pairs
+
+The guarded build used the frozen compiler from
+`c75520e9d59d74e19ba158e1cae5f394b3a2d874`, whose executable SHA-256 is
+`cb918e191bb344733347e0602171d2ec53bd1d201044fdbc5dd7666468eea0a0`.
+The control additions above were built in `.build/geometry/`, preserving the
+earlier practical images. Apple Clang 21.0.0, Rust 1.98.1
+(`48a229ceaefd4985c50990b14116b6d856af0985`, LLVM 22.1.8), libc++ header
+version `220106`, and Abseil `20260817.0` are recorded by
+`.build/geometry/ecosystem/geometry-environment.txt`. These are observations
+of this pinned toolchain, not portable predictions of native allocation.
+
+The build passed in 8.28 seconds. Each image then passed the 18,390 ordinary
+oracle traces and 1,440 occupancy traces. All 140 filled-map observations
+passed, as did the seven controls that must reject missing or corrupted
+observations. The ordinary and occupancy check stages took 1.66 and 0.93
+seconds; geometry collection took 0.21 seconds and occupancy accounting
+2.58 seconds. The complete guarded validation session took 13.79 seconds.
+No occupancy timing has run at this point.
+
+The retained [geometry observations](ecosystem-geometry.csv) contain 140
+unique rows, SHA-256
+`69e1b3c76be4cdf2857953a705faf6c833253ac6fdba2335b5501dd7b60329e0`.
+Both hash series give the same geometry and requested-byte totals. At
+population 3584, the exposed capacities are:
+
+| Entry/slot request | WF usable entries and physical slots | Rust usable-entry lower bound | C++ chaining buckets | Abseil physical slots |
+|---|---:|---:|---:|---:|
+| 3584, geometry only | 3584 | 3584 | 3593 | 4095 |
+| 4096 | 4096 | 7168 | 4096 | 8191 |
+| 5120 | 5120 | 7168 | 5147 | 8191 |
+| 6144 | 6144 | 7168 | 6151 | 8191 |
+| 8192 | 8192 | 14336 | 8192 | 16383 |
+
+At the original 4096 request, Whitefoot occupies 0.875 of its physical
+slots; Abseil occupies about 0.43755. Rust's 7168-entry guarantee does not
+expose a physical-slot denominator. C++ reports 0.875 entries per chaining
+bucket, which is a different quantity from open-addressed slot occupancy.
+The direct sparse C control has Whitefoot's capacity and requested-byte
+totals, but retains its independently written sparse algorithm. The
+geometry-only 3584 point fills all Whitefoot slots; it remains excluded from
+the timing sweep as preregistered.
+
+The policy difference is also present at the medium request: at 64/56,
+Whitefoot has 64 slots, Rust guarantees at least 112 entries, C++ has 64
+chaining buckets and Abseil has 127 slots. At 3/2 all four exposed counts are
+three, while their meanings and allocation sizes still differ.
+
+The following pairs are selected solely from the filled-map byte totals,
+before timing, among the four timed Whitefoot requests. Each native request
+remains 4096. The last column is the larger divided by the smaller total;
+all six pass the preregistered 1.10 limit for comparable requested memory.
+
+| Payload | Native peer | WF request | WF live requested bytes | Native live requested bytes | Byte ratio |
+|---|---|---:|---:|---:|---:|
+| 8 bytes | Rust HashMap | 6144 | 147472 | 139272 | 1.058878 |
+| 8 bytes | C++ unordered_map | 6144 | 147472 | 147456 | 1.000109 |
+| 8 bytes | Abseil flat_hash_map | 6144 | 147472 | 139184 | 1.059547 |
+| 256 bytes | Rust HashMap | 8192 | 2228240 | 2170888 | 1.026419 |
+| 256 bytes | C++ unordered_map | 4096 | 1114128 | 1036288 | 1.075114 |
+| 256 bytes | Abseil flat_hash_map | 8192 | 2228240 | 2169312 | 1.027164 |
+
+These totals include the C++ bucket backing and all 3584 nodes: C++ makes
+3585 allocation requests, whereas the other implementations make one.
+They do not include allocator metadata or establish equal physical memory,
+layout, lookup strategy or allocation cost. In particular, the wide C++
+pair keeps Whitefoot at its original 4096 slots; the Rust and Abseil pairs
+use 8192 slots. There is no single capacity request that matches every
+peer's memory policy.
+
+The retained [occupancy allocation observations](ecosystem-occupancy-accounting.csv)
+contain 160 unique rows, SHA-256
+`2b6242c6b9d36c85d2a8d588f7b4a3d698aff4336511e5fee02c531190581df3`.
+Every row balances requests and releases and ends with zero live bytes.
+At `ECO_OCCUPANCY_WORK=1048576`, each row executes one trace with 292
+rounds; all implementations and capacities agree on each payload/path
+checksum. This validates the proposed timing workload without supplying a
+timing result.
+
+### Query dispatch and inlining in the practical image
+
+Read-only inspection of the retained practical `map-timed` image, SHA-256
+`0ef00b9de6a541304f1029b0a8c7cb0b69415e6bbb8e971ac1917a32ff3ca54c`,
+separates the current generic map from the historical fixed-eight-slot
+inlining finding. The scalar and wide `wf_map_cost_library_*_trace` entries
+lead to specialized whole-trace bodies whose query paths already inline
+lookup, find/probe, hash, equality and observation. A separately emitted
+lookup symbol is not evidence of a query call. Put, try-put and rebuild still
+have calls elsewhere in these bodies; the native images also retain mutation
+helpers. This inspection supplies no measured benefit from another inlining
+change.
+
+The workload dispatch placement agrees in the three adapter sources.
+`map-library.wf` puts `lookup_path` and the operation branch inside its
+`for (index in 0_u64..count)` loop; Rust puts `match path` inside
+`for index in 0..count`; C++ puts its `if (path == Hit || ...)` inside
+`for (Word index = 0; index < count; ++index)`. All perform reserve before
+that key loop. Whitefoot also preserves the excluded historical rehash path
+outside this common loop; native adapters reject that path. The source
+control flow therefore differs in that extra case, but the native query
+dispatch was not manually moved outside the loop.
+
+The aligned scalar machine-code paths show three different resulting loops:
+
+| Implementation | Observed query loop |
+|---|---|
+| Whitefoot | Workload dispatch remains per key. Salt/collision state and map backing/capacity are reloaded per lookup. One `udiv`/`msub` pair computes the initial bucket, followed by a rolled probe over 24-byte tagged slots; the query key stays in a register. Lookup-result tag/payload/unit stores also remain. |
+| Rust | The hit/miss route is outside the key loop. Salt/collision state, control base and bucket mask are loaded before it. Inlined probing compares eight control bytes together, filters by seven hash bits, masks indexes and advances by growing groups. |
+| C++ unordered_map | The hit/miss route is outside the key loop, with hash state and bucket metadata loaded before it. Inlined lookup follows nodes, tests cached hashes and keys, and uses a mask for power-of-two bucket counts with a division fallback otherwise. |
+
+The native routing difference is an optimizer outcome from source dispatch
+inside the loop. The retained artifacts do not contain optimization remarks
+that establish why Whitefoot's branch was not hoisted. Its raw IR has a larger
+control-flow graph with loop-carried values and aggregate result stores;
+an unswitching cost or ordering explanation remains a hypothesis. The current
+query loop does not exhibit the old fixed-capacity failure in which early
+full unrolling kept `find` out of its caller. Capacity, probing strategy,
+layout, metadata reloads and result stores remain separate possible costs.
+Neither this inspection nor the occupancy discriminator assigns a causal
+timing percentage to any one of them. The adapter sources were left unchanged.
+
 ## Contract fixed before measurement
 
 All candidates own inline keys and values. Put installs the offered

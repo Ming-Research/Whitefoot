@@ -11,6 +11,8 @@
 #ifdef ACCOUNT_ONLY
 #include "../ecosystem-allocator.hpp"
 template<class T> using NativeAllocator = EcosystemAllocator<T>;
+extern "C" void wf_ecosystem_map_geometry(std::uint64_t, std::uint64_t,
+    std::uint64_t, std::uint64_t, std::uint64_t, double, double);
 #else
 template<class T> using NativeAllocator = std::allocator<T>;
 #endif
@@ -114,6 +116,18 @@ Word trace(Word capacity, Word count, Word rounds, Word seed, Word path,
     const Word ceiling = path == Policy ? 3 : 16384;
     for (Word index = 0; index < count; ++index)
         put(map, digest, key_at(index), Payload<V>::make(seed + index), ceiling);
+#ifdef ACCOUNT_ONLY
+    if constexpr (requires { map.capacity(); }) {
+        // Abseil reports physical element slots, including empty/deleted ones.
+        // Its compatibility maximum load factor is not a usable-entry bound.
+        wf_ecosystem_map_geometry(3, map.size(), UINT64_MAX, map.capacity(),
+            UINT64_MAX, map.load_factor(), map.max_load_factor());
+    } else {
+        // Standard unordered_map exposes chaining buckets, not element slots.
+        wf_ecosystem_map_geometry(2, map.size(), UINT64_MAX, UINT64_MAX,
+            map.bucket_count(), map.load_factor(), map.max_load_factor());
+    }
+#endif
     if (path == Policy) {
         put(map, digest, key_at(0), Payload<V>::make(seed + 10), ceiling);
         put(map, digest, key_at(count), Payload<V>::make(seed + 20), ceiling);
@@ -183,3 +197,22 @@ DEFAULT_ENTRY(eco_absl_map_word_default, FlatMap, Word, FlatDefaultHash)
 DEFAULT_ENTRY(eco_absl_map_record_default, FlatMap, Record, FlatDefaultHash)
 ALIGNED_ENTRY(eco_absl_map_word_aligned, FlatMap, Word)
 ALIGNED_ENTRY(eco_absl_map_record_aligned, FlatMap, Record)
+
+#ifdef ACCOUNT_ONLY
+#define ECO_STRING_INNER(VALUE) #VALUE
+#define ECO_STRING(VALUE) ECO_STRING_INNER(VALUE)
+extern "C" const char* eco_cpp_map_library_identity() {
+#if defined(_LIBCPP_VERSION)
+    return "libc++-" ECO_STRING(_LIBCPP_VERSION);
+#elif defined(__GLIBCXX__)
+    return "libstdc++-" ECO_STRING(__GLIBCXX__);
+#elif defined(_MSVC_STL_VERSION)
+    return "msvc-stl-" ECO_STRING(_MSVC_STL_VERSION);
+#else
+    return "cpp-standard-library-unidentified";
+#endif
+}
+extern "C" const char* eco_absl_map_library_identity() {
+    return "abseil-" ECO_STRING(ABSL_LTS_RELEASE_VERSION) "." ECO_STRING(ABSL_LTS_RELEASE_PATCH_LEVEL);
+}
+#endif

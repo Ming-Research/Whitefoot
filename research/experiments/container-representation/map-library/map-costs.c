@@ -1389,6 +1389,28 @@ uint64_t eco_c_map_record(uint64_t capacity, uint64_t count, uint64_t rounds,
                           uint64_t seed, uint64_t path, uint64_t collide) {
     return record_sparse_trace(capacity, count, rounds, seed, path, collide);
 }
+#if defined(ACCOUNT_ONLY)
+/* A separate filled-map witness keeps geometry reads out of the timed trace.
+ * The low/high halves encode count/capacity, combined with the setup digest. */
+#define ECO_GEOMETRY(NAME, P, B) \
+uint64_t NAME(uint64_t capacity, uint64_t count, uint64_t seed) { \
+    HashEnv env = {seed ^ UINT64_C(0x9e3779b97f4a7c15), false}; \
+    P##_Map map = P##_new(capacity); \
+    Digest digest = {seed, 0, 0, 0}; \
+    for (uint64_t i = 0; i < count; ++i) { \
+        B##_Put result = P##_put(&map, &env, (B##_Pair){key_at(i), B##_make(seed + i)}); \
+        ordered(&digest, result.kind); \
+        if (result.kind != INSERTED) \
+            ordered(&digest, B##_content(result.owner.key, result.owner.value)); \
+    } \
+    uint64_t geometry = (map.slots->capacity << 32) | map.count; \
+    P##_free(map, &digest); \
+    return finish(digest) ^ geometry; \
+}
+ECO_GEOMETRY(eco_c_map_word_geometry, word_sparse, word)
+ECO_GEOMETRY(eco_c_map_record_geometry, record_sparse, record)
+#undef ECO_GEOMETRY
+#endif
 #else
 int main(int argc, char **argv) {
     require(argc >= 2, "usage: map-costs check | clock-quantum | measure 0|1 primary|boundary|edit|rebuild|library|inactive original|compact");

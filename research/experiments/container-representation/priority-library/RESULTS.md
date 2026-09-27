@@ -223,20 +223,89 @@ conditions aligned while changing sifting movement. WF's wide pop/push is
 1.070–1.132 times swap C across the tested populations and 1.579–1.882 times
 hole C; that makes the sift
 algorithm a useful next discriminator without assigning a causal percentage
-to whole-slot movement. A WF/hole implementation comparison and current
-optimized-code inspection are needed before selecting an optimization.
+to whole-slot movement. The optimized inspection below identifies a source
+candidate; a measured WF comparison remains necessary before selection.
 
 Replacement has another source-visible distinction: WF performs one downward
 sift, Rust repairs through `peek_mut`, and C++ uses `pop_heap` followed by
 `push_heap`. This explains why the comparison includes different algorithms;
 it does not assign the timing ratio to a language. Wide replacement remains
 slower than Rust and both C controls, including 1.264–1.277 times Rust at
-n=256. A bounded follow-up should inspect the current optimized aggregate
-transfers and surviving public/callback boundaries with unchanged algorithms.
+n=256. The inspection below checks the current optimized aggregate transfers
+and surviving public/callback boundaries with unchanged algorithms.
 The practical `.ll` files are pre-O3 compiler outputs, so their visible
 copies and calls do not establish what survives optimization. Historical
 retained O2 observations have different visibility and allocator conditions
 and are not causal percentages of the practical O3 gaps.
+
+### Optimized baseline and unselected source candidates
+
+Read-only `nm -n` and `otool -tvV` inspection used the measured
+`.build/ecosystem/priority-timed`, SHA-256
+`880540053affdb13787f4e832ec048e97ea4fbdd6d1d48c5e1b7e1012fcb3bf0`.
+Its source baseline is `0c3203aa6111f14247aa950e3794e83082d4f29c`;
+priority production and benchmark sources are unchanged through
+`c75520e9d59d74e19ba158e1cae5f394b3a2d874`. These are final arm64 O3
+instructions under the recorded Apple Clang 21.0.0 and rustc 1.98.1 toolchains,
+not the pre-O3 `.ll` files. Addresses below identify this binary only.
+
+The wide WF entry `_wf_priority_cost_record_trace` at `0x100009c38`
+branches to `_wf_priority_cost_trace$instance$4dfceafcd9f4259b` at
+`0x10000a3a4`. Its hot pop/push loop has no surviving pop, push, sift,
+comparator or no-op position-reporter call. The pop sink still performs
+three complete 256-byte transfers per exchange at
+`0x10000b490`--`0x10000b590`; the push rise repeats that pattern from
+`0x10000ba20`. These implement the slot swaps at lines 86 and 156 of
+[priority-queue.wf](../../../../lib/std/collections/priority_queue/priority-queue.wf).
+Comparisons load keys directly. `make_room` calls remain at `0x10000a930`
+and `0x10000b984`, along with setup, final drain and cleanup calls.
+
+Native inlining is not uniform. `_priority_rust_record_trace` at
+`0x100012534` retains a call at `0x1000130dc` to the
+`BinaryHeap<Reverse<Record>>::pop` specialization at `0x100011f98`.
+`_priority_cpp_record_trace` at `0x10000e240` has inlined heap algorithms
+but retains vector growth calls. The C controls `_record_swap_trace`
+and `_record_hole_trace`, at `0x100004b08` and `0x100006718`, retain
+their push helpers. This evidence does not support a blanket forced-inlining
+change. The C movement discriminator remains the otherwise matched rise/sink
+pair in [priority-costs.c](priority-costs.c), lines 200 and 227.
+
+Two source hypotheses are **unimplemented, unmeasured and unselected**:
+
+- **Delayed exchange through a local owner.** For pop/replacement, find the
+  destination by read-only comparisons against the incoming owner, then
+  walk destination to root, exchanging each slot with that local owner and
+  returning the final displaced root. All places remain initialized. A local
+  carry might stay in registers instead of repeatedly staging a slot swap;
+  spills or the second traversal could remove the benefit. Push would need
+  the corresponding forward rotation along its ancestor path before final
+  append, with separately justified path storage or arithmetic.
+- **Shared four-ary, then eight-ary sifting.** Fewer levels trade full-owner
+  exchanges for additional child comparisons. Prove bounded child scans and
+  progress, including zero-byte elements and maximal ceilings; for `count > 1`,
+  `(count - 2) / D + 1` avoids overflow in the parent count. A changed fanout
+  would revise the recorded binary-heap choice, not establish native parity
+  by itself.
+
+The [shared-core decision](../../../../design/language/data-model/priority-queue-storage.md)
+constrains both candidates. Preserve plain/indexed source sharing and the
+published placement-reporting protocol; delayed reporting is observable and
+cannot silently replace initial/both-position reports. Every candidate must
+retain unique owners, refusal/retry, unchanged length/capacity guarantees and
+bounded progress independently of comparator consistency. A direct C-hole
+transcription is inadmissible under WIN-3 and OP-11; it is not a selected WF
+implementation or a reason to weaken ownership.
+
+The discriminator changes one source algorithm under the frozen compiler,
+adapters, allocator policy and workload. First require the independent sorted
+oracle, complete wide-owner/refusal checks, nested-owner consumption, indexed
+membership/placement checks and balanced accounting. Then inspect final O3
+movement and measure the complete scalar/wide matrix in both cohorts,
+retaining the C controls, both work settings and every sample. Failure to
+reduce the predicted transfers, improvement lost to variation, or a required
+cell still missing the stated performance target rejects the candidate as a
+solution. Raw physical cleanup remains outside queue rankings. No candidate
+build, timing, production change or tree revision accompanies this inspection.
 
 ## Historical matched C comparison
 

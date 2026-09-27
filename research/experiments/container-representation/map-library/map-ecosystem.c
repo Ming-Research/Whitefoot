@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -64,6 +65,9 @@ static const Variant variants[] = {
 };
 static const Shape measured_shapes[] = {{3, 2}, {64, 56}, {4096, 3584}};
 static const unsigned paths[] = {HIT, MISS, REPLACE, CHURN, EDIT, SETUP, GROW};
+static const Shape occupancy_shapes[] = {{4096, 3584}, {5120, 3584}, {6144, 3584}, {8192, 3584}};
+static const unsigned occupancy_paths[] = {HIT, MISS, REPLACE, EDIT};
+#define ELEMENTS(ARRAY) (sizeof(ARRAY) / sizeof((ARRAY)[0]))
 static const char *path_names[] = {
     "hit", "miss", "replace-old-value", "remove-churn", "reserve-more-entries",
     "excluded-same-capacity-rehash", "fill-free", "edit-first-word", "ceiling-policy", "reserve-check", "reserve-omitted"
@@ -230,6 +234,21 @@ static void check(void) {
     printf("map ecosystem: %zu oracle-checked traces passed\n", executions);
 }
 
+static void occupancy_check(void) {
+    const uint64_t rounds[] = {0, 1, 3}, seeds[] = {17, 101, UINT64_MAX};
+    size_t executions = 0;
+    for (size_t v = 0; v < ELEMENTS(variants); ++v)
+        for (size_t s = 0; s < ELEMENTS(occupancy_shapes); ++s)
+            for (size_t p = 0; p < ELEMENTS(occupancy_paths); ++p)
+                for (size_t r = 0; r < ELEMENTS(rounds); ++r)
+                    for (size_t n = 0; n < ELEMENTS(seeds); ++n) {
+                        checked_trace(&variants[v], 1, occupancy_shapes[s], rounds[r],
+                                      seeds[n], occupancy_paths[p], false);
+                        ++executions;
+                    }
+    printf("map occupancy: %zu oracle-checked traces passed\n", executions);
+}
+
 static void trace_size(Shape shape, unsigned path, uint64_t work,
                        uint64_t *rounds, uint64_t *traces) {
     uint64_t repeats = work / shape.count;
@@ -267,14 +286,18 @@ static uint64_t batch_oracle(bool wide, Shape shape, unsigned path, uint64_t rou
     return checksum;
 }
 
-static void measure(unsigned cohort, uint64_t work) {
+static void measure(unsigned cohort, uint64_t work, bool occupancy) {
+    const Shape *shapes = occupancy ? occupancy_shapes : measured_shapes;
+    const unsigned *selected_paths = occupancy ? occupancy_paths : paths;
+    size_t shape_count = occupancy ? ELEMENTS(occupancy_shapes) : ELEMENTS(measured_shapes);
+    size_t path_count = occupancy ? ELEMENTS(occupancy_paths) : ELEMENTS(paths);
     puts("contract,cohort,series,element_bytes,path,requested_capacity,count,hash,variant,sample,rounds,traces,elapsed_ns,checksum");
     for (unsigned wide = 0; wide < 2; ++wide)
-        for (size_t s = 0; s < sizeof measured_shapes / sizeof measured_shapes[0]; ++s)
-            for (size_t p = 0; p < sizeof paths / sizeof paths[0]; ++p)
-                for (unsigned series = 0; series < 2; ++series) {
-                    Shape shape = measured_shapes[s];
-                    unsigned path = paths[p];
+        for (size_t s = 0; s < shape_count; ++s)
+            for (size_t p = 0; p < path_count; ++p)
+                for (unsigned series = occupancy ? 1 : 0; series < 2; ++series) {
+                    Shape shape = shapes[occupancy && cohort ? shape_count - 1 - s : s];
+                    unsigned path = selected_paths[p];
                     uint64_t rounds, traces;
                     trace_size(shape, path, work, &rounds, &traces);
                     // Two complete, independently checked warmup batches per
@@ -298,8 +321,9 @@ static void measure(unsigned cohort, uint64_t work) {
                             uint64_t checksum = run_batch(trace_for(variant, series), shape, path, rounds, traces, seed);
                             uint64_t elapsed = nanoseconds() - start;
                             require(checksum == expected, "timed independent oracle"); observed ^= checksum;
-                            printf("normal,%u,%s,%u,%s,%" PRIu64 ",%" PRIu64 ",%s,%s,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
-                                   cohort, series ? "aligned-hash" : "native-default", wide ? 256 : 8,
+                            printf("%s,%u,%s,%u,%s,%" PRIu64 ",%" PRIu64 ",%s,%s,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                                   occupancy ? "capacity-sweep" : "normal", cohort,
+                                   series ? "aligned-hash" : "native-default", wide ? 256 : 8,
                                    path_names[path], shape.capacity, shape.count, hasher_for(variant, series),
                                    variant->name, sample, rounds, traces, elapsed, checksum);
                         }
@@ -307,15 +331,19 @@ static void measure(unsigned cohort, uint64_t work) {
                 }
 }
 #else
-static void account(uint64_t work) {
+static void account(uint64_t work, bool occupancy) {
+    const Shape *shapes = occupancy ? occupancy_shapes : measured_shapes;
+    const unsigned *selected_paths = occupancy ? occupancy_paths : paths;
+    size_t shape_count = occupancy ? ELEMENTS(occupancy_shapes) : ELEMENTS(measured_shapes);
+    size_t path_count = occupancy ? ELEMENTS(occupancy_paths) : ELEMENTS(paths);
     puts("contract,series,element_bytes,path,requested_capacity,count,hash,variant,rounds,traces,requests,releases,requested_bytes,peak_bytes,live_bytes,checksum");
     for (size_t v = 0; v < sizeof variants / sizeof variants[0]; ++v)
-        for (size_t s = 0; s < sizeof measured_shapes / sizeof measured_shapes[0]; ++s)
-            for (size_t p = 0; p < sizeof paths / sizeof paths[0]; ++p)
-                for (unsigned series = 0; series < 2; ++series) {
+        for (size_t s = 0; s < shape_count; ++s)
+            for (size_t p = 0; p < path_count; ++p)
+                for (unsigned series = occupancy ? 1 : 0; series < 2; ++series) {
                     const Variant *variant = &variants[v];
-                    Shape shape = measured_shapes[s];
-                    unsigned path = paths[p];
+                    Shape shape = shapes[s];
+                    unsigned path = selected_paths[p];
                     uint64_t rounds, traces, checksum = 0, expected = 0;
                     trace_size(shape, path, work, &rounds, &traces);
                     for (uint64_t i = 0; i < traces; ++i)
@@ -325,11 +353,174 @@ static void account(uint64_t work) {
                         checksum = checksum * UINT64_C(257)
                             + trace_for(variant, series)(shape.capacity, shape.count, rounds, 101 + i, path, 0);
                     require(checksum == expected, "accounting independent oracle"); clean_ledger();
-                    printf("accounting,%s,%u,%s,%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                    printf("%s,%s,%u,%s,%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                           occupancy ? "capacity-sweep-accounting" : "accounting",
                            series ? "aligned-hash" : "native-default", variant->wide ? 256 : 8, path_names[path],
                            shape.capacity, shape.count, hasher_for(variant, series), variant->name, rounds, traces,
                            ledger.requests, ledger.releases, ledger.bytes, ledger.peak, ledger.live, checksum);
                 }
+}
+
+typedef uint64_t (*GeometryTrace)(uint64_t, uint64_t, uint64_t);
+extern uint64_t wf_map_cost_library_word_geometry(uint64_t, uint64_t, uint64_t);
+extern uint64_t wf_map_cost_library_record_geometry(uint64_t, uint64_t, uint64_t);
+extern uint64_t eco_c_map_word_geometry(uint64_t, uint64_t, uint64_t);
+extern uint64_t eco_c_map_record_geometry(uint64_t, uint64_t, uint64_t);
+extern const char *eco_cpp_map_library_identity(void);
+extern const char *eco_absl_map_library_identity(void);
+
+enum { WF_GEOMETRY, RUST_GEOMETRY, CPP_GEOMETRY, ABSL_GEOMETRY, C_GEOMETRY };
+typedef struct {
+    uint64_t calls, kind, count, usable, slots, buckets;
+    double load_factor, max_load_factor;
+    Ledger filled, complete;
+    uint64_t checksum;
+    bool diagnostic_consistent;
+} Geometry;
+static bool capture_geometry;
+static Geometry snapshot;
+
+/* Called only by the separately compiled native accounting adapters. Unknown
+ * public quantities use UINT64_MAX/-1 internally and empty CSV fields. */
+void wf_ecosystem_map_geometry(uint64_t kind, uint64_t count, uint64_t usable,
+                               uint64_t slots, uint64_t buckets,
+                               double load_factor, double max_load_factor) {
+    if (!capture_geometry) return;
+    ++snapshot.calls;
+    snapshot.kind = kind; snapshot.count = count; snapshot.usable = usable;
+    snapshot.slots = slots; snapshot.buckets = buckets;
+    snapshot.load_factor = load_factor; snapshot.max_load_factor = max_load_factor;
+    snapshot.filled = ledger;
+}
+
+static void validate_geometry(Geometry value, uint64_t kind, Shape shape, uint64_t expected) {
+    require(value.checksum == expected, "geometry independent setup oracle");
+    require(value.calls == 1, "one filled geometry snapshot");
+    require(value.count == shape.count, "filled geometry population");
+    require(value.kind == kind, "geometry implementation identity");
+    bool valid = false;
+    if (kind == RUST_GEOMETRY) {
+        valid = value.usable >= shape.capacity && value.usable != UINT64_MAX
+            && value.slots == UINT64_MAX && value.buckets == UINT64_MAX
+            && value.load_factor == -1.0 && value.max_load_factor == -1.0;
+    } else if (kind == CPP_GEOMETRY) {
+        valid = value.usable == UINT64_MAX && value.slots == UINT64_MAX
+            && value.buckets != 0 && value.buckets != UINT64_MAX
+            && isfinite(value.max_load_factor) && value.max_load_factor > 0
+            && value.buckets * value.max_load_factor >= shape.capacity
+            && fabs(value.load_factor - (double)value.count / value.buckets) <= 0.000001;
+    } else if (kind == ABSL_GEOMETRY) {
+        valid = value.usable == UINT64_MAX && value.buckets == UINT64_MAX
+            && value.slots >= shape.capacity && value.slots != UINT64_MAX
+            && isfinite(value.max_load_factor) && value.max_load_factor > 0
+            && fabs(value.load_factor - (double)value.count / value.slots) <= 0.000001;
+    } else {
+        valid = value.usable == shape.capacity && value.slots == shape.capacity
+            && value.buckets == UINT64_MAX && value.max_load_factor == -1.0
+            && fabs(value.load_factor - (double)value.count / value.slots) <= 0.000001;
+    }
+    require(valid, "exposed capacity geometry");
+    require(value.diagnostic_consistent, "diagnostic matches trace allocation");
+    require(value.filled.live == value.complete.peak
+            && value.filled.requests == value.complete.requests
+            && value.filled.bytes == value.complete.bytes,
+            "filled geometry allocation snapshot");
+    require(value.complete.live == 0 && value.complete.requests == value.complete.releases,
+            "every allocation is reclaimed");
+}
+
+static Geometry read_geometry(size_t variant_index, unsigned series, Shape shape) {
+    const Variant *variant = &variants[variant_index];
+    uint64_t kind = variant_index % IMPLEMENTATIONS;
+    const uint64_t seed = 101;
+    uint64_t expected = oracle(variant->wide, shape.count, 0, seed, SETUP);
+    reset_ledger();
+    snapshot = (Geometry){0}; capture_geometry = true;
+    uint64_t checksum = trace_for(variant, series)(shape.capacity, shape.count, 0, seed, SETUP, 0);
+    capture_geometry = false;
+    clean_ledger();
+    Geometry value = snapshot;
+    value.complete = ledger; value.checksum = checksum; value.diagnostic_consistent = true;
+    if (kind == WF_GEOMETRY || kind == C_GEOMETRY) {
+        GeometryTrace diagnostic = kind == WF_GEOMETRY
+            ? (variant->wide ? wf_map_cost_library_record_geometry : wf_map_cost_library_word_geometry)
+            : (variant->wide ? eco_c_map_record_geometry : eco_c_map_word_geometry);
+        reset_ledger();
+        uint64_t encoded = diagnostic(shape.capacity, shape.count, seed) ^ expected;
+        clean_ledger();
+        value.diagnostic_consistent = ledger.requests == 1 && ledger.requests == value.complete.requests
+            && ledger.bytes == value.complete.bytes && ledger.peak == value.complete.peak;
+        value.calls = 1; value.kind = kind;
+        value.count = encoded & UINT64_C(0xffffffff);
+        value.slots = encoded >> 32; value.usable = value.slots;
+        value.buckets = UINT64_MAX;
+        value.load_factor = value.slots ? (double)value.count / value.slots : 0;
+        value.max_load_factor = -1.0;
+        value.filled = value.complete;
+        value.filled.live = value.complete.peak;
+        value.filled.releases = 0;
+    }
+    validate_geometry(value, kind, shape, expected);
+    observed ^= checksum;
+    return value;
+}
+
+static void optional_u64(uint64_t value) {
+    if (value != UINT64_MAX) printf("%" PRIu64, value);
+    putchar(',');
+}
+static void optional_double(double value) {
+    if (value >= 0) printf("%.9g", value);
+    putchar(',');
+}
+
+static void geometry(bool print_rows) {
+    const Shape shapes[] = {{3, 2}, {64, 56}, {3584, 3584}, {4096, 3584},
+                            {5120, 3584}, {6144, 3584}, {8192, 3584}};
+    size_t rows = 0;
+    if (print_rows)
+        puts("contract,series,element_bytes,requested_capacity,count,hash,variant,library,geometry_source,reserve_entry_floor,usable_entry_lower_bound,physical_slots,chaining_buckets,entries_per_slot_or_bucket,reported_max_load_factor,bucket_load_product,filled_live_bytes,requests,releases,requested_bytes,peak_bytes,final_live_bytes,checksum");
+    for (size_t v = 0; v < ELEMENTS(variants); ++v)
+        for (size_t s = 0; s < ELEMENTS(shapes); ++s)
+            for (unsigned series = 0; series < 2; ++series) {
+                const Variant *variant = &variants[v];
+                Shape shape = shapes[s];
+                Geometry value = read_geometry(v, series, shape);
+                ++rows;
+                if (!print_rows) continue;
+                const char *library = value.kind == CPP_GEOMETRY ? eco_cpp_map_library_identity()
+                    : value.kind == ABSL_GEOMETRY ? eco_absl_map_library_identity()
+                    : value.kind == RUST_GEOMETRY ? "rust-std"
+                    : value.kind == WF_GEOMETRY ? "whitefoot-bundled-std" : "direct-sparse-c";
+                const char *source = value.kind == C_GEOMETRY ? "filled-control-fields"
+                    : value.kind == WF_GEOMETRY ? "filled-public-diagnostic" : "filled-public-snapshot";
+                printf("capacity-geometry,%s,%u,%" PRIu64 ",%" PRIu64 ",%s,%s,%s,%s,%" PRIu64 ",",
+                       series ? "aligned-hash" : "native-default", variant->wide ? 256 : 8,
+                       shape.capacity, value.count, hasher_for(variant, series), variant->name,
+                       library, source, shape.capacity);
+                optional_u64(value.usable); optional_u64(value.slots); optional_u64(value.buckets);
+                optional_double(value.load_factor); optional_double(value.max_load_factor);
+                optional_double(value.kind == CPP_GEOMETRY ? value.buckets * value.max_load_factor : -1.0);
+                printf("%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                       value.filled.live, value.complete.requests, value.complete.releases,
+                       value.complete.bytes, value.complete.peak, value.complete.live, value.checksum);
+            }
+    if (!print_rows) printf("map geometry: %zu filled-map observations passed\n", rows);
+}
+
+static void negative_geometry(const char *failure) {
+    Shape shape = {3, 2};
+    uint64_t kind = strcmp(failure, "diagnostic") == 0 ? WF_GEOMETRY : RUST_GEOMETRY;
+    Geometry value = read_geometry(kind, 1, shape);
+    if (strcmp(failure, "missing") == 0) value.calls = 0;
+    else if (strcmp(failure, "population") == 0) ++value.count;
+    else if (strcmp(failure, "identity") == 0) value.kind = CPP_GEOMETRY;
+    else if (strcmp(failure, "capacity") == 0) value.usable = 0;
+    else if (strcmp(failure, "allocation") == 0) ++value.filled.live;
+    else if (strcmp(failure, "checksum") == 0) value.checksum ^= UINT64_C(1);
+    else if (strcmp(failure, "diagnostic") == 0) value.diagnostic_consistent = false;
+    else require(false, "unknown geometry negative control");
+    validate_geometry(value, kind, shape, oracle(false, shape.count, 0, 101, SETUP));
 }
 #endif
 
@@ -342,9 +533,11 @@ static uint64_t parse_work(const char *text) {
 }
 
 int main(int argc, char **argv) {
-    require(argc >= 2, "usage: check | negative-checksum | negative-leak | negative-reserve variant | account work | measure 0|1 work");
+    require(argc >= 2, "usage: check | occupancy-check | geometry | geometry-check | geometry-identities | negative-geometry kind | negative-checksum | negative-leak | negative-reserve variant | account work | occupancy-account work | measure 0|1 work | occupancy-measure 0|1 work");
     if (strcmp(argv[1], "check") == 0) {
         require(argc == 2, "check takes no arguments"); check();
+    } else if (strcmp(argv[1], "occupancy-check") == 0) {
+        require(argc == 2, "occupancy-check takes no arguments"); occupancy_check();
     } else if (strcmp(argv[1], "negative-checksum") == 0) {
         require(argc == 2, "negative-checksum takes no arguments");
         checked_trace(&variants[0], 1, (Shape){3, 2}, 1, 17, HIT, false);
@@ -366,13 +559,23 @@ int main(int argc, char **argv) {
         checked_trace(&variants[0], 1, (Shape){3, 2}, 1, 17, HIT, false);
         wf_ecosystem_note_alloc(8); clean_ledger();
     } else if (strcmp(argv[1], "account") == 0) {
-        require(argc == 3, "account requires a work count"); account(parse_work(argv[2]));
+        require(argc == 3, "account requires a work count"); account(parse_work(argv[2]), false);
+    } else if (strcmp(argv[1], "occupancy-account") == 0) {
+        require(argc == 3, "occupancy-account requires a work count"); account(parse_work(argv[2]), true);
+    } else if (strcmp(argv[1], "geometry") == 0 || strcmp(argv[1], "geometry-check") == 0) {
+        require(argc == 2, "geometry modes take no arguments"); geometry(strcmp(argv[1], "geometry") == 0);
+    } else if (strcmp(argv[1], "geometry-identities") == 0) {
+        require(argc == 2, "geometry-identities takes no arguments");
+        printf("C++ standard library headers: %s\nAbseil headers: %s\n",
+               eco_cpp_map_library_identity(), eco_absl_map_library_identity());
+    } else if (strcmp(argv[1], "negative-geometry") == 0) {
+        require(argc == 3, "negative-geometry requires a failure kind"); negative_geometry(argv[2]);
     }
 #else
-    else if (strcmp(argv[1], "measure") == 0) {
+    else if (strcmp(argv[1], "measure") == 0 || strcmp(argv[1], "occupancy-measure") == 0) {
         require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
                 "measure requires cohort 0 or 1 and a work count");
-        measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]));
+        measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]), strcmp(argv[1], "occupancy-measure") == 0);
     }
 #endif
     else require(false, "unknown or unavailable mode");

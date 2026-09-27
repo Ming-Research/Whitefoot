@@ -6,6 +6,19 @@ use std::hash::{BuildHasher, Hasher, RandomState};
 #[path = "../ecosystem-allocator.rs"]
 mod ecosystem_allocator;
 
+#[cfg(account_only)]
+unsafe extern "C" {
+    fn wf_ecosystem_map_geometry(
+        kind: u64,
+        count: u64,
+        usable: u64,
+        slots: u64,
+        buckets: u64,
+        load_factor: f64,
+        max_load_factor: f64,
+    );
+}
+
 const HIT: u64 = 0;
 const MISS: u64 = 1;
 const REPLACE: u64 = 2;
@@ -206,6 +219,20 @@ fn trace<V: Payload, S: BuildHasher>(
             key_at(index),
             V::make(seed.wrapping_add(index)),
             ceiling,
+        );
+    }
+    #[cfg(account_only)]
+    // capacity() is a guaranteed entry lower bound, not a physical slot count.
+    // This scalar snapshot exists only in the separately accounted image.
+    unsafe {
+        wf_ecosystem_map_geometry(
+            1,
+            map.len() as u64,
+            map.capacity() as u64,
+            u64::MAX,
+            u64::MAX,
+            -1.0,
+            -1.0,
         );
     }
     if path == POLICY {

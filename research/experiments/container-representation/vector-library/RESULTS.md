@@ -292,6 +292,109 @@ timing discriminators above still decide whether this separation helps.
 No caller invariant, contract or runtime behavior was weakened, and no
 compiler implementation or specification rule was changed for these probes.
 
+### Helper candidate result: useful intermediate, not selected
+
+The first measured candidate fails the no-useful-regression criterion.
+Scalar reserved at population 16 takes 1.070–1.072 times the fresh baseline
+in the two cohorts, while its Rust and C++ control medians are slightly
+lower. Normalizing by those controls does not remove the regression:
+the candidate/baseline ratio of WF/Rust is 1.103–1.107, and of WF/C++ is
+1.075–1.099. This candidate is preserved as an intermediate observation,
+not selected as the final implementation.
+
+Its exact source is
+[`f48e620b0aceaf592a57d2a91dd2ee5df0758a6e`](https://github.com/mbbill/Whitefoot/tree/f48e620b0aceaf592a57d2a91dd2ee5df0758a6e).
+The [fresh baseline repeat](ecosystem-append-baseline-samples.csv) and
+[helper samples](ecosystem-append-room-samples.csv) each contain 4,116 rows
+with identical work, rounds, complete checksums and sample coverage.
+Their SHA-256 hashes are, respectively,
+`e8c7935478034909812795846fd6c2bdb18ea96f5baedc0b6edda820155b8a3b` and
+`ea0b9176f2c89b16f6ce8d6db0ebc1b74763db8002a2277b7ce492c36e0da6c2`.
+The first comparison above remains frozen. Its WF medians and the fresh
+baseline repeat differ by factors 0.970–1.062 across the mutating cells;
+those older samples corroborate the baseline but are not pooled or used as
+the before/after denominator here.
+
+Both ecosystem correctness images pass their full 1,260 configurations and
+8,820 executions, including the expected checksum/cleanup failures. The
+formal vector program passes in both lowering modes with its new append
+saturation observation. The 294-row allocation CSV is byte-identical to the
+preserved [baseline accounting](ecosystem-accounting.csv), so this trial
+changes neither allocation policy nor requested storage. The native C driver,
+C++ object and Rust archive are also byte-identical between the two builds.
+Across all mutating cells/cohorts, unchanged Rust median drift is
+0.942–1.042, C++ drift 0.929–1.042 and take/swap C drift 0.920–1.052.
+
+Final O3 code satisfies the recorded discriminator: append inlines into the
+scalar and wide fill/tail loops. The wide tail constructs directly in the
+backing after `make_room`, eliminating its former record temporary and
+snapshot. The standalone wide append still has a snapshot, but these loops
+no longer call it. `make_room` remains a call per append, and the wide tail
+and truncate remain calls per suffix cycle. This is evidence about the whole
+source change; elapsed gains are not assigned solely to eliminated byte
+traffic or one call boundary.
+
+At population 4096, ranges below cover the two cohort medians. A/B divides
+helper-candidate WF time by fresh-baseline WF time. Ratios against native
+libraries are whole-trace observations under the original comparison contract.
+
+| Payload bytes | Path | Candidate WF ms | A/B | WF / Rust | WF / C++ |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 8 | reserved | 3.336–3.358 | 0.983–1.012 | 2.179–2.186 | 1.580–1.640 |
+| 8 | growth | 3.804–3.838 | 0.959–1.023 | 1.910–1.941 | 1.531–1.586 |
+| 8 | reuse | 3.313–3.331 | 0.976–1.012 | 2.204–2.206 | 1.599–1.606 |
+| 8 | suffix-1 | 2.883–2.960 | 0.632–0.635 | 1.852–1.882 | 0.972–1.001 |
+| 8 | suffix-2 | 2.498–2.625 | 0.683–0.725 | 1.874–2.005 | 1.508–1.594 |
+| 8 | suffix-3 | 2.258–2.423 | 0.818–0.845 | 1.713–1.801 | 1.286–1.346 |
+| 256 | reserved | 42.661–42.744 | 0.832–0.835 | 1.026–1.033 | 0.967–0.970 |
+| 256 | growth | 54.220–54.593 | 0.846–0.854 | 1.285–1.307 | 1.024–1.045 |
+| 256 | reuse | 42.600–42.702 | 0.823–0.842 | 1.036–1.042 | 0.967–0.973 |
+| 256 | suffix-1 | 23.699–23.725 | 0.513–0.519 | 1.486–1.491 | 1.411–1.412 |
+| 256 | suffix-2 | 24.085–24.162 | 0.545–0.555 | 1.100–1.101 | 1.090–1.100 |
+| 256 | suffix-3 | 28.005–28.032 | 0.633–0.635 | 1.090–1.100 | 1.053–1.053 |
+
+Across all populations, 29 of the 36 mutating cells have lower WF medians in
+both cohorts, two have higher medians and five have mixed directions. Besides
+the scalar reserved regression, scalar growth at population 16 is 1.005–1.007
+times baseline; that small difference is descriptive. Every wide path
+improves in both cohorts: full-chain A/B ratios are 0.819–0.885, suffix-1
+0.509–0.519, suffix-2 0.545–0.559 and suffix-3 0.627–0.635. Scalar suffixes
+also improve, while scalar large reserved/reuse remain essentially unchanged.
+At population 4096, wide suffix-1 still costs 1.332 times take/swap C, and
+scalar reserved costs 1.607–1.621 times that matched control. The remaining
+whole-trace gaps therefore require further source/code-generation comparison;
+they are not explained by the native libraries' different growth policies.
+
+Under the current target reducer's sample-separation qualification, three
+cells pass against the slower standard comparator: wide growth at 256 and
+wide reserved/reuse at 4096. Twenty remain deficits and thirteen are
+inconclusive because their observed sample ranges overlap. All six suffix-0
+cells remain unranked controls. Every mutating native comparison has samples
+of at least 1 ms and cohort-ratio spread below 10%; the one unstable C
+comparison is scalar suffix-2 at 256 against direct C (14.934%), which supports
+no attribution here. Every sub-millisecond observation belongs to suffix-0.
+
+### Next source trial: inline spare-capacity append
+
+Before measuring the second source candidate, keep the first candidate's
+compiler, native image and samples separate. Add an ordinary spare-capacity
+test to append: place and return on that branch; call `make_room` and place
+on the full-capacity branch. Two placement sites replace the original four;
+the helper receives no incoming element owner and runs only when growth is
+required. Its public contracts, proof obligations, growth policy, ownership,
+callback order and benchmark inputs stay fixed.
+
+The discriminators are removal of the helper call from the no-growth path,
+recovery of the scalar population-16 reserved regression, and preservation
+of the first candidate's wide-value gains. Inspect final code before timing:
+duplicate placement could inhibit inlining or restore the wide snapshot,
+which would falsify the proposed improvement. Pass the same complete
+correctness and accounting matrix, then measure the entire previous timing
+matrix in both cohorts rather than only the favorable suffix cells. A new
+useful-cell regression prevents final selection. The extra initial header
+allocation remains visible in the accounting above; this source trial makes
+no allocation-policy change or claim about its causal time share.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)

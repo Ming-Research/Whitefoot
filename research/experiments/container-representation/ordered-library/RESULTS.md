@@ -989,3 +989,68 @@ perl ../summarize-ecosystem.pl --complete ordered=.build/ecosystem/measurements-
 ```
 
 Combining the two work settings into one statistical input is invalid.
+
+### Native attribution and unmeasured candidates
+
+Read-only inspection of the measured arm64 `-O3` image
+`.build/ecosystem/ordered-ecosystem-timed`, SHA-256
+`8b7172e6bb10c5d93739efd5430a8e71de3edde76f594e486e49fdd2d35852d3`,
+confirms the following surviving work at revision `0c3203aa6111` above.
+These static observations do not quantify elapsed-time shares. The candidates
+remain unmeasured and unselected; no production or design-tree change follows
+from this inspection.
+
+- **Drained-node consumption:** scalar and wide `ordered_map_free_link` copy
+  504 and 4,224 bytes respectively before freeing the node, then recurse
+  through the copied leading link. The wide helper reserves 4,336 stack bytes,
+  including saved registers, and probes its frame. First test an ordinary
+  library reformulation that detaches the leading link before consuming the
+  now-empty node, preserving owner consumption and release order. Its predicted
+  effect is removal of the whole-node temporary and copy without changing
+  representation or allocation counts. A surviving copy/frame or no qualified
+  whole-trace gain falsifies that benefit. General consumed-field lowering is
+  a separate fallback, requiring compiler regression cases outside research.
+- **Contiguous entry shifting:** wide `ordered_map_insert_item` retains a loop
+  calling `memcpy` for each 280-byte entry shifted by non-full insertion.
+  The general `emit_run_shift` implementation in
+  `compiler/src/backend/emitter/runs.rs` emits this per-slot walk for both
+  `Slots` and `Ring`. A bounded compiler candidate lowers contiguous `Slots`
+  shifts to one overlapping bulk move while keeping the existing ring path.
+  The falsifiers are a surviving per-element loop, no qualified gain, or a
+  scalar/small-shift regression. Check front/interior/end and empty shifts,
+  inline/runtime capacity, captured arguments, zero-sized elements and
+  move-only owner order; preserve the admitted operation's descriptor updates.
+- **Scalar query search:** `ordered_map_lookup_link` still scans 32-byte
+  entries linearly, compares the selected key again, and recurses through
+  ordinary calls with a 16-byte frame. Source C also retains linear recursive
+  search. At 256 entries WF/source-C is 0.98–1.02 while WF/Rust is 1.66–1.82;
+  this does not isolate a WF lowering loss. Direct C's query traversal is
+  inlined and iterative, but its layout also differs, so subtracting its time
+  cannot price recursion. Test lower-bound binary search under the same node
+  layout, or separately retain the selected comparison result. Fewer
+  comparisons without a qualified gain, incorrect hit/miss or range results,
+  or regressions at other populations falsify the candidate. Keep existing
+  hostile-comparator owner-safety coverage; ordering laws must not become
+  safety assumptions.
+
+The [single-descent candidate](#single-descent-insertion-candidate) and
+[borrowed-promotion follow-up](#borrowed-promotion-follow-up) remain rejected.
+At 256 wide pairs their normalized replacement regressions were
+1.6214/1.6331 and 1.6885/1.6003 respectively. Removing recursive aggregate
+result clearing did not cure the loss. Current native insertion still stages
+an owned wide Pair through recursion, but that observation does not justify
+reviving either patch. A later insertion-only carrier experiment would need
+new evidence that the Boolean replacement fast path acquires no carrier
+initialization or extra frame cost, followed by the complete replacement
+matrix. The [recorded representation grounds](../../../../design/language/data-model/ordered-map-storage.md)
+also remain in force: observe split/merge and occupancy before choosing a
+different repair policy or node layout.
+
+Compiler trials must use identical WF source before and after the lowering
+change; library trials must hold callers, inputs, compiler, flags and harness
+fixed. Inspect final native code and run the arbitrary-owner, ceiling
+replacement/refusal, sorted/range traversal and complete-release observations
+before timing. Compare both payloads, all five paths, all three populations
+and both cohorts under the [registered target criterion](../ECOSYSTEM.md#optimization-criterion).
+Preserve allocation observations and the original baseline; a local copy or
+comparison-count reduction alone does not complete a cell's performance target.

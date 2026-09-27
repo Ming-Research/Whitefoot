@@ -224,6 +224,87 @@ and no ratio changes more than 10% between cohorts. Individual outliers are
 preserved in the raw samples; stable medians do not establish tail latency.
 No deque cell needs a longer replay for the conclusions stated here.
 
+### Native-code follow-up: unmeasured endpoint candidates
+
+Read-only inspection on 2026-09-26 used the baseline preserved at
+`c75520e9d59d74e19ba158e1cae5f394b3a2d874`; its compiler, Deque library and
+measurement sources are unchanged from the timing revision above. The emitting
+compiler SHA-256 is
+`cb918e191bb344733347e0602171d2ec53bd1d201044fdbc5dd7666468eea0a0`,
+verified against the retained compiler, with the recorded Apple Clang 21.0.0
+and Rust 1.98.1 settings. The inspected `.build/ecosystem/deque-costs-timed`
+SHA-256 is `f4ffd2d0da12d90272702f4619a6de6af25f01c4f3e2d1ce242f79275737574f`;
+its pre-optimization `whitefoot-timed.ll` SHA-256 is
+`89622404e240d377a5be6e330a631173c1d26babf07c6342f579e0e34dd854f7`.
+Use that checkout and emitter with the phase commands above for reproduction;
+a compiler rebuilt with changed bundled library sources is a different emitter.
+
+In the final scalar trace symbol
+`_wf_deque_library_trace$instance$29cf4bd076d714eb`, reverse churn's hot loop
+at `0x10000637c`–`0x1000063d4` stores the new element, reloads all three
+descriptor words (`ldp` plus `ldr`), and recomputes the front predecessor.
+Each iteration also stores length twice and head once. Forward churn at
+`0x100006420`–`0x100006458` keeps those words in registers. Rust's reverse loop
+at `0x10000b7e4`–`0x10000b814`, in `_rust_deque_word_trace`, also keeps its
+descriptor state in registers. Both reverse loops use conditional arithmetic,
+with no integer division or per-element calls. These addresses identify the
+hashed image; symbol names locate the bodies after a rebuild. For example,
+from the repository root:
+
+```sh
+deque_image=research/experiments/container-representation/deque-library/.build/ecosystem/deque-costs-timed
+/Library/Developer/CommandLineTools/usr/bin/llvm-objdump \
+  --no-show-raw-insn --disassemble \
+  --start-address=0x10000637c --stop-address=0x10000645c "$deque_image"
+```
+
+The ordinary Deque endpoint wrappers already call only their primitive and
+return the required value. In [`runs.rs`](../../../../compiler/src/backend/emitter/runs.rs),
+`emit_run_boundary` stores the payload before `move_run_boundary` reloads
+the descriptor; its `PlaceFront` arm calls `boundary_slot` again. The final
+`_wf_place_front$instance$4c5620a98e7f6ca7` body retains the same reload and
+recomputation. This is a concrete lowering lead, not a measured explanation
+of the whole gap: the same-layout C control also retains descriptor traffic.
+
+Two proposed experiments must remain separate, using the same caller, inputs,
+toolchain, flags and oracle before and after each change:
+
+- **A: qualify one unsigned subtraction.** In `boundary_slot`'s `PlaceFront`
+  arm, try `sub nuw` only for `select(head == 0, cap, head) - 1`.
+  Admitted placement proves `len < cap`, hence positive capacity; the selected
+  operand is therefore positive whether head is zero or nonzero. This proves
+  unsigned non-underflow without extending the flag to any wrapping sum or
+  unused subtraction alternative. It does not prove `nsw`: a zero-stride Ring
+  can have head `2^63`, whose decrement crosses the signed boundary. The
+  hypothesis is that this exact fact removes the observed descriptor reloads;
+  unchanged final code or no repeatable same-source improvement falsifies
+  that proposed benefit.
+- **B: capture the placement update once.** Separately, calculate the new
+  descriptor words before the payload store and reuse the already computed
+  front physical slot as the new head, initially preserving payload-then-header
+  store order. Test whether this removes the duplicate loads/calculation in
+  the final loop and improves the same trace. Persistent work or no repeatable
+  improvement falsifies its proposed benefit. Do not bundle B with A and
+  attribute the combined result to either alone.
+
+The [backend-fact grounds](../../../../design/compiler/backend-facts.md)
+require the complete target promise and reject broad Ring no-wrap assertions;
+A proposes only the positive-predecessor domain. The
+[storage representation](../../../../design/compiler/storage-representation.md)
+normalizes zero-stride addresses, not logical coordinates. Regression coverage
+must retain huge zero-size capacities, head-zero/nonzero transitions, fixed
+and runtime shapes, all endpoints, and owned/nodrop cleanup. The existing
+`zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once` test already
+crosses the signed boundary on its second front placement at capacity
+`2^63 + 1`; add its fixed-capacity counterpart and observe both ordinary and
+retained calls. Preserve the selected
+[take ordering](../../../../design/compiler/storage-placement.md) and
+[Deque contract](../../../../design/language/data-model/deque-rebase.md).
+Neither proposal has been built or measured. Correctness and accounting must
+pass before timing under the central per-cell criterion; growth and close
+forward cells remain separate questions. No speedup or design selection follows
+from this inspection.
+
 ## Historical source-composition evidence
 
 This explicit experiment bundles [`deque.wf`](../../../../lib/std/collections/deque/deque.wf).

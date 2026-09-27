@@ -1,10 +1,12 @@
-# Rust and C++ container comparison
+# Rust and C++ container comparison and optimization
 
 ## Question and scope
 
 How does the current Whitefoot library perform against ordinary production
 Rust and C++ containers when they complete the same application task, and
-which observed differences deserve the next investigation?
+which observed differences deserve the next investigation? The follow-on
+optimization asks whether each meaningful workload cell can run repeatably
+faster than the slower ordinary Rust or C++ standard-library counterpart.
 
 The comparison was framed after the container delivery at `0f22b026b`; its
 implementation now incorporates main `ad51e05df`. No timings were published
@@ -15,7 +17,7 @@ which identifies the timing and allocation executions. Later report,
 data-packaging and reducer commits do not change that identity. The map
 replay relinked after removing one trailing
 blank line in its shared oracle; that recorded source-file correction changes
-no behavior. The comparison selects no language amendment
+no behavior. That baseline comparison selected no language amendment
 or library algorithm change. Existing C controls remain attribution tools,
 not an asserted performance ceiling. The sources, commands, toolchain
 identities, raw samples, and qualifications below travel with any ratio.
@@ -81,6 +83,98 @@ Hash maps need two separately labelled questions: the ordinary default hasher
 and an aligned hash calculation for attribution. Neither a cheap integer hash
 nor a randomized default should silently stand in for the other. Different
 table layouts and load policies remain visible in both series.
+
+## Optimization criterion
+
+The baseline at `c75520e9d` is retained unchanged. Optimize Vector, Deque,
+HashMap, PriorityQueue and OrderedMap in that order, preserving their complete
+traces, ownership outcomes, cleanup and independent oracles. For each payload,
+operation and population separately, the target is WF elapsed time below the
+slower of the Rust and C++ standard-library times. Select that peer by its
+median within each order cohort; it may differ between cohorts. Abseil is an
+additional reference, never an alternative denominator chosen for this target.
+The six Vector suffix-zero and six priority storage-control cells remain
+unranked, leaving 198 application cells. No family average replaces a cell.
+
+Before candidate measurements, use this conservative sufficient test: in both
+cohorts, the largest WF sample must be below the smallest sample of the
+median-slower standard-library peer. Both selected comparisons must also pass
+the existing duration and cohort-stability qualifications. This observed-range
+test is not a confidence interval; outliers remain in the data. A strict median
+win without range separation is descriptive, not a completed target. A robust
+deficit has the smallest WF sample larger than the largest sample of
+either standard peer in both cohorts. All other qualified cells remain
+inconclusive. If close cells need a less conservative discriminator, record a
+fresh paired A/A noise experiment and its selection criterion before running
+it; do not choose a threshold after seeing a favorable ratio.
+
+Each optimization needs a before/after comparison with the same caller,
+inputs, toolchain, flags and harness, a predicted change in code or work, and
+a falsifier. Inspect final optimized code before attributing source-shaped IR
+copies to runtime cost. Rerun affected correctness and allocation observations
+before timing; keep build, execution and measurement costs separate. General
+compiler changes require regression cases outside research. Library changes
+must use the ordinary public path, without benchmark-specific dispatch or
+weaker proofs. Preserve baseline artifacts and samples rather than overwriting
+them with a candidate.
+
+Practical default-policy comparisons remain visible. HashMap attribution also
+uses aligned hashing, actual exposed capacity geometry, fixed-population
+occupancy sweeps and requested-memory comparisons, as preregistered in its
+[family report](map-library/RESULTS.md). Equal reservation arguments do not
+establish equal physical capacity or memory. No claim of matched conditions
+may hide a library's unexposed geometry or a remaining policy difference.
+
+The explicit `make ecosystem-targets` target reduces the final preserved
+baseline series without rerunning timing. Its CSV retains both cohorts,
+selected standard peers, sample bounds, qualification reasons and Abseil
+references; it is not a correctness gate. Override `ECO_TARGET_INPUTS` with
+a complete `family=path.csv` list to inspect a candidate. At the frozen
+baseline, the sufficient range test gives:
+
+| Family | Eligible cells | Pass | Deficit | Inconclusive |
+|---|---:|---:|---:|---:|
+| Vector | 36 | 0 | 36 | 0 |
+| Deque | 24 | 12 | 4 | 8 |
+| HashMap | 84 | 17 | 35 | 32 |
+| PriorityQueue | 24 | 10 | 10 | 4 |
+| OrderedMap | 30 | 7 | 17 | 6 |
+| Total | 198 | 46 | 102 | 50 |
+
+These are baseline classifications, not gains from an optimization. The
+twelve controls remain in the output with an unranked status.
+
+### Final-code attribution before optimization
+
+The O3 timed images, not just the emitted unoptimized LLVM, distinguish the
+following surviving work. Inspect the complete trace callers: a public helper
+definition may survive in an image even though every measured call was inlined.
+These observations identify discriminators, not percentages of elapsed time.
+
+| Family | WF code in the measured path | Rust/C++ comparison and next discriminator |
+|---|---|---|
+| Vector | Per-element append calls survive; wide suffix cycles construct a stack record, call append and pay its unconditional input snapshot. Truncate's suffix-one digest reads backing directly. | Both native fast paths construct directly in backing. C++ saves construction constants outside the suffix loop; WF repeats setup inside its tail helper. Compare source shapes with unchanged growth and consumption. |
+| HashMap | Lookup, find and remove are already inlined; put, try-put and rebuild retain calls. | Native queries inline too, and mutation helpers remain in native images. Rust scans compact control bytes in groups; libc++ follows nodes with cached hashes. Separate probing, capacity geometry and index arithmetic. |
+| Deque | Scalar endpoint operations inline, with descriptor reloads after front placement. | Rust retains descriptor state in registers. Neither churn loop uses integer division; test the exact predecessor arithmetic and update ordering. |
+| PriorityQueue | Hot push, pop, sift and replace inline; wide sifting still moves complete records repeatedly. | Rust's wide pop can retain a call while C++ heap code inlines. Test ownership-preserving movement order before blaming call overhead. |
+| OrderedMap | Query descent retains recursive lookup calls; exhausted-node cleanup still copies the complete node before freeing it; wide slot shifts copy one entry per iteration. | Native query descent uses loops. Source C remains close on several paths, so library traversal and layout must be separated from WF lowering. |
+
+The [fixed-eight-slot find observation](../../investigations/result-registers/DESIGN.md#lowering)
+is a distinct, still-valid lead: under Clang 18 on x86-64 at O2, early full
+unrolling raised the inline cost and kept `find` out of its caller. A different
+lowering inlined before peeling and ran the trace at 0.601 of the destination
+baseline, versus 0.956 for the selected register-result lowering. That is not
+the current dynamic-capacity map on Apple Clang 21/AArch64/O3: its measured
+lookup and find calls have already disappeared. A global inline or unroll
+policy must address the recorded cross-program losses; the historical ratio
+does not select it.
+
+For Vector, both Rust and C++ still retain a per-round work helper in reserved
+and reuse traces. The contrast above is specifically the per-element append
+fast path. Suffix-one has no rear-element exchange, making it a discriminator
+without the forward-native versus rear-relocating-WF algorithm difference of
+larger suffixes. Rust's drain range checks are still present; WF's proof-erased
+checks do not explain its deficit in this case.
 
 ## Measurement criteria recorded before running
 
