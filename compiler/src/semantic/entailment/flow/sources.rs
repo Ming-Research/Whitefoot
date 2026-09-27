@@ -454,8 +454,8 @@ fn commit_value_kind(node_path: &crate::NodePath, value: &CheckedExpression) -> 
 impl Reasoning<'_, '_, '_> {
     /// The value image shared by an ordinary let, a direct-place SET-1
     /// commit and a counted endpoint capture [FN-1]. Every admitted exact
-    /// integer conversion preserves its input's mathematical value; checked
-    /// and defined rows have another result type.
+    /// integer conversion preserves its input's mathematical value; wrapping
+    /// does not, and checked and defined rows have another result type.
     fn copy_source(&mut self, value: &CheckedExpression) -> Option<TermId> {
         match value {
             CheckedExpression::NumericConversion {

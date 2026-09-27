@@ -1,0 +1,12 @@
+fn narrowed(value: u32) -> result: u32 pure contract {
+  requires value == 256_u32;
+  ensures result == value;
+} {
+  let small = cvt.wrap::<u32, u8>(value);
+  let restored = cvt::<u8, u32>(small);
+  return restored;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
