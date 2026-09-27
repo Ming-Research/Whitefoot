@@ -869,6 +869,32 @@ C. The generated D compiler and `.build/fused-truncate` artifacts remain
 identified as rejected-candidate outputs; a subsequent C or compiler trial
 must rebuild the embedded library before using its compiler as a baseline.
 
+### Source discriminator F: one insertion after capacity preparation
+
+F reuses C's small `grow_vector_make_room` guard, then performs one
+`insert_at`, replacing insert's four growth/placement branches. The helper
+preserves length and publishes spare capacity, so the unchanged entry index
+bound still authorizes insertion. Public contracts, growth policy, element
+order, generic ownership, append and truncate remain unchanged. C's actual
+mixed-trace code still calls insert; its wide body snapshots all 256 incoming
+bytes before testing capacity. This is a source-factoring hypothesis, not a
+measured insertion benefit or an attribution of the failed Slots trial.
+
+Use the original C compiler lowering for both source arms: neither the Slots
+candidate nor E's branch-local truncate is included. Keep fixtures, native
+inputs and flags fixed. Before timing, require insert to inline in both mixed
+traces, no capacity-helper call on the spare path, and elimination of the wide
+entry snapshot without equivalent marker staging elsewhere across caller and
+callee. Inspect the actual caller and unchanged shift lowering; an unchanged
+hot path or displaced snapshot fails the discriminator. Cancellation of the
+paired insert/remove shifts is not assumed or required. First pass complete
+behavior, byte-identical accounting and the formal vector program with
+unchanged index/order/release expectations. Only then time the full existing
+two-cohort matrix against the fresh frozen-C series: reserved, growth and
+reuse are affected paths; suffixes are independent controls. Any repeatable
+useful-cell regression prevents selection. This candidate is preregistered
+before compilation and makes no performance claim.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
@@ -1498,3 +1524,175 @@ the compiler control. Wider shift populations may supplement this matrix to
 distinguish transfer setup from per-element work, but cannot replace or remove
 an original cell. This is a preregistered experiment, not a selected lowering
 or a measured performance claim.
+
+### Slots trial construction and correctness
+
+The source-C hash above remains unchanged. Before timing, the candidate
+compiler SHA-256 is
+`bfd74a17222a39cc8e49b0b78bcead77ace8120f06287cb2cb6dbb2abce4e442`;
+the final O3 Vector timed image is
+`7acdec6b78a671ab7f3b1e483bf82e13d004e5fc008de3e7b51d9ae42a4b55f2`,
+and its ordinary-allocation LLVM is
+`032dcab2f679efc7f37192e1e45531bf7291a16b74d46f9cde99c6d8ebd96d38`.
+Fresh `.build/slots-shift/` directories keep the source-C control images
+unchanged. The candidate reuses `array.rs`'s complete-stride transfer helper
+from the Slots arm of `runs.rs`; Ring and the other window operations retain
+their previous lowering. These are candidate identities, not an adoption.
+
+All three new backend tests in `compiler/src/backend/tests/windows.rs`
+passed: fixed/runtime Slots versus Ring IR shape, padded owning values and
+exact release order, and huge zero-byte logical lengths with native callers.
+The last case exercises fixed length `2^63` and runtime length `2^64 - 2`,
+including insertion/removal at the end, with optional address facts both
+emitted and withheld. All nine formal container program tests passed.
+Fresh timed and accounting correctness images passed for Vector, Deque,
+HashMap, PriorityQueue and OrderedMap, including their existing rejection
+controls. Accounting produced 294/120/420/150/210 rows respectively; Vector's
+294 rows are byte-identical to the source-C control accounting file.
+
+Construction and command elapsed times were recorded separately. Compiler
+construction took 9.383 s. The first unit construction took 103.632 s, then
+the focused command failed in 5.819 s because the zero-byte fixture nested
+`Empty()` in an argument, contrary to GRAM-9. The fixture also needed separate
+bindings for arithmetic inside comparisons under GRAM-6. Binding these
+expressions repaired the fixture without changing the parser or language;
+direct compiler emission then passed in 0.024 s. The repaired unit
+construction took 56.001 s and the three-test command 6.392 s; its Cargo
+test-body elapsed time of 5.75 s includes native construction inside test
+helpers. Corpus construction took 0.568 s and the nine-test command 31.924 s.
+Fresh ecosystem construction took 31.096 s, its correctness commands 7.543 s,
+and accounting 4.220 s. No performance measurement is included in these
+correctness timings.
+
+Bounded scratch fault controls used the same fixture sources and independent
+ledger/native witnesses. Each unmodified control passed first. Suppressing
+release `F1` left the native child at exit 0 but made the exact-ledger oracle
+fail with status 1. Giving the middle owning insertion the preceding
+initialized element as its shift source produced native exit 43 with
+`duplicate or unknown owner release`. Removing its transfer entirely had
+instead faulted with signal 11 before reaching the ledger; that result was
+not counted as a ledger rejection. Removing the huge fixed-window insertion's
+length store produced native exit 3 at the first roundtrip witness. Changing
+a normalized zero-stride GEP operand from `0` to `9223372036854775808`
+failed the address-operand assertion with status 1, without executing a huge
+walk. The successful scratch-control command took 1.936 s and required no
+further Rust rebuild.
+
+To reproduce the maintained correctness checks, use the current trial
+compiler with `cargo test --manifest-path compiler/Cargo.toml --profile gate
+--jobs 2 --locked --offline --lib _shifts_ -- --test-threads=1`, then the same
+Cargo options with `--test corpus programs::containers::`. Construct and run
+the explicit aggregate `ecosystem-build`, `ecosystem-check` and
+`ecosystem-account` targets with `BUILD=.build/slots-shift`, that compiler's
+`WHITEFOOTC` path and the pinned `ABSEIL_PREFIX`. Each command belongs under
+the repository's shared verification guard; none invokes measurement or adds
+research to the correctness gate.
+
+### Slots final code and paired timing: regression prevents selection
+
+The candidate fails the recorded no-useful-regression criterion. Scalar
+reuse at population 16 takes 1.870–1.876 ms versus fresh C's 1.639–1.642 ms:
+Slots/C ratios are 1.138855 and 1.144600. In both cohorts, the candidate
+minimum exceeds the control maximum, by factors 1.107591 and 1.108603.
+Rust median drift is 0.998388/1.005673 and C++ drift 1.035072/1.002789.
+The regression survives the native-control comparison and is decisive
+against production selection under the prerecorded criterion. This measured
+lowering is not recommended; the pending design amendment is not an adopted
+decision.
+
+The final-code discriminator did pass. Inspecting actual mixed-trace work,
+scalar instructions fall from 173 to 149; wide instructions change from
+410 to 411. Both removal shift loops become `memmove` calls. Retained
+scalar insert/remove helpers shrink from 160/37 to 109/20 instructions,
+and wide helpers from 177/46 to 132/33. There is a competing wide-value
+cost: preserving the removed value across the bulk call spills 25 payload
+fields instead of eleven, adding 112 bytes of stack stores and 112 bytes
+of reloads per removal. The wide work frame grows from `0x2f0` to `0x360`.
+The existing 256-byte insert-entry snapshot remains. Loop elimination is
+therefore established, but those observations alone do not assign the
+measured time to transfer setup, spills or the surviving insertion boundary.
+
+The six scalar/wide trace, tail and truncate bodies are unchanged after
+normalizing branch targets and constant references. Scalar trace loop
+addresses are also identical. Wide tail placement moves by -96 bytes and
+wide truncate by -364 bytes; these remain image-level differences. Suffix
+paths execute no insert/remove shift, so their timing changes cannot be
+presented as a direct bulk-transfer benefit. Disassembly uses the same
+`llvm-objdump --macho --disassemble --no-show-raw-insn` method as the preceding
+trials, inspecting callers as well as retained helpers.
+
+The pair uses unchanged library source C from
+`47f9f91b63a484ba7f4924a63b5863b1b8b6f289`; its whole-library SHA-256 is
+`5d0deaa41004b15b1def9c458df575634303df527b74d738916c9ad92b520197`.
+The control is the frozen production-C image identified above; the candidate
+compiler, LLVM and image are the identities in the construction section.
+The C driver, Rust archive, C++ object and all 294 accounting rows are
+byte-identical between arms. Both full matrices ran sequentially in one
+guarded command, invoking each frozen image with `measure 1048576 7`.
+The control took 80.725 s and Slots 80.401 s, both exit 0; the outer guard
+took 161.34 s, with no queue wait or busy retry. The runner rechecked source,
+compiler, native-input, accounting, LLVM and image hashes afterward and
+removed its one-shot script. No construction or correctness time is included
+in these measurement durations.
+
+The fresh [C control samples](ecosystem-slots-control-samples.csv) and
+[Slots samples](ecosystem-slots-shift-samples.csv) each contain 4,116 rows.
+Their SHA-256 values are
+`df92f6a209c74efc77e4fa29522816d96ccf1c505db2dd08ee9ceb5e5e4ca3b2` and
+`c5e61ba1392d32344bd81126310968ec51cd9b5ea14958b1b057946302f50f24`.
+All keys, work, rounds, traces, checksums and sample IDs 0–6 agree. Both
+files pass `summarize-ecosystem.pl --complete` and `--complete --targets`.
+Earlier source-C measurements remain separate evidence and are not pooled.
+
+The table covers all 36 useful cells. Ranges span the two cohort medians;
+ratios are whole-trace comparisons, not isolated insertion/removal latency.
+The final column uses each cohort's slower Rust/C++ standard median and
+does not itself establish sample separation.
+
+| Bytes | Path | Slots / C at 16 | at 256 | at 4096 | Slots ms at 4096 | Slots / slower standard at 4096 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 1.021–1.053 | 0.979–0.994 | 0.954–0.988 | 1.659–1.668 | 0.803–0.809 |
+| 8 | growth | 1.039–1.049 | 0.993–0.995 | 0.952–0.993 | 2.049–2.058 | 0.858–0.858 |
+| 8 | reuse | 1.139–1.145 | 0.985–0.992 | 0.990–0.995 | 1.629–1.640 | 0.790–0.795 |
+| 8 | suffix-1 | 0.997–0.998 | 1.001–1.029 | 0.985–0.997 | 2.945–2.952 | 1.003–1.004 |
+| 8 | suffix-2 | 0.991–0.997 | 0.996–1.009 | 0.990–0.997 | 2.379–2.381 | 1.452–1.455 |
+| 8 | suffix-3 | 0.982–0.983 | 0.995–1.003 | 0.999–1.011 | 1.931–1.959 | 1.105–1.119 |
+| 256 | reserved | 1.007–1.010 | 1.000–1.001 | 1.009–1.012 | 41.130–41.247 | 0.945–0.946 |
+| 256 | growth | 0.995–1.003 | 1.000–1.001 | 0.998–0.999 | 53.006–53.231 | 1.016–1.026 |
+| 256 | reuse | 1.006–1.008 | 1.006–1.009 | 1.005–1.006 | 41.005–41.030 | 0.944–0.945 |
+| 256 | suffix-1 | 1.000–1.002 | 0.998–1.007 | 0.997–1.000 | 22.698–22.701 | 1.361–1.365 |
+| 256 | suffix-2 | 0.999–1.035 | 0.981–0.993 | 1.013–1.032 | 23.120–23.877 | 1.061–1.095 |
+| 256 | suffix-3 | 1.000–1.001 | 1.004–1.004 | 0.998–0.999 | 26.482–26.518 | 1.009–1.012 |
+
+Fifteen useful cells have lower Slots medians in both cohorts, thirteen
+higher and eight mixed. Applying the observed-range comparison separately
+to every cell yields one strict regression, zero strict gains and 35 with
+overlap in at least one cohort. Small scalar reserved and growth also have
+higher medians in both cohorts, but their ranges do not establish strict
+regressions in both. The target reduction is a separate judgment: fresh C
+has 13 passes / 10 deficits / 13 inconclusive, while Slots has
+12 / 11 / 13. Each arm retains six unranked suffix-zero controls.
+
+All useful native target comparisons meet the duration and cohort-spread
+qualifications; the minimum useful WF sample across the arms is 1.544 ms.
+Every sub-millisecond observation is a suffix-zero control. Fresh C's
+scalar suffix-2 direct-C comparisons at 256 and 4096 are unstable (46.609%
+and 13.521%); Slots' only unstable comparison is wide suffix-zero take/swap C
+at 16 (29.673%). They support no ranking or attribution. Across all useful
+cells/cohorts, Rust control drift is 0.952–1.029 and C++ drift 0.962–1.035.
+The same-source experiment measures the combined bulk-call, spill and
+code-placement change; it does not isolate any of those costs. In particular,
+the surviving insert snapshot is a concrete next discriminator, not an
+established cause of the scalar reuse regression.
+
+The rejected compiler implementation and its tests remain reproducible in
+[slots-shift.patch](slots-shift.patch), SHA-256
+`6c120ebbb4fa178a3ef6b56bd9a8207c51de491a3b33a92fb829024209af9485`.
+It applies to base
+`02b61a3056d9ca1bbd1c34bfaf5ca1100301b779`; apply it in an isolated checkout
+before the construction commands above. After the failed comparison, its
+three production emitter/test files were restored exactly to that base by
+reversing the saved patch. The pending amendment retains the failed result
+for disposition. Source restoration does not replace an already built
+compiler: preserve the identified Slots artifacts and rebuild the embedded
+compiler before the next source-only trial on original C lowering.

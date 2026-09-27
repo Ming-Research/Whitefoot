@@ -572,6 +572,16 @@ rarely insert at the same place.
   registers, so the inlining separates them. How much of that gain an
   inlined, fully unrolled `find` keeps is unmeasured, as is whether other
   small container operations with fixed probe loops behave the same way.
+  The [2026-09-27 code-only follow-up](../research/experiments/container-representation/ECOSYSTEM.md#generic-native-pipeline-pilot-completed-negative-result)
+  reproduces the delayed-unroll mechanism on current AArch64 Clang 21 O3:
+  deferring full unrolling in the first stage lets `find` and `remove` inline,
+  and both records ASCII loops survive. Map text grows 78.991% and the
+  three-module total 28.793%, failing the preregistered provisional 25%/10%
+  selection screens. Those are experiment screens, not owner-approved
+  performance ceilings. Runtime gains, full-corpus effects and production O2
+  remain unmeasured; the short construction-cost observations remain
+  unqualified. This does not replace the historical Clang 18 x86-64 runtime
+  evidence above.
   Candidate levers: loop metadata on the emitted probe loop that leaves it
   to the late unroll pass, after inlining; an unroll threshold or pass order
   in the pipeline the driver requests that runs full unrolling after the
@@ -583,7 +593,7 @@ rarely insert at the same place.
   `.text` across the maintained programs and container bundles stays within
   a stated growth bound, and the maintained paired compute comparison
   passes. Deferred because it is a host inlining-policy question separate
-  from the result ABI, with one program as evidence. Reopen when a
+  from the result ABI, with one program as runtime evidence. Reopen when a
   maintained workload's time is dominated by an out-of-line container
   lookup, or when the driver's optimization pipeline is revisited.
 

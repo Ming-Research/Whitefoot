@@ -1,0 +1,508 @@
+diff --git a/compiler/src/backend/emitter/array.rs b/compiler/src/backend/emitter/array.rs
+index 75e38f5ee..b8ee86bfd 100644
+--- a/compiler/src/backend/emitter/array.rs
++++ b/compiler/src/backend/emitter/array.rs
+@@ -88,7 +88,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+     /// A bounded count of complete stride-spaced representations. Target
+     /// layout supplies the stride; zero-byte elements transfer no bytes while
+     /// ownership still moves with the whole source value.
+-    fn copy_element_range(
++    pub(super) fn copy_element_range(
+         &mut self,
+         element_llvm: &str,
+         source: &str,
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+index 68d32be1a..800d1fe99 100644
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -616,8 +616,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+     }
+ }
+
+-/// The label one shift leaves its block at: the loop is three LLVM blocks, so
+-/// a later phi in the same IR block must name the block the walk fell out of.
++/// The label one shift leaves its block at. A later phi in the same IR block
++/// must name this exit for both the contiguous Slots transfer and Ring walk.
+ pub(super) fn run_shift_done_label(result: IrValueId) -> String {
+     format!("run.shift.done.v{}", result.ordinal())
+ }
+@@ -697,10 +697,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+     /// [OP-10] `insert_at`'s and `remove_at`'s one shift of `window.filled`,
+     /// with the boundary move that shift makes room for or closes.
+     ///
+-    /// The walk runs in the direction that never overwrites a slot it has
+-    /// not yet read, and every slot it touches is reached through the
+-    /// window's own coordinate system, so one walk serves a `Slots` and a
+-    /// wrapped `Ring` alike [WIN-1].
++    /// Slots has a contiguous payload, so one overlapping range transfer
++    /// preserves the entire shifted extent. Ring retains its logical walk:
++    /// the physical range may wrap, and the direction never overwrites a
++    /// slot it has not yet read [WIN-1].
+     pub(super) fn emit_run_shift(
+         &mut self,
+         result: IrValueId,
+@@ -724,6 +724,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         {
+             return Err(BackendFailure::InvalidIr);
+         }
++        if shape.shape == IrWindowShape::Slots {
++            return self.emit_slots_shift(result, run_type, run, index, open, shape);
++        }
+         let element = shape.element_type(self.program)?;
+         let index = self.value_name(index);
+         let pre = run_shift_pre_label(result);
+@@ -788,6 +791,76 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+
++    /// A Slots shift moves complete, stride-spaced elements within the one
++    /// qualified allocation. The source and destination overlap, so this
++    /// must remain memmove, including for non-copy owning elements. The
++    /// removed element was captured before this step; insertion places its
++    /// new element afterwards. No source observation or release intervenes.
++    fn emit_slots_shift(
++        &mut self,
++        result: IrValueId,
++        run_type: IrType,
++        run: IrValueId,
++        index: IrValueId,
++        open: bool,
++        shape: RunShape,
++    ) -> Result<(), BackendFailure> {
++        let pre = run_shift_pre_label(result);
++        let done = run_shift_done_label(result);
++        writeln!(self.output, "  br label %{pre}\n{pre}:")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        let length = self.run_word(run_type, run, shape.length_field())?;
++        let index = self.value_name(index);
++        let next = self.next_temporary()?;
++        let count = self.next_temporary()?;
++        writeln!(self.output, "  %{next} = add i64 {index}, 1")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        let next_index = format!("%{next}");
++        let (source_index, destination_index) = if open {
++            (index.as_str(), next_index.as_str())
++        } else {
++            (next_index.as_str(), index.as_str())
++        };
++        // Insertion moves [index, length); removal has already captured
++        // index and moves [index + 1, length). OP-10 bounds both endpoints
++        // by cap, including the one-past pointer when the count is zero.
++        // The complete qualified allocation bounds count * target stride;
++        // that stride includes padding between adjacent element owners.
++        writeln!(self.output, "  %{count} = sub i64 {length}, {source_index}")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        let source = self.element_pointer(result, shape, run_type, run, source_index)?;
++        let destination = self.element_pointer(result, shape, run_type, run, destination_index)?;
++        let element = shape.element_type(self.program)?;
++        let logical_count = format!("%{count}");
++        // A zero-byte element can have a logical count outside the signed
++        // target address domain. Normalize only this address/size operand;
++        // the source index and the length update retain their logical values.
++        let address_count = self.element_address_index(element, &logical_count)?;
++        let element_llvm = llvm_type(self.program, element)?;
++        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
++        self.copy_element_range(
++            &element_llvm,
++            &format!("%{source}"),
++            &format!("%{destination}"),
++            address_count,
++        )?;
++        writeln!(self.output, "  br label %{done}\n{done}:")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        let moved = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{moved} = {} i64 {length}, 1",
++            if open { "add" } else { "sub" }
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
++        let length_address =
++            self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
++        writeln!(self.output, "  store i64 %{moved}, ptr {length_address}")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
++    }
++
+     /// [OP-10] `insert_at`'s placement into the slot the shift opened.
+     pub(super) fn emit_run_insert(
+         &mut self,
+diff --git a/compiler/src/backend/tests/windows.rs b/compiler/src/backend/tests/windows.rs
+index f3acf224c..097903fdf 100644
+--- a/compiler/src/backend/tests/windows.rs
++++ b/compiler/src/backend/tests/windows.rs
+@@ -42,6 +42,373 @@ use crate::target::{
+ use super::system::with_ir;
+ use super::*;
+
++/// The same OP-10 rows select a contiguous transfer for Slots and retain
++/// the coordinate walk for Ring. Runtime indices keep the transfer extent
++/// dynamic, so this observes lowering before the host can fold a small loop.
++#[test]
++fn slots_shifts_use_one_strided_transfer_and_rings_keep_logical_walks() {
++    for shape in ["Slots", "Ring"] {
++        for capacity in ["", ", 8"] {
++            let (ty, window) = if capacity.is_empty() {
++                (format!("Box<{shape}<u64>>"), "deref(values).inner")
++            } else {
++                (format!("{shape}<u64{capacity}>"), "deref(values)")
++            };
++            let source = format!(
++                "fn insert(values: &{ty}, index: u64, value: u64) -> result: unit writes(values) contract {{\n  requires index <= {window}.len;\n  requires {window}.len < {window}.cap;\n}} {{\n  insert_at(window: &{window}, index: index, value: value);\n  return unit;\n}}\n\nfn remove(values: &{ty}, index: u64) -> result: u64 writes(values) contract {{\n  requires index < {window}.len;\n}} {{\n  let value = remove_at(window: &{window}, index: index);\n  return value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
++            );
++            with_ir(source.as_bytes(), |program| {
++                for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
++                    let target = TargetLayout::host().expect("supported target");
++                    let llvm = emit_llvm_with_window_address_facts(program, target, facts)
++                        .expect("both shift shapes qualify independently of optional facts")
++                        .into_string();
++                    for row in ["insert_at", "remove_at"] {
++                        let body = emitted_prelude_row(&llvm, row);
++                        if shape == "Slots" {
++                            assert!(!body.contains("run.shift.head."), "{body}");
++                            assert_eq!(
++                                body.matches("call void @llvm.memmove.").count(),
++                                1,
++                                "{body}"
++                            );
++                            assert!(
++                                body.contains("getelementptr i64, ptr null, i64 %"),
++                                "{body}"
++                            );
++                        } else {
++                            assert!(body.contains("run.shift.head."), "{body}");
++                            assert!(body.contains("run.shift.body."), "{body}");
++                        }
++                    }
++                }
++            });
++        }
++    }
++}
++
++/// Observe both shift directions, both zero-length endpoint shifts and the
++/// padded stride of an owning element. The Ring starts at its last physical
++/// slot, so the identical logical trace crosses the backing boundary.
++#[test]
++fn slots_and_wrapped_ring_shifts_preserve_padded_owners_and_release_order() {
++    for (constructor, window, first_operation, expected) in [
++        (
++            "slots_new::<Record, 5>()",
++            "values",
++            "place_back",
++            "A1;A2;A3;A4;A5;F5;F2;F4;F1;F3;",
++        ),
++        (
++            "box_slots_new::<Record>(capacity: 5_u64)",
++            "values.inner",
++            "place_back",
++            "A1;A2;A3;A4;A5;A6;F6;F3;F5;F2;F4;F1;",
++        ),
++        (
++            "ring_new::<Record, 5>()",
++            "values",
++            "place_front",
++            "A1;A2;A3;A4;A5;F5;F2;F4;F1;F3;",
++        ),
++        (
++            "box_ring_new::<Record>(capacity: 5_u64)",
++            "values.inner",
++            "place_front",
++            "A1;A2;A3;A4;A5;A6;F6;F3;F5;F2;F4;F1;",
++        ),
++    ] {
++        let source = r#"struct Record {
++  marker: u8;
++  owner: Box<u64>;
++  tail: u16;
++}
++
++fn make(value: u64) -> result: Record pure {
++  let owner = box_new::<u64>(value: value);
++  return Record(marker: 7_u8, owner: move owner, tail: 9_u16);
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let values = CONSTRUCTOR;
++  let initial = WINDOW.len +wrap 11_u64;
++  let first = make(value: initial);
++  FIRST(window: &WINDOW, value: move first);
++  let second_seed = WINDOW[0_u64].owner.inner +wrap 11_u64;
++  let second = make(value: second_seed);
++  place_back(window: &WINDOW, value: move second);
++  let third_seed = WINDOW[1_u64].owner.inner +wrap 11_u64;
++  let third = make(value: third_seed);
++  insert_at(window: &WINDOW, index: 1_u64, value: move third);
++  let fourth_seed = WINDOW[1_u64].owner.inner +wrap 11_u64;
++  let fourth = make(value: fourth_seed);
++  insert_at(window: &WINDOW, index: 0_u64, value: move fourth);
++  let fifth_seed = WINDOW[0_u64].owner.inner +wrap 11_u64;
++  let fifth = make(value: fifth_seed);
++  insert_at(window: &WINDOW, index: 4_u64, value: move fifth);
++  let endpoint = remove_at(window: &WINDOW, index: 4_u64);
++  insert_at(window: &WINDOW, index: 4_u64, value: move endpoint);
++  let front = remove_at(window: &WINDOW, index: 0_u64);
++  let middle = remove_at(window: &WINDOW, index: 2_u64);
++  let last = remove_at(window: &WINDOW, index: 2_u64);
++  if front.owner.inner != 44_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if middle.owner.inner != 22_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  if last.owner.inner != 55_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  if WINDOW[0_u64].owner.inner != 11_u64 {
++    return std::process::exit_status(code: 4_u8);
++  }
++  if WINDOW[1_u64].owner.inner != 33_u64 {
++    return std::process::exit_status(code: 5_u8);
++  }
++  if WINDOW[1_u64].marker != 7_u8 {
++    return std::process::exit_status(code: 6_u8);
++  }
++  if WINDOW[1_u64].tail != 9_u16 {
++    return std::process::exit_status(code: 7_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#
++        .replace("CONSTRUCTOR", constructor)
++        .replace("WINDOW", window)
++        .replace("FIRST", first_operation);
++        for (overlap, facts) in [
++            (OverlapLowering::Off, WindowAddressFacts::Emit),
++            (OverlapLowering::Off, WindowAddressFacts::Withhold),
++            (OverlapLowering::On, WindowAddressFacts::Emit),
++        ] {
++            let llvm =
++                super::system::with_mutated_ir_lowering(source.as_bytes(), overlap, |program| {
++                    let target = TargetLayout::host().expect("supported target");
++                    let record = program
++                        .nominals()
++                        .iter()
++                        .find(|item| item.name() == "Record")
++                        .expect("the padded owning record");
++                    let layout = validate_static_storage(
++                        target,
++                        program,
++                        &TargetStorageType::source(crate::IrType::Nominal(record.id())),
++                    )
++                    .expect("the complete record fits");
++                    assert_eq!((layout.size(), layout.align()), (24, 8));
++                    let mut llvm = emit_llvm_with_window_address_facts(program, target, facts)
++                        .expect("padded owner shifts qualify with either fact choice")
++                        .into_string();
++                    llvm.push_str(
++                        &crate::driver::launcher::render(program, "main")
++                            .expect("ordinary test launcher"),
++                    );
++                    llvm
++                });
++            let module = super::owned_places::retain_calls(&llvm)
++                .replace("@malloc(", "@wf_test_allocate(")
++                .replace("@free(", "@wf_test_release(");
++            let allocations = if window == "values" { 5 } else { 6 };
++            let observer = super::owned_places::allocation_observer(allocations, 0);
++            let output = compile_link_and_run(&module, Some(&observer), &[]);
++            assert_eq!(
++                output.status.code(),
++                Some(0),
++                "{constructor} {overlap:?} {facts:?}: {output:?}"
++            );
++            assert_eq!(
++                output.stdout,
++                expected.as_bytes(),
++                "{constructor} {overlap:?} {facts:?}: {output:?}"
++            );
++            assert!(output.stderr.is_empty(), "{output:?}");
++        }
++    }
++}
++
++/// A zero-stride element still has its full logical index and length. Only
++/// element pointers and the transfer-size operand may normalize to zero.
++/// A native caller supplies valid initialized zero-byte windows directly, so
++/// huge shift counts execute without a huge source construction/fill loop.
++#[test]
++fn zero_stride_slots_shifts_normalize_transfer_extent_without_losing_length() {
++    let source = br#"struct Empty {
++}
++
++fn insert(values: &Slots<Empty, 9223372036854775809>, index: u64) -> result: unit writes(values) contract {
++  requires index <= deref(values).len;
++  requires deref(values).len < 9223372036854775809_u64;
++} {
++  let empty = Empty();
++  insert_at(window: values, index: index, value: empty);
++  return unit;
++}
++
++fn remove(values: &Slots<Empty, 9223372036854775809>, index: u64) -> result: Empty writes(values) contract {
++  requires index < deref(values).len;
++} {
++  let value = remove_at(window: values, index: index);
++  return value;
++}
++
++fn insert_runtime(values: &Box<Slots<Empty>>, index: u64) -> result: unit writes(values) contract {
++  requires index <= deref(values).inner.len;
++  requires deref(values).inner.len < deref(values).inner.cap;
++} {
++  let empty = Empty();
++  insert_at(window: &deref(values).inner, index: index, value: empty);
++  return unit;
++}
++
++fn remove_runtime(values: &Box<Slots<Empty>>, index: u64) -> result: Empty writes(values) contract {
++  requires index < deref(values).inner.len;
++} {
++  let value = remove_at(window: &deref(values).inner, index: index);
++  return value;
++}
++
++fn roundtrip_fixed(values: &Slots<Empty, 9223372036854775809>, index: u64) -> result: u64 writes(values) contract {
++  requires index <= deref(values).len;
++  requires deref(values).len < 9223372036854775809_u64;
++} {
++  let before = deref(values).len;
++  let after_insert = before +wrap 1_u64;
++  let empty = Empty();
++  insert_at(window: values, index: index, value: empty);
++  if deref(values).len != after_insert {
++    return 0_u64;
++  }
++  let removed = remove_at(window: values, index: index);
++  return deref(values).len;
++}
++
++fn roundtrip_runtime(values: &Box<Slots<Empty>>, index: u64) -> result: u64 writes(values) contract {
++  requires index <= deref(values).inner.len;
++  requires deref(values).inner.len < deref(values).inner.cap;
++} {
++  let before = deref(values).inner.len;
++  let after_insert = before +wrap 1_u64;
++  let empty = Empty();
++  insert_at(window: &deref(values).inner, index: index, value: empty);
++  if deref(values).inner.len != after_insert {
++    return 0_u64;
++  }
++  let removed = remove_at(window: &deref(values).inner, index: index);
++  return deref(values).inner.len;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let values = slots_new::<Empty, 3>();
++  let empty = Empty();
++  insert_at(window: &values, index: 0_u64, value: empty);
++  insert_at(window: &values, index: 0_u64, value: empty);
++  let first = remove_at(window: &values, index: 0_u64);
++  let last = remove_at(window: &values, index: 0_u64);
++  if values.len != 0_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  let runtime = box_slots_new::<Empty>(capacity: 9223372036854775809_u64);
++  insert_at(window: &runtime.inner, index: 0_u64, value: empty);
++  insert_at(window: &runtime.inner, index: 0_u64, value: empty);
++  let runtime_first = remove_at(window: &runtime.inner, index: 0_u64);
++  let runtime_last = remove_at(window: &runtime.inner, index: 0_u64);
++  if runtime.inner.len != 0_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let host = r#"#include <stdint.h>
++#include <stdlib.h>
++
++extern int wf_fixture_body(int, char **);
++extern uint64_t wf_roundtrip_fixed(uint64_t *, uint64_t);
++struct RuntimeSlots { uint64_t length, capacity; };
++extern uint64_t wf_roundtrip_runtime(struct RuntimeSlots **, uint64_t);
++
++int wf__main_body(int argc, char **argv) {
++    int status = wf_fixture_body(argc, argv);
++    if (status != 0) return status;
++    const uint64_t fixed_length = UINT64_C(1) << 63;
++    uint64_t fixed = fixed_length;
++    if (wf_roundtrip_fixed(&fixed, 0) != fixed_length || fixed != fixed_length) return 3;
++    if (wf_roundtrip_fixed(&fixed, fixed_length) != fixed_length || fixed != fixed_length) return 4;
++    struct RuntimeSlots *runtime = malloc(sizeof *runtime);
++    if (runtime == NULL) abort();
++    const uint64_t runtime_length = UINT64_MAX - 1;
++    runtime->length = runtime_length;
++    runtime->capacity = UINT64_MAX;
++    if (wf_roundtrip_runtime(&runtime, 0) != runtime_length || runtime->length != runtime_length) return 5;
++    if (wf_roundtrip_runtime(&runtime, runtime_length) != runtime_length || runtime->length != runtime_length) return 6;
++    if (runtime->capacity != UINT64_MAX) return 7;
++    free(runtime);
++    return 0;
++}
++"#;
++    for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
++        let llvm = with_ir(source, |program| {
++            let target = TargetLayout::host().expect("supported target");
++            let mut module = emit_llvm_with_window_address_facts(program, target, facts)
++                .expect("zero-stride shifts qualify with or without optional facts")
++                .into_string();
++            module.push_str(
++                &crate::driver::launcher::render(program, "main").expect("ordinary test launcher"),
++            );
++            module
++        });
++        let rows: Vec<_> = llvm
++            .split("\ndefine ")
++            .map(|body| body.split("\n}\n").next().expect("definition body"))
++            .filter(|body| {
++                body.lines().next().is_some_and(|line| {
++                    line.contains("@wf_insert_at$instance$")
++                        || line.contains("@wf_remove_at$instance$")
++                }) && body.contains("run.shift.pre.")
++            })
++            .collect();
++        assert_eq!(
++            rows.len(),
++            6,
++            "both operations at two fixed capacities and runtime capacity must be present"
++        );
++        for body in rows {
++            assert!(!body.contains("run.shift.head."), "{body}");
++            let addresses: Vec<_> = body
++                .lines()
++                .filter(|line| {
++                    line.contains("getelementptr")
++                        && line
++                            .rsplit_once(", ")
++                            .is_some_and(|(_, operand)| operand.starts_with("i64 "))
++                })
++                .collect();
++            assert!(!addresses.is_empty(), "{body}");
++            assert!(
++                addresses.iter().all(|line| line.ends_with("i64 0")),
++                "{body}"
++            );
++            assert!(
++                body.contains("store i64 %"),
++                "logical length still changes: {body}"
++            );
++        }
++        let body = "define i32 @wf__main_body(";
++        assert_eq!(llvm.matches(body).count(), 1);
++        let mut observed = super::owned_places::retain_calls(&llvm).replacen(
++            body,
++            "define i32 @wf_fixture_body(",
++            1,
++        );
++        observed.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
++        let output = compile_link_and_run(&observed, Some(host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{facts:?}: {output:?}");
++        assert!(output.stdout.is_empty(), "{output:?}");
++        assert!(output.stderr.is_empty(), "{output:?}");
++    }
++}
++
+ /// The baseline clears the complete empty-window representation, including
+ /// every descriptor word. This checks the shared row, not its callers.
+ fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
