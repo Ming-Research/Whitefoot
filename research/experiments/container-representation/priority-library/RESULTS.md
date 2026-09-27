@@ -307,6 +307,22 @@ cell still missing the stated performance target rejects the candidate as a
 solution. Raw physical cleanup remains outside queue rankings. No candidate
 build, timing, production change or tree revision accompanies this inspection.
 
+### Source-only diagnostic: duplicate sink after pop
+
+The current `priority_queue_pop` body exchanges the root with the last
+element, then calls `priority_queue_sift_sink` twice with the same `start`,
+`count` and comparator. The second call observes the heap after the first call
+has restored its invariant and should therefore return at the root; it adds no
+semantic work and is absent from the matched C controls. The candidate removes
+only that duplicate call. Before adoption it must pass the independent sorted
+oracle, all wide-owner/refusal and cleanup checks, and the allocator ledger.
+The optimized pop/push, grow/pop and heapify/pop paths must show one fewer
+sift invocation and no new transfer or call boundary. The complete 30-cell
+matrix at both recorded work settings must be measured with the same seeds and
+native controls; no useful cell may regress and every newly eligible cell must
+beat the slower standard peer. This is a source correction under the current
+algorithm, not a new API or specification choice.
+
 ## Historical matched C comparison
 
 Run from the repository root, with a built compiler or `WHITEFOOTC` override:
