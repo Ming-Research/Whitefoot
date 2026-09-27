@@ -244,13 +244,15 @@ the proofs make possible.
 
 ### Available now
 
-- **Made to be written by agents.** Whitefoot is designed as a harness for
-  AI agents. Every construct has one spelling, arguments are named and
-  literals carry their type, so a piece of code reads one way. Every
+- **Easy to write, easy to review.** A small language with no lifetimes and
+  one spelling for each construct is quick to learn, and a piece of code
+  reads one way. Every signature states what the function reads and writes,
+  and a contract states what it requires and ensures, so a reviewer reading
+  a call knows what it may touch without opening the function. Every
   rejection names one rule and one location and suggests a fix, also as JSON
   (`--diagnostic-format json`), and tests pin the most common fixes to a
-  repaired program that compiles. Most of the compiler itself is written by
-  agents under one person's design rulings.
+  repaired program that compiles. What makes the language easy for people to
+  write and review makes it easy for AI agents too.
 - **Parallelism sized at run time.** A program never says how many tasks run
   at once. Under `--par` the compiler turns independent calls and loop ranges
   into work that idle workers may take, and the runtime decides how far a
