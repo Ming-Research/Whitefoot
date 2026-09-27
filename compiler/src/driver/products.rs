@@ -18,6 +18,7 @@ impl<'a> CheckProducts<'a> {
         reuse_proofs: bool,
     ) -> Self {
         let bundle = resolved.syntax().classified_bundle().source_bundle();
+        let mut digests = std::collections::BTreeMap::new();
         let modules = (0..bundle.modules().len())
             .map(|index| {
                 let target = ModuleId::from_index(index)?;
@@ -83,7 +84,10 @@ impl<'a> CheckProducts<'a> {
                     let interface = bundle.files().iter().find(|file| {
                         file.module() == module && file.role() == SourceRole::Interface
                     })?;
-                    let digests = reads::declaration_digests(interface.bytes(), limits)?;
+                    let digests = digests
+                        .entry(module)
+                        .or_insert_with(|| reads::declaration_digests(interface.bytes(), limits))
+                        .as_ref()?;
                     fields.push(bundle.module(module)?.qualified_name().as_bytes());
                     fields.push(item.0.as_bytes()).push(item.1.as_bytes());
                     fields.push(digests.get(&item)?);

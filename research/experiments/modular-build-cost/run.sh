@@ -11,6 +11,10 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+if [ "${1:-}" = --units ]; then
+    shift
+    exec python3 "$here/units.py" "$@"
+fi
 repository=$(cd "$here/../../.." && pwd)
 compiler=${WHITEFOOTC:-$repository/compiler/target/gate/whitefootc}
 compiler=$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")

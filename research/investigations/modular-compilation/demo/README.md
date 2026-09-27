@@ -321,10 +321,15 @@ queue's ring, and they cannot name a private field in any role. No `observe`,
 `use view`, footprint declaration, getter in a contract, trusted axiom,
 implicit type invariant, runtime snapshot or mandatory box is needed.
 
-Both entries check and execute under these rules. The larger GrowVector
-wrapper/function-kind witness from LANGUAGE.md is still to be built; the FIFO
-alone is not evidence for all containers, precise effect combinations or
-incremental performance.
+Both entries check and execute under these rules. The maintained
+`tests/programs/containers/grow-vector-program.wf` exercises the standard
+library's vector, including draining through behavior bindings. It does not
+implement LANGUAGE.md's complete wrapper/function-kind witness: that witness
+adds an independent public `tag`, a wrapper repeating the append contract and
+a function-kind formal with the same boundary. The library's actual vector
+has only its readonly `storage` field. Keep that remaining language witness
+distinct from using the maintained program to qualify module build costs;
+the FIFO alone supplies neither result.
 
 ## Edits to try while reading
 
@@ -359,11 +364,18 @@ boundary; an unrelated earlier syntax failure is not evidence for it. The
 module-form conformance cases pin the access, publication, correspondence and
 graph-order boundaries among them under their rules.
 
-A future review aid should compare the resolved public API, not only changed
-lines containing `public`. Changing a published field type or a contract
-without editing its modifier must still be reported. Private field changes
-that alter public capabilities also matter; layout-only effects can be reported
-separately. No comparison script or new review gate is implemented here.
+The driver renders and compares resolved interfaces, including reached
+declarations, rather than selecting changed lines containing `public`:
+
+```sh
+whitefootc --graph modules.wfg --render-interface pkg::runtime::queue
+whitefootc --graph modules.wfg --compare-interface pkg::runtime::queue --against ../previous/modules.wfg
+```
+
+Use a complete previous specimen at the comparison path. Public field types,
+contracts and reached private declarations can affect this comparison even
+when no `public` modifier changes. The comparison is a review aid, not a
+separate approval or correctness gate.
 
 Both entries check and run, the rejection probes reject under their rules and
 the kernel artifact has no allocator dependency. Cold/incremental agreement for

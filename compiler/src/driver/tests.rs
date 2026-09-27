@@ -4,6 +4,8 @@ use super::{
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
+mod products;
+
 /// Places each record in the module its directory names, in the
 /// interface role when it is that directory's `module.wfm` [MOD-2].
 fn module_inputs<'a>(

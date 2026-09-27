@@ -1509,6 +1509,16 @@ lowering ownership, and structured notes preserve current source paths without
 rewriting finished diagnostic text. The `ir/products` schema and lowering
 product adapter serve this fragment store and leave with it if replaced.
 
+The first real-consumer cost probe found that the source-key constructor
+parsed a dependency's interface once per reached declaration. Memoize those
+declaration digests once per resolved checking view, using the existing digest
+producer and unchanged key bytes. Compare the same sources with the preceding
+binary as an ablation before attributing the observed GrowVector loss to that
+work. Also keep lowering checkpoints proportional to new helper reservations:
+a reservation journal avoids copying all earlier functions' helper counters
+at each source function. These are local work reductions under the retained
+representation, not new cache authority or a different invalidation boundary.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

@@ -1319,16 +1319,15 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
-- **Refresh the module specimen walkthrough with build-unit qualification.**
-  `research/investigations/modular-compilation/demo/README.md` still describes
-  resolved-interface comparison as a future aid, although the driver ships
-  `--render-interface` and `--compare-interface`. This can send an experiment
-  reader back to manual text comparison. Update the commands and reconcile
-  its remaining-evidence statements with the actual module build unit results;
-  the larger GrowVector/function-kind witness must be checked against its
-  stated subject rather than inferred from a similarly named program. Reopen
-  while publishing the current module build unit qualification, so the
-  walkthrough reports observed capability and remaining limits together.
+- **Complete the vector boundary witness when comparing independent fields.**
+  The maintained GrowVector program checks the shipped vector and behavior
+  drains, but does not establish LANGUAGE.md's combined public `tag`, external
+  append wrapper and function-kind formal with the complete storage contract.
+  The actual vector has only `storage`. Build the specified witness in the
+  modular-compilation investigation and check preserved facts after a tag-only
+  write versus invalidation after append. This is additional language-boundary
+  evidence, not required to measure reuse of the existing vector program;
+  reopen when evaluating those independent-field effects or that wrapper API.
 
 - **Finish and qualify the modular incremental design.** The module
   decisions in the [language](../design/language.md) and

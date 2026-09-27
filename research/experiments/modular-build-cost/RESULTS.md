@@ -182,6 +182,51 @@ import. It has no lowered-fragment retention yet. This single diagnostic trial
 selects no timing or memory conclusion; the paired real-consumer qualification
 still follows completion of those paths.
 
+## Module product qualification protocol
+
+The implementation comparison uses `run.sh --units BASELINE CANDIDATE`.
+Both arguments name already-built immutable compiler executables; building
+those compilers is outside the samples. The default is seven rounds, reversing
+compiler order on each round. Every compiler/round gets a new scratch source
+tree and cache. Each sequence measures cold, unchanged warm, second-entry and
+entry-local rename builds. The queue uses its existing two entries; the other
+programs are unchanged implementation records behind a public `main` interface
+and two small entry wrappers. Generated chains contain 8 or 32 modules with
+16 functions each. SHA-256, GrowVector, wfgrep and HashMap come from maintained
+programs; HashMap supplies the generic/behavior-heavy consumer. This is a
+build experiment, not a new formal fixture or an alternate language parser.
+
+The JSONL conditions identify compiler and maintained-source hashes. Each
+sample records native construction/linking from the CLI report, wall time,
+Darwin `wait4` peak RSS in bytes, cache bytes, work counters where supported,
+LLVM hash and runtime output. The driver reads compiler and program exit
+statuses directly. It compares baseline/candidate LLVM bytes and runtime
+observations at each step before accepting their paired result. Native-build
+RSS includes child resource accounting; `--compiler-only` repeats the sequence
+using `--emit-llvm`, separating compiler memory from native tools. The ordinary
+mode's additional emitted-module check is warm and is labelled accordingly;
+it is not a cold-compiler memory estimate.
+
+For stage attribution, export each revision to a disposable scratch tree,
+then run `python3 units.py --instrument TREE` and build that tree's compiler
+under the shared verification guard. The same exact source boundaries report
+source validation/resolution plus dependency-key assembly, formation/checking,
+typed lowering and emission. These instrumented binaries are separate from
+the primary timing pair. The instrumentation refuses the working repository
+and nonunique insertion points; it lives in this experiment's driver and
+retires with this retained-product comparison. No timers enter the compiler's
+maintained acceptance path. Run the instrumented pair with `--compiler-only`;
+the raw stage observations are retained in `stages_ms`.
+
+Driver controls ran the actual caller against one-shot compiler stand-ins:
+the success control completed; compiler exit 23, program exit 5, unequal
+program output and unequal LLVM each caused a nonzero experiment exit before
+the offending sample was admitted. The stand-ins were temporary and are not
+an oracle for compiler behavior. A baseline-against-itself run supplies the
+host's null comparison. Measurements and conclusions follow qualification;
+the initial real-consumer probes already identified repeated interface digest
+parsing in dependency-key assembly, addressed before the final comparison.
+
 ## Limits
 
 - Composition granularity: every build of an edited entry forms, resolves

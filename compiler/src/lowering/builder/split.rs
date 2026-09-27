@@ -167,6 +167,9 @@ pub(crate) struct Synthesis {
     /// How many functions each source function's splits have synthesized,
     /// which numbers the next one's symbol within that function alone.
     local: HashMap<String, u32>,
+    /// Reservations since a source-function checkpoint, including nested
+    /// helpers. A checkpoint never copies all earlier functions' counters.
+    reservations: Vec<(String, u32)>,
     ledger: Vec<ActualizationNote>,
     /// Observe construction, including work a later refusal used to discard.
     #[cfg(test)]
@@ -199,7 +202,7 @@ impl ActualizationNote {
 pub(super) struct SynthesisCheckpoint {
     functions: usize,
     ledger: usize,
-    local: HashMap<String, u32>,
+    reservations: usize,
 }
 
 pub(super) struct SynthesisProduct {
@@ -224,7 +227,7 @@ impl Synthesis {
         SynthesisCheckpoint {
             functions: self.functions.len(),
             ledger: self.ledger.len(),
-            local: self.local.clone(),
+            reservations: self.reservations.len(),
         }
     }
 
@@ -237,11 +240,11 @@ impl Synthesis {
         &self,
         checkpoint: &SynthesisCheckpoint,
     ) -> Option<SynthesisProduct> {
-        let mut local = self
-            .local
+        let mut local = self.reservations[checkpoint.reservations..]
             .iter()
-            .filter(|(key, value)| checkpoint.local.get(*key) != Some(*value))
-            .map(|(key, value)| (key.clone(), *value))
+            .cloned()
+            .collect::<HashMap<_, _>>()
+            .into_iter()
             .collect::<Vec<_>>();
         local.sort();
         Some(SynthesisProduct {
@@ -266,6 +269,7 @@ impl Synthesis {
             base,
             functions: Vec::new(),
             local: HashMap::new(),
+            reservations: Vec::new(),
             ledger: Vec::new(),
             #[cfg(test)]
             candidate_constructions: 0,
@@ -286,6 +290,7 @@ impl Synthesis {
         *local = local
             .checked_add(1)
             .ok_or(LoweringFailure::CounterOverflow)?;
+        self.reservations.push((parent.to_owned(), *local));
         self.functions.push(None);
         Ok((ordinal, name))
     }
