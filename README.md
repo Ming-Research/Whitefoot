@@ -184,7 +184,8 @@ acceptable. A program compiled in that mode would have:
 
 None of this mode is implemented yet. The [fixed-resource
 investigation](research/investigations/fixed-resource-execution/README.md)
-records its design so far and what each part still needs.
+records the design so far for the heap, the stack and termination, and what
+each still needs; the peripheral and timing parts are not designed yet.
 
 ## A small language
 
@@ -239,8 +240,8 @@ Code is longer than C, and each construct has one spelling.
 ## Highlights
 
 Safe, fast and small are the core. These are the other things worth knowing:
-first what works today, then what is in progress, then research directions
-the proofs make possible.
+first what works today, then what is in progress or planned, then research
+directions the proofs make possible.
 
 ### Available now
 
@@ -249,10 +250,11 @@ the proofs make possible.
   reads one way. Every signature states what the function reads and writes,
   and a contract states what it requires and ensures, so a reviewer reading
   a call knows what it may touch without opening the function. Every
-  rejection names one rule and one location and suggests a fix, also as JSON
-  (`--diagnostic-format json`), and tests pin the most common fixes to a
-  repaired program that compiles. What makes the language easy for people to
-  write and review makes it easy for AI agents too.
+  rejection names one rule and one location, many also suggest a fix, and
+  all of it is available as JSON (`--diagnostic-format json`); tests pin the
+  most common fixes to a repaired program that compiles. What makes the
+  language easy for people to write and review makes it easy for AI agents
+  too.
 - **Parallelism sized at run time.** A program never says how many tasks run
   at once. Under `--par` the compiler turns independent calls and loop ranges
   into work that idle workers may take, and the runtime decides how far a
@@ -263,11 +265,13 @@ the proofs make possible.
 - **Incremental builds.** A program is checked and compiled module by module.
   With `--cache DIR`, a module's verdict and each function's proof are reused
   while their inputs are unchanged, and compiled code is cached as well, so
-  an edit rebuilds little more than what it changed. In a first measurement (2026-09-24) on a
-  generated 33-module program, a rebuild after editing the function bodies of
-  one module took about 0.6 s, against about 3.2 s for a build without the
-  cache ([measurement](research/experiments/modular-build-cost/RESULTS.md));
-  build speed has not been studied systematically yet.
+  an edit re-proves and recompiles little more than what it changed; each
+  build still type-checks the whole program. In a first measurement
+  (2026-09-24) on a generated 33-module program, a rebuild after editing the
+  function bodies of one module took about 0.6 s, against about 3.2 s for a
+  build without the cache
+  ([measurement](research/experiments/modular-build-cost/RESULTS.md)); build
+  speed has not been studied systematically yet.
 
 ### In progress
 
@@ -279,8 +283,13 @@ the proofs make possible.
   code is never split into synchronous and asynchronous kinds. The `reads`
   and `writes` rows that let computation run in parallel decide which I/O
   calls may overlap. Serving many connections at once is being designed.
+
+### Planned
+
 - **The maximum-safety mode** described under [Beyond
-  memory](#beyond-memory-resources).
+  memory](#beyond-memory-resources): no dynamic resources, a proved stack
+  bound, proved termination, peripherals as linear values, no parallelism
+  scheduled at run time, and proved response and startup times.
 
 ### Research directions
 
@@ -292,7 +301,7 @@ Not started. Each builds on what the proofs already establish.
   quicksort above. The same proofs could show that each GPU thread writes
   only its own part of an array, including parts computed from the thread's
   index. Rust's borrow checker cannot see that two computed ranges are
-  disjoint, so a kernel in Rust either splits its data by a fixed pattern,
+  disjoint, so a kernel in Rust usually splits its data by a fixed pattern,
   such as equal chunks, or uses `unsafe`.
 - **Parallelism tuned by profiles.** Because the program never fixes how many
   tasks run, the degree of parallelism can be tuned to a workload from a
