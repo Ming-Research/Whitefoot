@@ -397,6 +397,11 @@ and the [workflow map](docs/workflow.md).
 | Wuffs | a proof checker instead of a solver | a general-purpose language with heap data and effects |
 | Dafny, Verus | contracts and invariants | the goal is runtime safety, not full functional correctness |
 
+## Disclaimer
+
+Whitefoot is a research language and compiler, not a product. Do not use it
+for anything that matters.
+
 ## License
 
 Whitefoot is available under the [MIT License](LICENSE).

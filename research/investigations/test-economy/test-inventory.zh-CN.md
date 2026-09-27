@@ -113,7 +113,7 @@ cargo build --profile gate --bin whitefootc --locked --offline
 cargo test --profile gate --all-targets --no-run --locked --offline
 ```
 
-带资源保护的等价入口是 `make -C compiler build` 和 `make -C compiler test-build`。后续分类中的命令描述底层构建过程；有边界限制的本地调用方式以 [验证入口](../../../docs/workflow.md#checks) 为准。
+带资源保护的等价入口是 `make -C compiler build` 和 `make -C compiler test-build`。后续分类中的命令描述底层构建过程；有边界限制的本地调用方式以 [验证入口](../../../README.md#verification) 为准。
 
 | 操作 | Gate 构建 | Dev/默认 test 构建 |
 |---|---:|---:|
