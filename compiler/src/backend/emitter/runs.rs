@@ -392,7 +392,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.move_run_boundary(shape, run_type, run, row)?;
+        self.move_run_boundary(shape, run_type, run, row, None)?;
         self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 
@@ -422,7 +422,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, updated, &physical)?;
         self.store_value_at(value, &format!("%{element_pointer}"))?;
-        self.move_run_boundary(shape, run_type, run, row)?;
+        self.move_run_boundary(shape, run_type, run, row, Some(physical))?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -432,9 +432,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run_type: IrType,
         run: IrValueId,
         row: IrBoundary,
+        front_placement_slot: Option<String>,
     ) -> Result<(), BackendFailure> {
         let length = self.run_word(run_type, run, shape.length_field())?;
-        let head = self.window_origin(shape, run_type, run)?;
+        // A front placement has already computed the touched slot in its
+        // payload store. Reuse that value for the new origin instead of
+        // reloading head/capacity and recomputing the same predecessor.
+        let head = if row.front() && row.places() {
+            None
+        } else {
+            Some(self.window_origin(shape, run_type, run)?)
+        };
         // The new descriptor words. A back operation leaves `head` where it
         // was; a front operation moves it by one, modulo the capacity.
         let new_length = self.next_temporary()?;
@@ -449,12 +457,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // removal's is one past the slot it read.
         let new_head = if row.front() {
             if row.places() {
-                self.boundary_slot(shape, run_type, run, row)?
+                match front_placement_slot {
+                    Some(slot) => slot,
+                    None => self.boundary_slot(shape, run_type, run, row)?,
+                }
             } else {
-                self.wrap_offset(shape, run_type, run, &head, "1")?
+                self.wrap_offset(
+                    shape,
+                    run_type,
+                    run,
+                    head.as_deref().ok_or(BackendFailure::InvalidIr)?,
+                    "1",
+                )?
             }
         } else {
-            head
+            head.ok_or(BackendFailure::InvalidIr)?
         };
         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let length_address =

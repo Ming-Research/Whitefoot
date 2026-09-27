@@ -170,6 +170,64 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
     }
 }
 
+/// A front placement already has the physical slot it just wrote. The
+/// descriptor update must reuse that slot as the new Ring origin instead of
+/// reloading head/capacity and recomputing the predecessor [OP-10, WIN-1].
+#[test]
+fn front_placement_reuses_the_written_ring_slot_for_the_new_head() {
+    let source = br#"fn front(values: &Box<Ring<u64>>, value: u64) -> result: unit writes(values.inner) contract {
+  requires deref(values).inner.len < deref(values).inner.cap;
+} {
+  place_front(window: &deref(values).inner, value: value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = with_ir(source, |program| {
+        let target = TargetLayout::host().expect("supported target");
+        emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
+            .expect("front placement emits")
+            .into_string()
+    });
+    let body = emitted_prelude_row(&module, "place_front");
+    let lines = body.lines().collect::<Vec<_>>();
+    let payload_store = lines
+        .iter()
+        .position(|line| line.contains("store i64 %v1, ptr"))
+        .expect("the placement stores its payload");
+    let payload_gep = lines[..payload_store]
+        .iter()
+        .rev()
+        .find(|line| line.contains("getelementptr inbounds") && line.contains(", i64 "))
+        .expect("the payload store has a physical index");
+    let physical = payload_gep
+        .rsplit_once(", i64 ")
+        .expect("the payload GEP has an index")
+        .1
+        .trim();
+    let tail = &lines[payload_store + 1..];
+    assert_eq!(
+        tail.iter().filter(|line| line.contains("load i64")).count(),
+        1,
+        "only the length is loaded after the payload store: {body}"
+    );
+    let descriptor_stores = tail
+        .iter()
+        .filter(|line| line.contains("store i64"))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(descriptor_stores.len(), 2, "length and head stores: {body}");
+    assert!(
+        descriptor_stores
+            .iter()
+            .any(|line| line.contains(&format!("store i64 {physical}, ptr"))),
+        "the new head reuses the written physical slot: {body}"
+    );
+}
+
 #[test]
 fn empty_fixed_windows_initialize_descriptors_before_return() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
