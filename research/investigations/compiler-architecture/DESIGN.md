@@ -617,7 +617,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
 described in [Approved architectural decisions](#approved-architectural-decisions).
 P3.4's shared views follow P2.2's shared place formation on this branch;
-P2.3 and P4.2 implementation remains pending.
+P4.2's structured emission is also implemented. P2.3 implementation remains
+pending.
 P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
@@ -646,7 +647,8 @@ with a cache.
 The owner approved P2.3, P3.4 and P4.2 before implementation, including the
 review finding that P4.2's model must retain named type definitions, their
 transitive dependencies and attribute-group uses. Their decisions now live
-under `design/compiler/`; their implementation and validation remain pending.
+under `design/compiler/`; P3.4 and P4.2 are implemented, while P2.3 remains
+pending.
 They change compiler structure, not language rules. P2.2's shared place
 formation precedes these implementations.
 
@@ -716,7 +718,7 @@ grammar alternatives and source locations must retain their existing tests.
 ### P4.2: structured emission
 
 `design/compiler/structured-emission.md` records the approved model. The
-current emitter and `backend/fragments.rs` reconstruct structure from text:
+former emitter and `backend/fragments.rs` reconstructed structure from text:
 alloca insertion uses byte offsets, attributes rewrite definition lines,
 phi predecessors rely on a separately maintained exit-label classification,
 and fragment construction parses emitted headers and references. A shared
@@ -731,6 +733,20 @@ The fragment ownership and dependency algorithm, linkage transformations,
 native ABI and target qualification keep their current contracts. Internal
 interfaces may evolve in this private crate. This does not select P4.1's
 parallel IR pass or change the two-worlds graph-transfer decision.
+
+The implementation keeps the printing model in
+`compiler/src/backend/emission.rs`, beside its emitter and fragment consumer;
+it exists to give those consumers one definition and dependency inventory and
+is removed if textual LLVM emission is replaced. Instructions remain text,
+while block starts, actual exits, deferred phi inputs, entry allocations,
+headers, linkage and dependencies are recorded before whole-module rendering.
+The driver carries this model through launcher construction and the existing
+entry-module cache. The compiler-private cache encoding retains these records
+because caching only LLVM would force the fragment path to reconstruct them.
+This extends the existing cache product rather than introducing a stable
+artifact format. The native linker consumes already selected fragment texts.
+Compile-time and memory costs of retaining the printing model are unmeasured;
+the change is selected for ownership and removal of repeated reconstruction.
 
 Cost is medium to large, spanning every helper that opens a block and every
 definition that can be split into a fragment. The benefit is removal of

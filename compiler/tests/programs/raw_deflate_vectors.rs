@@ -237,7 +237,8 @@ fn decoder_wire_boundaries_run_as_one_batch_through_the_actual_wf_decoder() {
         "raw_deflate_dynamic.wf",
         "raw_deflate_dynamic_decode.wf",
         "raw_deflate_probe.wf",
-    ]);
+    ])
+    .into_string();
     for name in ["main", "wf__main_body"] {
         let definition = format!("define i32 @{name}(");
         assert_eq!(llvm.matches(&definition).count(), 1);

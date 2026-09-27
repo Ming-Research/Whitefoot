@@ -374,7 +374,7 @@ fn run_module_program(
     graph_path: &Path,
     cache: Option<&BuildCache>,
     report: &mut BuildReport,
-) -> Result<Option<String>, Stop> {
+) -> Result<Option<whitefoot::LlvmModule>, Stop> {
     let (graph, sources) = read_module_program(graph_path)?;
     let inputs = module_inputs(&sources);
     let limits = CompilerLimits::default();
@@ -725,7 +725,7 @@ fn json_string(text: &str) -> String {
 /// Writes or links one emitted module as the options select.
 fn finish(
     options: &Options,
-    module: &str,
+    module: &whitefoot::LlvmModule,
     cache: Option<&BuildCache>,
     report: &mut BuildReport,
 ) -> Result<(), Stop> {
@@ -745,11 +745,18 @@ fn finish(
         return Ok(());
     }
     require_runner(module)?;
+    let splitting = std::time::Instant::now();
+    let fragments = options
+        .fragments
+        .map(|granularity| split_module(module, granularity))
+        .transpose()
+        .map_err(|failure| Stop::toolchain(failure.to_string()))?;
+    report.split = splitting.elapsed();
     compile_executable(
         module,
         options.output.as_deref().unwrap_or(Path::new("a.out")),
         cache,
-        options.fragments,
+        fragments.as_deref(),
         options.full_lto,
         report,
     )
@@ -874,7 +881,7 @@ fn compile_executable(
     llvm: &str,
     output: &Path,
     cache: Option<&BuildCache>,
-    fragments: Option<FragmentGranularity>,
+    fragments: Option<&[String]>,
     full_lto: bool,
     report: &mut BuildReport,
 ) -> Result<(), String> {
@@ -968,7 +975,7 @@ fn link_cached_objects(
     compiled: &[&str],
     llvm: &str,
     output: &Path,
-    fragments: Option<FragmentGranularity>,
+    fragments: Option<&[String]>,
     report: &mut BuildReport,
 ) -> Result<(), String> {
     let host = host_compiler_identity()?;
@@ -1016,15 +1023,8 @@ fn link_cached_objects(
         report.count_object(reused);
         objects.push(object);
     }
-    let splitting = std::time::Instant::now();
-    let parts = match fragments {
-        Some(granularity) => {
-            split_module(llvm, granularity).map_err(|failure| failure.to_string())?
-        }
-        None => vec![llvm.to_owned()],
-    };
+    let parts = fragments.map_or_else(|| vec![llvm.to_owned()], <[String]>::to_vec);
     report.fragments = parts.len();
-    report.split = splitting.elapsed();
     for (index, text) in parts.iter().enumerate() {
         // Relative names keep the staging directory, which differs per
         // invocation, out of the compiler's inputs.
@@ -2468,13 +2468,14 @@ mod tests {
         for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
             let cache =
                 super::open_cache(&root.join(format!("{granularity:?}"))).expect("open the cache");
-            let build = |llvm: &str| {
+            let build = |llvm: &whitefoot::LlvmModule| {
                 let mut report = super::BuildReport::default();
+                let fragments = super::split_module(llvm, granularity).expect("the model splits");
                 super::compile_executable(
                     llvm,
                     &executable,
                     Some(&cache),
-                    Some(granularity),
+                    Some(&fragments),
                     false,
                     &mut report,
                 )

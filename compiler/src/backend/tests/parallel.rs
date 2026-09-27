@@ -2668,5 +2668,6 @@ fn whitefoot_compile_layout(source: &[u8]) -> (String, Vec<String>) {
         crate::CompilerLimits::default(),
         crate::OverlapLowering::On,
     )
+    .map(|(module, ledger)| (module.into_string(), ledger))
     .expect("layout source must compile")
 }

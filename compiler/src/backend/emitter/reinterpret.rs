@@ -54,14 +54,18 @@ impl FunctionEmitter<'_, '_> {
             ) if source_width == destination_width && matches!(source_width, 32 | 64) => "bitcast",
             _ => return Err(BackendFailure::InvalidIr),
         };
-        writeln!(
-            self.output,
-            "  {} = {opcode} {} {} to {}",
-            self.value_name(result),
-            llvm_type(self.program, source_type)?,
-            self.value_name(value),
-            llvm_type(self.program, destination_type)?
-        )
+        {
+            let emitted_type_1 = self.output.type_name(self.program, source_type)?;
+            let emitted_type_3 = self.output.type_name(self.program, destination_type)?;
+            writeln!(
+                self.output,
+                "  {} = {opcode} {} {} to {}",
+                self.value_name(result),
+                emitted_type_1,
+                self.value_name(value),
+                emitted_type_3
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 }

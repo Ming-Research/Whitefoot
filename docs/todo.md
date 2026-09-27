@@ -1404,18 +1404,6 @@ rarely insert at the same place.
   module declarations only. Split when no open branch has large edits in
   these files; close when both are under 4,000 lines.
 
-- **LLVM emission writes and then patches text.**
-  `compiler/src/backend/emitter.rs` inserts entry allocas by byte offset and
-  adds the stack-probe attribute by rewriting `define` lines. Which operations
-  open blocks, and so which predecessor a phi names, comes from a hand-kept
-  list (`definition_exit_label`) apart from the code that opens them, and
-  `compiler/src/backend/fragments.rs` re-parses the finished text to split it.
-  A structured function model printed once (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, now owner-approved) records exit labels, places allocas and cuts fragments from the
-  model. Validate with byte-identical output, which keeps the backend tests'
-  substring checks as the net. Reopen when an operation that opens blocks is
-  added.
-
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
   `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
@@ -1475,6 +1463,18 @@ rarely insert at the same place.
   blocker. Reopen with the next module-reading performance investigation;
   require unchanged paths, extents and fingerprints, and measure whether the
   saved setup work matters before changing the cache policy.
+
+- **Measure the retained emission model's text storage when backend memory matters.**
+  Structured LLVM emission retains definition text for fragment construction
+  and a rendered whole-module string for existing text consumers. This can
+  duplicate instruction bytes; the practical memory and build-time cost is
+  unmeasured. Consider rendering whole-module text lazily or transferring it
+  to the final text consumer once fragment construction is complete. Either
+  change affects the private output/cache boundary and needs unchanged
+  whole-module bytes, fragment bytes and cached/uncached results. Defer from
+  the structural migration because no current experiment identifies this
+  storage as a blocker; reopen when a larger program's backend profile shows
+  material retained text or rendering cost.
 
 ## Open language questions
 

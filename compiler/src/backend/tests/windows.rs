@@ -283,7 +283,9 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
                 .expect("the zero-stride program qualifies in both fact choices")
                 .into_string();
             module.push_str(
-                &crate::driver::launcher::render(program, "main").expect("ordinary test launcher"),
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
             );
             module
         });
@@ -404,7 +406,9 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("the exact allocation boundary emits")
             .into_string();
         module.push_str(
-            &crate::driver::launcher::render(program, "main").expect("ordinary test launcher"),
+            &crate::driver::launcher::render(program, "main")
+                .expect("ordinary test launcher")
+                .render(),
         );
         module
     });
