@@ -694,6 +694,7 @@ pub enum IrConversionMode {
     Exact,
     Checked,
     Defined,
+    Wrap,
 }
 
 impl From<CheckedConversionMode> for IrConversionMode {
@@ -702,6 +703,7 @@ impl From<CheckedConversionMode> for IrConversionMode {
             CheckedConversionMode::Exact => Self::Exact,
             CheckedConversionMode::Checked => Self::Checked,
             CheckedConversionMode::Defined => Self::Defined,
+            CheckedConversionMode::Wrap => Self::Wrap,
         }
     }
 }

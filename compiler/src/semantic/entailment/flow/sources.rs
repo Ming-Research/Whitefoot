@@ -444,7 +444,8 @@ impl Analyzer<'_, '_> {
 
     /// The value image shared by an ordinary let and a direct-place SET-1
     /// commit. Every admitted exact integer conversion preserves its input's
-    /// mathematical value; checked and defined rows have another result type.
+    /// mathematical value; wrapping does not preserve it, and checked and
+    /// defined rows have another result type.
     fn copy_source(&mut self, value: &CheckedExpression) -> Option<TermId> {
         match value {
             CheckedExpression::NumericConversion {

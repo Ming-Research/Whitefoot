@@ -50,6 +50,8 @@ const U64: IntegerType = IntegerType {
     signed: false,
 };
 
+const INTEGER_TYPES: [IntegerType; 8] = [I8, I16, I32, I64, U8, U16, U32, U64];
+
 /// One representative per conversion class rather than all 64 ordered pairs.
 ///
 /// Both compiler sides are fully parametric in `(width, signedness)` and hold
@@ -96,7 +98,11 @@ const CONVERSION_CLASSES: [(IntegerType, IntegerType); 17] = [
 
 #[test]
 fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
-    let mut source = String::from("fn main() -> status: ExitStatus pure {\n");
+    // Extend this existing native construction with wrapping's previously
+    // unobservable out-of-domain integer values, including negative widening.
+    // Its expected values use mathematical modulo, not host numeric casts.
+    let (mut source, wrapping_observations) = wrapping_sources();
+    source.push_str("fn main() -> status: ExitStatus pure {\n");
     let mut total_count = 0;
     let mut checked_count = 0;
     for (source_type, destination_type) in CONVERSION_CLASSES {
@@ -137,6 +143,7 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
         .expect("write conversion domain agreement");
         checked_count += 1;
     }
+    source.push_str(&wrapping_observations);
     source.push_str("  return exit_status(code: 0_u8);\n}\n");
     assert_eq!(total_count, 5);
     assert_eq!(checked_count, 12);
@@ -156,6 +163,7 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
     }
     assert!(!llvm.contains(" nsw "));
     assert!(!llvm.contains(" nuw "));
+    assert_wrapping_ir(&llvm);
     let output = compile_and_run(&llvm);
     assert!(
         output.status.success(),
@@ -164,6 +172,81 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
     );
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+fn wrapping_sources() -> (String, String) {
+    let mut helpers = String::new();
+    let mut observations = String::new();
+    let mut pair_count = 0;
+    let mut observation_count = 0;
+    for source in INTEGER_TYPES {
+        let minimum = if source.signed {
+            -(1_i128 << (source.width - 1))
+        } else {
+            0
+        };
+        let maximum = (1_i128 << (source.width - u8::from(source.signed))) - 1;
+        let mut inputs = [minimum, minimum + 1, -1, 0, 1, maximum - 1, maximum]
+            .into_iter()
+            .filter(|value| (minimum..=maximum).contains(value))
+            .collect::<Vec<_>>();
+        inputs.sort_unstable();
+        inputs.dedup();
+        for destination in INTEGER_TYPES {
+            let name = format!("wrap_{}_{}", source.spelling, destination.spelling);
+            writeln!(
+                helpers,
+                "fn {name}(value: {source}) -> result: {destination} pure {{\n  return cvt.wrap::<{source}, {destination}>(value);\n}}\n",
+                source = source.spelling,
+                destination = destination.spelling,
+            )
+            .expect("write parameterized wrapping conversion");
+            pair_count += 1;
+            for &value in &inputs {
+                let modulus = 1_i128 << destination.width;
+                let residue = value.rem_euclid(modulus);
+                let expected = if destination.signed && residue >= modulus / 2 {
+                    residue - modulus
+                } else {
+                    residue
+                };
+                writeln!(
+                    observations,
+                    "  let wrapped{observation_count} = {name}(value: {value}_{source});\n  if wrapped{observation_count} == {expected}_{destination} {{\n  }} else {{\n    return exit_status(code: 8_u8);\n  }}",
+                    source = source.spelling,
+                    destination = destination.spelling,
+                )
+                .expect("write independently expected wrapping result");
+                observation_count += 1;
+            }
+        }
+    }
+    assert_eq!(pair_count, 64);
+    assert_eq!(observation_count, 352);
+    (helpers, observations)
+}
+
+fn assert_wrapping_ir(llvm: &str) {
+    for source in INTEGER_TYPES {
+        for destination in INTEGER_TYPES {
+            let symbol = format!("@wf_wrap_{}_{}", source.spelling, destination.spelling);
+            let body = super::parallel::function_body(llvm, &symbol);
+            let instruction = if source.width > destination.width {
+                format!(" = trunc i{} ", source.width)
+            } else if source.width < destination.width {
+                let opcode = if source.signed { "sext" } else { "zext" };
+                format!(" = {opcode} i{} ", source.width)
+            } else if source.signed == destination.signed {
+                " = select i1 true, ".to_owned()
+            } else {
+                format!(" = or i{} ", source.width)
+            };
+            assert!(body.contains(&instruction), "{body}");
+            for residual in ["icmp ", "fcmp ", "insertvalue ", "br i1", "@llvm.assume"] {
+                assert!(!body.contains(residual), "unexpected {residual} in {body}");
+            }
+        }
+    }
 }
 
 const fn converts_totally(source: IntegerType, destination: IntegerType) -> bool {

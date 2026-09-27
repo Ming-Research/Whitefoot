@@ -99,6 +99,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             "cvt" => Some(CheckedConversionMode::Exact),
             "cvt.checked" => Some(CheckedConversionMode::Checked),
             "cvt.defined" => Some(CheckedConversionMode::Defined),
+            "cvt.wrap" => Some(CheckedConversionMode::Wrap),
             _ => None,
         };
         if let Some(mode) = conversion_mode {

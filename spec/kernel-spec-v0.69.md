@@ -1,4 +1,4 @@
-# Kernel Specification v0.70
+# Kernel Specification v0.69
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -386,14 +386,14 @@ A `field` may carry the `readonly` modifier [GRAM-2], in any struct. A path that
 A capability modifier and a generic parameter's capability bound are properties of a declaration and not components of a type name: two instances of one nominal have one name whether or not its declaration is marked, and no name spells a capability [PROV-6].
 
 [TYPE-4] There are no implicit conversions.
-Numeric value conversion uses the explicit `cvt`, `cvt.checked`, `cvt.defined`, and `cvt.wrap` interfaces of [OP-6].
+Numeric value conversion uses the explicit `cvt`, `cvt.checked`, and `cvt.defined` interfaces of [OP-6].
 
 [TYPE-5] Statement-local typing; boundary-explicit facts.
 The factored `call` grammar denotes a construction exactly when its callee is an unqualified TYPEID application. A constructor writes any nominal arguments directly after that TYPEID, never with the function-call `::` introducer; writing the latter is a TYPE-5 error at the complete call. Its operands are named fields under GRAM-8, so a positional operand list is a GRAM-8 error there. Construction is an ordinary expression, not the callable occurrence required by an expression statement or a destructuring result-list let; either statement position rejects it under TYPE-5. These judgments preserve the constructor forms while sharing the strong-LL(2) prefix with qualified member calls.
 A `let` binder's mode and type are derived, never written: exactly the mode and type its selected right-hand side produces — an `ordinary_let_rhs` from its expression, which is always self-typed (operands are typed atoms, calls are typed by their [FN-1]/[OP-1] signatures, literals carry mandatory suffixes [FORM-5], constructions name their nominal and, when that nominal is generic, write its arguments); a `propagate_let_rhs` from the propagated Ok payload [ERR-3]; a `value_match` or `value_if` from the derived common delivery type [GIVE-1], whose delivering `give`s are inside the same `let_stmt`, so the derivation stays statement-local; and a parenthesized binder list from its `call`'s declared result ordinals, binder i at the mode and type determined by result ordinal i's declared `rtype` [GRAM-4, FN-1, CALL-4].
 A binder whose selected right-hand side is a reference instead takes that reference kind, by the same derivation and on the same statement-local ground [REF-1].
 This is unique reconstruction, not inference: no binder's type depends on a later statement, an expected type, or any use site, and no two derivations can disagree [FORM-1].
-Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
+Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
 A constructor `call` of a generic nominal states that nominal's type, const, and function arguments on the same ground and in every position, mandatorily: the source nominals under [FN-2], and the prelude generic nominals `Option<T>` and `Result<T, E>` through their variant constructors `None`, `Some`, `Ok`, and `Err`.
 A nullary `None()` has no operand to supply anything, and construction never consults an expected nominal type [TYPE-6], so the written arguments are the only supply there is; their absence, or a count other than the named nominal's parameter list, is a hard error citing TYPE-5 at the complete constructor `call`.
 A non-generic prelude nominal [PRE-1] has no parameters and writes no type arguments.
@@ -866,7 +866,6 @@ The table below is the normative inventory (columns: op, type domain, signature,
 | `cvt` | all numeric pairs [OP-6] | `(Src) -> own Dst` | pure |
 | `cvt.checked` | all numeric pairs [OP-6] | `(Src) -> own Result<Dst, NarrowError>` | pure |
 | `cvt.defined` | all numeric pairs [OP-6] | `(Src) -> own Bool` | pure |
-| `cvt.wrap` | all integer pairs [OP-6] | `(Src) -> own Dst` | pure |
 | `iand` `ior` `ixor` | all int T | `(T, T) -> own T` | pure |
 | `inot` | all int T | `(T) -> own T` | pure |
 | `ishl.wrap` `ishr.wrap` | all int T | `(T, u32) -> own T` | pure |
@@ -1025,13 +1024,8 @@ For symbolic endpoints, whole-type totality requires every pair admitted by thei
 This judgment inspects at most the 100 ordered primitive pairs and invents no numeric capability for an unbounded parameter.
 A refuted or unproved bare conversion is rejected at its `call` node citing OP-6 and rendering its canonical domain goal, with the repair to establish that domain or use `cvt.checked` to handle conversion failure as a value.
 
-The total integer conversion `cvt.wrap::<Src, Dst>(x)` returns `wrap_Dst(mathematical(x))` as defined by [OP-2].
-Its endpoint domain is all 64 ordered integer pairs, including identities; each endpoint is one primitive from [OP-2]'s integer set or one symbolic type parameter with the `Int` bound.
-It carries no ConversionDomain obligation.
-A pair outside that endpoint domain is an OP-1 rejection.
-
 [OP-7] Operation-name convention.
-An arithmetic, logic, bit, or compare op carries a domain prefix — `i` (integer), `f` (float), `b` (Bool logic), or `e` (tag-only enum comparison, including `Bool`) — whether or not a cross-domain twin exists; the conversion interfaces of [OP-6] and `reinterpret` carry no prefix.
+An arithmetic, logic, bit, or compare op carries a domain prefix — `i` (integer), `f` (float), `b` (Bool logic), or `e` (tag-only enum comparison, including `Bool`) — whether or not a cross-domain twin exists; the structural ops (`cvt`, `reinterpret`) carry no prefix.
 The integer arithmetic and integer comparison symbols of [GRAM-5] are the one prefix-free operation class: each is an integer-only table row, so `+` and `<` never denote a float or enum operation, and `fadd.strict`, `feq`, and `eeq` keep their prefixed names.
 `Bool` participates in the `b` family for boolean logic and the `e` family for tag-only equality; the operation name, not operand inference, selects the family.
 A respelled operation's token is its one constant spelling under the same one-spelling-per-operation discipline.
@@ -1284,7 +1278,7 @@ Grammar fixes all definitions before all requirements and all requirements befor
 
 The definition scope initially contains the function parameters, named consts, and live type and const parameters, then each earlier definition after its complete initializer.
 Every definition and clause expression must consist only of non-consuming datums, measure place forms [OP-15], and operation-table forms that are pure and total for every value in their selected operand domain.
-Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, and `cvt.wrap` are admitted on their respective endpoint domains by their total rows.
+Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; every `cvt.checked` and `cvt.defined` pair is admitted by its total row.
 Exact addition, subtraction, and multiplication are admitted and read as operations over the mathematical integers rather than as evaluations, exactly as an `affine_expr` is [INV-1]. A clause is erased before lowering and evaluates nothing, so a row whose meaning is total over the mathematical integers states a relation where it would otherwise request an operation, and no domain obligation arises to discharge.
 Function calls, construction, move, borrow, subscript, mutation, control flow, allocation, and every other partial operation are inadmissible even when another clause states their domain. Exact division, remainder, negation, absolute value, and the shifts remain partial under this judgment.
 Their corresponding `.defined` queries are total and admissible.

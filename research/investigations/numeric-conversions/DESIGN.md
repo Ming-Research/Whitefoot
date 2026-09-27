@@ -633,8 +633,9 @@ so its shared integer cast supplies the wrapping result directly. The name descr
 existing mode vocabulary; no competing `itrunc` spelling is proposed. This
 mode publishes no exact input equality. It retains ordinary destination-type
 bounds and a typed modular expression identity; admitting that identity does
-not add an arithmetic rewrite or a new automatic proof family. Concrete constant
-evaluation follows the same modular value rule. Integer-generic endpoints keep
+not add an arithmetic rewrite or a new automatic proof family. Constant operands
+have the same runtime value semantics; the existing proof rules do not gain
+general constant folding of operation trees. Integer-generic endpoints keep
 one destination result shape; float endpoints are rejected during formation.
 
 The compiler addition reuses the explicit conversion-mode path and integer

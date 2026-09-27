@@ -115,7 +115,7 @@ const fn prelude(
 }
 
 /// Distinct OP-1 spellings in normative table order.
-pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
+pub(crate) const OPERATION_FAMILIES: [&str; 89] = [
     "+wrap",
     "-wrap",
     "*wrap",
@@ -163,6 +163,7 @@ pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
     "cvt",
     "cvt.checked",
     "cvt.defined",
+    "cvt.wrap",
     "iand",
     "ior",
     "ixor",

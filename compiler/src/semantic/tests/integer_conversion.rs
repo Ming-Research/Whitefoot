@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use crate::lowering::{OverlapLowering, lower_checked};
 use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule, StaticObligationDisposition};
 
 use super::super::entailment::ObligationFamily;
@@ -21,14 +22,14 @@ const INTEGER_TYPES: [(&str, IntegerType); 8] = [
 ];
 
 #[test]
-fn every_integer_pair_has_uniform_exact_checked_and_defined_interfaces() {
+fn every_integer_pair_has_uniform_conversion_interfaces() {
     let mut source = String::new();
     let mut expected = Vec::new();
     for (source_name, source_type) in INTEGER_TYPES {
         for (destination_name, destination_type) in INTEGER_TYPES {
             writeln!(
                 source,
-                "fn convert_{source_name}_{destination_name}(value: {source_name}) -> result: Result<{destination_name}, NarrowError> pure contract {{\n  requires cvt.defined::<{source_name}, {destination_name}>(value);\n}} {{\n  let exact = cvt::<{source_name}, {destination_name}>(value);\n  let valid = cvt.defined::<{source_name}, {destination_name}>(value);\n  return cvt.checked::<{source_name}, {destination_name}>(value);\n}}\n"
+                "fn convert_{source_name}_{destination_name}(value: {source_name}) -> result: Result<{destination_name}, NarrowError> pure contract {{\n  requires cvt.defined::<{source_name}, {destination_name}>(value);\n}} {{\n  let exact = cvt::<{source_name}, {destination_name}>(value);\n  let valid = cvt.defined::<{source_name}, {destination_name}>(value);\n  let wrapped = cvt.wrap::<{source_name}, {destination_name}>(value);\n  return cvt.checked::<{source_name}, {destination_name}>(value);\n}}\n"
             )
             .expect("write generated source");
             expected.push((source_type, destination_type));
@@ -57,6 +58,7 @@ fn every_integer_pair_has_uniform_exact_checked_and_defined_interfaces() {
             let [
                 CheckedStatement::Let { value: exact, .. },
                 CheckedStatement::Let { value: defined, .. },
+                CheckedStatement::Let { value: wrapped, .. },
                 CheckedStatement::Return {
                     value:
                         CheckedExpression::NumericConversion {
@@ -70,7 +72,7 @@ fn every_integer_pair_has_uniform_exact_checked_and_defined_interfaces() {
                 },
             ] = function.body.as_deref().expect("WF body")
             else {
-                panic!("conversion function must retain its three interfaces");
+                panic!("conversion function must retain its four interfaces");
             };
             assert_eq!(*mode, CheckedConversionMode::Checked);
             assert!(matches!(
@@ -89,6 +91,24 @@ fn every_integer_pair_has_uniform_exact_checked_and_defined_interfaces() {
                 }
             ));
             assert_eq!(defined.ty(), CheckedType::Bool);
+            assert!(matches!(
+                wrapped,
+                CheckedExpression::NumericConversion {
+                    mode: CheckedConversionMode::Wrap,
+                    ..
+                }
+            ));
+            assert_eq!(wrapped.ty(), CheckedType::Integer(destination_type));
+            assert_eq!(
+                function
+                    .entailment
+                    .obligations
+                    .iter()
+                    .filter(|obligation| obligation.family == ObligationFamily::ConversionDomain)
+                    .count(),
+                1,
+                "only the exact conversion requires a domain proof"
+            );
             assert_eq!(
                 (*source, *destination),
                 (
@@ -112,21 +132,163 @@ fn every_integer_pair_has_uniform_exact_checked_and_defined_interfaces() {
 
 #[test]
 fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
-    assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let value = cvt::<i32, i64>(1_i16);\n  return exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Type5,
-        |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
-    );
-    assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = cvt::<i32>(1_i32);\n  return exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
-    );
-    assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let flag = True();\n  let value = cvt::<Bool, i32>(flag);\n  return exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
-    );
+    for operation in ["cvt", "cvt.wrap"] {
+        let source = format!(
+            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}::<i32, i64>(1_i16);\n  return exit_status(code: 0_u8);\n}}\n"
+        );
+        assert_rule_kind(source.as_bytes(), SemanticRule::Type5, |kind| {
+            matches!(kind, SemanticIssueKind::TypeMismatch { .. })
+        });
+        let source = format!(
+            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}(1_i32);\n  return exit_status(code: 0_u8);\n}}\n"
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Type5,
+            SemanticIssueKind::InvalidOperation,
+        );
+        let source = format!(
+            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}::<i32>(1_i32);\n  return exit_status(code: 0_u8);\n}}\n"
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Op1,
+            SemanticIssueKind::InvalidOperation,
+        );
+        let source = format!(
+            "fn main() -> status: ExitStatus pure {{\n  let flag = True();\n  let value = {operation}::<Bool, i32>(flag);\n  return exit_status(code: 0_u8);\n}}\n"
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Op1,
+            SemanticIssueKind::InvalidOperation,
+        );
+    }
+}
+
+#[test]
+fn wrapping_conversion_rejects_concrete_and_symbolic_float_endpoints() {
+    for (source_type, destination_type) in
+        [("f32", "u8"), ("u8", "f64"), ("f32", "f32"), ("f64", "f32")]
+    {
+        let source = format!(
+            "fn invalid(value: {source_type}) -> result: {destination_type} pure {{
+  return cvt.wrap::<{source_type}, {destination_type}>(value);
+}}
+
+fn main() -> status: ExitStatus pure {{
+  return exit_status(code: 0_u8);
+}}
+"
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Op1,
+            SemanticIssueKind::InvalidOperation,
+        );
+    }
+    for parameters in [
+        "S: Float, D: Int",
+        "S: Int, D: Float",
+        "S: Float, D: Float",
+        "S, D",
+    ] {
+        let source = format!(
+            "fn invalid<{parameters}>(value: S) -> result: D pure {{
+  return cvt.wrap::<S, D>(value);
+}}
+
+fn main() -> status: ExitStatus pure {{
+  return exit_status(code: 0_u8);
+}}
+"
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Op1,
+            SemanticIssueKind::InvalidOperation,
+        );
+    }
+}
+
+#[test]
+fn wrapping_conversion_is_total_for_independent_integer_parameters() {
+    let source = br#"fn modular<S: Int, D: Int>(value: S) -> result: D pure {
+  return cvt.wrap::<S, D>(value);
+}
+
+fn forward<A: Int, B: Int>(value: A) -> result: B pure {
+  return modular::<A, B>(value: value);
+}
+
+fn main() -> status: ExitStatus pure {
+  let narrowed = forward::<u16, u8>(value: 511_u16);
+  let widened = forward::<i8, u32>(value: -1_i8);
+  let relabeled = forward::<i32, u32>(value: -1_i32);
+  let identical = forward::<u64, u64>(value: 18446744073709551615_u64);
+  return exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!(
+                "independent Int endpoints must check without a domain requirement: {outcome:?}"
+            );
+        };
+        assert!(checked.data.functions.iter().all(|function| {
+            function
+                .entailment
+                .obligations
+                .iter()
+                .all(|obligation| obligation.family != ObligationFamily::ConversionDomain)
+        }));
+        lower_checked(*checked, OverlapLowering::Off)
+            .expect("concrete modular conversion instances must lower");
+    });
+}
+
+#[test]
+fn wrapping_conversion_is_total_in_contract_definitions_and_function_actuals() {
+    let source = br#"interface BytePolicy {
+  fn select(value: u16) -> result: u8 pure contract {
+    define reduced = cvt.wrap::<u16, u8>(value);
+    requires reduced == 1_u8;
+  };
+}
+
+fn select_byte(value: u16) -> result: u8 pure contract {
+  define reduced = cvt.wrap::<u16, u8>(value);
+  requires reduced == 1_u8;
+} {
+  return cvt.wrap::<u16, u8>(value);
+}
+
+binding LowByte : BytePolicy {
+  select = select_byte;
+}
+
+fn dispatch<interface BytePolicy>(value: u16) -> result: u8 pure contract {
+  define reduced = cvt.wrap::<u16, u8>(value);
+  requires reduced == 1_u8;
+} {
+  return BytePolicy::select(value: value);
+}
+
+fn main() -> status: ExitStatus pure {
+  let input = 257_u16;
+  let reduced = cvt.wrap::<u16, u8>(input);
+  if reduced == 1_u8 {
+    let selected = dispatch::<LowByte>(value: input);
+  }
+  return exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
 }
 
 #[test]
