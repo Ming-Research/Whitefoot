@@ -179,16 +179,16 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 短文，每篇只讲一个想法，附带能编译的程序。前三篇从上面的例子出发：
 
-1. 要么证明，要么写分支——边界检查和溢出检查因为被证明而消失。
+1. [要么证明，要么写分支](docs/articles/prove-it-or-write-a-branch.md)——边界检查和溢出检查因为被证明而消失。
 2. [写顺序的代码，得到并行的结果](docs/articles/sequential-code-parallel-results.md)——编译器如何在普通代码（包括递归）中找到独立性，并把它交给工作线程。
 3. [不用求解器，手工证明](docs/articles/proofs-by-hand.md)——差分约束（difference bounds）、约束闭包和循环不变式，在纸上演算一遍。
-4. 拒绝告诉你什么——为负责修复代码的 agent 编写的诊断信息。
-5. 整数——每个运算都写明自己的含义。
-6. 只有一种构建——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
-7. 从内存到资源——不用堆、线性资源，以及最高安全模式的计划。
-8. 审查者读什么——把契约和效应行作为审查的对象。
+4. [拒绝告诉你什么](docs/articles/what-a-rejection-tells-you.md)——为负责修复代码的 agent 编写的诊断信息。
+5. [整数](docs/articles/integers.md)——每个运算都写明自己的含义。
+6. [只有一种构建](docs/articles/one-build.md)——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
+7. [从内存到资源](docs/articles/beyond-memory.md)——不用堆、线性资源，以及最高安全模式的计划。
+8. [审查者读什么](docs/articles/what-a-reviewer-reads.md)——把契约和效应行作为审查的对象。
 9. 可信基——哪些东西被信任，以及缩小它的计划。
-10. 速度从哪里来——证明被利用的每一种方式。
+10. [速度从哪里来](docs/articles/where-the-speed-comes-from.md)——证明被利用的每一种方式。
 11. 不用 async 的 I/O——由编译器让普通调用相互重叠。
 12. 一个布局引擎——第一个大型程序。
 13. 这个项目如何借助 agent 构建。
