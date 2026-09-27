@@ -3,7 +3,20 @@ CARGO ?= cargo
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 
-.PHONY: check measure compiler x1-observe slab-deque-check slab-deque-measure map-native-check map-check map-measure
+.PHONY: check measure compiler x1-observe slab-deque-check slab-deque-measure map-native-check map-check map-measure \
+        ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+
+# Explicit research commands, wrapped externally by the shared run-check guard.
+# Recursive calls are sequential even under an outer parallel make. Callers
+# provide the frozen WHITEFOOTC and pinned ABSEIL_PREFIX; no compiler rebuild or
+# dependency download is hidden in these experiment targets.
+ECOSYSTEM_FAMILIES := vector-library deque-library map-library priority-library ordered-library
+ABSEIL_PREFIX ?=
+
+ecosystem-build ecosystem-check ecosystem-account ecosystem-measure:
+	@set -eu; for family in $(ECOSYSTEM_FAMILIES); do \
+	  $(MAKE) -C $$family $@ WHITEFOOTC="$(WHITEFOOTC)" ABSEIL_PREFIX="$(ABSEIL_PREFIX)"; \
+	done
 
 x1-observe:
 	$(MAKE) -C x1 observe WHITEFOOTC="$(WHITEFOOTC)"

@@ -31,35 +31,87 @@ static uint64_t comparisons, transfers;
 #define EVENT(name, amount) ((void)0)
 #endif
 
-enum { RECORD_WORDS = 32, CEILING = 4096, VARIANT_COUNT = 3 };
+#if defined(ECOSYSTEM)
+enum { VARIANT_COUNT = 5 };
+#else
+enum { VARIANT_COUNT = 3 };
+#endif
+enum { RECORD_WORDS = 32, CEILING = 4096 };
 typedef struct { uint64_t words[RECORD_WORDS]; } Record;
 typedef struct { uint8_t unused; } Order;
 #if defined(WITH_WF)
 extern uint64_t wf_priority_cost_word_trace(uint64_t, uint64_t, uint64_t, uint64_t);
 extern uint64_t wf_priority_cost_record_trace(uint64_t, uint64_t, uint64_t, uint64_t);
 #endif
+#if defined(ECOSYSTEM)
+extern uint64_t priority_rust_word_trace(uint64_t, uint64_t, uint64_t, uint64_t);
+extern uint64_t priority_rust_record_trace(uint64_t, uint64_t, uint64_t, uint64_t);
+extern uint64_t priority_cpp_word_trace(uint64_t, uint64_t, uint64_t, uint64_t);
+extern uint64_t priority_cpp_record_trace(uint64_t, uint64_t, uint64_t, uint64_t);
+extern uint64_t priority_rust_refusal(uint64_t);
+extern uint64_t priority_cpp_refusal(uint64_t);
+#endif
+#if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
 typedef union {
     struct { size_t bytes; uint64_t magic; } value;
     max_align_t alignment;
 } AllocationHeader;
 static size_t requests, requested_bytes, live_bytes, peak_bytes;
+#if defined(ECOSYSTEM)
+static size_t realloc_requests, releases, peak_overlap_upper_bytes;
+#endif
+#endif
 static volatile uint64_t observed;
 static const char *const path_names[] = {
     "pop-push", "replace-top", "grow-pop", "heapify-pop", "setup-cleanup"
 };
-static const char *const variant_names[] = { "whitefoot", "swap-c", "hole-c" };
+static const char *const variant_names[] = { "whitefoot", "swap-c", "hole-c"
+#if defined(ECOSYSTEM)
+    , "rust-binary-heap", "cpp-std-heap"
+#endif
+};
 
 static void require(bool condition, const char *message) {
     if (!condition) { fprintf(stderr, "priority library costs: %s\n", message); exit(1); }
 }
+#if defined(ECOSYSTEM) && defined(ACCOUNT_ONLY)
+void wf_ecosystem_note_alloc(uint64_t bytes) {
+    ++requests; requested_bytes += (size_t)bytes; live_bytes += (size_t)bytes;
+    if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+    if (live_bytes > peak_overlap_upper_bytes) peak_overlap_upper_bytes = live_bytes;
+}
+void wf_ecosystem_note_dealloc(uint64_t bytes) {
+    require(live_bytes >= bytes, "native live-byte accounting");
+    live_bytes -= (size_t)bytes; ++releases;
+}
+void wf_ecosystem_note_realloc(uint64_t old_bytes, uint64_t new_bytes) {
+    require(live_bytes >= old_bytes, "native realloc old extent");
+    // The System realloc call is preserved. Its internal transient footprint
+    // is hidden: record logical live bytes and a separate old+new upper bound.
+    if (live_bytes + new_bytes > peak_overlap_upper_bytes)
+        peak_overlap_upper_bytes = live_bytes + (size_t)new_bytes;
+    ++requests; ++realloc_requests; requested_bytes += (size_t)new_bytes;
+    live_bytes = live_bytes - (size_t)old_bytes + (size_t)new_bytes;
+    if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+}
+#endif
+#if defined(ECOSYSTEM) && !defined(ACCOUNT_ONLY)
+// Practical timed images have no accounting header, hook or counter.
+#define wf_cost_allocate(bytes) malloc((size_t)(bytes))
+#define wf_cost_release(pointer) free(pointer)
+#else
 NOINLINE void *wf_cost_allocate(uint64_t bytes) {
     require(bytes <= SIZE_MAX - sizeof(AllocationHeader), "allocation extent");
     AllocationHeader *header = malloc(sizeof *header + (size_t)bytes);
     require(header != NULL, "host allocation failure");
     header->value.bytes = (size_t)bytes;
     header->value.magic = UINT64_C(0x7072696f72697479);
+#if defined(ECOSYSTEM)
+    wf_ecosystem_note_alloc(bytes);
+#else
     ++requests; requested_bytes += (size_t)bytes; live_bytes += (size_t)bytes;
     if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+#endif
     return header + 1;
 }
 NOINLINE void wf_cost_release(void *pointer) {
@@ -67,11 +119,22 @@ NOINLINE void wf_cost_release(void *pointer) {
     AllocationHeader *header = (AllocationHeader *)pointer - 1;
     require(header->value.magic == UINT64_C(0x7072696f72697479), "allocation identity");
     require(live_bytes >= header->value.bytes, "live-byte accounting");
-    live_bytes -= header->value.bytes; header->value.magic = 0; free(header);
+#if defined(ECOSYSTEM)
+    wf_ecosystem_note_dealloc(header->value.bytes);
+#else
+    live_bytes -= header->value.bytes;
+#endif
+    header->value.magic = 0; free(header);
 }
+#endif
 static void reset_accounting(void) {
+#if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
     require(live_bytes == 0, "allocation left live between traces");
     requests = requested_bytes = peak_bytes = 0;
+#if defined(ECOSYSTEM)
+    realloc_requests = releases = peak_overlap_upper_bytes = 0;
+#endif
+#endif
 }
 static uint64_t next_state(uint64_t state) {
     return state * UINT64_C(6364136223846793005) + UINT64_C(1442695040888963407);
@@ -291,6 +354,10 @@ DEFINE_REFUSAL_CHECK(record_swap, Record, record_make, record_accept)
 DEFINE_REFUSAL_CHECK(record_hole, Record, record_make, record_accept)
 
 static uint64_t run(unsigned variant, bool wide, uint64_t count, uint64_t rounds, uint64_t seed, uint64_t path) {
+#if defined(ECOSYSTEM)
+    if (variant == 3) return wide ? priority_rust_record_trace(count, rounds, seed, path) : priority_rust_word_trace(count, rounds, seed, path);
+    if (variant == 4) return wide ? priority_cpp_record_trace(count, rounds, seed, path) : priority_cpp_word_trace(count, rounds, seed, path);
+#endif
 #if defined(WITH_WF)
     if (variant == 0) return wide ? wf_priority_cost_record_trace(count, rounds, seed, path) : wf_priority_cost_word_trace(count, rounds, seed, path);
 #endif
@@ -350,8 +417,21 @@ static uint64_t nanos(void) {
     return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
 #endif
 }
-static void check_accounting(bool wide, uint64_t count, uint64_t path, uint64_t traces) {
+static void check_accounting(unsigned variant, bool wide, uint64_t count, uint64_t path, uint64_t traces) {
+#if defined(ECOSYSTEM) && !defined(ACCOUNT_ONLY)
+    (void)variant; (void)wide; (void)count; (void)path; (void)traces;
+#else
     size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+#if defined(ECOSYSTEM)
+    if (variant >= 3) {
+        require(live_bytes == 0, "native complete backing cleanup");
+        require(count == 0 || (requests >= traces && requested_bytes >= count * stride * traces && peak_bytes >= count * stride),
+                "native allocation observation covers the live population");
+        return;
+    }
+#else
+    (void)variant;
+#endif
     size_t expected_requests = 1, expected_bytes = 16, expected_peak = 16;
     if (path >= 3) expected_bytes = expected_peak = 16 + count * stride;
     else if (path < 2 && count != 0) {
@@ -367,6 +447,7 @@ static void check_accounting(bool wide, uint64_t count, uint64_t path, uint64_t 
     require(requests == expected_requests * traces && requested_bytes == expected_bytes * traces && peak_bytes == expected_peak,
             "independent allocation count, requested-byte and peak formula");
     require(live_bytes == 0, "complete backing cleanup");
+#endif
 }
 static void check(void) {
     const uint64_t counts[] = {0, 1, 2, 3, 16, 63, 256, 4096};
@@ -387,19 +468,26 @@ static void check(void) {
                             reset_accounting();
                             require(run(v, wide != 0, counts[n], rounds[r], seeds[s], path) == expected,
                                     "independent sorted-sequence checksum");
-                            check_accounting(wide != 0, counts[n], path, 1); ++executions;
+                            check_accounting(v, wide != 0, counts[n], path, 1); ++executions;
                         }
                     }
     for (unsigned variant = 1; variant < VARIANT_COUNT; ++variant)
         for (unsigned wide = 0; wide < 2; ++wide) {
             reset_accounting();
-            uint64_t actual = wide ? (variant == 1 ? record_swap_refusal_check() : record_hole_refusal_check())
+            uint64_t actual;
+#if defined(ECOSYSTEM)
+            if (variant == 3) actual = priority_rust_refusal(wide);
+            else if (variant == 4) actual = priority_cpp_refusal(wide);
+            else
+#endif
+            actual = wide ? (variant == 1 ? record_swap_refusal_check() : record_hole_refusal_check())
                                    : (variant == 1 ? word_swap_refusal_check() : word_hole_refusal_check());
             require(actual == refusal_oracle(wide != 0), "independent native refusal/retry sequence");
-            check_accounting(wide != 0, CEILING, 0, 1);
+            check_accounting(variant, wide != 0, CEILING, 0, 1);
         }
-    printf("priority library costs: %zu complete scalar/owning trace executions and four native refusal/retry chains passed\n", executions);
+    printf("priority library costs: %zu complete scalar/owning trace executions and %u native refusal/retry chains passed\n", executions, (VARIANT_COUNT - 1) * 2);
 }
+#if !defined(ECOSYSTEM)
 static void measure(unsigned cohort) {
     const uint64_t counts[] = {16, 256, 4096};
     puts("contract,cohort,element_bytes,path,count,variant,sample,rounds,traces,elapsed_ns,checksum,requests,requested_bytes,peak_bytes");
@@ -421,7 +509,7 @@ static void measure(unsigned cohort) {
                             checksum = checksum * UINT64_C(257) + run(variant, wide != 0, count, rounds, seed + trace, path);
                         uint64_t elapsed = nanos() - before; observed = checksum;
                         require(checksum == expected, "timed sorted-sequence checksum");
-                        check_accounting(wide != 0, count, path, traces);
+                        check_accounting(variant, wide != 0, count, path, traces);
                         printf("%s,%u,%zu,%s,%" PRIu64 ",%s,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu\n",
                                CONTRACT, cohort, wide ? sizeof(Record) : sizeof(uint64_t), path_names[path], count,
                                variant_names[variant], sample, rounds, traces, elapsed, checksum, requests, requested_bytes, peak_bytes);
@@ -440,12 +528,13 @@ static void events(void) {
                     comparisons = transfers = 0; reset_accounting();
                     uint64_t result = run(variant, wide != 0, counts[n], rounds, 101, path);
                     require(result == oracle(wide != 0, counts[n], rounds, 101, path), "counted sorted-sequence checksum");
-                    check_accounting(wide != 0, counts[n], path, 1);
+                    check_accounting(variant, wide != 0, counts[n], path, 1);
                     size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
                     printf("%zu,%s,%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
                            stride, path_names[path], counts[n], variant_names[variant], rounds, comparisons, transfers, transfers * stride);
                 }
 }
+#endif
 #endif
 int main(int argc, char **argv) {
     require(argc >= 2, "usage: priority-costs check|measure COHORT|events");
