@@ -5,7 +5,8 @@ properties:
 
 - **Safe.** A program the compiler accepts has no undefined behavior, given
   a correct trusted base; it cannot panic, and no bounds, overflow or
-  conversion check runs in it. There is no `unsafe` to opt out with.
+  conversion check runs in it. There is no `unsafe` to opt out with, and a
+  program can declare that it uses no heap at all.
 - **Fast.** The safety comes from proofs checked at compile time, not from
   checks at run time, and the same proofs let the compiler drop bounds and
   overflow checks, tell LLVM which references do not alias, and run
@@ -144,6 +145,47 @@ checks similar proofs without a solver, but it is a language for libraries
 that parse, decode and encode file formats, and its code cannot make system
 calls or allocate memory.
 
+### Beyond memory: resources
+
+Memory safety is where the proofs start, not where they stop. The aim is to
+make Whitefoot as safe and robust as proofs can make a systems language,
+enough to carry the most critical infrastructure, and the next step is the
+program's resources: the memory it uses, its stack, its time and the devices
+it drives.
+
+Today:
+
+- **The heap is optional.** A program that begins with `program no_heap;`,
+  or an entry of a module program declared with `no_heap`, cannot allocate:
+  the compiler rejects every heap type and every allocating call in the code
+  that program or entry runs ([STOR-8](spec/kernel-spec.md)).
+- **Resources that must be released are linear.** A linear value cannot be
+  copied, and the compiler never discards it on its own: the program has to
+  pass it on or hand it to a function that consumes it. The standard
+  library's files, directories, listeners and connection halves are linear,
+  so each is closed exactly once, by an explicit call such as `close_read`,
+  and code that could lose one is rejected.
+- **The stack is reported, and tail calls do not grow it.** Running out of
+  stack stops the program with the fixed record above, `--stack-ledger`
+  reports each function's frame, and a self call marked `musttail` transfers
+  without growing the stack.
+
+Planned: a maximum-safety mode, for systems where a failure is not
+acceptable. A program compiled in that mode would have:
+
+- no heap and no other dynamic resource;
+- a peak stack proved to fit a capacity given in bytes;
+- every loop and every recursion proved to finish;
+- hardware peripherals mapped as linear values, so that a device is owned,
+  used and released under the same proofs as a file;
+- no parallelism scheduled at run time;
+- proved bounds on how long each peripheral takes to respond and how long the
+  program takes to start.
+
+None of this mode is implemented yet. The [fixed-resource
+investigation](research/investigations/fixed-resource-execution/README.md)
+records its design so far and what each part still needs.
+
 ## A small language
 
 Whitefoot is close to a safe C with simple generics. Its syntax borrows from
@@ -194,6 +236,75 @@ The cost is spelling: an expression does one operation, literals carry their
 type (`1_u64`), arguments are named, and a reference is read through `deref`.
 Code is longer than C, and each construct has one spelling.
 
+## Highlights
+
+Safe, fast and small are the core. These are the other things worth knowing:
+first what works today, then what is in progress, then research directions
+the proofs make possible.
+
+### Available now
+
+- **Made to be written by agents.** Whitefoot is designed as a harness for
+  AI agents. Every construct has one spelling, arguments are named and
+  literals carry their type, so a piece of code reads one way. Every
+  rejection names one rule and one location and suggests a fix, also as JSON
+  (`--diagnostic-format json`), and tests pin the most common fixes to a
+  repaired program that compiles. Most of the compiler itself is written by
+  agents under one person's design rulings.
+- **Parallelism sized at run time.** A program never says how many tasks run
+  at once. Under `--par` the compiler turns independent calls and loop ranges
+  into work that idle workers may take, and the runtime decides how far a
+  recursion fans out from the number of workers (`WF_WORKERS`); a call no
+  worker takes runs on the caller. Whatever the runtime decides, the result
+  equals the sequential one, and `--par-ledger` explains each decision the
+  compiler made.
+- **Incremental builds.** A program is checked and compiled module by module.
+  With `--cache DIR`, a module's verdict and each function's proof are reused
+  while their inputs are unchanged, and compiled code is cached as well, so
+  an edit rebuilds little more than what it changed. In a first measurement (2026-09-24) on a
+  generated 33-module program, a rebuild after editing the function bodies of
+  one module took about 0.6 s, against about 3.2 s for a build without the
+  cache ([measurement](research/experiments/modular-build-cost/RESULTS.md));
+  build speed has not been studied systematically yet.
+
+### In progress
+
+- **Concurrent I/O without async.** The language has no `async`, `await`,
+  futures, callbacks or tasks: files and sockets are ordinary values, and an
+  I/O operation is an ordinary call. The compiled program submits I/O through
+  a completion runtime (io_uring on Linux, I/O completion ports on Windows),
+  and independent calls in plain sequential code are issued together, so
+  code is never split into synchronous and asynchronous kinds. The `reads`
+  and `writes` rows that let computation run in parallel decide which I/O
+  calls may overlap. Serving many connections at once is being designed.
+- **The maximum-safety mode** described under [Beyond
+  memory](#beyond-memory-resources).
+
+### Research directions
+
+Not started. Each builds on what the proofs already establish.
+
+- **Safe GPU kernels.** A kernel is correct only if no two threads write the
+  same element. Whitefoot already proves that ranges such as `[0, p)` and
+  `[p + 1, n)` of one array do not overlap; that is how `--par` splits the
+  quicksort above. The same proofs could show that each GPU thread writes
+  only its own part of an array, including parts computed from the thread's
+  index. Rust's borrow checker cannot see that two computed ranges are
+  disjoint, so a kernel in Rust either splits its data by a fixed pattern,
+  such as equal chunks, or uses `unsafe`.
+- **Parallelism tuned by profiles.** Because the program never fixes how many
+  tasks run, the degree of parallelism can be tuned to a workload from a
+  profile, or adjusted while the program runs, without editing the source.
+- **Sandbox policies from effects.** A program's checked effects could become
+  its seccomp filter, WASI capability set, or file and network allowlist, so
+  that a deployed program can do only what its signatures say.
+- **Constant-time code.** A discipline that keeps a secret from choosing a
+  branch, an address or a variable-latency instruction, for cryptographic
+  code.
+- **Safe libraries for C.** A Whitefoot module shipped as a C header with
+  opaque, validated handles, so that a C program can replace its riskiest
+  code, such as a parser, with proved code.
+
 ## Articles
 
 Short pieces, each on one idea, with programs that compile. The first three
@@ -212,11 +323,14 @@ start from the examples above:
 5. Integers — every operation states its meaning.
 6. One build — no panic, no debug/release split, a fixed record on resource
    exhaustion.
-7. What a reviewer reads — contracts and effect rows as the review surface.
-8. The trusted base — what is trusted, and the plan to shrink it.
-9. Where the speed comes from — every way the proofs are used.
-10. A layout engine — the first large program.
-11. How this project is built with agents.
+7. Beyond memory — no heap, linear resources, and the plan for a
+   maximum-safety mode.
+8. What a reviewer reads — contracts and effect rows as the review surface.
+9. The trusted base — what is trusted, and the plan to shrink it.
+10. Where the speed comes from — every way the proofs are used.
+11. I/O without async — ordinary calls that the compiler overlaps.
+12. A layout engine — the first large program.
+13. How this project is built with agents.
 
 The other articles are being written; each title becomes a link when its
 article is published.
@@ -244,7 +358,9 @@ use it for anything that matters.
 Not yet available:
 
 - calls to C from source; C enters only as trusted linked definitions;
-- high-concurrency I/O for servers, which is being designed;
+- high-concurrency I/O for servers, which is in progress
+  ([Highlights](#in-progress));
+- the maximum-safety mode ([Beyond memory](#beyond-memory-resources));
 - explicit threads, async or SIMD. Parallelism comes from `--par` as
   described above.
 
