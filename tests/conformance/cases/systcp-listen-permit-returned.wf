@@ -1,3 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpListener = std::net::TcpListener;
+alias close_directory = std::fs::close_directory;
+alias close_listener = std::net::close_listener;
+alias exit_status = std::process::exit_status;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_listen = std::net::tcp_listen;
+
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   match deref(error) {
     NotFound(code: native_code, origin: native_origin) => {

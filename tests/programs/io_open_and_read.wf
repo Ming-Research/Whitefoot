@@ -1,3 +1,16 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+
 fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) {
   doc "The destination is a caller-formed range reference over one frame-resident array; writes(files) subsumes the read of the same path, so the pair is never written [EFF-1].";
   match arg_get(args: args, position: 1_u64) {
@@ -10,17 +23,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
               let window = &bytes[0_u64..64_u64];
               match read_at(factory: files, file: &file, destination: window, file_offset: 0_u64, start: 0_u64, end: 64_u64) {
                 Ok(value: n) => {
-                  let narrowed = cvt.checked::<u64, u8>(n);
-                  match narrowed {
-                    Ok(value: code) => {
-                      close_read(factory: files, file: move file);
-                      return exit_status(code: code);
-                    }
-                    Err(error: overflowed) => {
-                      close_read(factory: files, file: move file);
-                      return exit_status(code: 200_u8);
-                    }
-                  }
+                  let code = cvt::<u64, u8>(n);
+                  close_read(factory: files, file: move file);
+                  return exit_status(code: code);
                 }
                 Err(error: read_stop) => {
                   match read_stop {

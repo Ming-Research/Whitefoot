@@ -1,3 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias socket_address_v6 = std::net::socket_address_v6;
+
 fn main() -> status: ExitStatus pure {
   doc "Ordinary socket_address_v4 and socket_address_v6 declarations have empty rows and total signatures. Their caller constructs both address values in a pure body.";
   let loopback = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9000_u16);

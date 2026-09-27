@@ -9,8 +9,8 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out) cont
   let i = 0_u64;
   let o = 0_u64;
   region {
-    let alias = &uniq deref(out);
-    set deref(alias)[0_u64] = 0_u8;
+    let aliased = &uniq deref(out);
+    set deref(aliased)[0_u64] = 0_u8;
   }
   loop @groups {
     let rem = n -wrap i;

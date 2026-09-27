@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "A runtime-capacity window is taken from the one heap only after its static allocation-size obligation is discharged [OP-9, OP-13]. Allocation is total, so the construction carries no failure arm and the accepted formation has no runtime size-overflow fallback.";
   let taken = box_slots_new::<i32>(capacity: 4_u64);

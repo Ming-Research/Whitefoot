@@ -1,0 +1,16 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn floor(entries: &Array<Entry, 4>, i: u64) -> result: u64 reads(entries) contract {
+  requires i < 4_u64;
+  ensures result <= deref(entries)[i].width;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone exercises the relation datum admission; no call is needed.";
+  return exit_status(code: 0_u8);
+}

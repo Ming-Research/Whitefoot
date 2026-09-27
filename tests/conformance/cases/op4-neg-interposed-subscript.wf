@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn peek(v: &u64) -> result: u64 reads(v) {
   doc "Reads through deref the value the reference names and hands back an owned copy.";
   return deref(v);

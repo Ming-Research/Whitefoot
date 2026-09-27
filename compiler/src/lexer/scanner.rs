@@ -310,11 +310,11 @@ impl<'bytes> Scanner<'bytes> {
 /// This entry point does not decide terminal classification, canonical
 /// spacing, parseability, semantic acceptance, or normative diagnostics.
 #[must_use]
-pub fn lex<'source>(source: &'source SourceBundle, limits: LexLimits) -> LexOutcome<'source> {
+pub fn lex(source: &SourceBundle, limits: LexLimits) -> LexOutcome {
     lex_shapes(source, limits)
 }
 
-fn lex_shapes<'source>(source: &'source SourceBundle, limits: LexLimits) -> LexOutcome<'source> {
+fn lex_shapes(source: &SourceBundle, limits: LexLimits) -> LexOutcome {
     let source_count = match u32::try_from(source.len()) {
         Ok(value) => value,
         Err(_) => {
@@ -486,7 +486,7 @@ fn lex_shapes<'source>(source: &'source SourceBundle, limits: LexLimits) -> LexO
         });
     }
     LexOutcome::Complete(LexedBundle {
-        source,
+        source: source.clone(),
         lexemes,
         source_offsets,
         token_count,
@@ -528,23 +528,19 @@ fn increment_with_limit(
     Ok(actual)
 }
 
-fn raw_issue<'source>(
-    source: &'source SourceBundle,
-    source_id: SourceId,
-    issue: RawIssue,
-) -> LexOutcome<'source> {
+fn raw_issue(source: &SourceBundle, source_id: SourceId, issue: RawIssue) -> LexOutcome {
     match produced_span(source, source_id, issue.start, issue.end) {
         Ok(span) => LexOutcome::SourceIssue(SourceIssue::new(span, issue.kind)),
         Err(failure) => LexOutcome::CompilerFailure(failure),
     }
 }
 
-fn produced_span<'source>(
-    source: &'source SourceBundle,
+fn produced_span(
+    source: &SourceBundle,
     source_id: SourceId,
     start: usize,
     end: usize,
-) -> Result<SourceSpan<'source>, LexCompilerFailure> {
+) -> Result<SourceSpan, LexCompilerFailure> {
     let start = u64::try_from(start).map(ByteOffset::new).map_err(|_| {
         LexCompilerFailure::InvalidProducedSpan {
             source: source_id,

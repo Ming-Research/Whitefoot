@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn expression_position_0() -> status: ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn window_sum<const n: u64>(buf: Slots<u8, n>, offset: u64, length: u64) -> total: u64 pure {
   let spare = buf.len;
   let end = offset +wrap length;

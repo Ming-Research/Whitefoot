@@ -1,0 +1,3 @@
+fn helper() -> result: u8 pure {
+  return 1_u8;
+}

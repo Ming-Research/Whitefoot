@@ -1,9 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 opaque struct Token {
   value: u64;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2: a source-declared opaque struct carries a constructor entry that exists to be refused, exactly as the prelude's opaque structs do; a constructor call whose leading TYPEID names one is a hard error citing TYPE-2 at the complete call, with the restructuring build it with a construction function. No source-declared opaque struct has one, so a value of Token is never formed.";
+  doc "TYPE-2: a source-declared opaque struct carries a constructor entry that exists to be refused, exactly as the prelude's opaque structs do; a constructor call whose leading TYPEID names one is a hard error citing TYPE-2 at the complete call. No value of an opaque struct the program declares is ever formed, so the repair is to remove opaque from Token's declaration.";
   let t = Token(value: 7_u64);
   let v = t.value;
   if v == 7_u64 {

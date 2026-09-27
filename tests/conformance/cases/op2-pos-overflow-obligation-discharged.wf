@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bump(x: u64) -> return_value: u64 pure {
   doc "OP-2 constant-operand class: `x + 1_u64` has a constant operand, so it carries an overflow obligation. The dominating branch establishes x < 100 and derives the residual upper conjunct, so the site returns the exact value with no runtime overflow check and the row is `pure` under EFF-2.";
   let small = x < 100_u64;

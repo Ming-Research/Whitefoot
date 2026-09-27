@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn consume(run: Slots<u8, 4>) -> size: u64 pure {
   doc "Consumes the window it is handed and reports its length.";
   let n = run.len;

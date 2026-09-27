@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   doc "An else-free guard whose body falls through also has a reaching false edge. A bound available only on the true edge cannot prove the subscript after the join [ENT-5, OP-4].";
   let spare = deref(b).len;

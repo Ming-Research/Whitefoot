@@ -173,8 +173,8 @@ fn read_pair(low: u64, high: u64) -> result: u8 pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "read_pair");
@@ -204,8 +204,8 @@ fn get(symbol: u64) -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "get");
@@ -264,8 +264,8 @@ fn disjunctive_signs_and_bxor_record_nothing() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "classify");
@@ -318,8 +318,8 @@ fn guard(index: u64) -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "guard");
@@ -386,8 +386,8 @@ fn caller(low: u64, high: u64) -> result: u8 pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let callee = entailment(source, "pick");
@@ -442,8 +442,8 @@ fn band_conjunct_over_a_derived_binding_discharges_like_the_single_bound_pair() 
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let separate = br#"fn read_pair(input: &[u8], at: u64) -> result: u8 reads(input) {
@@ -462,8 +462,8 @@ fn main() -> status: ExitStatus pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for source in [conjoined.as_slice(), separate.as_slice()] {
@@ -501,8 +501,8 @@ fn band_guard_over_a_derived_binding_admits_the_true_edge_only() {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(source, "window");
@@ -521,8 +521,8 @@ fn main() -> status: ExitStatus pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(else_edge, "window");
@@ -556,8 +556,8 @@ fn band_over_derived_bindings_proves_no_unnamed_bound() {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(uncovered, "read_three");
@@ -580,8 +580,8 @@ fn main() -> status: ExitStatus pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let summary = entailment(disjoined, "read_pair");

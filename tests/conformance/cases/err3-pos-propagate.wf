@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum MyErr {
   Bad();
 }
 
 fn step(x: i32) -> result: Result<i32, MyErr> pure {
   if x < 0_i32 {
-    let bad_atom_0001 = Bad();
+    let bad_atom_0001 = MyErr::Bad();
     return Err<i32, MyErr>(error: bad_atom_0001);
   } else {
     return Ok<i32, MyErr>(value: x);

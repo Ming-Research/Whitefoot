@@ -1,3 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapConsume = std::collections::hash_map::HashMapConsume;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPair = std::collections::hash_map::HashMapPair;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias exit_status = std::process::exit_status;
+alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_pair_consume = std::collections::hash_map::hash_map_pair_consume;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_rehash = std::collections::hash_map::hash_map_rehash;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias hash_map_reserve = std::collections::hash_map::hash_map_reserve;
+alias hash_map_try_put = std::collections::hash_map::hash_map_try_put;
+
 struct HashMapHashEnv {
   hostile: Bool;
 }

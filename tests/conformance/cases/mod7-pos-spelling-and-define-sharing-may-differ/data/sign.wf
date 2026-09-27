@@ -1,0 +1,20 @@
+fn sign_of(value: i32) -> result: Sign pure {
+  doc "Compares the value against zero.";
+  if value < 0_i32 {
+    return Sign::Neg();
+  }
+  if value == 0_i32 {
+    return Sign::Zero();
+  }
+  return Sign::Pos();
+}
+
+fn bounded(value: u64) -> result: Sign pure contract {
+  requires value < 10_u64;
+} {
+  doc "The same boundary, written without the shared define and through the unqualified type name.";
+  if value == 0_u64 {
+    return Sign::Zero();
+  }
+  return Sign::Pos();
+}

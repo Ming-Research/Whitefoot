@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Exercise every Boolean table operation through normal source compilation and host execution [OP-1, OP-8].";
   let yes = True();

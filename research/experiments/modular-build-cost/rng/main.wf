@@ -1,0 +1,16 @@
+fn main() -> status: ExitStatus pure {
+  let state = 88172645463325252_u64;
+  for @spin (index in 0_u64..400000000_u64) {
+    let next = pkg::rng::next(state: state);
+    set state = next;
+  }
+  let low = iand(state, 127_u64);
+  match cvt.checked::<u64, u8>(low) {
+    Ok(value: code) => {
+      return exit_status(code: code);
+    }
+    Err(error: refused) => {
+      return exit_status(code: 255_u8);
+    }
+  }
+}

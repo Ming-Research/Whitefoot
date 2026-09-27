@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
   doc "One predecessor bounds i +wrap 1, whose wrapped image is not the mathematical i + 1; the other bounds i directly.";
   let spare = deref(b).len;

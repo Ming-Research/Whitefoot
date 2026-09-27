@@ -8,7 +8,7 @@ use crate::{
 
 use super::{CheckStop, Checker};
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn has_fixed(
         &self,
         node: NodeId,
@@ -55,11 +55,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         role: DeclarationRole,
     ) -> Result<&crate::DeclarationRecord, CheckStop> {
-        let path = self.tree.path(node)?;
         self.resolved
-            .declarations()
-            .iter()
-            .find(|declaration| declaration.role() == role && declaration.origin().node() == path)
+            .declarations_at(node)
+            .find(|declaration| declaration.role() == role)
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
 
@@ -73,12 +71,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         role: DeclarationRole,
     ) -> Result<Vec<&crate::DeclarationRecord>, CheckStop> {
-        let path = self.tree.path(node)?;
         let mut found = self
             .resolved
-            .declarations()
-            .iter()
-            .filter(|declaration| declaration.role() == role && declaration.origin().node() == path)
+            .declarations_at(node)
+            .filter(|declaration| declaration.role() == role)
             .collect::<Vec<_>>();
         found.sort_by_key(|declaration| declaration.origin().coordinate().start());
         Ok(found)
@@ -89,10 +85,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         role: DeclarationRole,
     ) -> Result<Option<&crate::DeclarationRecord>, CheckStop> {
-        let path = self.tree.path(node)?;
-        let mut matches = self.resolved.declarations().iter().filter(|declaration| {
-            declaration.role() == role && declaration.origin().node() == path
-        });
+        let mut matches = self
+            .resolved
+            .declarations_at(node)
+            .filter(|declaration| declaration.role() == role);
         let declaration = matches.next();
         if matches.next().is_some() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -138,9 +134,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         }
         let mut uses = self
             .resolved
-            .lexical_uses()
-            .iter()
-            .filter(|usage| usage.role() == role && usage.origin().node() == path)
+            .lexical_uses_at(node)
+            .filter(|usage| usage.role() == role)
             .collect::<Vec<_>>();
         uses.sort_by_key(|usage| usage.origin().role_ordinal());
         Ok(uses)
@@ -167,9 +162,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
         }
         self.resolved
-            .lexical_uses()
-            .iter()
-            .find(|usage| roles.contains(&usage.role()) && usage.origin().node() == path)
+            .lexical_uses_at(node)
+            .find(|usage| roles.contains(&usage.role()))
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
 
@@ -178,11 +172,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         role: DependentDeclarationRole,
     ) -> Result<&crate::DependentDeclarationRecord, CheckStop> {
-        let path = self.tree.path(node)?;
         self.resolved
-            .dependent_declarations()
-            .iter()
-            .find(|declaration| declaration.role() == role && declaration.origin().node() == path)
+            .dependent_declarations_at(node)
+            .find(|declaration| declaration.role() == role)
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
 
@@ -191,11 +183,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         node: NodeId,
         role: DeferredUseRole,
     ) -> Result<&crate::DeferredUseRecord, CheckStop> {
-        let path = self.tree.path(node)?;
         self.resolved
-            .deferred_uses()
-            .iter()
-            .find(|usage| usage.role() == role && usage.origin().node() == path)
+            .deferred_uses_at(node)
+            .find(|usage| usage.role() == role)
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
 
@@ -210,6 +200,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 rule,
                 location: SemanticLocation::SourceNode(path.clone(), coordinate),
                 kind,
+                request: None,
             }),
             _ => CheckStop::Compiler(SemanticCompilerFailure::InvalidCanonicalTree),
         }
@@ -236,7 +227,24 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             rule,
             location: SemanticLocation::SourceNode(path, coordinate),
             kind,
+            request: None,
         }))
+    }
+
+    /// One node a rejection payload names, with its complete source extent,
+    /// so the driver can print it as a position rather than as a path.
+    pub(super) fn node_location(
+        &self,
+        path: &crate::NodePath,
+    ) -> Result<SemanticLocation, CheckStop> {
+        let node = self
+            .tree
+            .node_with_path(path)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(SemanticLocation::SourceNode(
+            path.clone(),
+            self.tree.coordinate(node)?,
+        ))
     }
 
     pub(super) fn unsupported<ResultValue>(
@@ -244,7 +252,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         feature: UnsupportedSemanticFeature,
         node: NodeId,
     ) -> Result<ResultValue, CheckStop> {
-        let node = self.tree.path(node)?.clone();
+        let node = SemanticLocation::SourceNode(
+            self.tree.path(node)?.clone(),
+            self.tree.coordinate(node)?,
+        );
         Err(CheckStop::Unsupported(SemanticUnsupported {
             feature,
             node,

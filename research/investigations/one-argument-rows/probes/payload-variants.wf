@@ -1,0 +1,33 @@
+enum Slot {
+  Full(value: u64);
+  Spare(amount: u64);
+}
+
+fn drain(slot: &Slot) -> result: u64 reads(slot), writes(slot.Full.value), writes(slot.Spare.amount) {
+  match deref(slot) {
+    Full(value: held) => {
+      let seen = deref(held);
+      set deref(held) = 0_u64;
+      return seen;
+    }
+    Spare(amount: room) => {
+      set deref(room) = 0_u64;
+      return 1_u64;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let slot = Slot::Full(value: 3_u64);
+  let seen = drain(slot: &slot);
+  if seen == 3_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let again = drain(slot: &slot);
+  if again == 0_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

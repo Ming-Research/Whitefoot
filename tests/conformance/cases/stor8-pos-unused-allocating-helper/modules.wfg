@@ -1,0 +1,5 @@
+pkg: [std::process];
+
+entry small = pkg::main {
+  no_heap;
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn changed(count: u64, divisor: u64, choose: Bool) -> result: u64 pure contract {
   requires count <= 4096_u64;
   requires 1_u64 <= divisor;

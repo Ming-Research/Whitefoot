@@ -7,10 +7,10 @@ use super::with_semantics;
 
 #[test]
 fn produces_div_error_results() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let quotient = -2147483648_i32 /checked -1_i32;
   let remainder = 42_u64 %checked 5_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

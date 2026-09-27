@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn ordered(x: u8, middle: u8) -> result: unit pure contract {
   requires x <= middle;
   requires middle <= 254_u8;

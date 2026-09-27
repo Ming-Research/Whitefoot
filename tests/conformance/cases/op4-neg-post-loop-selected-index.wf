@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn last_written(xs: &[u8]) -> value: u8 reads(xs) contract {
   define n0 = deref(xs).len;
   requires n0 >= 1_u64;

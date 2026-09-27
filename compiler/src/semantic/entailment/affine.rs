@@ -249,6 +249,16 @@ impl AffineInequality {
         Ok(inequality)
     }
 
+    /// The exact complement `sum(coefficient * term) >= upper + 1`, in
+    /// canonical form. Every atom denotes a mathematical integer, so this is
+    /// the negation an [INV-1] target's refutation derives [MSR-4].
+    pub(crate) fn negated(&self, check: &mut AffineCheckState) -> Result<Self, AffineCheckError> {
+        Ok(Self {
+            terms: merge_scaled(&[], self.terms(), -1, check)?.into_boxed_slice(),
+            upper: checked_sub(checked_neg(self.upper)?, 1)?,
+        })
+    }
+
     /// Removes one already-established premise with coefficient one.
     ///
     /// If interval facts prove the returned inequality, adding `premise`

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn partial_op(x: u64) -> result: u64 pure contract {
   define halved = x / 2_u64;
   define permitted = halved <= x;

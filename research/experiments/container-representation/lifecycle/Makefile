@@ -22,8 +22,8 @@ check:
 	      pool_boundary_capacity) helpers=pool_helpers.wf; rule='[INV-1]'; detail=UndischargedLocalInvariant; class=specified-proof-limitation ;; \
 	      pool_field_result) helpers=; rule='[FN-9]'; detail=InvalidPostconditionSelector; class=specified-contract-limitation ;; \
 	      pool_false_conservation) helpers=; rule='[FN-9]'; detail=Refuted; class=invalid-contract ;; \
-	      pool_static_length) helpers=; rule='[INV-1]'; detail='name: "initialized"'; class=specified-proof-limitation; source="$(BUILD)/$$name.wf"; sed 's/invariant capacity: cap_of(block.bytes) >= 4_u64;/invariant initialized: len_of(block.bytes) >= 4_u64;/' pool_static_capacity.wf > "$$source" ;; \
-	      linear_failure_leak) helpers=linear_helpers.wf; rule='[PROV-6]'; detail='binding: "first"'; class=invalid-linear-leak ;; \
+	      pool_static_length) helpers=; rule='[INV-1]'; detail='name: initialized'; class=specified-proof-limitation; source="$(BUILD)/$$name.wf"; sed 's/invariant capacity: cap_of(block.bytes) >= 4_u64;/invariant initialized: len_of(block.bytes) >= 4_u64;/' pool_static_capacity.wf > "$$source" ;; \
+	      linear_failure_leak) helpers=linear_helpers.wf; rule='[PROV-6]'; detail='binding: first'; class=invalid-linear-leak ;; \
 	      ring_contiguous_view) helpers=ring_helpers.wf; rule='[BLK-0]'; detail='head_of(run) <= room_of(run)'; class=invalid-contiguous-view ;; \
 	    esac; \
 	    rm -f "$(BUILD)/$$name.ll"; \

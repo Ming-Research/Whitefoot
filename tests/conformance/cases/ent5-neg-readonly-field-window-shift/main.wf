@@ -1,0 +1,28 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-5, OP-10: remove_at writes the window's filled part, which contains every element, so the bound on rows[0].width dies even though the offset is unchanged; the shifted element is the wide one and the cell read owes an unproved c < cells.len.";
+  let rows = slots_new::<Entry, 4>();
+  let narrow = kinds::make_entry(width: 3_u64, weight: 1_u64);
+  let wide = kinds::make_entry(width: 8_u64, weight: 1_u64);
+  place_back(window: &rows, value: narrow);
+  place_back(window: &rows, value: wide);
+  let cells = array_filled::<u8, 3>(value: 7_u8);
+  let total = 0_u64;
+  if rows.len == 2_u64 {
+    if rows[0_u64].width <= cells.len {
+      let removed = remove_at(window: &rows, index: 0_u64);
+      if rows.len == 1_u64 {
+        for (c in 0_u64..rows[0_u64].width) {
+          let cell = cells[c];
+          let widened = cvt::<u8, u64>(cell);
+          set total = total +wrap widened;
+        }
+      }
+    }
+  }
+  return exit_status(code: 0_u8);
+}

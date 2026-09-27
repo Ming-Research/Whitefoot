@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-11: swap exchanges the values at two owned places of one type and consumes neither root, so two elements of one window exchange slots with no writer-observable point at which a slot is empty or a stored element has a second owner. It is the one operation whose two reference arguments may name the same place, so the pair needs no distinctness proof. The exit code reports each cell's own capacity after the exchange.";
   let grid = slots_new::<Box<Slots<u8>>, 2>();

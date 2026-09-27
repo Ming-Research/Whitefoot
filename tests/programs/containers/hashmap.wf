@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum PutResult {
   Inserted();
   Replaced();
@@ -35,13 +38,13 @@ fn occupied_slot(key: u64, value: u64) -> slot: Slot pure {
 fn view_entry(stored_entry: &Option<Entry>, tombstone: Bool) -> view: SlotView reads(stored_entry) {
   match deref(stored_entry) {
     Some(value: present) => {
-      return Occupied(key: deref(present).key, value: deref(present).value);
+      return SlotView::Occupied(key: deref(present).key, value: deref(present).value);
     }
     None() => {
       if tombstone {
-        return Tombstone();
+        return SlotView::Tombstone();
       }
-      return Empty();
+      return SlotView::Empty();
     }
   }
 }
@@ -94,7 +97,7 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
         if current_key == key {
           let replacement = occupied_slot(key: key, value: value);
           set deref(slots)[at] = replacement;
-          return size, Replaced();
+          return size, PutResult::Replaced();
         }
       }
       Tombstone() => {
@@ -111,7 +114,7 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
           set deref(slots)[at] = replacement;
         }
         let larger = size +wrap 1_u64;
-        return larger, Inserted();
+        return larger, PutResult::Inserted();
       }
     }
   }
@@ -119,9 +122,9 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
     let replacement = occupied_slot(key: key, value: value);
     set deref(slots)[first_tombstone] = replacement;
     let larger = size +wrap 1_u64;
-    return larger, Inserted();
+    return larger, PutResult::Inserted();
   }
-  return size, Full();
+  return size, PutResult::Full();
 }
 
 fn find(slots: &Slots<Slot, 8>, key: u64) -> result: Option<u64> reads(slots) contract {

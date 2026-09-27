@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn walk<const n: u64>(run: &Slots<u8, n>, at: u64) -> total: u64 reads(run) contract {
   requires at <= deref(run).len;
 } {

@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
+  define row = i;
+  requires i < deref(rows).len;
+  requires k < deref(rows)[row].len;
+} {
+  doc "The place's offset is a definition. Definitions are erased by expansion, so the place is deref(rows)[i] and the earlier requirement discharges its subscript; the body reads the element both requirements bound.";
+  return deref(rows)[i][k];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "ENT-2, FN-8: the caller proves both requirements and observes the element.";
+  let inner = slots_new::<u8, 8>();
+  place_back(window: &inner, value: 7_u8);
+  place_back(window: &inner, value: 9_u8);
+  let outer = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: &outer, value: move inner);
+  if 0_u64 < outer.len {
+    if 1_u64 < outer[0_u64].len {
+      let value = pick(rows: &outer, i: 0_u64, k: 1_u64);
+      if value == 9_u8 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

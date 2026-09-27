@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Numeric conversion is explicit [TYPE-4]; bare cvt from i32 to i64 has a whole-type total domain.";
   let x = 7_i32;

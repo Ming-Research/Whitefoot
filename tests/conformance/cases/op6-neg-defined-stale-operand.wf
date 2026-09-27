@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn narrow(value: u32) -> result: u8 pure {
   let permitted = cvt.defined::<u32, u8>(value);
   set value = 300_u32;

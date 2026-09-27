@@ -48,7 +48,7 @@ stmt := let_stmt | set_stmt | expr_stmt | return_stmt | loop_stmt
 ```
 
 `check_stmt` is not in it. Batch 0071 (`f8c81dfc`, activating v0.32) retired the
-anonymous body check; `mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md`
+anonymous body check; [mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md)
 records the move and its reason ("an anonymous body check is a claim minus its
 name, justification, accountability entry, redundancy advice, and refutation")
 and, in the same node, the deferral this study inherits:
@@ -123,7 +123,7 @@ The R3-PROVISIONAL register line at `spec/kernel-spec.md:8` names the exact item
 > ordinary-let/final-check subset (FN-8 — semantics selected, spelling not yet
 > compared)
 
-and `mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md` dates it:
+and [mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md) dates it:
 
 > 2026-07-11 statement: the semantics (existence, callee-entry execution,
 > always-retained check, concrete-only scope) are evidence-selected; the
@@ -905,7 +905,7 @@ canonical-form baselines.
 
 ## 7. Design-memory check
 
-Consulted: `mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md`, its
+Consulted: [mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/requires-entry-contract.md), its
 `.alt/recognizer-driven-elision.md`, its child
 `requirement-enforcement.md` and that child's
 `.alt/callee-entry-prologue.md`; plus

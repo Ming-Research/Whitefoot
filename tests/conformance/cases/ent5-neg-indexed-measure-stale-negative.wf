@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn write(target: &u64, value: u64) -> result: unit writes(target) {
   doc "The ordinary declared write projects onto the caller's index binding [EFF-2].";
   set deref(target) = value;

@@ -1,0 +1,5 @@
+pkg::vec: [];
+pkg::wrap: [pkg::vec];
+pkg: [pkg::vec, pkg::wrap, std::process];
+
+entry main = pkg::main;

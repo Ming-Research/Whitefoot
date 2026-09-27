@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Cell {
   value: u64;
 }
@@ -10,7 +13,7 @@ fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.v
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "EFF-5: two substituted effects on overlapping paths where at least one is a write must be proved disjoint, and are otherwise a hard error at the complete call; the restructuring is to prove the two positions distinct, or pass one of them.";
+  doc "EFF-5: two substituted effects on overlapping paths where at least one is a write must be proved disjoint, and are otherwise a hard error at the complete call; with no position to separate the two paths, the repair passes places that do not overlap.";
   let a = Cell(value: 4_u64);
   copy_across(source: &a, destination: &a);
   let seen = a.value;

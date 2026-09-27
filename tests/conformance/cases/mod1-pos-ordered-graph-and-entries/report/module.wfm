@@ -1,0 +1,5 @@
+alias ExitStatus = std::process::ExitStatus;
+
+public fn code_of(sign: pkg::data::Sign) -> code: u8 pure doc "Maps a sign to an exit code.";
+
+public fn quiet() -> status: ExitStatus pure doc "Exits with status zero.";

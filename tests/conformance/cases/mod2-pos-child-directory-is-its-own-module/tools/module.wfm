@@ -1,0 +1,1 @@
+public fn seven() -> result: u8 pure doc "Returns seven.";

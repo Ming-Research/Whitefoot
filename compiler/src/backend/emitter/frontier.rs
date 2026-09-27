@@ -56,7 +56,7 @@ pub(super) struct RecursiveFrontiers {
 }
 
 impl RecursiveFrontiers {
-    pub(super) fn new(program: &IrProgram<'_, '_, '_>, clones: &HashSet<u32>) -> Self {
+    pub(super) fn new(program: &IrProgram, clones: &HashSet<u32>) -> Self {
         let Some(selected) = program.recursion_budget() else {
             return Self::default();
         };

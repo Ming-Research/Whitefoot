@@ -1,3 +1,8 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias args_count = std::text::args_count;
+alias exit_status = std::process::exit_status;
+
 fn count_arguments(args: &Args) -> result: u64 reads(args) {
   doc "Args is immutable, but args_count still observes the state its parameter supplies. The exact row is reads(args), rooted at the reference parameter EFF-1 requires; a by-value parameter would carry no entry at all.";
   let total = args_count(args: args);

@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn keep(value: u8) -> result: u8 pure {
+  return value;
+}
+
+binding Keep : pkg::lib::Convert<u8> {
+  convert = keep;
+}
+
+fn apply<interface pkg::lib::Convert<T>>(value: T) -> result: u8 pure {
+  doc "The qualified group names another module's public interface; its targs declare the group binder T.";
+  let result = pkg::lib::Convert::convert(value: value);
+  return result;
+}
+
+fn main() -> status: ExitStatus pure {
+  let seven = apply::<Keep>(value: 7_u8);
+  return exit_status(code: seven);
+}

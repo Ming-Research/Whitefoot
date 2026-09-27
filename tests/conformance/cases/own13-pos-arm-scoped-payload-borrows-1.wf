@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Packet {
   Data(value: i32);
 }
 
 fn main() -> status: ExitStatus pure {
   doc "Matching through a reference derives a payload binder that names the scrutinee path extended by its payload step; reading that copy payload leaves the enum live.";
-  let packet = Data(value: 4_i32);
+  let packet = Packet::Data(value: 4_i32);
   let holder = &packet;
   match deref(holder) {
     Data(value: payload) => {

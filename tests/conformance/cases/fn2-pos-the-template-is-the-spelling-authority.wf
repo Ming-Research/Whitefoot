@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn pass<T: drop>(value: T) -> back: T pure {
   doc "One body written for the affine class, serving a copy instance and an affine one.";
   return move value;

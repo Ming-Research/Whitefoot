@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   for @walk (i in 0_u64..2_u64) {
     for @walk (j in 0_u64..2_u64) {

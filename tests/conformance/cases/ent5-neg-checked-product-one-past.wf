@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn products(first: u8, second: u8) -> result: u64 pure {
+  let a = cvt::<u8, u64>(first);
+  let b = cvt::<u8, u64>(second);
+  match a *checked b {
+    Ok(value: area) => {
+      at_most(value: area, limit: 65024_u64);
+      return area;
+    }
+    Err(error: overflowed) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

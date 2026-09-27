@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A heap-resident runtime-capacity run is taken from the one heap, filled, and folded through counted ranges whose binder facts prove every indexed access in bounds; the cell takes its compiler-derived release at normal owner exit.";
   let cell = box_slots_new::<u64>(capacity: 8_u64);

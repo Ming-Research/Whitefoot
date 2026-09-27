@@ -50,11 +50,11 @@ fn exercise<T>(values: &Slots<T, 4>) -> result: unit writes(values) contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
   exercise::<u64>(values: &values);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -107,14 +107,14 @@ const PUSH: &str = r#"fn push(values: &Slots<u64, 4>, value: u64) -> result: uni
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   push(values: &values, value: 7_u64);
   invariant upper: values.len <= 1_u64;
   invariant lower: values.len >= 1_u64;
   let last = take_back(window: &values);
   invariant empty: values.len <= 0_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -176,8 +176,8 @@ fn entry_former_rejects_body_and_read_only_parameter() {
   return deref(values).len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(read_only.as_bytes(), SemanticRule::Msr3);
@@ -213,12 +213,12 @@ fn whole_referent_assignment_kills_the_old_window_facts() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
   clear(values: &values);
   let last = take_back(window: &values);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule(source.as_bytes(), SemanticRule::Fn8);
@@ -236,16 +236,16 @@ fn exit_facts_publish_beside_multiple_results() {
   return value, count;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
   let (value, count) = pop(values: &values);
   invariant empty: values.len <= 0_u64;
   invariant reported: count <= 0_u64;
   if value != 7_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -266,14 +266,14 @@ fn push(pair: &Pair, value: u64) -> result: unit writes(pair.changed) contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let changed = slots_new::<u64, 4>();
   let untouched = slots_new::<u64, 4>();
   let pair = Pair(changed: move changed, untouched: move untouched);
   push(pair: &pair, value: 7_u64);
   invariant changed: pair.changed.len >= 1_u64;
   invariant unchanged: pair.untouched.len <= 0_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -288,14 +288,14 @@ fn a_writing_call_invalidates_a_surviving_reference() {
     let helper = PUSH.split("fn main()").next().unwrap();
     let source = format!(
         "{helper}{}",
-        r#"fn main() -> status: ExitStatus pure {
+        r#"fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 1_u64);
   place_back(window: &values, value: 2_u64);
   let seen = &values[0_u64];
   push(values: &values, value: 3_u64);
   let observed = deref(seen);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -329,8 +329,8 @@ fn assigning_the_actual_after_a_call_kills_its_exit_only_relation() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -357,8 +357,8 @@ fn written_state_equality_requires_both_affine_bounds() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);
@@ -382,7 +382,7 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
     let helper = PUSH.split("fn main()").next().unwrap();
     let source = format!(
         "{helper}{}",
-        r#"fn main() -> status: ExitStatus pure {
+        r#"fn main() -> status: std::process::ExitStatus pure {
   let empty = slots_new::<u64, 4>();
   let owner = box_new::<Slots<u64, 4>>(value: move empty);
   let filled = owner.inner.len;
@@ -391,9 +391,9 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
     invariant changed: owner.inner.len >= 1_u64;
     let held = &owner.inner[0_u64];
     let observed = deref(held);
-    return exit_status(code: 0_u8);
+    return std::process::exit_status(code: 0_u8);
   }
-  return exit_status(code: 1_u8);
+  return std::process::exit_status(code: 1_u8);
 }
 "#
     );
@@ -410,7 +410,7 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
 
 #[test]
 fn two_overlapping_written_arguments_are_refused_pairwise() {
-    // [EFF-5] clause 1: the substituted effects are compared pairwise, and
+    // [EFF-5] clause 1: the effects two arguments supply are compared, and
     // two overlapping paths at least one of which writes are a hard error at
     // the complete `call`. v0.59 spelled the same refusal as a loan conflict
     // between two `&uniq` actuals.
@@ -423,12 +423,12 @@ fn two_overlapping_written_arguments_are_refused_pairwise() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let first = slots_new::<u64, 4>();
   let second = slots_new::<u64, 4>();
   place_back(window: &first, value: 7_u64);
   copy_first(source: &first, destination: &second);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_complete(source);

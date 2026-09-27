@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const rows: Array<Array<u64, 2>, 1> =[[7_u64, 9_u64]];
 
 fn read(values: &Array<Array<u64, 2>, 1>) -> result: u64 reads(values) {

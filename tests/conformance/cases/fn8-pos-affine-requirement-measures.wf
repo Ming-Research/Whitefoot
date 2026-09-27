@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill(first: &[u64], second: &[u64], output: &[u64]) -> result: u64 reads(first.len), reads(second.len), writes(output) contract {
   requires deref(first).len <= 16_u64;
   requires deref(second).len <= 16_u64;

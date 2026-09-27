@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "INV-1 and OP-4: an invariant evaluates nothing and reads no storage, but a measure over a place whose subscripts are not all discharged is no term there either. The run below is empty, so the subscript's own `0 < table.len` is underivable at the statement that writes it.";
   let table = slots_new::<Slots<u8, 4>, 2>();

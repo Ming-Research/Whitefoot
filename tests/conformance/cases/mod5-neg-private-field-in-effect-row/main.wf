@@ -1,0 +1,11 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Pair = pkg::data::Pair;
+alias exit_status = std::process::exit_status;
+
+fn touch(pair: &Pair) -> result: unit writes(pair.right) {
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

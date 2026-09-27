@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Choice {
   Short(values: Slots<u8, 4>);
   Long(values: Slots<u8, 8>);
@@ -15,13 +18,13 @@ fn inspect(choose_short: Bool) -> result: unit pure {
   let choice = if choose_short {
     let short_values = slots_new::<u8, 4>();
     place_back(window: &short_values, value: 11_u8);
-    let short = Short(values: move short_values);
+    let short = Choice::Short(values: move short_values);
     give move short;
   } else {
     let long_values = slots_new::<u8, 8>();
     place_back(window: &long_values, value: 17_u8);
     place_back(window: &long_values, value: 23_u8);
-    let long = Long(values: move long_values);
+    let long = Choice::Long(values: move long_values);
     give move long;
   }
   match choice {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The retired `.trap` mode suffix is outside FORM-3's closed OPNAME spelling set.";
   let value = iadd.trap<i32>(1_i32, 2_i32);

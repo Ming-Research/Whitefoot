@@ -1,0 +1,49 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn stamp_two_ranges(first: &[u8], second: &[u8]) -> result: u64 writes(first), writes(second) {
+  if 0_u64 < deref(first).len {
+    set deref(first)[0_u64] = 7_u8;
+  }
+  if 0_u64 < deref(second).len {
+    set deref(second)[0_u64] = 8_u8;
+  }
+  return 2_u64;
+}
+
+fn split(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes(v) contract {
+  requires deref(u).len <= deref(w).len;
+  requires deref(w).len <= deref(v).len;
+} {
+  doc "OWN-7, EFF-5: both ranges have measure endpoints. The first's captured end and the second's captured start are the same measure, so the first ends no later than the second starts and the call may write both.";
+  let low = &deref(v)[deref(u).len..deref(w).len];
+  let high = &deref(v)[deref(w).len..deref(v).len];
+  let stamped = stamp_two_ranges(first: low, second: high);
+  return stamped;
+}
+
+fn main() -> status: ExitStatus pure {
+  let data = array_filled::<u8, 6>(value: 0_u8);
+  let short = array_filled::<u8, 1>(value: 0_u8);
+  let middle = array_filled::<u8, 3>(value: 0_u8);
+  let whole = &data[0_u64..6_u64];
+  let start = &short[0_u64..1_u64];
+  let cut = &middle[0_u64..3_u64];
+  let stamped = split(v: whole, u: start, w: cut);
+  if stamped != 2_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if data[1_u64] != 7_u8 {
+    return exit_status(code: 2_u8);
+  }
+  if data[3_u64] != 8_u8 {
+    return exit_status(code: 3_u8);
+  }
+  if data[0_u64] != 0_u8 {
+    return exit_status(code: 4_u8);
+  }
+  if data[2_u64] != 0_u8 {
+    return exit_status(code: 5_u8);
+  }
+  return exit_status(code: 0_u8);
+}

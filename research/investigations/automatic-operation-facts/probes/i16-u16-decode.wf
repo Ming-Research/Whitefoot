@@ -1,0 +1,17 @@
+fn read_u16(bytes: &[u8], at: u64) -> result: u16 reads(bytes) contract {
+  requires at + 1_u64 < deref(bytes).len;
+} {
+  let next = at + 1_u64;
+  let low = deref(bytes)[at];
+  let high = deref(bytes)[next];
+  let low_wide = cvt::<u8, u64>(low);
+  let high_wide = cvt::<u8, u64>(high);
+  let high_shifted = ishl(high_wide, 8_u32);
+  let value = ior(low_wide, high_shifted);
+  let narrow = cvt::<u64, u16>(value);
+  return narrow;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -7,11 +10,11 @@ enum Sign {
 fn sign_of(x: i32) -> function_result: Sign pure {
   doc "Conditional value produced by returning from branches (canonical for return position).";
   if x < 0_i32 {
-    return Neg();
+    return Sign::Neg();
   } else if x == 0_i32 {
-    return Zero();
+    return Sign::Zero();
   } else {
-    return Pos();
+    return Sign::Pos();
   }
 }
 

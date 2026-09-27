@@ -21,11 +21,11 @@ use super::{assert_rule, assert_rule_kind, with_semantics};
 
 #[test]
 fn cell_creation_content_read_and_cleanup_are_explicit() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let value = 41_u64;
   let owner = box_new::<u64>(value: value);
   let loaded = owner.inner;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -87,8 +87,8 @@ fn assign_owner() -> result: u64 pure {
   return seen;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -139,8 +139,8 @@ fn unbox() -> result: u64 pure {
   return taken.value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -201,8 +201,8 @@ fn take() -> result: u8 pure {
   return taken.value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -288,8 +288,8 @@ fn take(token: Token) -> result: u8 pure {
   return taken.value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         // PROV-6 precedes WIN-3 under DIAG-1 at this same consumed place:
@@ -306,13 +306,13 @@ fn indexed_box_content_move_remains_a_win3_source_rejection() {
   value: u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let slots = slots_new::<Box<Payload>, 1>();
   let payload = Payload(value: 1_u8);
   let cell = box_new::<Payload>(value: move payload);
   place_back(window: &slots, value: move cell);
   let taken = move slots[0_u64].inner;
-  return exit_status(code: taken.value);
+  return std::process::exit_status(code: taken.value);
 }
 "#,
         SemanticRule::Win3,
@@ -342,8 +342,8 @@ fn hold(first: Token, second: Token) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Win3,
@@ -357,11 +357,11 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let b = box_new::<i32>(value: 4_i32);
   eat(b: move b);
   set b.inner = 7_i32;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Own1,
@@ -395,20 +395,20 @@ fn main() -> status: ExitStatus pure {
 /// `Box<u64>` and the two spellings name the same type.
 #[test]
 fn a_derived_cell_nominal_is_interned_whether_or_not_the_type_is_spelled_elsewhere() {
-    let named_nowhere = br#"fn main() -> status: ExitStatus pure {
+    let named_nowhere = br#"fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 41_u64);
   let loaded = owner.inner;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let named_in_a_signature = br#"fn take(b: Box<u64>) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 41_u64);
   take(b: move owner);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for source in [named_nowhere.as_slice(), named_in_a_signature.as_slice()] {
@@ -450,10 +450,10 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn deref_of_a_cell_is_a_type7_rejection_naming_the_field_inner() {
     assert_rule_kind(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 41_u64);
   let loaded = deref(owner);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         SemanticRule::Type7,

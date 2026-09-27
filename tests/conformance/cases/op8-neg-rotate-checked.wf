@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bad(a: u32, n: u32) -> return_value: u32 pure {
   doc "A rotate amount is taken modulo width, so rotates are dotless-total [OP-8]; irotl.checked is a well-formed operation token but names no table row and must be rejected under OP-1.";
   return irotl.checked(a, n);

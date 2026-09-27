@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "OP-2: integer negation has exact, wrap, and checked rows; the exact row is admitted only when its ineg.defined obligation is proved.";
   let wrapped = ineg.wrap(-128_i8);

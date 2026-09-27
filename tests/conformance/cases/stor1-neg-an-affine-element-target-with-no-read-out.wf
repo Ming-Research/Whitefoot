@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "An element target holding a heap-owned run is stored over while it is live and while the right-hand side supplies a different run. Assigning over an owned place releases the affine previous value, so the store is admitted and no read-out form is required.";
   let empty = slots_new::<Box<Slots<u8>>, 2>();

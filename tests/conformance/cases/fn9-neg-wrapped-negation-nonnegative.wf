@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn wrapped_negate(value: i32) -> result: i32 pure contract {
   requires value == -2147483648_i32;
   ensures result >= 0_i32;

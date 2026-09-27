@@ -7,7 +7,7 @@ use super::{assert_rule, assert_rule_kind, with_semantics};
 
 #[test]
 fn retains_the_complete_direct_float_operation_family() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let a = fadd.strict(1.0_f32, 2.0_f32);
   let b = fsub.strict(a, 1.0_f32);
   let c = fmul.strict(a, b);
@@ -32,7 +32,7 @@ fn retains_the_complete_direct_float_operation_family() {
   let v = ffma.strict(a, b, c);
   let w = finf::<f32>();
   let x = fnan::<f32>();
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -85,17 +85,17 @@ fn retains_the_complete_direct_float_operation_family() {
 #[test]
 fn float_literal_and_operation_failures_keep_their_rule_owners() {
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = 1.00_f64;\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = 1.00_f64;\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Form7,
         SemanticIssueKind::InvalidFloatLiteral,
     );
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = fadd.strict(1_i32, 2_i32);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = fadd.strict(1_i32, 2_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
         SemanticIssueKind::InvalidOperation,
     );
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let value = fadd.strict(1.0_f64, 2_i32);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = fadd.strict(1.0_f64, 2_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );

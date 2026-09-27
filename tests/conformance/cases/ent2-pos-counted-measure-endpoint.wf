@@ -1,0 +1,58 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn sum_bytes(src: &[u8]) -> total: u64 reads(src) {
+  doc "The range reference's len is itself the upper endpoint term; S11 equates the captured upper value with it, so the binder bound discharges the element read without a preceding let.";
+  let acc = 0_u64;
+  for (i in 0_u64..deref(src).len) {
+    let byte = deref(src)[i];
+    let wide = cvt::<u8, u64>(byte);
+    set acc = acc +wrap wide;
+  }
+  return acc;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Measure terms serve directly as counted endpoints: a range reference len, a local run's len and cap in both endpoint positions, and a measure whose measure place is subscripted.";
+  let bytes = array_filled::<u8, 4>(value: 3_u8);
+  let view = &bytes[1_u64..4_u64];
+  let viewed = sum_bytes(src: view);
+  if viewed == 9_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let run = slots_new::<u8, 4>();
+  place_back(window: &run, value: 5_u8);
+  place_back(window: &run, value: 6_u8);
+  let spare = 0_u64;
+  for (k in run.len..run.cap) {
+    set spare = spare +wrap 1_u64;
+  }
+  if spare == 2_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let stored = 0_u64;
+  for (i in 0_u64..run.len) {
+    let byte = run[i];
+    let wide = cvt::<u8, u64>(byte);
+    set stored = stored +wrap wide;
+  }
+  if stored == 11_u64 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  let row = array_filled::<u8, 3>(value: 7_u8);
+  let table = array_filled::<Array<u8, 3>, 2>(value: row);
+  let cells = 0_u64;
+  for (j in 0_u64..table[1_u64].len) {
+    let cell = table[1_u64][j];
+    let wide = cvt::<u8, u64>(cell);
+    set cells = cells +wrap wide;
+  }
+  if cells == 21_u64 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

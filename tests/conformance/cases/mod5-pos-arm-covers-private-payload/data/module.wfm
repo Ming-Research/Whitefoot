@@ -1,0 +1,6 @@
+public enum Reading {
+  Value(public raw: u8, checksum: u8);
+  Missing();
+}
+
+public fn read() -> reading: Reading pure doc "Produces one reading.";

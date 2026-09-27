@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Distinct value names and a break to a lexically enclosing loop [TYPE-6].";
   let i = 0_i32;

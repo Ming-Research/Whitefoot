@@ -40,8 +40,8 @@ use super::super::model::{
     CheckedType, IntegerType, WindowShape,
 };
 use super::super::places::{
-    CapturedRange, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep, ResolvedPlace,
-    UnprovedSeparations,
+    CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep,
+    ResolvedPlace, UnprovedSeparations,
 };
 use super::{
     CheckStop, Checker, EffectPath, FunctionSignature, LocalBinding, PlaceAccess, TypedExpression,
@@ -231,11 +231,31 @@ impl ReferenceInfo {
     /// [REF-1] the join of two incoming edges: the union of the path sets,
     /// and the meet of the validity facts, because a check must hold on every
     /// incoming edge.
+    ///
+    /// An index one edge superseded is superseded after the join too, so the
+    /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
             }
+        }
+        let superseded = self
+            .paths
+            .iter()
+            .flat_map(ResolvedPlace::superseded_indices)
+            .collect::<Vec<_>>();
+        if !superseded.is_empty() {
+            let mut joined = Vec::with_capacity(self.paths.len());
+            for mut path in std::mem::take(&mut self.paths) {
+                for (capture, binding) in &superseded {
+                    path.supersede_capture(*capture, *binding);
+                }
+                if !joined.contains(&path) {
+                    joined.push(path);
+                }
+            }
+            self.paths = joined;
         }
         if let ReferenceValidity::Invalid(event) = &other.validity {
             self.invalidate(event.clone());
@@ -399,7 +419,7 @@ pub(super) enum RequiredReferent {
     IndexableStorage,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Retains the structural walk's already-resolved [REF-1] paths without
     /// interpreting their roots again. Recording at formation and rebinding
     /// sites also retains origins of invalidated and out-of-scope holders;
@@ -642,6 +662,28 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         event: &InvalidationEvent,
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
+        // [REF-1] a reference keeps the index value its formation read, so a
+        // write of that binding leaves the reference valid but ends the
+        // binding's spelling as a name for its index. [EFF-1] A parameter no
+        // longer holds its call value.
+        if written.path.is_empty()
+            && let PlaceRoot::Binding(binding) = written.root
+        {
+            for reference in bindings
+                .values_mut()
+                .filter_map(|local| local.reference.as_mut())
+            {
+                for path in &mut reference.paths {
+                    path.supersede_binding(binding);
+                }
+            }
+            for local in bindings
+                .values_mut()
+                .filter(|local| local.binding == binding)
+            {
+                local.call_value = false;
+            }
+        }
         let include_equal = matches!(event, InvalidationEvent::PrefixMoved);
         let primitive_write = !include_equal
             && !matches!(
@@ -660,7 +702,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 )
             );
         let oracle = UnprovedSeparations;
-        for local in bindings.values_mut() {
+        // A preserved bystander records its separation query once the walk
+        // is over: the query carries both places in their source spelling,
+        // and naming them reads the same bindings this walk updates.
+        let mut preserved = Vec::new();
+        for (declaration, local) in bindings.iter_mut() {
             // A write to the enum itself ends every refinement occurrence for
             // that enum even when an equal-path reference remains valid under
             // the proper-prefix write rule. A payload-field write is below
@@ -681,24 +727,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 if !written.may_be_prefix_of(&oracle, path, include_equal) {
                     continue;
                 }
-                if let Some((site, positions)) =
+                if let Some((site, (positions, window))) =
                     site.zip(Self::separable_by_position(written, path))
                 {
-                    let query = CheckedCallSeparation {
-                        site: site.clone(),
-                        exchange: false,
-                        reference_use: Some(super::super::model::CheckedReferencePreservationUse {
-                            site: site.clone(),
-                            binder: String::new(),
-                            event: event.phrase(),
-                        }),
-                        positions,
-                        left_spelling: self.render_resolved_place(written)?,
-                        right_spelling: self.render_resolved_place(path)?,
-                    };
-                    if !reference.preservations.contains(&query) {
-                        reference.preservations.push(query);
-                    }
+                    preserved.push((*declaration, site, positions, window, path.clone()));
                 } else {
                     invalidated = true;
                     break;
@@ -706,6 +738,31 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
             if invalidated {
                 reference.invalidate(event.clone());
+            }
+        }
+        for (declaration, site, positions, window, path) in preserved {
+            let query = CheckedCallSeparation {
+                site: site.clone(),
+                exchange: false,
+                reference_use: Some(super::super::model::CheckedReferencePreservationUse {
+                    site: site.clone(),
+                    binder: String::new(),
+                    event: event.phrase(),
+                }),
+                positions,
+                window,
+                left_spelling: self.render_resolved_place(written, bindings)?,
+                right_spelling: self.render_resolved_place(&path, bindings)?,
+                one_argument: false,
+            };
+            let Some(reference) = bindings
+                .get_mut(&declaration)
+                .and_then(|local| local.reference.as_mut())
+            else {
+                continue;
+            };
+            if !reference.preservations.contains(&query) {
+                reference.preservations.push(query);
             }
         }
         Ok(())
@@ -957,8 +1014,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     ),
                 );
             }
-            let captured = Self::captured_of(offset_node, &offset.expression)
-                .unwrap_or(CapturedValue::unknown());
+            let captured = self.note_capture(
+                Self::captured_of(offset_node, &offset.expression)
+                    .unwrap_or(CapturedValue::unknown()),
+                bindings,
+            );
             let mut places = local
                 .reference
                 .as_ref()
@@ -1236,10 +1296,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let start = endpoints
             .pop()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let captured_start =
-            Checker::captured_of(start_node, &start.expression).unwrap_or(CapturedValue::unknown());
-        let captured_end =
-            Checker::captured_of(end_node, &end.expression).unwrap_or(CapturedValue::unknown());
+        // [REF-1, OWN-7] each endpoint keeps the occurrence that evaluated it,
+        // whatever its form, so this formation's endpoint images are its own.
+        let captured_start = self.note_capture(
+            Checker::captured_endpoint_of(start_node, &start.expression)?,
+            bindings,
+        );
+        let captured_end = self.note_capture(
+            Checker::captured_endpoint_of(end_node, &end.expression)?,
+            bindings,
+        );
         // [OWN-7] the formed reference names the base path extended by its
         // own range step; every later separation question reads that step.
         let captured = CapturedRange {
@@ -1341,15 +1407,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     /// The value parameter one captured index or endpoint read, when it read
-    /// one [EFF-1]: a signature never contains an index expression, so this
-    /// is the only index spelling a declared row admits.
+    /// that parameter's call value [EFF-1]: a signature never contains an
+    /// index expression, and a row evaluates its index parameter once at the
+    /// call, so this is the only index a declared row admits.
+    ///
+    /// A capture read the call value when its formation recorded it so
+    /// [`Self::note_capture`]. A spelled capture of a parameter that still
+    /// holds its call value read it too, since no path to here wrote it.
     fn captured_parameter(
         &self,
-        captured: super::super::places::CapturedValue,
+        captured: CapturedValue,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Option<DeclarationId> {
-        let binding = captured.support()?;
-        let local = bindings.values().find(|local| local.binding == binding)?;
+        let local = match captured.term {
+            CapturedTerm::Binding(binding) | CapturedTerm::Superseded(binding) => {
+                bindings.values().find(|local| local.binding == binding)?
+            }
+            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => {
+                return None;
+            }
+        };
+        let holds_call_value =
+            matches!(captured.term, CapturedTerm::Binding(_)) && local.call_value;
+        if !holds_call_value
+            && !self
+                .call_value_captures
+                .borrow()
+                .contains(&captured.capture)
+        {
+            return None;
+        }
         self.resolved
             .declarations()
             .iter()
@@ -1358,6 +1445,30 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     && declaration.role() == DeclarationRole::Parameter
             })
             .map(|declaration| declaration.id())
+    }
+
+    /// [EFF-1] records a capture that reads a parameter while the parameter
+    /// holds its call value on every path to the formation, which is exactly
+    /// when the capture names the row's index parameter
+    /// [`Self::captured_parameter`]. Every formation of an index or a range
+    /// endpoint passes its capture through here; a later write of the
+    /// parameter, or a join with an edge that wrote it, does not change what
+    /// the capture read.
+    pub(super) fn note_capture(
+        &self,
+        captured: CapturedValue,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> CapturedValue {
+        if let CapturedTerm::Binding(binding) = captured.term
+            && bindings
+                .values()
+                .any(|local| local.binding == binding && local.call_value)
+        {
+            self.call_value_captures
+                .borrow_mut()
+                .insert(captured.capture);
+        }
+        captured
     }
 
     /// [EFF-2] the enclosing formal-rooted effect of one resolved access.
@@ -1564,6 +1675,39 @@ mod tests {
         let right = reference(0);
         left.join(&right);
         assert_eq!(left.paths.len(), 1);
+    }
+
+    /// [REF-1] an index one edge wrote the binding of after the formation is
+    /// superseded after the join: both edges still hold the one capture, so
+    /// the joined reference keeps one member, and the binding's spelling no
+    /// longer names its index. Another capture from the same binding keeps
+    /// its spelling.
+    #[test]
+    fn a_join_supersedes_an_index_one_edge_wrote() {
+        use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
+        let indexed = |capture: u32| {
+            let mut place = ResolvedPlace::binding(BindingId(0));
+            place.push_subscript(CapturedValue::new(
+                CaptureId::source(capture),
+                CapturedTerm::Binding(BindingId(1)),
+            ));
+            ReferenceInfo::formed(ReferenceKind::Single, place)
+        };
+        let mut unwritten = indexed(0);
+        let mut written = indexed(0);
+        written.paths[0].supersede_binding(BindingId(1));
+        unwritten.join(&written);
+        assert_eq!(unwritten.paths, written.paths);
+
+        let mut other_formation = indexed(1);
+        other_formation.join(&written);
+        assert_eq!(other_formation.paths.len(), 2);
+        assert_eq!(
+            other_formation.paths[0]
+                .spelled_indices()
+                .collect::<Vec<_>>(),
+            [(CaptureId::source(1), BindingId(1))]
+        );
     }
 
     /// [REF-1] classify when a contribution retains its entering shape and

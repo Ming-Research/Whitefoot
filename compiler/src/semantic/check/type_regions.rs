@@ -6,7 +6,6 @@
 //! it after their symbolic nominal checkpoint has been restored.
 
 use crate::syntax::NodeId;
-use crate::syntax::terminal::TerminalPredicate;
 use crate::{DeclarationClass, DeclarationId, LexicalUseRole, Production, ResolvedTarget};
 
 use super::super::model::{CheckedNominalKind, CheckedType};
@@ -35,7 +34,7 @@ impl TypeRegionShape {
     }
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [BLK-4] the complete value type, including phantom nominal brands and
     /// instantiated element types. This is independent of the declaration's
     /// region-argument matching shape: an opaque `T` can carry confinement.
@@ -153,10 +152,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         source: Option<NodeId>,
     ) -> Result<TypeRegionShape, CheckStop> {
         if let Some(source) = source
-            && self
-                .tree
-                .direct_token_with(source, TerminalPredicate::TypeIdentifier)?
-                .is_some()
+            && self.tree.names_nominal(source)?
             && matches!(
                 self.use_at(source, LexicalUseRole::Type)?.target(),
                 ResolvedTarget::Source {

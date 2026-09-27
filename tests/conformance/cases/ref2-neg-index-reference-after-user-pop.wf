@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pop(window: &Slots<u64, 4>) -> value: u64 writes(window.last), writes(window.len) contract {
+  requires deref(window).len > 0_u64;
+} {
+  doc "Takes the last element back. Its row writes window.last, so a call may lower window.len below the index a reference into the window was formed under.";
+  let v = take_back(window: window);
+  return v;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10, REF-2: e = &r[1_u64] is formed under 1 < r.len. The call to pop, a program function whose row writes r.last, ends that bound as take_back does, so reading e afterwards uses a reference into a slot the window no longer fills.";
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  let e = &r[1_u64];
+  let x = pop(window: &r);
+  let seen = deref(e);
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,6 @@
+public struct Packet {
+  public readonly id: u64;
+  public size: u64;
+}
+
+public fn make(id: u64, size: u64) -> packet: Packet pure doc "Builds a packet with its readonly identity.";

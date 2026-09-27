@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Flag {
   First();
   Second();
@@ -9,10 +12,10 @@ fn make_ok(value: u64) -> function_result: Result<u64, Flag> pure {
 
 fn make_err(second: Bool) -> function_result: Result<u64, Flag> pure {
   if second {
-    let second_atom_0001 = Second();
+    let second_atom_0001 = Flag::Second();
     return Err<u64, Flag>(error: second_atom_0001);
   } else {
-    let first_atom_0002 = First();
+    let first_atom_0002 = Flag::First();
     return Err<u64, Flag>(error: first_atom_0002);
   }
 }
@@ -37,10 +40,10 @@ fn result_code(result: Result<u64, Flag>) -> function_result: u64 pure {
 
 fn make_some(second: Bool) -> function_result: Option<Flag> pure {
   if second {
-    let second_atom_0003 = Second();
+    let second_atom_0003 = Flag::Second();
     return Some<Flag>(value: second_atom_0003);
   } else {
-    let first_atom_0004 = First();
+    let first_atom_0004 = Flag::First();
     return Some<Flag>(value: first_atom_0004);
   }
 }

@@ -1,3 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias ReadFile = std::fs::ReadFile;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+
 interface Disposer {
   fn release(factory: &HandleFactory, file: ReadFile) -> function_result: unit pure;
 }

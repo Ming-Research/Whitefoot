@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-11: swap exchanges the values at two owned places of one type; neither root is consumed, both bindings remain live, and each root is the sole owner of the value the other held.";
   let a = box_new::<u64>(value: 1_u64);

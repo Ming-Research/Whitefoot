@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-3, ENT-2: a tracked place's path admits the enum payload step, so an arm's path names its own variant's storage and an enum more than one of whose variants carries fields needs no separate treatment. The construct carries the window's measures into Result's Ok payload and the arm binder reads them back out, which is what discharges the place_back in the arm. Under the previous version no place path could separate Ok(value) from Err(error) and the identical program was refused; v0.60 admits the payload step, so this case is now an acceptance rather than a rejection, and its identifier keeps the question it was written for.";
   let block = slots_new::<u8, 4>();

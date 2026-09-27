@@ -21,15 +21,18 @@ pub(super) enum ConditionalAlternative {
     Chain(NodeId),
 }
 
-pub(super) struct TreeView<'unit, 'classified, 'lexed, 'source> {
-    resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+pub(super) struct TreeView<'unit> {
+    resolved: &'unit ResolvedSyntaxUnit,
     paths: Vec<NodePath>,
+    /// Every node ordered by its path, so a path finds its node by binary
+    /// search.
+    by_path: Vec<NodeId>,
     direct_terminals: Vec<Vec<usize>>,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> TreeView<'unit> {
     pub(super) fn new(
-        resolved: &'unit ResolvedSyntaxUnit<'classified, 'lexed, 'source>,
+        resolved: &'unit ResolvedSyntaxUnit,
     ) -> Result<Self, SemanticCompilerFailure> {
         let topology = Self::topology_of(resolved);
         let mut paths = Vec::with_capacity(topology.nodes.len());
@@ -50,6 +53,15 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
             paths.push(NodePath { components });
         }
 
+        let mut by_path = (0..paths.len())
+            .map(|index| NodeId::from_index(index).ok_or(SemanticCompilerFailure::CounterOverflow))
+            .collect::<Result<Vec<_>, _>>()?;
+        by_path.sort_by(|left, right| {
+            paths[left.index()]
+                .components()
+                .cmp(paths[right.index()].components())
+        });
+
         let mut direct_terminals = vec![Vec::new(); topology.nodes.len()];
         for (terminal_index, terminal) in topology.terminals.iter().enumerate() {
             let owner = terminal
@@ -63,6 +75,7 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         Ok(Self {
             resolved,
             paths,
+            by_path,
             direct_terminals,
         })
     }
@@ -71,9 +84,7 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         Self::topology_of(self.resolved)
     }
 
-    fn topology_of<'resolved>(
-        resolved: &'resolved ResolvedSyntaxUnit<'_, '_, '_>,
-    ) -> &'resolved FinalizedTopology {
+    fn topology_of(resolved: &ResolvedSyntaxUnit) -> &FinalizedTopology {
         &resolved.syntax().finalized.topology
     }
 
@@ -153,8 +164,67 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         Ok(None)
     }
 
-    /// Uppercase callees without a member selector are constructions. The
-    /// grammar shares their prefix with qualified member calls (strong LL(2)).
+    /// Whether a callable node writes no body: a function-kind formal's
+    /// `fn_sig`, a PRE-1 record, or an interface `fn_decl` that ends in `;`
+    /// or its `doc` entry [MOD-7].
+    pub(super) fn is_body_less(&self, node: NodeId) -> Result<bool, SemanticCompilerFailure> {
+        Ok(match self.production(node)? {
+            Production::FnSig => true,
+            Production::FnDecl => self
+                .direct_terminals
+                .get(node.index())
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?
+                .iter()
+                .all(|terminal| {
+                    self.resolved
+                        .syntax()
+                        .classified_bundle()
+                        .tokens()
+                        .get(*terminal)
+                        .is_none_or(|token| {
+                            !token
+                                .terminals()
+                                .contains(TerminalPredicate::Fixed(crate::FixedTerminal::LeftBrace))
+                        })
+                }),
+            _ => false,
+        })
+    }
+
+    /// Whether a `type`, `cvalue` or destructuring target names a nominal:
+    /// directly by its TYPEID, or through a qualified `type_path` [MOD-5].
+    pub(super) fn names_nominal(&self, node: NodeId) -> Result<bool, SemanticCompilerFailure> {
+        Ok(self
+            .direct_token_with(node, TerminalPredicate::TypeIdentifier)?
+            .is_some()
+            || self.first_child_with(node, Production::TypePath)?.is_some())
+    }
+
+    /// The innermost node of a callee's qualified chain [GRAM-5, MOD-5]: the
+    /// callee itself when it is unqualified, otherwise its last
+    /// `callee_path`. The tail writes the final function name, or the
+    /// `pack_use` and member that every unqualified callee writes directly.
+    pub(super) fn callee_tail(&self, callee: NodeId) -> Result<NodeId, SemanticCompilerFailure> {
+        let mut node = callee;
+        while let Some(next) = self.first_child_with(node, Production::CalleePath)? {
+            node = next;
+        }
+        Ok(node)
+    }
+
+    /// The `pack_use` a callee's tail writes, when it writes one.
+    pub(super) fn callee_application(
+        &self,
+        callee: NodeId,
+    ) -> Result<Option<NodeId>, SemanticCompilerFailure> {
+        let tail = self.callee_tail(callee)?;
+        self.first_child_with(tail, Production::PackUse)
+    }
+
+    /// Uppercase callees without an IDENT member selector are constructions:
+    /// a struct or prelude constructor, or a type-owned variant written
+    /// after its owner [TYPE-6]. The grammar shares their prefix with
+    /// qualified member calls (strong LL(2)).
     pub(super) fn is_constructor_call(
         &self,
         node: NodeId,
@@ -165,24 +235,46 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         let Some(callee) = self.first_child_with(node, Production::Callee)? else {
             return Ok(false);
         };
-        Ok(self
-            .first_child_with(callee, Production::PackUse)?
-            .is_some()
+        let tail = self.callee_tail(callee)?;
+        Ok(self.first_child_with(tail, Production::PackUse)?.is_some()
             && self
-                .direct_token_with(callee, TerminalPredicate::Identifier)?
+                .direct_token_with(tail, TerminalPredicate::Identifier)?
                 .is_none())
+    }
+
+    /// The group application a `gparam` or `binding_decl` writes: its
+    /// `pack_use`, or the `type_path` of a qualified group, whose `targs`
+    /// follow it in the same parent [GRAM-2, MOD-5].
+    pub(super) fn group_application(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<NodeId>, SemanticCompilerFailure> {
+        match self.first_child_with(node, Production::PackUse)? {
+            Some(application) => Ok(Some(application)),
+            None => self.first_child_with(node, Production::TypePath),
+        }
     }
 
     pub(super) fn argument_list(
         &self,
         node: NodeId,
     ) -> Result<Option<NodeId>, SemanticCompilerFailure> {
+        // A qualified group's `targs` are its parent's, after the path.
+        if self.production(node)? == Production::TypePath
+            && let Some(parent) = self.parent(node)?
+            && matches!(
+                self.production(parent)?,
+                Production::Gparam | Production::BindingDecl
+            )
+        {
+            return self.first_child_with(parent, Production::Targs);
+        }
         if self.is_constructor_call(node)? {
             let callee = self
                 .first_child_with(node, Production::Callee)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             let head = self
-                .first_child_with(callee, Production::PackUse)?
+                .callee_application(callee)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             self.first_child_with(head, Production::Targs)
         } else {
@@ -298,10 +390,10 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
     }
 
     pub(super) fn node_with_path(&self, path: &NodePath) -> Option<NodeId> {
-        self.paths
-            .iter()
-            .position(|candidate| candidate == path)
-            .and_then(NodeId::from_index)
+        self.by_path
+            .binary_search_by(|node| self.paths[node.index()].components().cmp(path.components()))
+            .ok()
+            .map(|position| self.by_path[position])
     }
 
     pub(super) fn parent(&self, node: NodeId) -> Result<Option<NodeId>, SemanticCompilerFailure> {
@@ -345,18 +437,17 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
     }
 
     /// Copies the exact canonical source spelling owned by one production
-    /// node. Semantic metadata uses this only while the source bundle is
-    /// live; it is not a portable source identity or a second parser.
+    /// node. It is not a portable source identity or a second parser.
     pub(super) fn source_spelling(&self, node: NodeId) -> Result<String, SemanticCompilerFailure> {
         let coordinate = self.coordinate(node)?;
-        let span = self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
+        let bundle = self.resolved.syntax().classified_bundle().source_bundle();
+        let span = bundle
             .span(coordinate.source(), coordinate.start(), coordinate.end())
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?;
-        std::str::from_utf8(span.bytes())
+        let bytes = bundle
+            .span_bytes(span)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        std::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)
     }
@@ -400,14 +491,16 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
         path: &NodePath,
     ) -> Result<(String, u64), SemanticCompilerFailure> {
         let (display_path, coordinate) = self.source_identity(path)?;
-        let prefix = self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
+        let bundle = self.resolved.syntax().classified_bundle().source_bundle();
+        let prefix = bundle
             .span(coordinate.source(), ByteOffset::new(0), coordinate.start())
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let newlines = prefix.bytes().iter().filter(|byte| **byte == b'\n').count();
+        let newlines = bundle
+            .span_bytes(prefix)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count();
         let line = u64::try_from(newlines)
             .map_err(|_| SemanticCompilerFailure::InvalidCanonicalTree)?
             .saturating_add(1);
@@ -461,13 +554,12 @@ impl<'unit, 'classified, 'lexed, 'source> TreeView<'unit, 'classified, 'lexed, '
     pub(super) fn token_bytes(
         &self,
         terminal: usize,
-    ) -> Result<&'source [u8], SemanticCompilerFailure> {
-        self.resolved
-            .syntax()
-            .classified_bundle()
+    ) -> Result<&'unit [u8], SemanticCompilerFailure> {
+        let classified = self.resolved.syntax().classified_bundle();
+        classified
             .tokens()
             .get(terminal)
-            .map(|token| token.token().span().bytes())
+            .and_then(|token| classified.token_bytes(token.token()))
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)
     }
 

@@ -1,12 +1,14 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Block {
-  bytes: Slots<u8, 4>;
+  count: u64;
 }
 
 fn pass_block(block: Block) -> result: Block pure contract {
-  ensures result.bytes.cap == block.bytes.cap;
-  ensures result.bytes.len == block.bytes.len;
+  ensures result.count == block.count;
 } {
-  doc "FN-9 admits its specified whole-result forms and the explicit Result route; a nominal field such as `result.bytes` is not a selectable aggregate result datum.";
+  doc "FN-9 admits its specified whole-result forms, the explicit Result route and CALL-4's measures of owned descendants; an ordinary integer field of an aggregate result such as `result.count` is not a selectable result datum.";
   return move block;
 }
 

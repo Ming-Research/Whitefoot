@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn decode_case(input: &[u8], out: &[u8]) -> result: u64 reads(input), writes(out) {
   doc "The probe driver hands the decoder two range references and reads back one status word per case [REF-4].";
   match inflate(out: out, input: input) {

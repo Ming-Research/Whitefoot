@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
-use crate::syntax::{FinalizedTopology, NodeId};
+use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 use crate::{ByteOffset, CanonicalSyntaxUnit, Production, SyntaxCoordinate};
 
 use super::super::scopes::ScopeBuild;
@@ -9,10 +9,13 @@ use super::super::{
     DeclarationRole, DeferredUseRole, DependentDeclarationRole, LexicalUseRole,
     ResolutionCompilerFailure, SourceOrigin,
 };
-use super::{ClassifiedRole, EventKey, RawRole, RawRoleKind, SelectorRole, owner_chain};
+use super::{
+    ClassifiedRole, EventKey, PathSegment, Qualifier, RawRole, RawRoleKind, SelectorRole,
+    owner_chain,
+};
 
 pub(super) fn classify_roles(
-    syntax: &CanonicalSyntaxUnit<'_, '_, '_>,
+    syntax: &CanonicalSyntaxUnit,
     scopes: &ScopeBuild,
 ) -> Result<Vec<ClassifiedRole>, ResolutionCompilerFailure> {
     let topology = &syntax.finalized.topology;
@@ -31,6 +34,7 @@ pub(super) fn classify_roles(
         classify_node(
             topology,
             classified,
+            &direct_terminals,
             record.production,
             node,
             direct,
@@ -100,13 +104,24 @@ pub(super) fn classify_roles(
             .get(&index)
             .ok_or(ResolutionCompilerFailure::CounterOverflow)?;
         let scope = scopes.node_scope(role.owner)?;
+        let coordinate = SyntaxCoordinate::new(role.source, role.role_start, role.role_end);
+        // Presentation only: an owner without a source extent quotes the role.
+        let extent = match topology.node(role.owner).map(|record| record.extent) {
+            Some(FinalizedExtent::Source { source, start, end }) => {
+                SyntaxCoordinate::new(source, start, end)
+            }
+            _ => coordinate,
+        };
         roles.push(ClassifiedRole {
             kind: role.kind,
             spelling: role.spelling,
+            qualifier: role.qualifier,
+            member_owner: role.member_owner,
             owner: role.owner,
             origin: SourceOrigin {
                 node: scopes.path(role.owner)?.clone(),
-                coordinate: SyntaxCoordinate::new(role.source, role.role_start, role.role_end),
+                coordinate,
+                extent,
                 role_ordinal,
                 subtoken_ordinal: role.subtoken_ordinal,
             },
@@ -143,9 +158,11 @@ fn direct_terminals_by_owner(
     Ok(direct)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_node(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
+    direct_table: &[Vec<usize>],
     production: Production,
     owner: NodeId,
     direct: &[usize],
@@ -317,6 +334,21 @@ fn classify_node(
         // [PROV-6, GRAM-4] a destructuring consume writes the nominal it takes
         // apart where every other `let` writes its binders; the TYPEID is a use
         // of that nominal and the binders belong to the `fieldbind` list below.
+        // [MOD-5] a destructuring consume may name its nominal through a
+        // qualified path; its final TYPEID is the construct use.
+        Production::LetStmt if child_with(topology, owner, Production::TypePath).is_some() => {
+            let path = child_with(topology, owner, Production::TypePath)
+                .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+            add_path_use(
+                classified,
+                direct_table,
+                owner,
+                path,
+                RawRoleKind::LexicalUse(LexicalUseRole::Construct),
+                roles,
+                complete_counts,
+            )?;
+        }
         Production::LetStmt
             if names
                 .first()
@@ -510,6 +542,28 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
+        // [GRAM-3, MOD-5] a qualified type writes its names in its child
+        // `type_path`: the final TYPEID is this type's use and the root and
+        // module segments before it select the module that declares it.
+        Production::Type if child_with(topology, owner, Production::TypePath).is_some() => {
+            let path = child_with(topology, owner, Production::TypePath)
+                .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+            add_path_use(
+                classified,
+                direct_table,
+                owner,
+                path,
+                RawRoleKind::LexicalUse(
+                    if parent_production(topology, owner) == Some(Production::Targ) {
+                        LexicalUseRole::TypeArgument
+                    } else {
+                        LexicalUseRole::Type
+                    },
+                ),
+                roles,
+                complete_counts,
+            )?;
+        }
         // [GRAM-3] `type := <primitive> | TYPEID targs?`: a primitive writes
         // no name at all, and a nominal writes exactly one direct TYPEID,
         // every argument sitting below the child `targs`.
@@ -536,44 +590,83 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
-        Production::PackUse => {
-            let parent = topology
-                .node(owner)
-                .and_then(|record| record.parent)
-                .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
-            let constructor = parent_production(topology, owner) == Some(Production::Callee)
-                && topology
-                    .node(parent)
-                    .and_then(|record| record.last_terminal())
-                    .and_then(|ordinal| usize::try_from(ordinal).ok())
-                    .is_some_and(|index| {
-                        name_predicate(classified, index) != Some(TerminalPredicate::Identifier)
-                    });
-            let (carrier, role) = if constructor {
-                (
-                    topology
-                        .node(parent)
-                        .and_then(|record| record.parent)
-                        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?,
-                    LexicalUseRole::Construct,
-                )
-            } else {
-                (owner, LexicalUseRole::FormalGroup)
-            };
-            add_single(
+        // A `pack_use` in a callee chain is classified by that callee, which
+        // alone knows whether a member follows it [GRAM-5, MOD-5].
+        Production::PackUse
+            if matches!(
+                parent_production(topology, owner),
+                Some(Production::Callee | Production::CalleePath)
+            ) => {}
+        Production::PackUse => add_single(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::LexicalUse(LexicalUseRole::FormalGroup),
+            roles,
+            complete_counts,
+        )?,
+        // [MOD-5] a qualified group reference of a `binding_decl` or an
+        // interface `gparam` carries its own use; a qualified type, callee,
+        // construction or destructuring target is classified by its owner.
+        Production::TypePath
+            if matches!(
+                parent_production(topology, owner),
+                Some(Production::BindingDecl | Production::Gparam)
+            ) =>
+        {
+            add_path_use(
                 classified,
-                carrier,
-                &names,
-                RawRoleKind::LexicalUse(role),
+                direct_table,
+                owner,
+                owner,
+                RawRoleKind::LexicalUse(LexicalUseRole::FormalGroup),
                 roles,
                 complete_counts,
             )?;
         }
+        // [MOD-4] an alias declares its first name; the path after `pkg`
+        // names its target, whose segments are resolved when the alias is.
+        Production::AliasDecl => {
+            let Some((first, rest)) = names.split_first() else {
+                return Err(ResolutionCompilerFailure::InvalidRoleShape);
+            };
+            let segments = rest
+                .iter()
+                .map(|terminal| path_segment(classified, *terminal))
+                .collect::<Result<Vec<_>, _>>()?;
+            add_complete(
+                classified,
+                owner,
+                *first,
+                RawRoleKind::Declaration(DeclarationRole::Alias),
+                roles,
+                complete_counts,
+            )?;
+            if let Some(role) = roles.last_mut() {
+                role.qualifier = Some(Qualifier {
+                    alias_root: None,
+                    standard: has_fixed_terminal(classified, direct, FixedTerminal::Std),
+                    segments,
+                });
+            }
+            for segment in rest {
+                add_complete(
+                    classified,
+                    owner,
+                    *segment,
+                    RawRoleKind::Selector(SelectorRole::PathSegment),
+                    roles,
+                    complete_counts,
+                )?;
+            }
+        }
+        // [TYPE-6] an arm label resolves against the scrutinee's already
+        // known enum type, so it waits for the checker.
         Production::Arm => add_single(
             classified,
             owner,
             &names,
-            RawRoleKind::LexicalUse(LexicalUseRole::ArmVariant),
+            RawRoleKind::DeferredUse(DeferredUseRole::ArmVariant),
             roles,
             complete_counts,
         )?,
@@ -643,22 +736,93 @@ fn classify_node(
             complete_counts,
         )?,
         Production::Cvalue => {
-            // The candidate CONST-2 construction cvalue owns one TYPEID (the
-            // constructor) plus its direct field labels; the reference cvalue
-            // owns exactly one IDENT naming an earlier const.
-            let constructor = names.iter().copied().find(|index| {
-                name_predicate(classified, *index) == Some(TerminalPredicate::TypeIdentifier)
-            });
-            if let Some(constructor) = constructor {
-                add_complete(
-                    classified,
-                    owner,
-                    constructor,
-                    RawRoleKind::LexicalUse(LexicalUseRole::Construct),
-                    roles,
-                    complete_counts,
-                )?;
-                for label in names.iter().copied().filter(|index| *index != constructor) {
+            // The CONST-2 construction cvalue writes its constructor TYPEID,
+            // or a type-owned variant as an owner TYPEID and a member TYPEID
+            // [TYPE-6], either of them possibly through a qualified
+            // `type_path` [MOD-5], plus its direct field labels; the
+            // reference cvalue owns exactly one IDENT naming a const.
+            let type_ids: Vec<_> = names
+                .iter()
+                .copied()
+                .filter(|index| {
+                    name_predicate(classified, *index) == Some(TerminalPredicate::TypeIdentifier)
+                })
+                .collect();
+            let labels: Vec<_> = names
+                .iter()
+                .copied()
+                .filter(|index| !type_ids.contains(index))
+                .collect();
+            let path = child_with(topology, owner, Production::TypePath);
+            let constructor = match (path, type_ids.as_slice()) {
+                (Some(path), []) => {
+                    add_path_use(
+                        classified,
+                        direct_table,
+                        owner,
+                        path,
+                        RawRoleKind::LexicalUse(LexicalUseRole::Construct),
+                        roles,
+                        complete_counts,
+                    )?;
+                    true
+                }
+                (Some(path), [member]) => {
+                    let owner_coordinate = add_path_use(
+                        classified,
+                        direct_table,
+                        owner,
+                        path,
+                        RawRoleKind::LexicalUse(LexicalUseRole::VariantOwner),
+                        roles,
+                        complete_counts,
+                    )?;
+                    add_member(
+                        classified,
+                        owner,
+                        *member,
+                        owner_coordinate,
+                        roles,
+                        complete_counts,
+                    )?;
+                    true
+                }
+                (None, [constructor]) => {
+                    add_complete(
+                        classified,
+                        owner,
+                        *constructor,
+                        RawRoleKind::LexicalUse(LexicalUseRole::Construct),
+                        roles,
+                        complete_counts,
+                    )?;
+                    true
+                }
+                (None, [type_owner, member]) => {
+                    add_complete(
+                        classified,
+                        owner,
+                        *type_owner,
+                        RawRoleKind::LexicalUse(LexicalUseRole::VariantOwner),
+                        roles,
+                        complete_counts,
+                    )?;
+                    let owner_coordinate = token_coordinate(classified, *type_owner)?;
+                    add_member(
+                        classified,
+                        owner,
+                        *member,
+                        owner_coordinate,
+                        roles,
+                        complete_counts,
+                    )?;
+                    true
+                }
+                (None, []) => false,
+                _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
+            };
+            if constructor {
+                for label in labels {
                     add_complete(
                         classified,
                         owner,
@@ -668,11 +832,11 @@ fn classify_node(
                         complete_counts,
                     )?;
                 }
-            } else if !names.is_empty() {
+            } else if !labels.is_empty() {
                 add_single(
                     classified,
                     owner,
-                    &names,
+                    &labels,
                     RawRoleKind::LexicalUse(LexicalUseRole::ConstValue),
                     roles,
                     complete_counts,
@@ -691,52 +855,16 @@ fn classify_node(
                 )?;
             }
         }
-        Production::Callee => {
-            if topology.node_children(owner).is_some_and(|children| {
-                children.iter().any(|child| {
-                    topology
-                        .node(*child)
-                        .is_some_and(|record| record.production == Production::PackUse)
-                })
-            }) {
-                if !names.is_empty() {
-                    add_single(
-                        classified,
-                        owner,
-                        &names,
-                        RawRoleKind::DeferredUse(DeferredUseRole::FunctionMember),
-                        roles,
-                        complete_counts,
-                    )?;
-                }
-                return Ok(());
-            }
-            let [callee] = names.as_slice() else {
-                return Err(ResolutionCompilerFailure::InvalidRoleShape);
-            };
-            let use_role = match name_predicate(classified, *callee) {
-                Some(TerminalPredicate::Identifier) => {
-                    if matches!(
-                        parent_production(topology, owner),
-                        Some(Production::FunctionArg | Production::FnBind)
-                    ) {
-                        LexicalUseRole::FunctionBinding
-                    } else {
-                        LexicalUseRole::IdentifierCallee
-                    }
-                }
-                Some(TerminalPredicate::OperationName) => LexicalUseRole::OperationCallee,
-                _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
-            };
-            add_complete(
-                classified,
-                owner,
-                *callee,
-                RawRoleKind::LexicalUse(use_role),
-                roles,
-                complete_counts,
-            )?;
-        }
+        Production::Callee => classify_callee(
+            topology,
+            classified,
+            direct_table,
+            owner,
+            roles,
+            complete_counts,
+        )?,
+        // Classified by the callee or owner that writes it.
+        Production::CalleePath | Production::TypePath => {}
         Production::FnBind => {
             if let [member] = names.as_slice() {
                 add_complete(
@@ -796,25 +924,355 @@ fn parent_production(topology: &FinalizedTopology, node: NodeId) -> Option<Produ
 
 /// The direct arguments of a parameter-group application declare names.
 /// Nested applications remain uses and receive FN-3's flat-binder judgment.
-fn group_binder(topology: &FinalizedTopology, mut node: NodeId) -> bool {
-    for expected in [
-        Production::Targ,
-        Production::Targs,
-        Production::PackUse,
-        Production::Gparam,
-    ] {
-        let Some(parent) = topology.node(node).and_then(|record| record.parent) else {
-            return false;
-        };
-        if topology
-            .node(parent)
-            .is_none_or(|record| record.production != expected)
-        {
-            return false;
-        }
-        node = parent;
+/// An interface `gparam` writes its group either as a `pack_use` or, when the
+/// group is qualified, as a `type_path` whose `targs` are the `gparam`'s own
+/// children [MOD-5].
+fn group_binder(topology: &FinalizedTopology, node: NodeId) -> bool {
+    let parent_of = |node: NodeId| topology.node(node).and_then(|record| record.parent);
+    let production_of = |node: NodeId| topology.node(node).map(|record| record.production);
+    let Some(targ) =
+        parent_of(node).filter(|parent| production_of(*parent) == Some(Production::Targ))
+    else {
+        return false;
+    };
+    let Some(targs) =
+        parent_of(targ).filter(|parent| production_of(*parent) == Some(Production::Targs))
+    else {
+        return false;
+    };
+    let Some(application) = parent_of(targs) else {
+        return false;
+    };
+    match production_of(application) {
+        Some(Production::Gparam) => true,
+        Some(Production::PackUse) => parent_of(application)
+            .is_some_and(|gparam| production_of(gparam) == Some(Production::Gparam)),
+        _ => false,
     }
-    true
+}
+
+/// The first direct child of `node` with this production.
+fn child_with(
+    topology: &FinalizedTopology,
+    node: NodeId,
+    production: Production,
+) -> Option<NodeId> {
+    topology.node_children(node)?.iter().copied().find(|child| {
+        topology
+            .node(*child)
+            .is_some_and(|record| record.production == production)
+    })
+}
+
+/// One name terminal's spelling and source coordinate.
+fn path_segment(
+    classified: &crate::ClassifiedBundle,
+    terminal: usize,
+) -> Result<PathSegment, ResolutionCompilerFailure> {
+    let token = classified
+        .tokens()
+        .get(terminal)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+        .token();
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    Ok(PathSegment {
+        spelling: std::str::from_utf8(bytes)
+            .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?
+            .to_owned(),
+        coordinate: token_coordinate(classified, terminal)?,
+    })
+}
+
+fn token_coordinate(
+    classified: &crate::ClassifiedBundle,
+    terminal: usize,
+) -> Result<SyntaxCoordinate, ResolutionCompilerFailure> {
+    let id = classified
+        .tokens()
+        .get(terminal)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+        .token()
+        .id();
+    Ok(SyntaxCoordinate::new(id.source(), id.start(), id.end()))
+}
+
+/// Classifies one qualified path `("pkg" | IDENT) "::" (IDENT "::")* TYPEID`
+/// [MOD-5]: its final TYPEID takes `kind` at `carrier` with the path's
+/// qualifier, and its alias root and module segments are path selectors of
+/// that same carrier. Returns the final TYPEID's coordinate.
+fn add_path_use(
+    classified: &crate::ClassifiedBundle,
+    direct_table: &[Vec<usize>],
+    carrier: NodeId,
+    path: NodeId,
+    kind: RawRoleKind,
+    roles: &mut Vec<RawRole>,
+    counts: &mut [u8],
+) -> Result<SyntaxCoordinate, ResolutionCompilerFailure> {
+    let direct = direct_table
+        .get(path.index())
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    let pkg_rooted = has_fixed_terminal(classified, direct, FixedTerminal::Pkg);
+    let standard = has_fixed_terminal(classified, direct, FixedTerminal::Std);
+    let names: Vec<_> = direct
+        .iter()
+        .copied()
+        .filter(|index| name_predicate(classified, *index).is_some())
+        .collect();
+    let Some((last, prefix)) = names.split_last() else {
+        return Err(ResolutionCompilerFailure::InvalidRoleShape);
+    };
+    let (alias_root, segments) = if pkg_rooted || standard {
+        (None, prefix)
+    } else {
+        let Some((root, segments)) = prefix.split_first() else {
+            return Err(ResolutionCompilerFailure::InvalidRoleShape);
+        };
+        (Some(path_segment(classified, *root)?), segments)
+    };
+    let qualifier = Qualifier {
+        alias_root,
+        standard,
+        segments: segments
+            .iter()
+            .map(|terminal| path_segment(classified, *terminal))
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    add_complete(classified, carrier, *last, kind, roles, counts)?;
+    if let Some(role) = roles.last_mut() {
+        role.qualifier = Some(qualifier);
+    }
+    for terminal in prefix {
+        add_complete(
+            classified,
+            carrier,
+            *terminal,
+            RawRoleKind::Selector(SelectorRole::PathSegment),
+            roles,
+            counts,
+        )?;
+    }
+    token_coordinate(classified, *last)
+}
+
+/// Adds the member TYPEID of a type-owned variant construction [TYPE-6]: a
+/// construct use of `carrier` resolved among the variants of the owner whose
+/// TYPEID sits at `owner`.
+fn add_member(
+    classified: &crate::ClassifiedBundle,
+    carrier: NodeId,
+    member: usize,
+    owner: SyntaxCoordinate,
+    roles: &mut Vec<RawRole>,
+    counts: &mut [u8],
+) -> Result<(), ResolutionCompilerFailure> {
+    if name_predicate(classified, member) != Some(TerminalPredicate::TypeIdentifier) {
+        return Err(ResolutionCompilerFailure::InvalidRoleShape);
+    }
+    add_complete(
+        classified,
+        carrier,
+        member,
+        RawRoleKind::LexicalUse(LexicalUseRole::Construct),
+        roles,
+        counts,
+    )?;
+    if let Some(role) = roles.last_mut() {
+        role.member_owner = Some(owner);
+    }
+    Ok(())
+}
+
+/// Classifies one `callee` and its whole `callee_path` chain [GRAM-5, MOD-5].
+///
+/// The chain is `pkg`- or alias-rooted when it is qualified; its tail is the
+/// innermost node, which writes either the final function IDENT or a
+/// `pack_use` with an optional member. A function name is a use of the
+/// callee; a bare `pack_use` is a construction of the enclosing `call`; a
+/// `pack_use` with an IDENT member is a group whose member the checker
+/// selects; and a `pack_use` with a TYPEID member is the owner enum of a
+/// type-owned variant construction [TYPE-6].
+fn classify_callee(
+    topology: &FinalizedTopology,
+    classified: &crate::ClassifiedBundle,
+    direct_table: &[Vec<usize>],
+    callee: NodeId,
+    roles: &mut Vec<RawRole>,
+    counts: &mut [u8],
+) -> Result<(), ResolutionCompilerFailure> {
+    let names_of = |node: NodeId| -> Result<Vec<usize>, ResolutionCompilerFailure> {
+        Ok(direct_table
+            .get(node.index())
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+            .iter()
+            .copied()
+            .filter(|index| name_predicate(classified, *index).is_some())
+            .collect())
+    };
+    let callee_direct = direct_table
+        .get(callee.index())
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    let callee_names = names_of(callee)?;
+    let mut qualified = false;
+    let mut alias_root = None;
+    let mut segment_terminals = Vec::new();
+    let mut tail = callee;
+    let standard = has_fixed_terminal(classified, callee_direct, FixedTerminal::Std);
+    if standard || has_fixed_terminal(classified, callee_direct, FixedTerminal::Pkg) {
+        qualified = true;
+        tail = child_with(topology, callee, Production::CalleePath)
+            .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
+    } else if let Some(path) = child_with(topology, callee, Production::CalleePath) {
+        let [root] = callee_names.as_slice() else {
+            return Err(ResolutionCompilerFailure::InvalidRoleShape);
+        };
+        qualified = true;
+        alias_root = Some(*root);
+        tail = path;
+    }
+    while tail != callee {
+        let Some(next) = child_with(topology, tail, Production::CalleePath) else {
+            break;
+        };
+        let segment_names = names_of(tail)?;
+        let [segment] = segment_names.as_slice() else {
+            return Err(ResolutionCompilerFailure::InvalidRoleShape);
+        };
+        segment_terminals.push(*segment);
+        tail = next;
+    }
+    let qualifier = if qualified {
+        Some(Qualifier {
+            alias_root: alias_root
+                .map(|root| path_segment(classified, root))
+                .transpose()?,
+            standard,
+            segments: segment_terminals
+                .iter()
+                .map(|terminal| path_segment(classified, *terminal))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    } else {
+        None
+    };
+    let tail_names: Vec<usize> = if tail == callee {
+        callee_names
+    } else {
+        names_of(tail)?
+    };
+    let with_qualifier = |roles: &mut Vec<RawRole>| {
+        if let Some(role) = roles.last_mut() {
+            role.qualifier.clone_from(&qualifier);
+        }
+    };
+    if let Some(pack) = child_with(topology, tail, Production::PackUse) {
+        let pack_names = names_of(pack)?;
+        let [owner_name] = pack_names.as_slice() else {
+            return Err(ResolutionCompilerFailure::InvalidRoleShape);
+        };
+        match tail_names.as_slice() {
+            [] => {
+                let call = topology
+                    .node(callee)
+                    .and_then(|record| record.parent)
+                    .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+                add_complete(
+                    classified,
+                    call,
+                    *owner_name,
+                    RawRoleKind::LexicalUse(LexicalUseRole::Construct),
+                    roles,
+                    counts,
+                )?;
+                with_qualifier(roles);
+            }
+            [member]
+                if name_predicate(classified, *member) == Some(TerminalPredicate::Identifier) =>
+            {
+                add_complete(
+                    classified,
+                    pack,
+                    *owner_name,
+                    RawRoleKind::LexicalUse(LexicalUseRole::FormalGroup),
+                    roles,
+                    counts,
+                )?;
+                with_qualifier(roles);
+                add_complete(
+                    classified,
+                    callee,
+                    *member,
+                    RawRoleKind::DeferredUse(DeferredUseRole::FunctionMember),
+                    roles,
+                    counts,
+                )?;
+            }
+            [member] => {
+                let call = topology
+                    .node(callee)
+                    .and_then(|record| record.parent)
+                    .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+                add_complete(
+                    classified,
+                    pack,
+                    *owner_name,
+                    RawRoleKind::LexicalUse(LexicalUseRole::VariantOwner),
+                    roles,
+                    counts,
+                )?;
+                with_qualifier(roles);
+                add_member(
+                    classified,
+                    call,
+                    *member,
+                    token_coordinate(classified, *owner_name)?,
+                    roles,
+                    counts,
+                )?;
+            }
+            _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
+        }
+    } else {
+        let [name] = tail_names.as_slice() else {
+            return Err(ResolutionCompilerFailure::InvalidRoleShape);
+        };
+        let use_role = match name_predicate(classified, *name) {
+            Some(TerminalPredicate::Identifier) => {
+                if matches!(
+                    parent_production(topology, callee),
+                    Some(Production::FunctionArg | Production::FnBind)
+                ) {
+                    LexicalUseRole::FunctionBinding
+                } else {
+                    LexicalUseRole::IdentifierCallee
+                }
+            }
+            Some(TerminalPredicate::OperationName) if !qualified => LexicalUseRole::OperationCallee,
+            _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
+        };
+        add_complete(
+            classified,
+            callee,
+            *name,
+            RawRoleKind::LexicalUse(use_role),
+            roles,
+            counts,
+        )?;
+        with_qualifier(roles);
+    }
+    for terminal in alias_root.iter().chain(&segment_terminals) {
+        add_complete(
+            classified,
+            callee,
+            *terminal,
+            RawRoleKind::Selector(SelectorRole::PathSegment),
+            roles,
+            counts,
+        )?;
+    }
+    Ok(())
 }
 
 /// The role one `pbase` IDENT takes [GRAM-4, GRAM-5].
@@ -887,7 +1345,7 @@ fn ancestor_with_production(
 }
 
 fn name_predicate(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     terminal: usize,
 ) -> Option<TerminalPredicate> {
     let set = classified.tokens().get(terminal)?.terminals();
@@ -903,7 +1361,7 @@ fn name_predicate(
 
 /// Whether one node writes this exact fixed terminal directly.
 fn has_fixed_terminal(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     direct: &[usize],
     terminal: FixedTerminal,
 ) -> bool {
@@ -917,7 +1375,7 @@ fn has_fixed_terminal(
 }
 
 fn add_single(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminals: &[usize],
     kind: RawRoleKind,
@@ -931,7 +1389,7 @@ fn add_single(
 }
 
 fn add_all(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminals: &[usize],
     kind: RawRoleKind,
@@ -959,7 +1417,7 @@ fn add_all(
 /// context-free [GRAM-5].
 #[allow(clippy::too_many_arguments)]
 fn classify_projection_names(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     names: &[usize],
     subscript: bool,
@@ -994,7 +1452,7 @@ fn classify_projection_names(
 }
 
 fn add_complete(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminal: usize,
     kind: RawRoleKind,
@@ -1007,7 +1465,10 @@ fn add_complete(
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
         .token();
     let id = token.id();
-    let spelling = std::str::from_utf8(token.span().bytes())
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+    let spelling = std::str::from_utf8(bytes)
         .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?
         .to_owned();
     let count = counts
@@ -1019,6 +1480,8 @@ fn add_complete(
     roles.push(RawRole {
         kind,
         spelling,
+        qualifier: None,
+        member_owner: None,
         owner,
         source: id.source(),
         carrier_start: id.start(),
@@ -1031,7 +1494,7 @@ fn add_complete(
 }
 
 fn add_generic_suffix(
-    classified: &crate::ClassifiedBundle<'_, '_>,
+    classified: &crate::ClassifiedBundle,
     owner: NodeId,
     terminal: usize,
     roles: &mut Vec<RawRole>,
@@ -1047,7 +1510,9 @@ fn add_generic_suffix(
         return Ok(());
     }
     let token = classified_token.token();
-    let bytes = token.span().bytes();
+    let bytes = classified
+        .token_bytes(token)
+        .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
     if bytes.len() < 3 || !matches!(&bytes[..2], b"0_" | b"1_") {
         return Ok(());
     }
@@ -1069,6 +1534,8 @@ fn add_generic_suffix(
     roles.push(RawRole {
         kind: RawRoleKind::LexicalUse(LexicalUseRole::GenericNumericSuffix),
         spelling: suffix.to_owned(),
+        qualifier: None,
+        member_owner: None,
         owner,
         source: token.id().source(),
         carrier_start: token.id().start(),

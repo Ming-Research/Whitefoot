@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A mutable inline window is filled and folded through target-before-RHS checked indexed writes and ordinary checked reads; counted-loop range facts discharge every indexed access.";
   let values = slots_new::<u64, 8>();

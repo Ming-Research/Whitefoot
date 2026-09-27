@@ -1,0 +1,19 @@
+fn start() -> counter: Counter pure {
+  return Counter(count: 0_u64, limit: 1_u64);
+}
+
+fn bump(counter: &Counter) -> result: unit writes(counter.count) contract {
+  requires deref(counter).limit > deref(counter).count;
+} {
+  doc "A private function's contract may name the module's private fields, since only this module calls it.";
+  let next = deref(counter).count + 1_u64;
+  set deref(counter).count = next;
+  return unit;
+}
+
+fn step(counter: &Counter) -> result: unit writes(counter) {
+  if deref(counter).limit > deref(counter).count {
+    bump(counter: counter);
+  }
+  return unit;
+}

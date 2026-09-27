@@ -1,0 +1,15 @@
+public struct Job {
+  doc "One unit of queued work: a caller-chosen tag and an eight-bit payload.";
+  public tag: u8;
+  public payload: u8;
+}
+
+public struct Report {
+  doc "The observable result of one batch: the two tags taken in order, their payload digest and the queue length left.";
+  public first_tag: u8;
+  public second_tag: u8;
+  public digest: u8;
+  public remaining: u64;
+}
+
+public fn boxed_copy<T: copy>(value: T) -> result: Box<T> pure doc "Copies a value into one owned heap cell.";

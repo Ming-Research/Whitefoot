@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn peek(window: &[u8]) -> result: unit reads(window) contract {
   requires 1_u64 <= deref(window).len;
 } {

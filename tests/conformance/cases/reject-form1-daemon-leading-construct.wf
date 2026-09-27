@@ -1,4 +1,4 @@
-daemon fn main() -> function_result: ExitStatus pure {
+daemon fn main() -> function_result: u64 pure {
   doc "The leading spelling is not an ordinary declaration construct. FORM-1 rejects it; no program-kind marker is admitted.";
-  return exit_status(code: 0_u8);
+  return 0_u64;
 }

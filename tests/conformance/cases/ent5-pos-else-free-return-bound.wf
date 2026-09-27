@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn pick_byte(b: &[u8], i: u64) -> result: u8 reads(b) {
   doc "The out-of-range true edge returns and contributes no predecessor. The else-free false edge therefore retains the strict index bound at the continuation [ENT-5, OP-4].";
   let spare = deref(b).len;

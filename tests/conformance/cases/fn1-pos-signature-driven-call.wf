@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn add(x: i32, y: i32) -> result: i32 pure {
   doc "A full signature states param modes/types and return mode/type [FN-1].";
   return x +wrap y;

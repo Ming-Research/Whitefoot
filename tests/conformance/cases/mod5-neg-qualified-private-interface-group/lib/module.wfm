@@ -1,0 +1,5 @@
+interface Convert<T: copy> {
+  fn convert(value: T) -> result: u8 pure;
+}
+
+public fn seven() -> result: u8 pure doc "Seven.";

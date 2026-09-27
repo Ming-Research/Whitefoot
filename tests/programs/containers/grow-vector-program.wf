@@ -1,3 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias VectorDrain = std::collections::vector::VectorDrain;
+alias exit_status = std::process::exit_status;
+alias grow_vector_append = std::collections::vector::grow_vector_append;
+alias grow_vector_drain = std::collections::vector::grow_vector_drain;
+alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
+alias grow_vector_insert = std::collections::vector::grow_vector_insert;
+alias grow_vector_new = std::collections::vector::grow_vector_new;
+alias grow_vector_remove = std::collections::vector::grow_vector_remove;
+alias grow_vector_reserve = std::collections::vector::grow_vector_reserve;
+alias grow_vector_swap_remove = std::collections::vector::grow_vector_swap_remove;
+alias grow_vector_truncate = std::collections::vector::grow_vector_truncate;
+
 struct Sum {
   total: u64;
   sequence: u64;

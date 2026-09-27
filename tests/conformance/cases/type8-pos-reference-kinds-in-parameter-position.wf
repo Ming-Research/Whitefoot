@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn total(first: &u64, part: &[u64]) -> result: u64 reads(first), reads(part) contract {
   requires deref(part).len > 0_u64;
 } {

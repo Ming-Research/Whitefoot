@@ -1,0 +1,110 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn at_least(value: u64, floor: u64) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn within(value: i32, low: i32, high: i32) -> result: unit pure contract {
+  requires low <= value;
+  requires value <= high;
+} {
+  return unit;
+}
+
+fn sums(start: u64, count: u64) -> result: u64 pure {
+  let outcome = start +checked count;
+  match outcome {
+    Ok(value: end) => {
+      at_least(value: end, floor: start);
+      at_least(value: end, floor: count);
+      return end;
+    }
+    Err(error: overflowed) => {
+      return start;
+    }
+  }
+}
+
+fn differences(total: u64, part: u64) -> result: u64 pure {
+  match total -checked part {
+    Ok(value: rest) => {
+      at_most(value: rest, limit: total);
+      return rest;
+    }
+    Err(error: overflowed) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn products(first: u8, second: u8) -> result: u64 pure {
+  let a = cvt::<u8, u64>(first);
+  let b = cvt::<u8, u64>(second);
+  match a *checked b {
+    Ok(value: area) => {
+      at_most(value: area, limit: 65025_u64);
+      return area;
+    }
+    Err(error: overflowed) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn quotients(count: u64, divisor: u64) -> result: u64 pure {
+  match count %checked divisor {
+    Ok(value: rest) => {
+      at_most(value: rest, limit: count);
+      match count /checked divisor {
+        Ok(value: part) => {
+          at_most(value: part, limit: count);
+          return part;
+        }
+        Err(error: refused) => {
+          return rest;
+        }
+      }
+    }
+    Err(error: refused) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn signs(delta: i32) -> result: i32 pure {
+  if -100_i32 <= delta {
+    if delta <= 50_i32 {
+      match iabs.checked(delta) {
+        Ok(value: magnitude) => {
+          within(value: magnitude, low: 0_i32, high: 100_i32);
+        }
+        Err(error: overflowed) => {
+          return 0_i32;
+        }
+      }
+      match ineg.checked(delta) {
+        Ok(value: negated) => {
+          within(value: negated, low: -50_i32, high: 100_i32);
+          return negated;
+        }
+        Err(error: overflowed) => {
+          return 0_i32;
+        }
+      }
+    }
+  }
+  return 0_i32;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

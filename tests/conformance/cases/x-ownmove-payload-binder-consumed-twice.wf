@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum Inner {
   Value(number: i32);
   Empty();
@@ -10,8 +13,8 @@ enum Wrap {
 
 fn main() -> status: ExitStatus pure {
   doc "OWN-1: an affine payload binder is consumed by one inner match; a second inner match of it is a use-after-consume.";
-  let inner = Value(number: 7_i32);
-  let w = W(inner: move inner);
+  let inner = Inner::Value(number: 7_i32);
+  let w = Wrap::W(inner: move inner);
   match w {
     W(inner: s) => {
       match s {

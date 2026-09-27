@@ -1,0 +1,3 @@
+fn dot() -> shape: Shape pure {
+  return Shape::Dot(size: 7_u8);
+}

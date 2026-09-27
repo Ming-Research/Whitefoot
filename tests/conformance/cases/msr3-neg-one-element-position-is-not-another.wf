@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-3, OWN-7: an element placement writes the element position it names and no other. The commit at blocks[0] carries that window's measures to blocks[0], and the two literal offsets are provably distinct, so nothing was established about blocks[1] and the subscript inside it has nothing to discharge against.";
   let blocks = slots_new::<Slots<u8, 8>, 2>();

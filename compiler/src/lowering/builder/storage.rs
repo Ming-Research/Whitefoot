@@ -24,7 +24,7 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
         match statement {
             CheckedStatement::Let { value, .. }
             | CheckedStatement::DestructuringLet { value, .. }
-            | CheckedStatement::Evaluate(value)
+            | CheckedStatement::Evaluate { value, .. }
             | CheckedStatement::DropExpression { value, .. }
             | CheckedStatement::Return { value, .. }
             | CheckedStatement::Give { value, .. } => collect_expression(value, bindings),

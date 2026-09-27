@@ -156,6 +156,10 @@ Nodes: {nodes}
         self.write("design/log.md", LOG_HEADER + BASE_ENTRY.replace("Establish", "Update"))
         self.assert_rejected(self.lint(self.base), "newest log entry is not new")
 
+    def test_repeated_log_entry_heading_is_rejected(self):
+        self.write("design/log.md", LOG_HEADER + BASE_ENTRY + "\n" + BASE_ENTRY.replace("Establish", "Build"))
+        self.assert_rejected(self.lint(self.base), "entry heading repeats log.md:3")
+
     def test_log_must_name_the_changed_node(self):
         self.change_tree()
         self.log_change(nodes="language/other")
@@ -219,6 +223,13 @@ Nodes: {nodes}
     def test_work_branch_with_no_main_base_fails(self):
         self.git("update-ref", "-d", "refs/remotes/origin/main")
         self.assertNotEqual(self.ci_base("push", "refs/heads/work").returncode, 0)
+
+    def test_pull_request_uses_the_merge_base_of_main(self):
+        self.change_tree()
+        self.commit("Pull request edit")
+        result = self.ci_base("pull_request", "refs/pull/1/merge")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), self.base)
 
     def test_unhandled_event_fails(self):
         self.assert_rejected(self.ci_base("unknown-event", "refs/heads/main"), "unsupported")

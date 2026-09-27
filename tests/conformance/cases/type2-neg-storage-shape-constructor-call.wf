@@ -1,5 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2: the storage shapes are the prelude's opaque structs, and an opaque struct's constructor entry exists to be refused, so a constructor call naming Slots is a hard error at the complete call; the restructuring is to build it with a construction function.";
+  doc "TYPE-2: the storage shapes are the prelude's opaque structs, and an opaque struct's constructor entry exists to be refused, so a constructor call naming Slots is a hard error at the complete call; the repair is to build it with a construction function.";
   let s = Slots::<u64, 4>();
   let n = s.len;
   if n == 0_u64 {

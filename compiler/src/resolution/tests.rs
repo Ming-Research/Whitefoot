@@ -59,9 +59,7 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
 
 fn with_resolution<ResultValue>(
     inputs: &[SourceInput<'_>],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        ResolutionOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     with_resolution_sources(inputs, false, run)
 }
@@ -69,9 +67,7 @@ fn with_resolution<ResultValue>(
 fn with_resolution_sources<ResultValue>(
     inputs: &[SourceInput<'_>],
     include_prelude: bool,
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        ResolutionOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     let bundle = if include_prelude {
         SourceBundle::with_prelude(inputs, SOURCE_LIMITS)
@@ -91,13 +87,13 @@ fn with_resolution_sources<ResultValue>(
     ) else {
         panic!("resolver test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("resolver test source must parse");
     };
     let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
         panic!("resolver test derivation must finalize");
     };
-    let canonical = audit_canonical(finalized, CANONICAL_LIMITS);
+    let canonical = audit_canonical(*finalized, CANONICAL_LIMITS);
     let CanonicalOutcome::Complete(syntax) = canonical else {
         panic!("resolver test source must use exact FORM-2 formatting: {canonical:?}");
     };
@@ -106,9 +102,7 @@ fn with_resolution_sources<ResultValue>(
 
 fn with_one_resolution<ResultValue>(
     source: &[u8],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        ResolutionOutcome<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     with_resolution(&[SourceInput::new("test.wf", source)], run)
 }
@@ -161,18 +155,19 @@ fn helper() -> result: unit pure {
     });
 }
 
+/// [MOD-3, CONST-2] a module's named consts are visible throughout it; the
+/// checker orders their evaluation by dependency and refuses a cycle, so a
+/// use of a later const resolves.
 #[test]
-fn named_constants_remain_lexically_declaration_before_use() {
+fn named_constants_are_visible_throughout_their_module() {
     let source = b"const first: i32 = second;\n\nconst second: i32 = 2_i32;\n";
     with_one_resolution(source, |outcome| {
-        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("later named constant must not be visible: {outcome:?}");
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("a later named constant must be visible: {outcome:?}");
         };
-        assert_eq!(issue.rule(), ResolutionRule::Const2);
-        assert!(matches!(
-            issue.kind(),
-            ResolutionIssueKind::InvisibleUse { spelling, .. } if spelling == "second"
-        ));
+        assert!(resolved.lexical_uses().iter().any(|usage| {
+            usage.role() == LexicalUseRole::ConstValue && usage.spelling() == "second"
+        }));
     });
 }
 
@@ -205,8 +200,10 @@ fn probe() -> result: unit pure {
     });
 }
 
+/// [MOD-3, TYPE-6] a module's nominals are visible independently of item
+/// order, exactly as its functions are.
 #[test]
-fn source_nominals_are_not_visible_before_their_declaration() {
+fn source_nominals_are_visible_before_their_declaration() {
     let source = br#"fn consume(value: Later) -> result: unit pure {
 }
 
@@ -214,14 +211,14 @@ struct Later {
 }
 "#;
     with_one_resolution(source, |outcome| {
-        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("later nominal must not be visible: {outcome:?}");
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("a later nominal must be visible: {outcome:?}");
         };
-        assert_eq!(issue.rule(), ResolutionRule::Type5);
-        assert!(matches!(
-            issue.kind(),
-            ResolutionIssueKind::InvisibleUse { spelling, .. } if spelling == "Later"
-        ));
+        assert!(
+            resolved.lexical_uses().iter().any(|usage| {
+                usage.role() == LexicalUseRole::Type && usage.spelling() == "Later"
+            })
+        );
     });
 }
 
@@ -901,7 +898,8 @@ fn a_heap_declaration_is_admitted_only_as_the_leading_item() {
 
 /// [SET-1] "A `set` whose target name resolves to nothing declares nothing and
 /// is a hard error citing SET-1 at that `place`." v0.59's [LIV-2] promoted
-/// exactly this target into a `let` declaration instead.
+/// exactly this target into a `let` declaration instead, which is what the
+/// repair now tells the writer to do [DIAG-1].
 #[test]
 fn an_unresolved_bare_set_target_declares_nothing_and_cites_set1() {
     let source = br#"fn probe() -> result: unit pure {
@@ -914,14 +912,13 @@ fn an_unresolved_bare_set_target_declares_nothing_and_cites_set1() {
             panic!("an unresolvable set target must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), ResolutionRule::Set1);
-        assert!(matches!(
+        assert_eq!(
             issue.kind(),
-            ResolutionIssueKind::UnresolvedUse {
-                spelling,
-                role: LexicalUseRole::PlaceBase,
-                ..
-            } if spelling == "missing"
-        ));
+            &ResolutionIssueKind::UndeclaredSetTarget {
+                spelling: "missing".to_owned(),
+                mechanical_fix: "no binding `missing` is in scope, so this `set` declares nothing: write it as `let missing = ...;`, keeping its right-hand side, to declare the binding here, or name a binding that is in scope".to_owned(),
+            }
+        );
     });
 }
 
@@ -1654,8 +1651,11 @@ fn match_binder_cannot_equal_its_paired_field_name() {
     });
 }
 
+/// [TYPE-6] an arm label resolves against its scrutinee's enum type, so
+/// resolution defers it to the checker and never selects a constructor of
+/// the same spelling.
 #[test]
-fn arm_lookup_does_not_accept_a_struct_constructor() {
+fn arm_labels_wait_for_their_scrutinee_type() {
     let source = br#"struct Boxed {
 }
 
@@ -1668,15 +1668,18 @@ fn probe() -> result: unit pure {
 }
 "#;
     with_one_resolution(source, |outcome| {
-        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("arm must require an enum variant: {outcome:?}");
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("an arm label is deferred to the checker: {outcome:?}");
         };
-        assert_eq!(issue.rule(), ResolutionRule::Type6);
-        assert!(matches!(
-            issue.kind(),
-            ResolutionIssueKind::UnresolvedUse { spelling, available, .. }
-                if spelling == "Boxed" && available.contains(&DeclarationClass::StructConstructor)
-        ));
+        assert!(resolved.deferred_uses().iter().any(|usage| {
+            usage.role() == DeferredUseRole::ArmVariant && usage.spelling() == "Boxed"
+        }));
+        assert!(
+            !resolved
+                .lexical_uses()
+                .iter()
+                .any(|usage| usage.spelling() == "Boxed")
+        );
     });
 }
 
@@ -1759,7 +1762,7 @@ fn probe() -> result: unit pure {
   let called = user::<i32, one>(arg: borrowed);
   let taken = move called;
   let comparison = ordinary == two;
-  let chosen = Present(value: ordinary);
+  let chosen = Choice::Present(value: ordinary);
   let payload = chosen.Present.value;
   loop @done {
     break @done;
@@ -1841,7 +1844,7 @@ fn probe() -> result: unit pure {
             LexicalUseRole::FormalGroup,
             LexicalUseRole::TypeArgument,
             LexicalUseRole::Construct,
-            LexicalUseRole::ArmVariant,
+            LexicalUseRole::VariantOwner,
             LexicalUseRole::EffectRoot,
             LexicalUseRole::EffectIndex,
             LexicalUseRole::BreakLabel,
@@ -1867,6 +1870,7 @@ fn probe() -> result: unit pure {
         for role in [
             DeferredUseRole::FieldInitializer,
             DeferredUseRole::MatchField,
+            DeferredUseRole::ArmVariant,
             DeferredUseRole::ProjectedField,
             DeferredUseRole::PayloadVariant,
             DeferredUseRole::FunctionBinding,
@@ -1986,7 +1990,9 @@ fn existing_positive_conformance_programs_resolve_without_fixture_rewrites() {
 fn existing_requires_scope_conformance_case_reaches_type5_resolution() {
     let source =
         include_bytes!("../../../tests/conformance/cases/fn8-neg-requires-local-in-body.wf");
-    with_one_resolution(source, |outcome| {
+    // The case names the standard library's exit status, which a unit with
+    // the prelude carries [MOD-10].
+    with_resolution_sources(&[SourceInput::new("test.wf", source)], true, |outcome| {
         let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
             panic!("requires-scope conformance case must reject: {outcome:?}");
         };
@@ -2022,7 +2028,7 @@ fn prelude_collision_payload_keeps_both_ordered_struct_domains() {
 #[test]
 fn duplicate_main_conformance_case_is_type6() {
     let source = include_bytes!("../../../tests/conformance/cases/fn7-neg-two-mains.wf");
-    with_one_resolution(source, |outcome| {
+    with_resolution_sources(&[SourceInput::new("test.wf", source)], true, |outcome| {
         let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
             panic!("the later main declaration must be rejected: {outcome:?}");
         };
@@ -2382,27 +2388,23 @@ fn diagnostics_ignore_logical_paths_and_repeat_byte_for_byte() {
     assert_eq!(issue("first.wf"), issue("first.wf"));
 }
 
+/// [MOD-3] record order no longer controls visibility inside one module,
+/// and logical paths still create no namespace.
 #[test]
-fn source_record_order_controls_const_visibility_but_paths_create_no_namespace() {
+fn source_record_order_controls_no_visibility_and_paths_create_no_namespace() {
     let use_source = SourceInput::new("consumer/first.wf", b"const first: i32 = second;\n");
     let declaration_source = SourceInput::new("library/second.wf", b"const second: i32 = 2_i32;\n");
-    with_resolution(&[use_source, declaration_source], |outcome| {
-        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("later-source const must be invisible: {outcome:?}");
-        };
-        assert_eq!(issue.rule(), ResolutionRule::Const2);
-        assert!(matches!(
-            issue.kind(),
-            ResolutionIssueKind::InvisibleUse { spelling, .. } if spelling == "second"
-        ));
-    });
-
-    with_resolution(&[declaration_source, use_source], |outcome| {
-        assert!(
-            matches!(outcome, ResolutionOutcome::Complete(_)),
-            "earlier source record must make the const visible: {outcome:?}"
-        );
-    });
+    for order in [
+        [use_source, declaration_source],
+        [declaration_source, use_source],
+    ] {
+        with_resolution(&order, |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "a module's const is visible in every record of it: {outcome:?}"
+            );
+        });
+    }
 
     let first = SourceInput::new("left/name.wf", b"fn same() -> result: unit pure {\n}\n");
     let second = SourceInput::new("right/name.wf", b"fn same() -> result: unit pure {\n}\n");
@@ -2466,7 +2468,7 @@ fn every_distinct_op1_family_resolves_through_the_normal_callee_path() {
 // visibility, collision and callable-binding coverage without an external domain.
 #[test]
 fn parsed_prelude_declarations_are_ordinary_visible_targets() {
-    let source = b"fn inspect(args: &Args) -> result: u64 reads(args) {\n  return args_count(args: args);\n}\n";
+    let source = b"fn inspect(args: &std::text::Args) -> result: u64 reads(args) {\n  return std::text::args_count(args: args);\n}\n";
     with_resolution_sources(
         &[SourceInput::new("ordinary.wf", source)],
         true,
@@ -2496,9 +2498,9 @@ fn parsed_prelude_declarations_are_ordinary_visible_targets() {
 #[test]
 fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_resolves() {
     for source in [
-        "struct HostString {\n}\n",
-        "enum Collision {\n  NotFound();\n}\n",
-        "fn helper() -> result: unit pure {\n  let args_count = 0_u64;\n  return unit;\n}\n",
+        "struct Slots {\n}\n",
+        "struct DivideByZero {\n}\n",
+        "fn helper() -> result: unit pure {\n  let box_new = 0_u64;\n  return unit;\n}\n",
     ] {
         with_resolution_sources(
             &[SourceInput::new("collision.wf", source.as_bytes())],
@@ -2516,13 +2518,28 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
             },
         );
     }
+    // [TYPE-6] a source variant belongs to its enum and enters no
+    // constructor domain, so it shares a PRE-1 variant's spelling freely.
+    with_resolution_sources(
+        &[SourceInput::new(
+            "owned.wf",
+            b"enum Collision {\n  NotFound();\n}\n",
+        )],
+        true,
+        |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "a type-owned variant collides with no prelude constructor: {outcome:?}"
+            );
+        },
+    );
     // [TYPE-2] an opaque struct's constructor entry "exists to be refused", so
     // resolution supplies it and the refusal is the checker's hard error at
     // the complete `call`. What is checked here is that the entry resolves:
     // the rejection that used to happen at this stage, as an unresolved name,
     // would have made [TYPE-2]'s judgment over a resolved declaration
     // unreachable.
-    let source = b"fn fabricate() -> result: HostString pure {\n  return HostString();\n}\n";
+    let source = b"fn fabricate() -> result: std::text::HostString pure {\n  return std::text::HostString();\n}\n";
     with_resolution_sources(&[SourceInput::new("opaque.wf", source)], true, |outcome| {
         let ResolutionOutcome::Complete(resolved) = outcome else {
             panic!("an opaque nominal's constructor entry resolves: {outcome:?}");
@@ -2556,7 +2573,7 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
 
 #[test]
 fn an_ordinary_prelude_signature_is_eligible_for_an_actual_member() {
-    let source = b"interface Counter {\n  fn count(args: &Args) -> result: u64 reads(args);\n}\n\nbinding Selected : Counter {\n  count = args_count;\n}\n";
+    let source = b"interface Counter {\n  fn count(args: &std::text::Args) -> result: u64 reads(args);\n}\n\nbinding Selected : Counter {\n  count = std::text::args_count;\n}\n";
     with_resolution_sources(&[SourceInput::new("actual.wf", source)], true, |outcome| {
         let ResolutionOutcome::Complete(resolved) = outcome else {
             panic!("FN-4 admits ordinary declarations: {outcome:?}");
@@ -2596,19 +2613,17 @@ fn supplied_signature_locals_do_not_capture_writer_global_names() {
 fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // The opaque structs first, each with the nominal and the refused
     // constructor [TYPE-2] its collision names in both domains; `Bool` and
-    // its variants follow; the ordinary struct contributes distinct nominal
-    // and constructor records before its fields. `Bool` collides on its
-    // nominal alone, because an enum contributes its variants' spellings to
-    // the constructor domain and not its own.
+    // its variants follow. `Bool` collides on its nominal alone, because an
+    // enum contributes its variants' spellings to the constructor domain and
+    // not its own.
     for (name, origins) in [
-        ("HostString", vec![24, 25]),
-        ("Bool", vec![50]),
-        ("Overflow", vec![65, 66]),
-        ("TcpConnection", vec![72, 73]),
+        ("Slots", vec![5, 6]),
+        ("Bool", vec![22]),
+        ("Overflow", vec![37, 38]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
-            &[SourceInput::new("prelude/HostString.wf", source.as_bytes())],
+            &[SourceInput::new("prelude/Array.wf", source.as_bytes())],
             true,
             |outcome| {
                 let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
@@ -2638,7 +2653,7 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
 fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_count() {
     let read_inventory = |source: &[u8]| {
         with_resolution_sources(
-            &[SourceInput::new("prelude/HostString.wf", source)],
+            &[SourceInput::new("prelude/Array.wf", source)],
             true,
             |outcome| {
                 let ResolutionOutcome::Complete(resolved) = outcome else {
@@ -2666,9 +2681,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // refused constructor and its fields in declaration order". x1 puts the
     // three storage shapes first, each with its nominal, the constructor
     // [TYPE-2] exists to refuse, its element and capacity parameters and its
-    // readonly measure fields; the cell follows with four records of its own,
-    // and each of the fourteen host handles then contributes a nominal and a
-    // refused constructor and no field at all.
+    // readonly measure fields; the cell follows with four records of its own.
+    // The host handles are the standard library's [PRE-2], not PRE-1's.
     assert_eq!(first[0].1, "Array");
     assert_eq!(first[0].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[1].1, "Array");
@@ -2689,38 +2703,24 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[19].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[20].1, "T");
     assert_eq!(first[21].1, "inner");
-    assert_eq!(first[22].1, "Args");
-    assert_eq!(first[23].2, Some(DeclarationClass::StructConstructor));
-    assert_eq!(first[48].1, "TcpSend");
-    // Then each ordinary struct or enum with its constructor or variants and
-    // their fields, then `Int` and `Float`, then the host functions, then the
-    // construction functions [OP-13], then the window operations [OP-10],
-    // then `swap` [OP-11] and `free_empty` [OP-14], each with its type, const
-    // and value parameters in declared order.
-    assert_eq!(first[50].1, "Bool");
-    assert_eq!(first[72].1, "TcpConnection");
-    assert_eq!(first[76].1, "AcceptedConnection");
-    assert_eq!(first[194].1, "Int");
-    assert_eq!(first[195].1, "Float");
-    assert_eq!(first[196].1, "args_count");
-    assert_eq!(first[312].1, "close_send");
-    assert_eq!(first[315].1, "box_new");
-    assert_eq!(first[346].1, "place_back");
-    assert_eq!(first[390].1, "swap");
-    assert_eq!(first[394].1, "free_empty");
-    // x1 adds the three storage shapes to the opaque phase, which grows from
-    // 32 records to 50: `Array` contributes five, `Slots` six and `Ring`
-    // seven — a nominal, a refused constructor, two generic parameters and
-    // one readonly field per measure — so the whole inventory grew by 18
-    // again and every ordinal from `Box` on moved by that much.
-    assert_eq!(first.len(), 397);
+    // Then each enum with its variants and their fields, then `Int` and
+    // `Float`, then the construction functions [OP-13], then the window
+    // operations [OP-10], then `swap` [OP-11] and `free_empty` [OP-14], each
+    // with its type, const and value parameters in declared order.
+    assert_eq!(first[22].1, "Bool");
+    assert_eq!(first[44].1, "Int");
+    assert_eq!(first[45].1, "Float");
+    assert_eq!(first[46].1, "box_new");
+    assert_eq!(first[77].1, "place_back");
+    assert_eq!(first[121].1, "swap");
+    assert_eq!(first[125].1, "free_empty");
+    // The opaque phase holds the three storage shapes and the cell, 22
+    // records: `Array` contributes five, `Slots` six, `Ring` seven and `Box`
+    // four. The host declarations left PRE-1 for the standard library
+    // [PRE-2], so the inventory holds 128 records where it held 397.
+    assert_eq!(first.len(), 128);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
-    assert!(
-        first.len() > 256,
-        "the full ordinary inventory must not truncate at u8: {}",
-        first.len()
-    );
     assert!(
         first
             .iter()
@@ -2729,9 +2729,14 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     );
 }
 
+/// While the host declarations were PRE-1's the inventory held 397 records,
+/// and this test showed that a late collision kept an ordinal above `u8`. The
+/// host declarations are the standard library's now [PRE-2] and the
+/// inventory holds 128, so no prelude ordinal exceeds `u8`; what remains to
+/// show is that the last function's collision names its own preorder ordinal.
 #[test]
-fn a_late_prelude_function_collision_preserves_an_ordinal_above_u8() {
-    let source = b"fn close_send() -> result: unit pure {\n  return unit;\n}\n";
+fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
+    let source = b"fn free_empty() -> result: unit pure {\n  return unit;\n}\n";
     with_resolution_sources(
         &[SourceInput::new("collision.wf", source)],
         true,
@@ -2744,8 +2749,121 @@ fn a_late_prelude_function_collision_preserves_an_ordinal_above_u8() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 312)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 125)
             );
         },
+    );
+}
+
+/// Each declaration by role and spelling, with its key.
+type DeclarationKeys = Vec<(String, String)>;
+
+/// Each lexical use by spelling, with its item-relative key and its
+/// whole-unit node path.
+type UseKeys = Vec<(String, String, Vec<u32>)>;
+
+/// Every declaration of `source` and every lexical use in it, with their
+/// keys.
+fn keys_of(source: &[u8]) -> (DeclarationKeys, UseKeys) {
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("key probe source must resolve: {outcome:?}");
+        };
+        let declarations = resolved
+            .declarations()
+            .iter()
+            .map(|declaration| {
+                (
+                    format!("{:?} {}", declaration.role(), declaration.spelling()),
+                    declaration.key().to_string(),
+                )
+            })
+            .collect();
+        let uses = resolved
+            .lexical_uses()
+            .iter()
+            .map(|usage| {
+                (
+                    usage.spelling().to_owned(),
+                    resolved
+                        .occurrence_key(usage.origin().node())
+                        .expect("a use inside an item has an occurrence key")
+                        .to_string(),
+                    usage.origin().node().components().to_vec(),
+                )
+            })
+            .collect();
+        (declarations, uses)
+    })
+}
+
+/// [MOD-3] an item added before the others moves every later item's node
+/// paths but renames no declaration and no occurrence: keys are relative to
+/// the item that holds them (`design/compiler/incremental-compilation.md`).
+#[test]
+fn an_unrelated_item_renames_no_declaration_or_occurrence() {
+    let body = br#"fn probe(limit: u64) -> result: unit pure {
+  for @range (index in 0_u64..limit) {
+    let copied = index;
+    helper();
+    break @range;
+  }
+  return unit;
+}
+
+fn helper() -> result: unit pure {
+}
+"#;
+    let mut widened = b"fn unrelated() -> result: unit pure {\n}\n\n".to_vec();
+    widened.extend_from_slice(body);
+    let (declarations, uses) = keys_of(body);
+    let (wider_declarations, wider_uses) = keys_of(&widened);
+    assert_eq!(wider_declarations.len(), declarations.len() + 1);
+    for declaration in &declarations {
+        assert!(
+            wider_declarations.contains(declaration),
+            "{declaration:?} must keep its key"
+        );
+    }
+    assert_eq!(wider_uses.len(), uses.len());
+    for ((spelling, key, path), (wider_spelling, wider_key, wider_path)) in
+        uses.iter().zip(&wider_uses)
+    {
+        assert_eq!(spelling, wider_spelling);
+        assert_eq!(key, wider_key, "`{spelling}` must keep its occurrence key");
+        assert_ne!(path, wider_path, "`{spelling}` moves in the whole unit");
+    }
+}
+
+/// [TYPE-6] two enums of one module may name a variant alike, since a
+/// construction names its owner and an arm its scrutinee's type; each
+/// variant's key is placed within its own enum.
+#[test]
+fn variants_of_two_enums_keep_distinct_keys() {
+    let source = br#"enum Left {
+  Same();
+}
+
+enum Right {
+  Same();
+}
+"#;
+    let (declarations, _) = keys_of(source);
+    let variants = declarations
+        .iter()
+        .filter(|(declaration, _)| declaration == "Variant Same")
+        .map(|(_, key)| key.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(variants.len(), 2);
+    assert_ne!(variants[0], variants[1]);
+    assert!(
+        variants[0].starts_with("pkg::Left#Enum/"),
+        "{}",
+        variants[0]
+    );
+    assert!(
+        variants[1].starts_with("pkg::Right#Enum/"),
+        "{}",
+        variants[1]
     );
 }

@@ -36,7 +36,7 @@ fn every_integer_pair_has_uniform_conversion_interfaces() {
         }
     }
     source
-        .push_str("fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n");
+        .push_str("fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n");
 
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -134,13 +134,13 @@ fn every_integer_pair_has_uniform_conversion_interfaces() {
 fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
     for operation in ["cvt", "cvt.wrap"] {
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}::<i32, i64>(1_i16);\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let value = {operation}::<i32, i64>(1_i16);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule_kind(source.as_bytes(), SemanticRule::Type5, |kind| {
             matches!(kind, SemanticIssueKind::TypeMismatch { .. })
         });
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}(1_i32);\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let value = {operation}(1_i32);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule(
             source.as_bytes(),
@@ -148,7 +148,7 @@ fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
             SemanticIssueKind::InvalidOperation,
         );
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let value = {operation}::<i32>(1_i32);\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let value = {operation}::<i32>(1_i32);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule(
             source.as_bytes(),
@@ -156,7 +156,7 @@ fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
             SemanticIssueKind::InvalidOperation,
         );
         let source = format!(
-            "fn main() -> status: ExitStatus pure {{\n  let flag = True();\n  let value = {operation}::<Bool, i32>(flag);\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let flag = True();\n  let value = {operation}::<Bool, i32>(flag);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_rule(
             source.as_bytes(),
@@ -176,8 +176,8 @@ fn wrapping_conversion_rejects_concrete_and_symbolic_float_endpoints() {
   return cvt.wrap::<{source_type}, {destination_type}>(value);
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -198,8 +198,8 @@ fn main() -> status: ExitStatus pure {{
   return cvt.wrap::<S, D>(value);
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -221,12 +221,12 @@ fn forward<A: Int, B: Int>(value: A) -> result: B pure {
   return modular::<A, B>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let narrowed = forward::<u16, u8>(value: 511_u16);
   let widened = forward::<i8, u32>(value: -1_i8);
   let relabeled = forward::<i32, u32>(value: -1_i32);
   let identical = forward::<u64, u64>(value: 18446744073709551615_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -274,13 +274,17 @@ fn dispatch<interface BytePolicy>(value: u16) -> result: u8 pure contract {
   return BytePolicy::select(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  let input = 257_u16;
+fn forward(input: u16) -> result: unit pure {
   let reduced = cvt.wrap::<u16, u8>(input);
   if reduced == 1_u8 {
     let selected = dispatch::<LowByte>(value: input);
   }
-  return exit_status(code: 0_u8);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  forward(input: 257_u16);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -319,8 +323,8 @@ fn caller(value: u32) -> result: u8 pure contract {
   return required(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -372,7 +376,7 @@ fn conversion_diagnostics_distinguish_refutation_from_missing_or_stale_evidence(
         ),
     ] {
         let source = format!(
-            "fn narrow(value: u32) -> result: u8 pure {{\n  {body}\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn narrow(value: u32) -> result: u8 pure {{\n  {body}\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue, .. } = outcome else {

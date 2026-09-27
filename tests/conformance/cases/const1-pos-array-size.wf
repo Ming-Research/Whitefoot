@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A decimal integer literal is a constant-expression usable as a Slots<T, n> capacity.";
   let xs = slots_new::<i32, 4>();

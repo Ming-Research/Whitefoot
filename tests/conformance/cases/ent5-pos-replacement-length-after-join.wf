@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A replacement run delivers its initialized length after a prior control join: the whole-binding commit is the REBIND naming event, whose placement datum carries the source window's measures to the destination place [MSR-3, SET-1]. The old run length dies with the commit [ENT-5] and is not incorrectly used, while the delivered length discharges the later subscript [OP-4].";
   let base = array_filled::<u32, 4>(value: 1_u32);

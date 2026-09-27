@@ -1,0 +1,3 @@
+alias Inner = pkg::data::Hidden;
+
+public fn seven() -> result: u8 pure doc "Seven.";

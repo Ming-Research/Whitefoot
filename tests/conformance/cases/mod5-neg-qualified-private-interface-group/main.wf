@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn keep(value: u8) -> result: u8 pure {
+  return value;
+}
+
+binding Keep : pkg::lib::Convert<u8> {
+  convert = keep;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = pkg::lib::seven();
+  return exit_status(code: code);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inline_run_overflow(count: u64) -> made: Box<Slots<Slots<u64, 2>>> pure contract {
   requires count <= 768614336404564651_u64;
 } {

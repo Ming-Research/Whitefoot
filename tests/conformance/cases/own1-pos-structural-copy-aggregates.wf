@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Record {
   values: Array<u8, 2>;
 }
@@ -35,7 +38,7 @@ fn main() -> status: ExitStatus pure {
   let record = Record(values: seed);
   let forwarded = pass::<Record>(value: record);
   set forwarded.values[0_u64] = 7_u8;
-  let original = Packed(record: record);
+  let original = Wrapped::Packed(record: record);
   let changed_second = original;
   let untouched = original;
   let original_ref = &original;

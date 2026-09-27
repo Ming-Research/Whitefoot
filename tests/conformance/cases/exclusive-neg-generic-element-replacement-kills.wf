@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn replace_at<T: drop>(values: &Slots<T, 2>, at: u64, incoming: &T) -> result: unit writes(values[at]), writes(incoming) contract {
   requires at < deref(values).len;
 } {

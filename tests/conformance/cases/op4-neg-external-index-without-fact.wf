@@ -1,3 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
 fn main(inputs: Inputs) -> status: ExitStatus pure {
   doc "An ordinary function result is an ordinary symbolic runtime value, not a fact source. Using it directly as a window index leaves the bounds Goal unproved, so OP-4 rejects before lowering.";
   let Inputs(args: arg_list, cwd: root, handles: entry_factory, ..) = move inputs;

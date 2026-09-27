@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn hold(taken: Slots<u8, 4>) -> kept: Slots<u8, 4> pure contract {
   ensures kept.len >= 1_u64;
 } {

@@ -149,15 +149,15 @@ for f in spec/kernel-spec-v0.{0..6}.md; do grep -o 'on a copy value is a hard er
 
 `spec/derivation/derivation-ledger.md:172-173`, the entire recorded rationale: *"Companion FORM-1 discipline: `move` on a copy value is now a hard error (one spelling per meaning: copies are used bare)."* It rode in as a companion to the 2026-07-10 tag-only-enums-are-copy amendment, which was itself evidence-driven and measured.
 
-`mcts_mem/whitefoot/ownership/copy-classification.alt/` contains exactly one file, `uniform-affine-enums.md` — about the classification, not the ban. **The ban has no recorded alternative and no recorded weighing.**
+[mcts_mem/whitefoot/ownership/copy-classification.alt/](https://github.com/mbbill/Whitefoot/tree/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/ownership/copy-classification.alt) contains exactly one file, `uniform-affine-enums.md` — about the classification, not the ban. **The ban has no recorded alternative and no recorded weighing.**
 
 `docs/constitution.md:28` (R3): *"One way to say anything, and the survivor is chosen by evidence for P0+P1 among candidates, measured under W1 (weak writers). **Minimality-selected forms are PROVISIONAL.**"* And `derivation-ledger.md:169-171`, in the same amendment: *"The original affinity of Bool was minimality-selected (R3 provisional: uniform enum rule), not evidence-selected; this amendment is the evidence-driven correction."*
 
 ### M12 — The tree's spelling doctrine cuts against the *narrow* fix, not the broad one.
 
-`mcts_mem/whitefoot/surface-form/spelling-rule.md:4`, verbatim: *"The legality of a spelling depends only on its grammar class … **never on use-site context** …; **relief is all-or-nothing per class**, and a class that cannot be relieved wholly stays uniformly mandatory."*
+[mcts_mem/whitefoot/surface-form/spelling-rule.md:4](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form/spelling-rule.md#L4), verbatim: *"The legality of a spelling depends only on its grammar class … **never on use-site context** …; **relief is all-or-nothing per class**, and a class that cannot be relieved wholly stays uniformly mandatory."*
 
-`mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md:1-2`: *"Relief was decided per position … One construct carried different legal spellings at different sites, and a class could be partially relieved."* Move: *"2026-08-07 replaced by [[spelling-rule]]."*
+[mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md:1-2](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md#L1-L2): *"Relief was decided per position … One construct carried different legal spellings at different sites, and a class could be partially relieved."* Move: *"2026-08-07 replaced by [[spelling-rule]]."*
 
 Item 5 of the live node — *"Every position is mandatory or forbidden; no element is optional"*, dated 2026-08-07, the newest spelling doctrine in the tree — is **falsified today** by M10.
 
@@ -266,7 +266,7 @@ Ranked by measured capability delivered per unit of measured cost. This is a ran
 
 **The one genuine incompatibility is A versus A′.** ALTERNATIVES ranked the narrow, type-parameter-only relief **first**. DOCTRINE, SPELLING-RULE, and FOOTPRINT all independently landed on some version of "not the deletion as written; the coherent forms are a multi-edit consuming-`move` change or a bound extension."
 
-**The evidence that separates them is decisive and dated:** `mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md`, replaced by `spelling-rule` on 2026-08-07 — one day before the ALTERNATIVES report was written — describes A′ word for word. `CLAUDE.md` requires consulting *"the relevant live `mcts_mem/` node **and its rejected alternatives**"*; that folder was not opened. Independently, my `take_i32` measurement shows A′ does not even avoid the problem it was proposed to avoid. **A′ is refuted. I am not resurrecting it.**
+**The evidence that separates them is decisive and dated:** [mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form/spelling-rule.alt/positional-relief.md), replaced by `spelling-rule` on 2026-08-07 — one day before the ALTERNATIVES report was written — describes A′ word for word. `CLAUDE.md` requires consulting *"the relevant live `mcts_mem/` node **and its rejected alternatives**"*; that folder was not opened. Independently, my `take_i32` measurement shows A′ does not even avoid the problem it was proposed to avoid. **A′ is refuted. I am not resurrecting it.**
 
 **Positions killed by their skeptics, which I verified and am not resurrecting:**
 - DOCTRINE §7(a), *"FORM-1 is violated today in the existence direction."* FORM-1 `:52` reads *"Unknown constructs are hard errors (conservative extension)"* — its answer to "this shape has no spelling" is **reject it**. The reading also trivializes the rule (OWN-11, OWN-5, and ERR-2 would all breach FORM-1). The absence of a writable generic body is a real defect, but it is an **R2** defect, not a FORM-1 defect. The "it's a wash" framing is unavailable.

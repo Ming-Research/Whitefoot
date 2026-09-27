@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "[INV-1] a `call` in an affine-factor position is refused at the call node. The admitted atoms are a measure member on an admitted measure place [OP-15], a bare IDENT place, and an integer literal, so widening the production admits one closed set of factors rather than every runtime expression form.";
   let run = slots_new::<u8, 8>();

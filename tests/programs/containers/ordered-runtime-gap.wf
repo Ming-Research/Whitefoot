@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum RuntimeGapNode {
   Empty();
   Entry(left: Box<RuntimeGapNode>, right: Box<RuntimeGapNode>);
 }
 
 fn boxed_empty() -> made: Box<RuntimeGapNode> pure {
-  let empty = Empty();
+  let empty = RuntimeGapNode::Empty();
   let cell = box_new::<RuntimeGapNode>(value: move empty);
   return move cell;
 }
@@ -15,7 +18,7 @@ fn insert_once(tree: &Box<RuntimeGapNode>) -> inserted: Bool writes(tree) {
     Empty() => {
       let left_child = boxed_empty();
       let right_child = boxed_empty();
-      let stored_entry = Entry(left: move left_child, right: move right_child);
+      let stored_entry = RuntimeGapNode::Entry(left: move left_child, right: move right_child);
       let replacement = box_new::<RuntimeGapNode>(value: move stored_entry);
       set deref(tree) = move replacement;
       return True();

@@ -104,7 +104,7 @@ ordinary-let/final-check subset (FN-8 — semantics selected, spelling not yet
 compared)."
 
 **The batch-0071 decision this stance must compose with.**
-`mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md`:
+[mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/checks-and-proofs/obligation-discharge/writer-trap-surface.md):
 "One writer-stated trap construct exists: the named, justification-bearing
 claim." Its second bullet is load-bearing here: "The retained condition-judgment
 and program-start trap semantics stay owned by the rule the retired body

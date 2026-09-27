@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   let aw = 127_i8 +wrap 1_i8;
   let sw = 0_u8 -wrap 1_u8;

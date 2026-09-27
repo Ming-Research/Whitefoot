@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn bump(part: &[u64], at: u64) -> result: unit writes(part) contract {
+  requires at < deref(part).len;
+} {
+  doc "Adds 10 to element at of the run part names. Its row writes the whole run.";
+  let old = deref(part)[at];
+  set deref(part)[at] = old +wrap 10_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-2, REF-4: the call writes the run v[0_u64..2_u64], which holds v[1_u64] and lies above it, so it writes a proper prefix of e = &v[1_u64] and reading e afterwards is refused, as reading a reference formed through the run itself is.";
+  let v = array_filled::<u64, 4>(value: 1_u64);
+  let e = &v[1_u64];
+  bump(part: &v[0_u64..2_u64], at: 1_u64);
+  let seen = deref(e);
+  return exit_status(code: 0_u8);
+}

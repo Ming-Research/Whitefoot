@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  doc "Writes the length of the range src into the first element of the range dst.";
+  let n = deref(src).len;
+  if 0_u64 < deref(dst).len {
+    set deref(dst)[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> result: unit writes(values) contract {
+  requires a <= b;
+  requires b <= 8_u64;
+  requires c <= d;
+  requires d <= 8_u64;
+} {
+  doc "Passes the run 0..2 of the frame values[a..b] and the run 2..4 of the frame values[c..d], frames nothing proves apart.";
+  let left = &deref(values)[a..b];
+  let right = &deref(values)[c..d];
+  if 2_u64 <= deref(left).len {
+    if 4_u64 <= deref(right).len {
+      copy_len(src: &deref(left)[0_u64..2_u64], dst: &deref(right)[2_u64..4_u64]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OWN-7, EFF-5: the two runs' containing paths values[a..b] and values[c..d] differ in a range step, and every step below a range is relative to it, so 0..2 of one frame and 2..4 of the other overlap when the frames are values[2..6] and values[0..4]. Nothing proves the frames apart, so the call is refused.";
+  let values = array_filled::<u64, 8>(value: 1_u64);
+  copy_between(values: &values, a: 2_u64, b: 6_u64, c: 0_u64, d: 4_u64);
+  return exit_status(code: 0_u8);
+}

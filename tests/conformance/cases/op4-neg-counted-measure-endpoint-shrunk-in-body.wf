@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The upper capture equals run.len only in the preheader. take_back writes that length on a path reaching the next header, so the equality is not in the counted head state and the element read has no bound against the current length.";
+  let run = slots_new::<u8, 4>();
+  place_back(window: &run, value: 5_u8);
+  place_back(window: &run, value: 6_u8);
+  let total = 0_u64;
+  for (i in 0_u64..run.len) {
+    let byte = run[i];
+    let wide = cvt::<u8, u64>(byte);
+    set total = total +wrap wide;
+    let nonempty = run.len > 0_u64;
+    if nonempty {
+      let dropped = take_back(window: &run);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

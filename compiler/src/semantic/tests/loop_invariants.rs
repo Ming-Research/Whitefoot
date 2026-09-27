@@ -70,13 +70,13 @@ fn assert_invariant_required_relation(source: &[u8], expected: &str) {
 
 #[test]
 fn source_invariant_is_checked_at_base_and_arbitrary_backedge() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant limit: i <= 1_u64
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -93,12 +93,12 @@ fn source_invariant_is_checked_at_base_and_arbitrary_backedge() {
 
 #[test]
 fn a_body_local_invariant_is_not_a_counted_header_invariant() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (i in 0_u64..1_u64) {
     let value = i;
     invariant limit: i <= 1_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -117,7 +117,7 @@ fn a_body_local_invariant_is_not_a_counted_header_invariant() {
 
 #[test]
 fn ordered_invariant_roots_have_exact_integer_normalization() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant nonstrict_forward: i <= 1_u64,
@@ -126,7 +126,7 @@ fn ordered_invariant_roots_have_exact_integer_normalization() {
     invariant strict_reverse: 2_u64 > i
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -144,23 +144,23 @@ fn ordered_invariant_roots_have_exact_integer_normalization() {
     });
 
     for source in [
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant limit: i < 1_u64
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant limit: 1_u64 > i
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -184,13 +184,13 @@ fn ordered_invariant_roots_have_exact_integer_normalization() {
 
 #[test]
 fn equality_is_an_invariant_root() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant same: i == i
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -203,13 +203,13 @@ fn equality_is_an_invariant_root() {
 
 #[test]
 fn disequality_is_not_an_invariant_root() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant different: i != 2_u64
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -243,8 +243,8 @@ fn ordinary_loop_invariant_is_inductive_at_an_arbitrary_header() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -278,8 +278,8 @@ fn ordinary_loop_without_a_break_has_a_contradictory_continuation() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -318,8 +318,8 @@ fn a_body_local_invariant_is_not_an_ordinary_loop_header_invariant() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -358,8 +358,8 @@ fn ordinary_loop_write_must_preserve_the_next_header_invariant() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Backedge,
@@ -383,8 +383,8 @@ fn ordinary_backedge_diagnostic_prints_the_source_relation() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         "value <= 0_u64",
@@ -405,8 +405,8 @@ fn counted_backedge_diagnostic_prints_the_hidden_next_binder() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         "sum <= (255_u64 * (i + 1_u64))",
@@ -430,8 +430,8 @@ fn ordinary_loop_break_does_not_export_its_header_invariant() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -477,8 +477,8 @@ fn ordinary_loop_batch_uses_all_invariants_for_each_backedge() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -539,8 +539,8 @@ fn a_failed_base_batch_grants_no_ordinary_header_assumption() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -566,13 +566,13 @@ fn main() -> status: ExitStatus pure {
 #[test]
 fn zero_trip_range_still_requires_the_invariant_base_case() {
     assert_invariant_issue(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..0_u64,
     invariant limit: 1_u64 <= i
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Base,
@@ -582,7 +582,7 @@ fn zero_trip_range_still_requires_the_invariant_base_case() {
 #[test]
 fn normal_body_fallthrough_must_preserve_the_invariant() {
     assert_invariant_issue(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let sum = 0_u64;
   for (
     i in 0_u64..1_u64,
@@ -590,7 +590,7 @@ fn normal_body_fallthrough_must_preserve_the_invariant() {
   ) {
     set sum = 2_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Backedge,
@@ -612,8 +612,8 @@ fn a_conditional_unit_step_preserves_the_invariant_through_an_affine_join() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -650,8 +650,8 @@ fn an_affine_join_does_not_hide_a_branch_that_advances_too_far() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Backedge,
@@ -675,8 +675,8 @@ fn an_affine_join_retains_a_negative_constant_delta() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -718,8 +718,8 @@ fn separate_joined_bindings_do_not_share_one_delta_atom() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Backedge,
@@ -728,14 +728,14 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn a_matching_break_is_not_a_backedge() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   for (
     i in 0_u64..1_u64,
     invariant limit: i <= 0_u64
   ) {
     break;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -762,8 +762,8 @@ fn requirement_facts_seed_the_originating_invariant_context() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -793,8 +793,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Base,
@@ -831,8 +831,8 @@ fn add_one(weights: &[u8], count: u64) -> result: u32 reads(weights) contract {
   return incremented;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -956,7 +956,7 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn later_invariant_backedge_can_use_an_earlier_invariant() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 0_u64;
   let y = 0_u64;
   for (
@@ -967,7 +967,7 @@ fn later_invariant_backedge_can_use_an_earlier_invariant() {
     set y = x;
     set x = i;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -982,7 +982,7 @@ fn later_invariant_backedge_can_use_an_earlier_invariant() {
     });
 
     assert_invariant_issue(
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 0_u64;
   let y = 0_u64;
   for (
@@ -992,7 +992,7 @@ fn later_invariant_backedge_can_use_an_earlier_invariant() {
     set y = x;
     set x = i;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         LoopInvariantProofObligation::Backedge,
@@ -1013,8 +1013,8 @@ fn descending_range_does_not_publish_a_false_exhaustion_substitution() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1062,8 +1062,8 @@ fn matching_break_removes_false_header_exhaustion_facts_at_the_join() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1108,8 +1108,8 @@ fn no_backedge_invariant_can_finish_with_a_safe_false_header_exit() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1181,8 +1181,8 @@ fn right(value: i32) -> result: i32 pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1232,7 +1232,7 @@ fn main() -> status: ExitStatus pure {
 fn active_invariant_proves_a_real_array_index_obligation() {
     let source = br#"const values: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let at = 0_u64;
   for (
     i in 0_u64..4_u64,
@@ -1241,7 +1241,7 @@ fn main() -> status: ExitStatus pure {
     let value = values[at];
     set at = at + 1_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1311,8 +1311,8 @@ fn finish(count: u64) -> result: u32 pure contract {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1407,8 +1407,8 @@ fn finish_or_stop(stop: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -1451,8 +1451,8 @@ fn active_invariant_proves_a_dynamic_range_reference_index_obligation() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1527,8 +1527,8 @@ fn exhaustion_fact_proves_filled_and_vacant_allocation_fit() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1614,7 +1614,7 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {
-    let source = br#"fn publish_prefix(factory: &HandleFactory, output: &OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
   define capacity = deref(source).len;
   requires limit <= capacity;
 } {
@@ -1628,12 +1628,12 @@ fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     set start = end;
     set end = end + 1_u64;
   }
-  let outcome = write_once(factory: factory, output: output, source: source, start: start, end: end);
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end);
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1711,8 +1711,8 @@ fn independent_invariant_intervals_discharge_two_operand_exact_multiplication() 
   return left;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1773,11 +1773,11 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn admitted_product_publishes_its_interval_to_the_following_operation() {
-    // [ENT-3.S14]. The multiplication is admitted by [ENT-6]'s interval rule
-    // because both widened operands are u32-ranged, and the add that follows
-    // is in range only because the product's own interval bounds `base`.
-    // Before S14 the rule proved that interval and discarded it, so the add
-    // had no premise and was refused [OP-2].
+    // [ENT-3.S7]'s `*` row. The multiplication is admitted by [ENT-6]'s
+    // interval rule because both widened operands are u32-ranged, and the add
+    // that follows is in range only because the product's own interval bounds
+    // `base`. Without a product row the rule proved that interval and
+    // discarded it, so the add had no premise and was refused [OP-2].
     let source = br#"fn flat(row: u32, width: u32, col: u32) -> at: u64 pure {
   let r = cvt::<u32, u64>(row);
   let w = cvt::<u32, u64>(width);
@@ -1787,8 +1787,8 @@ fn admitted_product_publishes_its_interval_to_the_following_operation() {
   return at;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1819,7 +1819,7 @@ fn main() -> status: ExitStatus pure {
         );
         assert!(
             sum.discharged,
-            "the addition discharges only from the interval S14 published on the product"
+            "the addition discharges only from the interval the `*` row published on the product"
         );
     });
 }
@@ -1843,8 +1843,8 @@ fn interval_product_checks_the_two_cross_endpoint_pairs() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1897,8 +1897,8 @@ fn caller(rows: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2061,8 +2061,8 @@ fn a_local_proof_fact_can_discharge_an_ordinary_loop_backedge() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2122,8 +2122,8 @@ fn automatic_residual_reduction_composes_two_live_l0_facts() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2198,8 +2198,8 @@ fn count_or_stop(stop: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics_dark(source, |outcome| {
@@ -2269,8 +2269,8 @@ fn count_or_stop(stop: Bool) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2343,8 +2343,8 @@ fn a_published_guard_discharges_an_ordinary_loop_cursor_increment() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2402,8 +2402,8 @@ fn an_unguarded_cursor_increment_fails_the_ordinary_loop_backedge() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2459,8 +2459,8 @@ fn a_guarded_cursor_increment_reaches_the_ordinary_loop_backedge() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2503,8 +2503,8 @@ fn a_direct_cursor_increment_and_its_let_spelling_agree() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let through_let = br#"fn advance(limit: u64) -> result: unit pure {
@@ -2523,8 +2523,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let step = |source: &[u8]| {
@@ -2573,8 +2573,8 @@ fn a_body_invariant_after_the_write_and_the_ordinary_header_are_both_proved() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2618,8 +2618,8 @@ fn a_break_only_body_creates_no_ordinary_loop_backedge_obligation() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2669,10 +2669,10 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
   return hi;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let t = True();
   let v = narrow(spare: 8_u64, cand: 3_u64, flag: t);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -2707,7 +2707,7 @@ fn main() -> status: ExitStatus pure {
 /// would discharge from a length the run no longer has.
 #[test]
 fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "The measure the header names is replaced inside the body.";
   let seed = array_filled::<u8, 4>(value: 0_u8);
   let data = slots_from_array::<u8, 4>(values: seed);
@@ -2719,7 +2719,7 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
     set data = move fresh;
     let byte = data[3_u64];
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn empty(choose: Bool) -> result: Result<i32, u8> pure contract {
   ensures when Ok(value: payload): payload == 0_i32;
 } {

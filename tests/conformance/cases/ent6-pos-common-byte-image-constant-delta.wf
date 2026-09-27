@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn checked_sum(weights: &[u8]) -> result: u64 reads(weights) contract {
   define bound = deref(weights).len;
   requires bound <= 100_u64;

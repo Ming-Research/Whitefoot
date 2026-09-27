@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "Another module reads the public field directly and the private one through its declaring module's operation.";
+  let pair = data::make(left: 1_u8, right: 2_u8);
+  let left = pair.left;
+  let right = data::right_of(pair: pair);
+  if left == 1_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if right == 2_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

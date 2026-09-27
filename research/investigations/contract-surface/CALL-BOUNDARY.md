@@ -54,7 +54,7 @@ The [x1 spelling discussion](../access-effects/SPEC-AMENDMENT-MAP.md#surface-and
 recommended retaining result `own` because removal would rewrite signatures
 without a semantic gain. This historical recommendation is not an independent
 ground for retaining the spelling: current
-[decision practice](../../../docs/practice.md#evidence-guidance) excludes
+[decision practice](https://github.com/mbbill/Whitefoot/blob/efe40194a05b339c46b931e87bd05a40036f23cf/docs/practice.md#evidence-guidance) excludes
 internal migration cost as a language-selection ground before real adoption.
 The resulting v0.60 grammar removed borrow results; v0.67 still retained
 `rtype := "own" type`.

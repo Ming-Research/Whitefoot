@@ -112,26 +112,26 @@ fn folded(lo: u64, hi: u64) -> result: u64 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   doc "Every degenerate range folds to the accumulator it arrived with, and one wide range folds to the same value split or not.";
   let empty = folded(lo: 5_u64, hi: 5_u64);
   if empty == 7_u64 {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let inverted = folded(lo: 400000_u64, hi: 5_u64);
   if inverted == 7_u64 {
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let single = folded(lo: 5_u64, hi: 6_u64);
   let one = mix(seed: 5_u64);
   let expected = one +wrap 7_u64;
   if single == expected {
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -159,7 +159,7 @@ const WIDE_FRAME: &[u8] = br#"fn mix(seed: u64) -> result: u64 pure {
   return state;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   doc "Thirty-two live scalars stand between the loop and a frame that fits.";
   let a0 = 0_u64;
   let a1 = 1_u64;
@@ -232,9 +232,9 @@ fn main() -> status: ExitStatus pure {
     set total = total +wrap biased;
   }
   if total == 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -322,19 +322,19 @@ fn folded(salt: u64, rounds: u64, stride: u64) -> result: u64 pure {
   return total;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let value = folded(salt: 9876543210_u64, rounds: 24_u64, stride: 7_u64);
   let report = box_array_filled::<u8>(count: 8_u64, value: 0_u8);
   let window = &report.inner[0_u64..8_u64];
   let stored = spell(destination: window, at: 0_u64, value: value);
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64) {
+  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64) {
     Ok(value: accepted) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     Err(error: problem) => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
   }
 }
@@ -385,18 +385,18 @@ fn mapped() -> result: Box<Array<u8>> pure {
   return move out;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
-  close_directory(factory: &entry_factory, directory: move unused_cwd);
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let report = mapped();
   let size = report.inner.len;
   let source = &report.inner[0_u64..size];
-  match write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size) {
+  match std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size) {
     Ok(value: accepted) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     Err(error: problem) => {
-      return exit_status(code: 1_u8);
+      return std::process::exit_status(code: 1_u8);
     }
   }
 }
@@ -475,32 +475,32 @@ fn mapped(count: u64) -> result: Box<Array<Aligned>> pure contract {
   return move output;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let empty = mapped(count: 0_u64);
   if empty.inner.len != 0_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let output = mapped(count: 400000_u64);
   if output.inner.len != 400000_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let first = output.inner[0_u64];
   let first_expected = mix(seed: 400000_u64);
   if first.tag != 7_u8 {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   if first.word != first_expected {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let last = output.inner[399999_u64];
   let last_expected = mix(seed: 799999_u64);
   if last.tag != 7_u8 {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   if last.word != last_expected {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -523,12 +523,12 @@ const NESTED_PAYLOAD_REDUCTIONS: &[u8] = br#"fn nested() -> result: u64 pure {
   return total;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let observed = nested();
   if observed != 3407872_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -736,16 +736,70 @@ fn synthesized(module: &str, prefix: &str) -> String {
     only.clone()
 }
 
+/// [MOD-8] a split's helpers and the thunks their halves hand out are named by
+/// the function they came from and their number among its own, so another
+/// function gaining a permitted loop leaves every one of them, and the
+/// function that calls them, byte for byte as it was.
+#[test]
+fn split_helpers_keep_their_symbols_when_another_function_gains_a_split() {
+    let base = fold_module(true);
+    let source = std::str::from_utf8(PERMITTED_FOLD).expect("the fixture is text");
+    let refolded = source
+        .split_once("fn folded(")
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .map(|(body, _)| format!("fn refolded({body}\n}}\n\n"))
+        .expect("the fixture defines folded");
+    let extended = emit_with_overlap(
+        source
+            .replacen("fn folded(", &format!("{refolded}fn folded("), 1)
+            .as_bytes(),
+    );
+    let splitters = synthesized_symbols(&base, "@wf__par_split_");
+    let chunks = synthesized_symbols(&base, "@wf__par_chunk_");
+    assert_eq!(splitters, ["@wf__par_split_folded.0"], "{base}");
+    assert_eq!(chunks, ["@wf__par_chunk_folded.1"], "{base}");
+    assert_eq!(
+        synthesized_symbols(&extended, "@wf__par_split_").len(),
+        2,
+        "the added function splits its own loop:\n{extended}"
+    );
+    let thunks = base
+        .lines()
+        .filter_map(|line| line.strip_prefix("define internal void @wf__par_thunk_"))
+        .filter_map(|rest| rest.split_once('('))
+        .map(|(name, _)| format!("@wf__par_thunk_{name}"))
+        .collect::<Vec<_>>();
+    assert!(!thunks.is_empty(), "{base}");
+    for symbol in splitters
+        .iter()
+        .chain(&chunks)
+        .chain(&thunks)
+        .map(String::as_str)
+        .chain(["@wf_folded"])
+    {
+        assert_eq!(
+            function_body(&base, symbol),
+            function_body(&extended, symbol),
+            "{symbol} must keep its text"
+        );
+    }
+}
+
 /// Every synthesized definition bearing `prefix`, without runtime helpers or
-/// sequential-clone spellings that merely contain a similar suffix.
+/// sequential-clone spellings that merely contain a similar suffix. A
+/// synthesized symbol names its source function and its number among that
+/// function's helpers.
 fn synthesized_symbols(module: &str, prefix: &str) -> Vec<String> {
     let mut found: Vec<String> = module
         .lines()
         .filter_map(|line| line.split_once(prefix))
         .filter_map(|(head, tail)| head.starts_with("define ").then_some(tail))
         .filter_map(|tail| tail.split_once('('))
-        .filter(|(ordinal, _)| ordinal.parse::<u32>().is_ok())
-        .map(|(ordinal, _)| format!("{prefix}{ordinal}"))
+        .filter(|(name, _)| {
+            name.rsplit_once('.')
+                .is_some_and(|(_, number)| number.parse::<u32>().is_ok())
+        })
+        .map(|(name, _)| format!("{prefix}{name}"))
         .collect();
     found.sort_unstable();
     found.dedup();
@@ -854,7 +908,7 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
         );
     let unsplit = emit(source.as_bytes());
     let split = super::system::with_parallel_ir(source.as_bytes(), |program| {
-        use crate::backend::target::{TargetLayout, parallel_lane_frame_layout};
+        use crate::target::{TargetLayout, parallel_lane_frame_layout};
         let host = TargetLayout::host().expect("supported test host");
         let splitter = program
             .functions()
@@ -1371,6 +1425,84 @@ fn a_borrowed_read_modify_map_preserves_the_sequential_bytes() {
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
+/// Each iteration fills one proved-disjoint row through a unit helper written
+/// as a [GRAM-4] expression statement, the natural spelling of a call whose
+/// result is `unit`. PAR-2 judges that call by its row exactly as it judges a
+/// let-bound one, so the row loop is split as an independent map.
+const EXPRESSION_STATEMENT_ROWS: &[u8] =
+    br#"fn fill_row(output: &[u64], value: u64) -> result: unit writes(output) {
+  let count = deref(output).len;
+  for (i in 0_u64..count) {
+    set deref(output)[i] = value;
+  }
+  return unit;
+}
+
+fn rows(width: u64) -> result: Box<Array<u64>> pure contract {
+  requires width <= 4096_u64;
+} {
+  let cells = 64_u64 * width;
+  let values = box_array_filled::<u64>(count: cells, value: 0_u64);
+  for (r in 0_u64..64_u64) {
+    let start = r * width;
+    let end = start + width;
+    invariant bounded: end <= cells {
+      use width times (r + 1_u64 <= 64_u64);
+    }
+    let row = &values.inner[start..end];
+    fill_row(output: row, value: r);
+  }
+  return move values;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = rows(width: 1024_u64);
+  let count = values.inner.len;
+  if count != 65536_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  for (i in 0_u64..count) {
+    let seen = values.inner[i];
+    let expected = i / 1024_u64;
+    if seen != expected {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn an_expression_statement_row_map_is_split_and_keeps_its_rows() {
+    let ledger = super::compile_permission_ledger(EXPRESSION_STATEMENT_ROWS);
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.starts_with("PAR split") && line.contains(" rows ")),
+        "the row loop must be split as an independent map: {ledger:?}"
+    );
+    let unsplit = emit(EXPRESSION_STATEMENT_ROWS);
+    let split = emit_with_overlap(EXPRESSION_STATEMENT_ROWS);
+    let directory = test_directory();
+    let reference = Command::new(build_executable(&unsplit, &directory))
+        .output()
+        .expect("run the row map that splits nothing");
+    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
+    let executable = build_executable(&split, &directory);
+    for workers in ["0", "1", "4"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", workers)
+            .output()
+            .expect("run the split row map");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: every row must hold its own index"
+        );
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
 /// A loop that maps and reduces still selects the Reduction result path. The
 /// full map and all eight reduction bytes are independently observable.
 #[test]
@@ -1737,9 +1869,9 @@ fn admitted_combine_source() -> Vec<u8> {
     }
     let width = 8 * ADMITTED_COMBINES.len();
     source.push_str(&format!(
-        "\nfn main(inputs: Inputs) -> status: ExitStatus pure {{\n  \
-         let Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;\n  \
-         close_directory(factory: &factory, directory: move cwd);\n  \
+        "\nfn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{\n  \
+         let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;\n  \
+         std::fs::close_directory(factory: &factory, directory: move cwd);\n  \
          let report = box_array_filled::<u8>(count: {width}_u64, value: 0_u8);\n  \
          let window = &report.inner[0_u64..{width}_u64];\n"
     ));
@@ -1753,10 +1885,10 @@ fn admitted_combine_source() -> Vec<u8> {
         at = format!("a{index}");
     }
     source.push_str(&format!(
-        "  match write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
+        "  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
          end: {width}_u64) {{\n    Ok(value: accepted) => {{\n      \
-         return exit_status(code: 0_u8);\n    }}\n    Err(error: problem) => {{\n      \
-         return exit_status(code: 1_u8);\n    }}\n  }}\n}}\n"
+         return std::process::exit_status(code: 0_u8);\n    }}\n    Err(error: problem) => {{\n      \
+         return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n}}\n"
     ));
     source.into_bytes()
 }
@@ -1942,12 +2074,12 @@ fn composed(limit: u64) -> result: u64 pure {
   return acc;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let result = composed(limit: 4_u64);
   if result != 97_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = emit_with_overlap(source);
@@ -2216,7 +2348,7 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
                     .count(),
                 1
             );
-            let host = crate::backend::target::TargetLayout::host().expect("supported test host");
+            let host = crate::target::TargetLayout::host().expect("supported test host");
             let module = crate::backend::emitter::emit_llvm_with_layout(program, host)
                 .expect("ordinary lowering must retain valid nested synthesis ordinals")
                 .into_string();

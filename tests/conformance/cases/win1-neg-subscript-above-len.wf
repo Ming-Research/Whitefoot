@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-1: the subscript obligation is stated against len and never against cap, so an offset below cap but not below len is rejected.";
   let r = slots_new::<u64, 4>();

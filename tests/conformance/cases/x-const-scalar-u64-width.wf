@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 const maximum: u64 = 18446744073709551615_u64;
 
 fn main() -> status: ExitStatus pure {

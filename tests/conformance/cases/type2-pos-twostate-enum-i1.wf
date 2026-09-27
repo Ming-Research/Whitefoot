@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum ScanState {
   InSpace();
   InWord();
@@ -6,10 +9,10 @@ enum ScanState {
 fn flip(s: ScanState) -> function_result: ScanState pure {
   let out = match s {
     InSpace() => {
-      give InWord();
+      give ScanState::InWord();
     }
     InWord() => {
-      give InSpace();
+      give ScanState::InSpace();
     }
   }
   return out;
@@ -17,7 +20,7 @@ fn flip(s: ScanState) -> function_result: ScanState pure {
 
 fn main() -> status: ExitStatus pure {
   doc "A 2-variant tag-only enum is Bool-isomorphic: copy semantics, matched twice, loop-carried and set-mutated; lowers as i1. The unexpected final arm returns a nonzero status, making the runtime observation explicit through ordinary control.";
-  let st = InSpace();
+  let st = ScanState::InSpace();
   let i = 0_u64;
   loop @l {
     if i >= 5_u64 {

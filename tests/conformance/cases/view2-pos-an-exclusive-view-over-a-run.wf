@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The writing half of the range-reference domain over a frame-resident Slots run: the range reference is formed over the initialized window, one element is written through it, and the run itself is read back.";
   let one = slots_new::<u8, 2>();

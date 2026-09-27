@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn allocate_then_return(x: i32) -> function_result: i32 pure {
   doc "Takes a cell from the one heap and lets it go at scope exit; allocation and release carry no effect entry [STOR-8], so the declared row is the empty one.";
   let scratch = box_slots_new::<u8>(capacity: 1_u64);

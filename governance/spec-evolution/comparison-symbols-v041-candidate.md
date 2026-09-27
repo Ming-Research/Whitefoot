@@ -101,7 +101,7 @@ where an atom is expected ([GRAM-5]), and `use 3 * a <= b;` does not derive
 - Docs: `README.md`, `compiler/README.md`, `docs/patterns.md`,
   `docs/why-whitefoot.md` (current examples only; the historical kernels in
   Part II keep their historical spelling), `docs/current-plan.md`,
-  `docs/roadmap.md` (FLOOR-5), `mcts_mem/whitefoot/surface-form/operation-spelling.md`.
+  `docs/roadmap.md` (FLOOR-5), [mcts_mem/whitefoot/surface-form/operation-spelling.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form/operation-spelling.md).
 - Research programs: the programs a maintained runner still compiles
   through the current compiler are respelled by the same rewriter and were
   compiled through the branch compiler afterwards: the ten

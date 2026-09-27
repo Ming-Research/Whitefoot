@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f(cell: &Box<Slots<u64>>, x: i32) -> result: i32 writes(cell) {
   doc "Declares a write of the cell content that the body never performs.";
   return x;

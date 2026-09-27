@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn merge_step(left: Array<u32, 3>, right: Array<u32, 3>, out: Array<u32, 3>, i: u64, j: u64, k: u64) -> result: Array<u32, 3> pure contract {
   requires i <= 3_u64;
   requires j <= 3_u64;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main () -> status: ExitStatus pure {
   doc "An OPNAME mode suffix is a closed word set; a bad suffix is illegal [FORM-3].";
   let a = iadd.bogus<i32>(1_i32, 2_i32);

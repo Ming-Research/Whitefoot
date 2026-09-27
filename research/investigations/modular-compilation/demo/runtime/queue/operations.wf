@@ -1,0 +1,27 @@
+alias Work = pkg::data::Job;
+
+fn new() -> made: Queue pure contract {
+  ensures made.storage.len == 0_u64;
+} {
+  doc "The helper's postcondition reaches storage at its result destination, and the CONSTRUCT placement carries the ring's length into the queue this function returns.";
+  let storage = new_storage();
+  let built = Queue(storage: move storage);
+  return move built;
+}
+
+fn push(queue: &Queue, job: Work) -> result: unit writes(queue.storage) contract {
+  requires deref(queue).storage.len < capacity;
+  ensures deref(queue).storage.len == deref(entry(queue)).storage.len + 1_u64;
+} {
+  doc "The readonly storage field is an ordinary writable field here, because this module declares it.";
+  place_back(window: &deref(queue).storage, value: job);
+  return unit;
+}
+
+fn pop(queue: &Queue) -> job: Work writes(queue.storage) contract {
+  requires deref(queue).storage.len > 0_u64;
+  ensures deref(queue).storage.len + 1_u64 == deref(entry(queue)).storage.len;
+} {
+  let taken = take_front(window: &deref(queue).storage);
+  return taken;
+}

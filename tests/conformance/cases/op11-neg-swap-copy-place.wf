@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-11: a swap over a copy place is a hard error at the first borrow expression; the restructuring is to read the two values and assign them back.";
   let a = 1_u64;

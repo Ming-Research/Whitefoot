@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1 applies inside an index place: a u64 offset is copy and cannot be written with move.";
   let items = slots_new::<u8, 2>();

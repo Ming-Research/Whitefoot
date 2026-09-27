@@ -5,12 +5,12 @@ use super::{assert_rule, with_semantics};
 
 #[test]
 fn retains_each_mode_and_rejects_unsigned_types() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let wrapped = ineg.wrap(-128_i8);
   let exact = ineg(-42_i16);
   let negation_is_defined = ineg.defined(-42_i64);
   let negation_result = ineg.checked(-42_i32);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -42,7 +42,7 @@ fn retains_each_mode_and_rejects_unsigned_types() {
     });
 
     assert_rule(
-        b"fn main() -> status: ExitStatus pure {\n  let value = ineg.wrap(1_u8);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ineg.wrap(1_u8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
         SemanticIssueKind::InvalidOperation,
     );

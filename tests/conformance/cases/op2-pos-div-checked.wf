@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn classify(x: i32, y: i32) -> return_value: i32 pure {
   doc "/checked yields Result<T, DivError> [OP-2]: Err(DivideByZero()) for a zero divisor, Err(DivOverflow()) for signed iK::MIN/-1, else Ok.";
   match x /checked y {

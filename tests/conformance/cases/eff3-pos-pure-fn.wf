@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn dbl(x: i32) -> result: i32 pure {
   doc "A genuinely `pure` body: total `.wrap` addition and no reads, writes, or allocation [EFF-3].";
   let r = x +wrap x;

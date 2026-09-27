@@ -1,5 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2: Box is the prelude's opaque struct, and an opaque struct's constructor entry exists to be refused; a constructor call whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete call, with the restructuring build it with a construction function. A Box comes only from box_new, box_array_filled, box_slots_new or box_ring_new [OP-13, PRE-1].";
+  doc "TYPE-2: Box is the prelude's opaque struct, and an opaque struct's constructor entry exists to be refused; a constructor call whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete call, with the repair to build it with a construction function. A Box comes only from box_new, box_array_filled, box_slots_new or box_ring_new [OP-13, PRE-1].";
   let b = Box::<u64>(inner: 7_u64);
   let v = b.inner;
   if v == 7_u64 {

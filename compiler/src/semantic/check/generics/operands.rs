@@ -192,7 +192,7 @@ const OPERAND_ROWS: &[OperandRow] = &[
     },
 ];
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Whether this template is one of the eleven rows whose type parameters
     /// an operand supplies [OP-10, OP-11, OP-14].
     ///
@@ -215,6 +215,31 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             return Ok(None);
         }
         Ok(Some(index))
+    }
+
+    /// Whether this instance is of the one row whose undischarged requirement
+    /// is reported under [OP-14] "at the complete `call`", where every other
+    /// callee's is an [FN-8] report.
+    pub(in crate::semantic::check) fn empties_run(
+        &self,
+        function: super::super::super::model::FunctionId,
+    ) -> Result<bool, CheckStop> {
+        let signature = self
+            .signatures
+            .get(function.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(&template_index) = self.templates_by_declaration.get(&signature.declaration)
+        else {
+            return Ok(false);
+        };
+        let template = self
+            .function_templates
+            .get(template_index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(self
+            .operand_directed_row_index(template)?
+            .and_then(|index| OPERAND_ROWS.get(index))
+            .is_some_and(|row| row.rule == SemanticRule::Op14))
     }
 
     /// The substitution one call to an operand-directed row selects [OP-10].
@@ -272,8 +297,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         self.issue_node(
             row.rule,
             call,
-            SemanticIssueKind::type_mismatch(
-                match row.admitted {
+            SemanticIssueKind::UnadmittedOperandShape {
+                expected: match row.admitted {
                     AdmittedShapes::Window => "a `Slots` or `Ring` operand [OP-10]",
                     AdmittedShapes::Ring => "a `Ring` operand, which is what this row admits",
                     AdmittedShapes::BoxedRuntimeSlots => "a `Box<Slots<T>>` operand",
@@ -282,8 +307,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     }
                     AdmittedShapes::AnyValue => "an owned place of one type [OP-11]",
                 },
-                "an operand outside this operation's admitted set",
-            ),
+                mechanical_fix: "pass an operand of the admitted shape, or use an operation whose row admits this operand's shape",
+            },
         )
     }
 
@@ -407,7 +432,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// type it can name. Every ownership, liveness, validity and effect
     /// judgment on the same operand is made once, by the ordinary argument
     /// check against the instance this oracle selects.
-    fn place_selected_type(
+    pub(in crate::semantic::check) fn place_selected_type(
         &self,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -425,7 +450,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// A range binding stores its element in `LocalBinding::ty`, so retaining
     /// the kind prevents an index from projecting through a composite element
     /// a second time.
-    fn place_selected_kind(
+    pub(in crate::semantic::check) fn place_selected_kind(
         &self,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,

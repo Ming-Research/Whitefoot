@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn consume_images(quotient: u64, doubled: u64, count: u64) -> result: unit pure contract {
   requires quotient <= count;
   requires doubled <= count;

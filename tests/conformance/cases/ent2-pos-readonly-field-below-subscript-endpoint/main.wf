@@ -1,0 +1,47 @@
+alias Entry = pkg::kinds::Entry;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias kinds = pkg::kinds;
+
+fn row_sum(entries: &[Entry], cells: &[u8], i: u64) -> total: u64 reads(entries), reads(cells) contract {
+  requires i < deref(entries).len;
+} {
+  doc "Through a range reference the element's readonly field is the same clause (b) term, so its guard carries to the endpoint and the binder bound discharges the element read.";
+  let acc = 0_u64;
+  if deref(entries)[i].width <= deref(cells).len {
+    for (c in 0_u64..deref(entries)[i].width) {
+      let cell = deref(cells)[c];
+      let widened = cvt::<u8, u64>(cell);
+      set acc = acc +wrap widened;
+    }
+  }
+  return acc;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A readonly field below a subscript is an ENT-2 clause (b) term: the guard establishes its bound, S11 equates the upper capture with it, and each cell read discharges without a preceding let.";
+  let narrow = kinds::make_entry(width: 3_u64, weight: 1_u64);
+  let entries = array_filled::<Entry, 4>(value: narrow);
+  set entries[2_u64] = kinds::make_entry(width: 2_u64, weight: 1_u64);
+  let cells = array_filled::<u8, 3>(value: 7_u8);
+  let i = 1_u64;
+  let total = 0_u64;
+  if entries[i].width <= cells.len {
+    for (c in 0_u64..entries[i].width) {
+      let cell = cells[c];
+      let widened = cvt::<u8, u64>(cell);
+      set total = total +wrap widened;
+    }
+  }
+  if total == 21_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let view = &entries[0_u64..4_u64];
+  let window = &cells[0_u64..3_u64];
+  let viewed = row_sum(entries: view, cells: window, i: 2_u64);
+  if viewed == 14_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 2_u8);
+}

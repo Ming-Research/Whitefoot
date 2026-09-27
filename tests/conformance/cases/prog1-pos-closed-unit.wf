@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn helper(x: i32) -> return_value: i32 pure {
   doc "In-unit helper; every callee name is defined within this compilation unit. Explicit wrapping arithmetic makes the helper total so this case isolates closed-world resolution.";
   return x +wrap 1_i32;

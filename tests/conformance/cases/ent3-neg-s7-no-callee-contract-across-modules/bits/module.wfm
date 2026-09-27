@@ -1,0 +1,1 @@
+public fn top(value: u64) -> result: u64 pure doc "The high byte of a word.";

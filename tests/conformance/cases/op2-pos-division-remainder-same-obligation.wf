@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn modulo(n: u64, d: u64) -> return_value: u64 pure {
   doc "`%` carries the identical division obligation as `/` and discharges from the identical fact [OP-2, ENT-6]: one obligation family covers both spellings, so a dominating branch establishing the nonzero divisor makes the remainder site total and `pure`.";
   if d > 0_u64 {

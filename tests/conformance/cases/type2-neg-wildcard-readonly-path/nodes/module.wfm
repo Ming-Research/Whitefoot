@@ -1,0 +1,4 @@
+public struct Node {
+  public value: u64;
+  public readonly next: Option<Box<Node>>;
+}

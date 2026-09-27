@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Tagged {
   Num(n: i32);
   Nil();
@@ -5,7 +8,7 @@ enum Tagged {
 
 fn main() -> status: ExitStatus pure {
   doc "Statement-position match over an owned payload enum: the moved scrutinee's payload is copied into the arm as a fresh local, and the signed-remainder range proves the exact multiplication [TYPE-2, GRAM-10, OWN-13, OP-1].";
-  let t = Num(n: 21_i32);
+  let t = Tagged::Num(n: 21_i32);
   match t {
     Num(n: v) => {
       let bounded = v % 1073741824_i32;

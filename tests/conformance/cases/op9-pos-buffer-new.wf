@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn make(n: u64) -> made: Box<Slots<i32>> pure contract {
   requires n <= 1024_u64;
 } {

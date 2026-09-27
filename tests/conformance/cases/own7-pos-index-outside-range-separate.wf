@@ -1,0 +1,64 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit reads(values[start..end]), writes(values[slot]) contract {
+  requires start <= end;
+  requires end <= 4_u64;
+  requires slot < 4_u64;
+} {
+  doc "Writes the length of the run values[start..end] into values[slot]. EFF-5: one argument supplies both entries, and whether an index step overlaps a range step depends on the values, so every call compares them.";
+  let run = &deref(values)[start..end];
+  let length = deref(run).len;
+  set deref(values)[slot] = length;
+  return unit;
+}
+
+fn record_after(values: &Array<u64, 4>, lo: u64, hi: u64, at: u64) -> result: unit writes(values) contract {
+  requires lo <= hi;
+  requires hi <= at;
+  requires at < 4_u64;
+} {
+  doc "OWN-7: the contract proves the slot at or after the run's end, hi <= at.";
+  record_run(values: values, start: lo, end: hi, slot: at);
+  return unit;
+}
+
+fn record_before(values: &Array<u64, 4>, lo: u64, hi: u64, at: u64) -> result: unit writes(values) contract {
+  requires at < lo;
+  requires lo <= hi;
+  requires hi <= 4_u64;
+} {
+  doc "OWN-7: the contract proves the slot before the run's start, at < lo.";
+  record_run(values: values, start: lo, end: hi, slot: at);
+  return unit;
+}
+
+fn record_empty(values: &Array<u64, 4>, lo: u64, hi: u64, at: u64) -> result: unit writes(values) contract {
+  requires lo <= hi;
+  requires hi <= lo;
+  requires hi <= 4_u64;
+  requires at < 4_u64;
+} {
+  doc "OWN-7: the contract proves the run empty, hi <= lo, and says nothing about where the slot lies.";
+  record_run(values: values, start: lo, end: hi, slot: at);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OWN-7 separates an index step from a range step under one containing path when the index is proved before the range's start or at or after its end, or the range empty. The first call's written values put slot 3 at the end of 0..2; each other call is proved by its caller's contract. The program observes each run length in its slot.";
+  let values = array_filled::<u64, 4>(value: 9_u64);
+  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 3_u64);
+  record_after(values: &values, lo: 0_u64, hi: 1_u64, at: 2_u64);
+  record_before(values: &values, lo: 1_u64, hi: 3_u64, at: 0_u64);
+  record_empty(values: &values, lo: 1_u64, hi: 1_u64, at: 1_u64);
+  if values[0_u64] == 2_u64 {
+    if values[1_u64] == 0_u64 {
+      if values[2_u64] == 1_u64 {
+        if values[3_u64] == 2_u64 {
+          return exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}

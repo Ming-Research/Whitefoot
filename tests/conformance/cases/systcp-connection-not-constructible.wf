@@ -1,3 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpReceive = std::net::TcpReceive;
+alias TcpSend = std::net::TcpSend;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-5: TcpConnection has an ordinary public constructor, but unit is not TcpReceive or TcpSend. The original two wrong field values remain rejected.";
   let link = TcpConnection(receive: unit, send: unit);

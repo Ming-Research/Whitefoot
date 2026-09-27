@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A reference holder over a heap-resident run: let holder = &cell.inner; names the path the Box content occupies, and the measure read and the subscript reach that one run through that one holder rather than through one shape each.";
   let cell = box_slots_new::<u8>(capacity: 2_u64);

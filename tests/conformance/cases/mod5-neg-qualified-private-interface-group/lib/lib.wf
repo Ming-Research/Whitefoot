@@ -1,0 +1,3 @@
+fn seven() -> result: u8 pure {
+  return 7_u8;
+}

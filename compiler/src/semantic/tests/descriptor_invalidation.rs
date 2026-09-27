@@ -219,18 +219,18 @@ fn carry(third_window: Box<Ring<u8>>) -> result: unit pure contract {
   requires third_window.inner.cap == 8_u64;
   requires third_window.inner.head == 3_u64;
 } {
-  let end = End();
+  let end = Chain::End();
   let end_box = box_new::<Chain>(value: move end);
-  let deepest_value = End();
+  let deepest_value = Chain::End();
   let deepest = box_new::<Chain>(value: move deepest_value);
-  set deepest.inner = Next(window: move third_window, tail: move end_box);
+  set deepest.inner = Chain::Next(window: move third_window, tail: move end_box);
   let second_window = box_ring_new::<u8>(capacity: 4_u64);
   place_back(window: &second_window.inner, value: 7_u8);
-  let middle_value = End();
+  let middle_value = Chain::End();
   let middle_box = box_new::<Chain>(value: move middle_value);
-  set middle_box.inner = Next(window: move second_window, tail: move deepest);
+  set middle_box.inner = Chain::Next(window: move second_window, tail: move deepest);
   let first_window = box_ring_new::<u8>(capacity: 4_u64);
-  let root = Next(window: move first_window, tail: move middle_box);
+  let root = Chain::Next(window: move first_window, tail: move middle_box);
   let moved = move root;
   match moved {
     End() => {
@@ -280,9 +280,9 @@ fn recursive_box_placement_does_not_revive_an_overwritten_descendants_measure() 
     let source = RECURSIVE_BOX_MEASURES.replace(
         "  let second_window =",
         r#"  let replacement_window = box_ring_new::<u8>(capacity: 4_u64);
-  let replacement_end = End();
+  let replacement_end = Chain::End();
   let replacement_tail = box_new::<Chain>(value: move replacement_end);
-  set deepest.inner = Next(window: move replacement_window, tail: move replacement_tail);
+  set deepest.inner = Chain::Next(window: move replacement_window, tail: move replacement_tail);
   let second_window ="#,
     );
     assert_rule_kind(source.as_bytes(), SemanticRule::Inv1, |kind| {
@@ -343,9 +343,9 @@ fn examine(flag: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   examine(flag: 0_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Inv1, |_| true);
@@ -373,9 +373,9 @@ fn examine(flag: u64) -> result: u64 pure {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let quotient = examine(flag: 0_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op2, |_| true);
@@ -383,7 +383,7 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn replacing_an_indexed_window_kills_its_old_length() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let row = slots_new::<u8, 4>();
   place_back(window: &row, value: 7_u8);
   let table = slots_new::<Slots<u8, 4>, 2>();
@@ -393,9 +393,9 @@ fn replacing_an_indexed_window_kills_its_old_length() {
     let blank = slots_new::<u8, 4>();
     set table[index] = move blank;
     let observed = table[index][0_u64];
-    return exit_status(code: observed);
+    return std::process::exit_status(code: observed);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Op4, |_| true);
@@ -403,7 +403,7 @@ fn replacing_an_indexed_window_kills_its_old_length() {
 
 #[test]
 fn a_written_proof_cannot_reuse_a_replaced_elements_length() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let row = slots_new::<u8, 4>();
   place_back(window: &row, value: 7_u8);
   let table = slots_new::<Slots<u8, 4>, 2>();
@@ -414,7 +414,7 @@ fn a_written_proof_cannot_reuse_a_replaced_elements_length() {
     set table[index] = move blank;
     invariant stale: table[index].len == 1_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Inv1, |_| true);
@@ -422,7 +422,7 @@ fn a_written_proof_cannot_reuse_a_replaced_elements_length() {
 
 #[test]
 fn replacing_a_distinct_element_preserves_the_measured_element() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let row = slots_new::<u8, 4>();
   place_back(window: &row, value: 7_u8);
   let other = slots_new::<u8, 4>();
@@ -434,9 +434,9 @@ fn replacing_a_distinct_element_preserves_the_measured_element() {
     let blank = slots_new::<u8, 4>();
     set table[1_u64] = move blank;
     let observed = table[0_u64][0_u64];
-    return exit_status(code: observed);
+    return std::process::exit_status(code: observed);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);
@@ -450,11 +450,11 @@ fn changing_length_preserves_a_runtime_capacity_fact() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<u8>(capacity: 4_u64);
   place_back(window: &window.inner, value: 7_u8);
   check_capacity(value: window.inner.cap);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source);

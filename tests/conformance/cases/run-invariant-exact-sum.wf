@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A counted loop and affine invariant prove every exact sum step before execution: sum 0..4 == 10.";
   let sum = 0_u64;

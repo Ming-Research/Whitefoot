@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Chunk {
   low: Slots<u64, 256>;
   high: Slots<u64, 256>;
@@ -216,11 +219,7 @@ fn radix_scatter(input: &[u64], bit: u32) -> result: Box<Array<u64>> reads(input
   let high_output = &highs.inner[0_u64..capacity];
   let packed = pack_chunks(chunks: source, first: 0_u64, lows: low_output, highs: high_output);
   let output_count = low_total + high_total;
-  invariant output_limit: output_count <= 33554944_u64 {
-    use full_low_bound;
-    use full_high_bound;
-    use 2 times capacity_limit;
-  }
+  invariant output_limit: output_count <= 33554944_u64;
   let output = box_array_filled::<u64>(count: output_count, value: 0_u64);
   let low_source = &lows.inner[0_u64..low_total];
   let high_source = &highs.inner[0_u64..high_total];

@@ -8,13 +8,13 @@ use crate::syntax::NodeId;
 use crate::{DeclarationId, NodePath, Production, SemanticCompilerFailure, SemanticRule};
 
 use super::super::super::entailment::{
-    CallGoalDisposition, EntailmentContext, FunctionEntailment, contract_implies,
+    CallGoalDisposition, EntailmentContext, FunctionEntailment, analyze_function, contract_implies,
     finalize_function_entailment,
 };
 use super::super::super::goal::{CheckedRequirement, GoalDatum, GoalExpression, GoalTemplate};
 use super::super::super::model::{
     BindingId, CheckedBoundPostcondition, CheckedCallContract, CheckedContractQuery,
-    CheckedFunction, CheckedParameter, CheckedType, ContractQueryId,
+    CheckedExpression, CheckedFunction, CheckedParameter, CheckedType, ContractQueryId,
 };
 use super::super::super::postcondition::PostconditionConstantOrigin;
 use super::super::requires::{ExpandedClauseDatum, ExpandedClauseExpression};
@@ -30,6 +30,8 @@ struct InterfaceContracts {
 struct InterfaceRequirement {
     clause: NodePath,
     template: GoalTemplate,
+    /// The [ENT-2] clause (b) places the requirement forms.
+    places: Vec<CheckedExpression>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -51,14 +53,63 @@ struct ContractVariable {
     ty: CheckedType,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_formal_contract_formation(
         &self,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
         self.check_entry_formers(signature)?;
-        self.behavior_contracts(signature)?;
-        Ok(())
+        let contracts = self.behavior_contracts(signature)?;
+        self.judge_formal_requirement_places(signature, &contracts.requires)
+    }
+
+    /// [ENT-2, FN-8] a formal's block has an ordinary block's formation rules,
+    /// so each requirement forms its places at the body entry of whatever
+    /// function is bound to it, in the state holding the formal's requirements
+    /// written before its clause, and their subscripts owe [OP-4] there. That
+    /// state is the hypothetical premise set every [FN-4] query over these
+    /// requirements establishes, so no query premise names a place whose
+    /// subscripts nothing judged.
+    fn judge_formal_requirement_places(
+        &self,
+        signature: &FunctionSignature,
+        requires: &[InterfaceRequirement],
+    ) -> Result<(), CheckStop> {
+        if requires
+            .iter()
+            .all(|requirement| requirement.places.is_empty())
+        {
+            return Ok(());
+        }
+        let variables = signature
+            .parameters
+            .iter()
+            .map(|parameter| ContractVariable {
+                mode: parameter.mode,
+                ty: parameter.ty,
+            })
+            .collect::<Vec<_>>();
+        let premises = requires
+            .iter()
+            .map(|requirement| {
+                (
+                    requirement.clause.clone(),
+                    requirement.template.clone(),
+                    requirement.places.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut function = self.contract_hypothesis(signature, &variables, premises)?;
+        // A residual is read at the formal's own clause, so it names the
+        // formal's own parameters rather than the alpha-renamed datums.
+        for (parameter, formal) in function.parameters.iter_mut().zip(&signature.parameters) {
+            parameter.name.clone_from(&formal.name);
+        }
+        self.form_function_obligation_records(&mut function)?;
+        let entailment =
+            self.with_contract_context(&function, |context| analyze_function(&function, context));
+        function.entailment = entailment;
+        self.entailment_rejection(&function)
     }
 
     pub(super) fn check_behavior_contracts(
@@ -231,7 +282,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     /// One finite [FN-4] query over alpha-renamed declaration datums. The
     /// temporary checked function has no body and publishes no summary; its
     /// requirements are only the hypothetical premise set submitted to the
-    /// ordinary S4/AUTO entry.
+    /// ordinary S4/AUTO entry. A formal requirement premise's places were
+    /// judged in this same premise state when the formal was formed
+    /// [`Self::judge_formal_requirement_places`], so the query forms none.
     fn contract_implication(
         &self,
         signature: &FunctionSignature,
@@ -243,6 +296,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if premise_paths.len() != premises.len() {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
+        let premises = premise_paths
+            .iter()
+            .zip(premises)
+            .map(|(clause, template)| (clause.clone(), template.clone(), Vec::new()))
+            .collect();
+        let function = self.contract_hypothesis(signature, variables, premises)?;
+        Ok(self.with_contract_context(&function, |context| {
+            contract_implies(&function, context, goal)
+        }))
+    }
+
+    /// The body-less function one contract query or formation judgment
+    /// runs in: its parameters are alpha-renamed contract datums, and its
+    /// requirements are the hypothetical premise set, each with the clause
+    /// places it forms.
+    fn contract_hypothesis(
+        &self,
+        signature: &FunctionSignature,
+        variables: &[ContractVariable],
+        premises: Vec<(NodePath, GoalTemplate, Vec<CheckedExpression>)>,
+    ) -> Result<CheckedFunction, CheckStop> {
         let parameters = variables
             .iter()
             .enumerate()
@@ -263,26 +337,31 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 })
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
-        let requirements = premise_paths
-            .iter()
-            .zip(premises)
-            .map(|(clause, template)| CheckedRequirement {
-                template: template.clone(),
-                clause: clause.clone(),
-            })
-            .collect::<Vec<_>>();
-        let function = CheckedFunction {
+        let mut requirements = Vec::with_capacity(premises.len());
+        let mut requirement_places = Vec::with_capacity(premises.len());
+        for (clause, template, places) in premises {
+            requirements.push(CheckedRequirement { template, clause });
+            requirement_places.push(places);
+        }
+        Ok(CheckedFunction {
             formal_hypothesis: true,
             id: signature.id,
             declaration: signature.declaration,
+            module: self
+                .resolved
+                .declaration(signature.declaration)
+                .and_then(crate::DeclarationRecord::module)
+                .unwrap_or(crate::ModuleId::BUNDLE_ROOT),
             name: signature.name.clone(),
             symbol: signature.symbol.clone(),
+            function_actuals: Vec::new(),
             region_parameters: Vec::new(),
             parameters,
             result_mode: signature.result_mode,
             result: signature.result,
             declared_state_writes: Vec::new(),
             requirements,
+            requirement_places,
             postconditions: Vec::new(),
             body: None,
             reference_origins: Vec::new(),
@@ -290,8 +369,18 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
-        };
+        })
+    }
+
+    /// Runs `query` in the declaration-only proof context of one contract
+    /// hypothesis: no callee, contract query or verified summary is visible.
+    fn with_contract_context<ResultValue>(
+        &self,
+        function: &CheckedFunction,
+        query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,
+    ) -> ResultValue {
         let binding_names = function
             .parameters
             .iter()
@@ -312,7 +401,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             verified_postcondition_proofs: &[],
             binding_names: &binding_names,
         };
-        Ok(contract_implies(&function, &context, goal))
+        query(&context)
     }
 
     fn behavior_contracts(
@@ -351,13 +440,16 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             next_loop: &mut next_loop,
             binding_names: &mut names,
         };
-        let requires = self
-            .check_requires(signature, block, &mut bindings.clone(), &mut counters)?
+        let checked =
+            self.check_requires(signature, block, &mut bindings.clone(), &mut counters)?;
+        let requires = checked
             .requirements
             .into_iter()
-            .map(|requirement| InterfaceRequirement {
+            .zip(checked.places)
+            .map(|(requirement, places)| InterfaceRequirement {
                 clause: requirement.clause,
                 template: requirement.template,
+                places,
             })
             .collect();
         let mut ensures = Vec::new();

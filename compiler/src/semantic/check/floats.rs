@@ -35,6 +35,47 @@ pub(super) fn parse_float_literal(bytes: &[u8]) -> Option<CheckedValue> {
     Some(CheckedValue::Float { ty, bits })
 }
 
+/// One float value in the source spelling that denotes it [FORM-5, OP-1].
+///
+/// A finite value is its unique canonical literal, suffix included, which is
+/// the spelling [FORM-7] admits for it. No literal denotes a non-finite value
+/// [FORM-5], so those render as the operation producing them: `finf` and its
+/// `fneg`, `fnan` for the canonical quiet NaN, and the `reinterpret` of the
+/// bits for any other NaN payload [OP-8].
+pub(in crate::semantic) fn float_value_spelling(ty: FloatType, bits: u64) -> String {
+    let (suffix, carrier, finite, infinite, negative, canonical_nan) = match ty {
+        FloatType::F32 => {
+            let value = f32::from_bits(u32::try_from(bits).unwrap_or(u32::MAX));
+            (
+                "f32",
+                "u32",
+                value.is_finite().then(|| canonical_f32(value)).flatten(),
+                value.is_infinite(),
+                value.is_sign_negative(),
+                bits == 0x7fc0_0000,
+            )
+        }
+        FloatType::F64 => {
+            let value = f64::from_bits(bits);
+            (
+                "f64",
+                "u64",
+                value.is_finite().then(|| canonical_f64(value)).flatten(),
+                value.is_infinite(),
+                value.is_sign_negative(),
+                bits == 0x7ff8_0000_0000_0000,
+            )
+        }
+    };
+    match finite {
+        Some(literal) => format!("{literal}_{suffix}"),
+        None if infinite && negative => format!("fneg(finf::<{suffix}>())"),
+        None if infinite => format!("finf::<{suffix}>()"),
+        None if canonical_nan => format!("fnan::<{suffix}>()"),
+        None => format!("reinterpret::<{carrier}, {suffix}>({bits}_{carrier})"),
+    }
+}
+
 fn canonical_f32(value: f32) -> Option<String> {
     canonical_float(
         value.is_sign_negative(),
@@ -205,7 +246,9 @@ fn with_sign(spelling: String, negative: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_f32, canonical_f64, parse_float_literal};
+    use super::{
+        FloatType, canonical_f32, canonical_f64, float_value_spelling, parse_float_literal,
+    };
 
     #[test]
     fn canonical_float_spelling_uses_the_shortest_grammar_form() {
@@ -262,5 +305,39 @@ mod tests {
             canonical_f64(f64::from_bits(1)).as_deref(),
             Some("2.5e-324")
         );
+    }
+
+    /// [FORM-5] a finite value renders as the one literal the lexer admits
+    /// for it, which a diagnostic once rendered as its bit pattern; a value no
+    /// literal denotes renders as the operation producing it [OP-1, OP-8].
+    #[test]
+    fn a_float_value_renders_as_its_canonical_source_spelling() {
+        for (ty, bits, spelling) in [
+            (FloatType::F64, 1.0_f64.to_bits(), "1.0_f64"),
+            (FloatType::F64, (-0.0_f64).to_bits(), "-0.0_f64"),
+            (FloatType::F64, 6.022e23_f64.to_bits(), "6.022e23_f64"),
+            (FloatType::F32, u64::from(1.5_f32.to_bits()), "1.5_f32"),
+            (FloatType::F32, u64::from(0.1_f32.to_bits()), "0.1_f32"),
+            (FloatType::F64, f64::INFINITY.to_bits(), "finf::<f64>()"),
+            (
+                FloatType::F32,
+                u64::from(f32::NEG_INFINITY.to_bits()),
+                "fneg(finf::<f32>())",
+            ),
+            (FloatType::F64, 0x7ff8_0000_0000_0000, "fnan::<f64>()"),
+            (
+                FloatType::F64,
+                0x7ff8_0000_0000_0001,
+                "reinterpret::<u64, f64>(9221120237041090561_u64)",
+            ),
+        ] {
+            assert_eq!(float_value_spelling(ty, bits), spelling);
+            if spelling.ends_with("_f64") || spelling.ends_with("_f32") {
+                assert!(
+                    parse_float_literal(spelling.as_bytes()).is_some(),
+                    "{spelling} must be the admitted literal"
+                );
+            }
+        }
     }
 }

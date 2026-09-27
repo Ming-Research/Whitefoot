@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn overwrite(slots: &Slots<u64, 2>, at: u64) -> result: unit writes(slots[at]) contract {
   requires at < deref(slots).len;
 } {

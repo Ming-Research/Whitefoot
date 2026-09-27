@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bad(a: f32) -> return_value: f32 pure {
   doc "fneg is EXACT and dotless [OP-3]; fneg.strict names no table op and must be rejected.";
   return fneg.strict::<f32>(a);

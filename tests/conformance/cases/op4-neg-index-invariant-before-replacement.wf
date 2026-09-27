@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn probe<const n: u64>(table: Slots<u8, n>, idx: u64, limit: u64) -> found: u8 pure contract {
   define spare = table.len;
   requires idx < limit;

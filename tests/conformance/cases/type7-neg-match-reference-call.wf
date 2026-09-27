@@ -1,10 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum State {
   Ready();
 }
 
 fn make() -> result: Box<State> pure {
   doc "Hands back the cell itself, references never being returned [REF-3].";
-  let state = Ready();
+  let state = State::Ready();
   let cell = box_new::<State>(value: state);
   return move cell;
 }

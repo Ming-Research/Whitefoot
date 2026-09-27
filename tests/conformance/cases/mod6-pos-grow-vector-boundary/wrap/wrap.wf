@@ -1,0 +1,38 @@
+alias GrowVector = pkg::vec::GrowVector;
+
+fn push_one<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < ceiling;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+} {
+  let length = pkg::vec::grow_vector_append::<T, ceiling>(values: values, value: move value);
+  return length;
+}
+
+fn fill<fn push(values: &GrowVector<u64, 8>, value: u64) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < 8_u64;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+}>(values: &GrowVector<u64, 8>, count: u64) -> total: u64 writes(values.storage) contract {
+  requires count <= 8_u64;
+  requires deref(values).storage.inner.len == 0_u64;
+  ensures total == deref(values).storage.inner.len;
+} {
+  let half = count / 2_u64;
+  for @pairs (
+    index in 0_u64..half,
+    invariant counted: deref(values).storage.inner.len == index + index
+  ) {
+    invariant room: deref(values).storage.inner.len + 2_u64 <= count {
+      use counted;
+      use (2_u64 * half <= count);
+      use 2 times (index < half);
+    }
+    let first = push(values: values, value: index);
+    let second = push(values: values, value: index);
+  }
+  let total = deref(values).storage.inner.len;
+  return total;
+}

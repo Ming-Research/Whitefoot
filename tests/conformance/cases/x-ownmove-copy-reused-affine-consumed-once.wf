@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 nocopy enum Flag {
   A();
   B();
@@ -20,7 +23,7 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 3_u8);
   }
-  let f = A();
+  let f = Flag::A();
   match move f {
     A() => {
     }

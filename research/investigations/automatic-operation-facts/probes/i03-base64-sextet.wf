@@ -1,0 +1,11 @@
+fn first_sextet(byte: u8) -> result: u8 pure {
+  let alphabet = array_filled::<u8, 64>(value: 65_u8);
+  let sextet = ishr(byte, 2_u32);
+  let index = cvt::<u8, u64>(sextet);
+  let digit = alphabet[index];
+  return digit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

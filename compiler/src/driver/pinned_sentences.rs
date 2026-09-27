@@ -7,7 +7,8 @@
 //! rendered, and not pinned by a test. This module is the one home for the corpus that
 //! closes that: one minimal source per form, the rule it must cite, and the
 //! exact fragments its rendered rejection must contain. Adding a sentence to
-//! the compiler means adding a row here.
+//! the compiler means adding a row here, or, for a repair [DIAG-1], a pair in
+//! `driver::pinned_repairs`, which pins the programs the repair produces.
 //!
 //! The rows are deliberately redundant with the per-item tests in
 //! `driver::tests` and in `semantic::tests`: those pin one sentence beside the
@@ -76,15 +77,15 @@ const PROBES: &[Probe] = &[
         name: "const-name-is-not-an-ident.wf",
         source: br#"const Limit: u64 = 8_u64;
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FORM-3",
-        // The whole payload, so the field names of the hand-written `Debug`
-        // are pinned with the sentence they carry.
+        // The whole payload, so the field labels the record prints are pinned
+        // with the sentence they carry.
         sentences: &[
-            r#"SyntaxIssue { rule: Form3, coordinate: SyntaxCoordinate { source: SourceId(0), start: ByteOffset(6), end: ByteOffset(11) }, expected: ["IDENT"], mechanical_fix: "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape" }"#,
+            "\n  expected: [IDENT]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
         ],
     },
     Probe {
@@ -93,8 +94,8 @@ fn main() -> status: ExitStatus pure {
   seq: u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FORM-3",
@@ -110,11 +111,11 @@ fn main() -> status: ExitStatus pure {
     // LABEL — whose own sentences no longer list REGIONID either.
     Probe {
         name: "break-target-is-not-a-label.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   loop @spin {
     break spin;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FORM-3",
@@ -142,8 +143,8 @@ fn main() -> status: ExitStatus pure {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "GRAM-2",
@@ -162,8 +163,8 @@ fn helper(value: u64) -> out: u64 pure {
   return a;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "GRAM-9",
@@ -179,8 +180,8 @@ fn main() -> status: ExitStatus pure {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "GRAM-9",
@@ -199,8 +200,8 @@ fn main() -> status: ExitStatus pure {
   return deref(destination).len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "MSR-3",
@@ -218,8 +219,8 @@ fn main() -> status: ExitStatus pure {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "CALL-6",
@@ -237,8 +238,8 @@ fn main() -> status: ExitStatus pure {
   seq: u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-6",
@@ -248,12 +249,12 @@ fn main() -> status: ExitStatus pure {
     },
     Probe {
         name: "collides-with-a-prelude-opaque-declaration.wf",
-        source: br#"struct DirectoryRead {
+        source: br#"struct Slots {
   seq: u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-6",
@@ -263,10 +264,10 @@ fn main() -> status: ExitStatus pure {
     },
     Probe {
         name: "redeclared-in-one-scope.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let count = 1_u64;
   let count = 2_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-6",
@@ -284,19 +285,20 @@ fn consume(ticket: Ticket) -> seq: u64 pure {
   return ticket.seq;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let permit = Ticket(seq: 1_u64);
   let used = consume(ticket: move permit);
   if used == 1_u64 {
     let permit = Ticket(seq: 2_u64);
     let again = consume(ticket: move permit);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-6",
         sentences: &[
-            r#"DeclarationCollision { spelling: "permit""#,
+            "]: DeclarationCollision\n",
+            "\n  spelling: permit\n",
             "a declaration's scope ends with the block that declares it, and not where its value is consumed: a binding whose value was moved is dead as a value while its declaration stays live, so an inner declaration of the same spelling still collides with it. Rename the inner declaration, or close the block that declares the outer one before this point",
         ],
     },
@@ -305,33 +307,33 @@ fn main() -> status: ExitStatus pure {
     // -------------------------------------------------------------------
     Probe {
         name: "prelude-range-residual.wf",
-        source: br#"fn main(out: OutputStream, factory: HandleFactory) -> status: ExitStatus pure {
+        source: br#"fn main(out: std::io::OutputStream, factory: std::io::HandleFactory) -> status: std::process::ExitStatus pure {
   let header = array_filled::<u8, 4>(value: 65_u8);
   let payload = array_filled::<u8, 9>(value: 66_u8);
   let wide = payload.len;
   let view = &header[0_u64..4_u64];
-  let sent = write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide);
-  return exit_status(code: 0_u8);
+  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
         // Regression for the range-root substitution: the goal must retain
         // the range holder's own `len` rather than becoming `header.len`
         // (ref4-neg-a-requirement-over-a-range-reference-is-the-ranges-length).
-        sentences: &[r#"instantiated_goal: "wide <= deref(view).len""#],
+        sentences: &["\n  instantiated_goal: wide <= deref(view).len\n"],
     },
     Probe {
         name: "bounds-residual.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let table = array_filled::<u8, 4>(value: 0_u8);
   let other = array_filled::<u8, 9>(value: 0_u8);
   let pick = other.len;
   let one = table[pick];
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "OP-4",
-        sentences: &[r#"residual: "pick < table.len""#],
+        sentences: &["\n  residual: pick < table.len\n"],
     },
     // -------------------------------------------------------------------
     // [FN-2]: written type and region arguments.
@@ -350,14 +352,15 @@ fn main() -> status: ExitStatus pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let doubled = identity(value: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-2",
         sentences: &[
-            r#"TypeMismatch { expected: "1 written generic argument", found: "no explicit argument list" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: 1 written generic argument\n  found: no explicit argument list\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -370,14 +373,15 @@ fn main() -> status: ExitStatus pure {
   right: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let p = Pair(left: 1_u64, right: 2_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "1 written generic argument", found: "no explicit argument list" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: 1 written generic argument\n  found: no explicit argument list\n",
         ],
     },
     Probe {
@@ -387,14 +391,15 @@ fn main() -> status: ExitStatus pure {
   right: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let p = Pair<u64, u64>(left: 1_u64, right: 2_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "1 written expanded generic argument", found: "2 written expanded generic arguments" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: 1 written expanded generic argument\n  found: 2 written expanded generic arguments\n",
         ],
     },
     Probe {
@@ -404,14 +409,15 @@ fn main() -> status: ExitStatus pure {
   right: T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let p = Pair<4>(left: 1_u64, right: 2_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a type argument occupies this parameter position", found: "a nonmatching behavior argument" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a type argument occupies this parameter position\n  found: a nonmatching behavior argument\n",
         ],
     },
     Probe {
@@ -420,14 +426,15 @@ fn main() -> status: ExitStatus pure {
   count: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let r = Row<u64>(count: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a const argument occupies this parameter position", found: "a nonmatching behavior argument" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a const argument occupies this parameter position\n  found: a nonmatching behavior argument\n",
         ],
     },
     Probe {
@@ -436,14 +443,15 @@ fn main() -> status: ExitStatus pure {
   value: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let p = Plain<u64>(value: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "0 written expanded generic arguments", found: "1 written expanded generic argument" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: 0 written expanded generic arguments\n  found: 1 written expanded generic argument\n",
         ],
     },
     Probe {
@@ -452,13 +460,14 @@ fn main() -> status: ExitStatus pure {
   return 0_u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "this type spelled with no type arguments", found: "a written `<...>` type-argument list on a type that takes none" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: this type spelled with no type arguments\n  found: a written `<...>` type-argument list on a type that takes none\n",
         ],
     },
     Probe {
@@ -467,14 +476,15 @@ fn main() -> status: ExitStatus pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = widen::<f64>(value: 1.0_f64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-3",
         sentences: &[
-            r#"TypeMismatch { expected: "an integer type, which the parameter's `Int` bound requires", found: "f64" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: an integer type, which the parameter's `Int` bound requires\n  found: f64\n",
         ],
     },
     Probe {
@@ -483,14 +493,15 @@ fn main() -> status: ExitStatus pure {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let a = scale::<u64>(value: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-3",
         sentences: &[
-            r#"TypeMismatch { expected: "a float type, which the parameter's `Float` bound requires", found: "u64" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a float type, which the parameter's `Float` bound requires\n  found: u64\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -502,13 +513,14 @@ fn main() -> status: ExitStatus pure {
   return Ok(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "Result with both type arguments written: as a type `Result<u64, IoError>`, and as a variant constructor `Ok<u64, IoError>(value: v)`", found: "Result with no written type-argument list" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: Result with both type arguments written: as a type `Result<u64, IoError>`, and as a variant constructor `Ok<u64, IoError>(value: v)`\n  found: Result with no written type-argument list\n",
         ],
     },
     Probe {
@@ -517,28 +529,30 @@ fn main() -> status: ExitStatus pure {
   return Ok<u64>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "Result<T, E> with exactly two type arguments", found: "a Result type-argument list of a different length" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: Result<T, E> with exactly two type arguments\n  found: a Result type-argument list of a different length\n",
         ],
     },
     Probe {
         name: "result-with-a-const-type-argument.wf",
-        source: br#"fn pick(value: u64) -> out: Result<4, IoError> pure {
-  return Ok<4, IoError>(value: value);
+        source: br#"fn pick(value: u64) -> out: Result<4, std::io::IoError> pure {
+  return Ok<4, std::io::IoError>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a type in each Result type-argument position", found: "a const argument in a Result type-argument position" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a type in each Result type-argument position\n  found: a const argument in a Result type-argument position\n",
         ],
     },
     Probe {
@@ -547,13 +561,14 @@ fn main() -> status: ExitStatus pure {
   return Some(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "Option with its type argument written: as a type `Option<u64>`, and as a variant constructor `Some<u64>(value: v)`", found: "Option with no written type-argument list" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: Option with its type argument written: as a type `Option<u64>`, and as a variant constructor `Some<u64>(value: v)`\n  found: Option with no written type-argument list\n",
         ],
     },
     Probe {
@@ -562,13 +577,14 @@ fn main() -> status: ExitStatus pure {
   return Some<u64, u64>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "Option<T> with exactly one type argument", found: "an Option type-argument list of a different length" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: Option<T> with exactly one type argument\n  found: an Option type-argument list of a different length\n",
         ],
     },
     Probe {
@@ -577,13 +593,14 @@ fn main() -> status: ExitStatus pure {
   return Some<4>(value: value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a type in the Option type-argument position", found: "a const argument in the Option type-argument position" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a type in the Option type-argument position\n  found: a const argument in the Option type-argument position\n",
         ],
     },
     // Retired with the measure-former call spelling. v0.59 read a measure by
@@ -617,13 +634,14 @@ fn main() -> status: ExitStatus pure {
   return a +wrap b;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "EFF-1",
         sentences: &[
-            r#"InvalidEffectRow { reason: "a row lists each path at most once per category, and this entry repeats one", mechanical_fix: "delete the repeated entry; `writes(p)` already subsumes `reads(p)`, so the pair is never written for one path" }"#,
+            "]: InvalidEffectRow\n",
+            "\n  reason: a row lists each path at most once per category, and this entry repeats one\n  mechanical_fix: delete the repeated entry\n",
         ],
     },
     Probe {
@@ -632,13 +650,14 @@ fn main() -> status: ExitStatus pure {
   return deref(value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "EFF-1",
         sentences: &[
-            r#"InvalidEffectRow { reason: "each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type", mechanical_fix: "select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents" }"#,
+            "]: InvalidEffectRow\n",
+            "\n  reason: each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type\n  mechanical_fix: select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents\n",
         ],
     },
     Probe {
@@ -652,13 +671,14 @@ fn touch(pair: &Pair) -> out: u64 reads(pair.middle) {
   return deref(pair).left;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "EFF-1",
         sentences: &[
-            r#"InvalidEffectRow { reason: "an effect-path suffix names a member its selected type does not declare", mechanical_fix: "name a declared member of that type, or the reference parameter itself" }"#,
+            "]: InvalidEffectRow\n",
+            "\n  reason: an effect-path suffix names a member its selected type does not declare\n  mechanical_fix: name a declared member of that type, or the reference parameter itself\n",
         ],
     },
     Probe {
@@ -667,13 +687,101 @@ fn main() -> status: ExitStatus pure {
   return deref(data).len;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "EFF-2",
         sentences: &[
-            r#"EffectMismatch { expected_row: "reads(data.len)", found_row: "pure", missing: ["reads(data.len)"], extra: [], mechanical_fix: "declare exactly the row the body exhibits: add every missing category and path and remove every extra one; EFF-2 admits no wider and no narrower declaration than the union of the body-syntactic and release contributions" }"#,
+            "]: EffectMismatch\n",
+            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [reads(data.len)]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
+        ],
+    },
+    Probe {
+        // The body reads and writes `stats.count` and never touches
+        // `stats.total`: the suggestion drops the read the write subsumes
+        // [EFF-1], nothing is missing, and the untouched write is extra.
+        name: "declared-row-writes-an-unexhibited-field.wf",
+        source: br#"struct Stats {
+  count: u64;
+  total: u64;
+}
+
+fn record(stats: &Stats) -> result: unit writes(stats.count), writes(stats.total) {
+  let old = deref(stats).count;
+  set deref(stats).count = old +wrap 1_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-2",
+        sentences: &[
+            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [writes(stats.total)]\n",
+        ],
+    },
+    Probe {
+        name: "read-subsumed-by-a-write-of-the-same-path.wf",
+        source: br#"fn bump(value: &u64) -> out: u64 reads(value), writes(value) {
+  let old = deref(value);
+  set deref(value) = old +wrap 1_u64;
+  return old;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-1",
+        sentences: &[
+            "]: SubsumedEffectEntry\n",
+            "\n  entry: reads(value)\n  covering: writes(value)\n",
+        ],
+    },
+    Probe {
+        name: "write-below-a-written-path.wf",
+        source: br#"struct Pair {
+  first: u8;
+  second: u8;
+}
+
+fn reset(pair: &Pair) -> result: unit writes(pair), writes(pair.first) {
+  set deref(pair) = Pair(first: 0_u8, second: 0_u8);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-1",
+        sentences: &[
+            "]: SubsumedEffectEntry\n",
+            "\n  entry: writes(pair.first)\n  covering: writes(pair)\n",
+        ],
+    },
+    Probe {
+        name: "read-below-a-read-path.wf",
+        source: br#"struct Pair {
+  first: u8;
+  second: u8;
+}
+
+fn inspect(pair: &Pair) -> result: u8 reads(pair), reads(pair.first) {
+  let whole = deref(pair);
+  return whole.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-1",
+        sentences: &[
+            "]: SubsumedEffectEntry\n",
+            "\n  entry: reads(pair.first)\n  covering: reads(pair)\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -681,28 +789,29 @@ fn main() -> status: ExitStatus pure {
     // -------------------------------------------------------------------
     Probe {
         name: "buffer-length-is-not-a-u64.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let flag = 1_u64 > 0_u64;
   let store = box_array_filled::<u8>(count: flag, value: 0_u8);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
-        sentences: &[r#"TypeMismatch { expected: "u64", found: "Bool" }"#],
+        sentences: &["]: TypeMismatch\n", "\n  expected: u64\n  found: Bool\n"],
     },
     Probe {
         // Field suffixes after indices are supported; this scalar element
         // still has no fields. Pin that type rule, not the retired path limit.
         name: "scalar-buffer-element-has-no-fields.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let store = array_filled::<u8, 4>(value: 0_u8);
   let one = store[0_u64].value;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a source struct, whose declared field this suffix selects", found: "u8" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a source struct, whose declared field this suffix selects\n  found: u8\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -726,10 +835,10 @@ fn measure(view: u64) -> out: u64 pure {
   return view;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let view = &digits[0_u64..2_u64];
   let n = measure(view: view);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
@@ -753,8 +862,8 @@ fn main() -> status: ExitStatus pure {
         // named as the range reference it is. The actual carries no mode
         // because a reference kind has none.
         sentences: &[
-            r#"expected: "own u64""#,
-            r#"found: "&[u8]""#,
+            "\n  expected: own u64\n",
+            "\n  found: &[u8]\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -766,13 +875,14 @@ fn main() -> status: ExitStatus pure {
   return value.count;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a source struct, whose declared field this suffix selects", found: "u64" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a source struct, whose declared field this suffix selects\n  found: u64\n",
         ],
     },
     Probe {
@@ -786,13 +896,14 @@ fn peek(pair: Pair) -> out: u64 pure {
   return pair.middle;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "a declared field of Pair", found: "the field name `middle`, which that struct does not declare" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: a declared field of Pair\n  found: the field name `middle`, which that struct does not declare\n",
         ],
     },
     Probe {
@@ -801,10 +912,10 @@ fn main() -> status: ExitStatus pure {
   seq: u64;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let ticket = Ticket(seq: 1_u64);
   set ticket = 2_u64;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
@@ -814,32 +925,33 @@ fn main() -> status: ExitStatus pure {
         // complete `expr` child of the `set_stmt`, carrying expected `own T`
         // and the actual mode and type". A bare type on either side drops the
         // mode the rule names.
-        sentences: &[r#"TypeMismatch { expected: "own Ticket", found: "own u64" }"#],
+        sentences: &["]: TypeMismatch\n", "\n  expected: own Ticket\n  found: own u64\n"],
     },
     Probe {
         name: "boolean-operand-is-an-integer.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let flag = band(1_u64, 2_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
-        sentences: &[r#"TypeMismatch { expected: "own Bool", found: "own u64" }"#],
+        sentences: &["]: TypeMismatch\n", "\n  expected: own Bool\n  found: own u64\n"],
     },
     Probe {
         name: "match-scrutinee-is-not-an-enum.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let value = 1_u64;
   match value {
     Ok(value: inner) => {
     }
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "TYPE-5",
         sentences: &[
-            r#"TypeMismatch { expected: "an enum scrutinee, whose variants the arms match", found: "u64" }"#,
+            "]: TypeMismatch\n",
+            "\n  expected: an enum scrutinee, whose variants the arms match\n  found: u64\n",
         ],
     },
     Probe {
@@ -848,15 +960,16 @@ fn main() -> status: ExitStatus pure {
   return 0_T;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let flag = 1_u64 > 0_u64;
   let a = zeroed::<Bool>(sample: flag);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FORM-5",
         sentences: &[
-            r#"TypeMismatch { expected: "an integer or float type, whose 0 and 1 this form names""#,
+            "]: TypeMismatch\n",
+            "\n  expected: an integer or float type, whose 0 and 1 this form names\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -871,14 +984,14 @@ fn main() -> status: ExitStatus pure {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let s = 3_u64;
   let r = need(x: s);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
-        sentences: &[r#"instantiated_goal: "s +wrap 1_u64 < 10_u64""#],
+        sentences: &["\n  instantiated_goal: s +wrap 1_u64 < 10_u64\n"],
     },
     Probe {
         name: "goal-with-a-numeric-conversion.wf",
@@ -889,12 +1002,12 @@ fn main() -> status: ExitStatus pure {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let bytes = array_filled::<u8, 1>(value: 3_u8);
   let raw = bytes[0_u64];
   let s = cvt::<u8, u32>(raw);
   let r = need(x: s);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
@@ -903,7 +1016,7 @@ fn main() -> status: ExitStatus pure {
         // affine route, which reaches a call goal that projects to no L0
         // relation, so a literal actual would prove the requirement and print
         // no diagnostic. The pinned sentence is unchanged.
-        sentences: &[r#"instantiated_goal: "cvt::<u32, u64>(s) < 10_u64""#],
+        sentences: &["\n  instantiated_goal: cvt::<u32, u64>(s) < 10_u64\n"],
     },
     Probe {
         name: "goal-with-a-reinterpretation.wf",
@@ -914,14 +1027,14 @@ fn main() -> status: ExitStatus pure {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let s = 3_i64;
   let r = need(x: s);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
-        sentences: &[r#"instantiated_goal: "reinterpret::<i64, u64>(s) < 10_u64""#],
+        sentences: &["\n  instantiated_goal: reinterpret::<i64, u64>(s) < 10_u64\n"],
     },
     Probe {
         name: "goal-with-a-float-literal.wf",
@@ -931,14 +1044,14 @@ fn main() -> status: ExitStatus pure {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let v = 2.0_f64;
   let r = need(x: v);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
-        sentences: &[r#"instantiated_goal: "flt(v, Float { ty: F64, bits: 4607182418800017408 })""#],
+        sentences: &["\n  instantiated_goal: flt(v, 1.0_f64)\n"],
     },
     Probe {
         name: "goal-over-an-admitted-index-actual.wf",
@@ -948,14 +1061,14 @@ fn main() -> status: ExitStatus pure {
   return x;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let data = array_filled::<u8, 4>(value: 0_u8);
   let r = need(x: data[0_u64]);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
-        sentences: &[r#"instantiated_goal: "data[0_u64] < 10_u8""#],
+        sentences: &["\n  instantiated_goal: data[0_u64] < 10_u8\n"],
     },
     Probe {
         name: "goal-over-a-dereferenced-holder.wf",
@@ -971,15 +1084,89 @@ fn outer(names: &[u8]) -> out: u64 pure {
   return r;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
         // [OP-15] spells a measure read through a reference `deref(names).len`;
         // the renderer currently drops the `deref`. The pinned sentence is the
         // specification spelling and stays failing until the renderer is fixed.
-        sentences: &[r#"instantiated_goal: "9_u64 <= deref(names).len""#],
+        sentences: &["\n  instantiated_goal: 9_u64 <= deref(names).len\n"],
+    },
+    Probe {
+        // A generic callee is named as a call writes it [FN-2], never by the
+        // symbol that keys its lowering.
+        name: "goal-of-a-generic-instance.wf",
+        source: br#"fn need<const n: u64>(x: u64) -> out: u64 pure contract {
+  requires x < n;
+} {
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = need::<4>(x: 9_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &["\n  concrete_callee: need::<4>\n"],
+    },
+    // -------------------------------------------------------------------
+    // [FN-9]: the selected return, named by its instance.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "postcondition-of-a-generic-instance.wf",
+        source: br#"fn bad<T: Int>(value: T) -> result: T pure contract {
+  ensures result < value;
+} {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let ignored = bad::<u8>(value: 0_u8);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-9",
+        sentences: &["\n  concrete_function: bad::<u8>\n"],
+    },
+    // -------------------------------------------------------------------
+    // [PROV-6] and [GRAM-8]: a generic nominal instance is named as its
+    // type is written [GRAM-3], never by the key the checker interned it
+    // under.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "unconsumed-instance-of-a-generic-nodrop-struct.wf",
+        source: br#"nodrop struct Token<T> {
+  value: T;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let token = Token<u64>(value: 1_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "PROV-6",
+        sentences: &["\n  binding: token\n  obligation: Token<u64>\n"],
+    },
+    Probe {
+        name: "const-of-a-generic-struct-with-a-wrong-field.wf",
+        source: br#"struct Wrap<T> {
+  value: T;
+}
+
+const w: Wrap<u64> = Wrap<u64>(other: 1_u64);
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-8",
+        sentences: &[
+            "]: InvalidConstructionFields\n",
+            "\n  constructor: Wrap<u64>\n  declared_fields: [value]\n",
+        ],
     },
     // [FORM-8] one canonical region spelling: each position a region can
     // occupy, written exactly where the surrounding text does not fix it.
@@ -995,7 +1182,7 @@ fn main() -> status: ExitStatus pure {
   return n;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let c = box_array_filled::<u8>(count: 4_u64, value: 0_u8);
   let flag = 1_u64;
   let taken = 0_u64;
@@ -1004,14 +1191,14 @@ fn main() -> status: ExitStatus pure {
   } else {
     set taken = 7_u64;
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "LIV-1",
         sentences: &[
-            r#"binding: "c""#,
-            r#"live_predecessor: "the `else` branch""#,
-            r#"dead_predecessor: "the `if` branch""#,
+            "\n  binding: c\n",
+            "\n  live_predecessor: the `else` branch\n",
+            "\n  dead_predecessor: the `if` branch\n",
             "every predecessor of a join agrees on a binding\'s live-or-dead status: consume it on every predecessor, on none, or commit a value back into it before the predecessor that consumed it reaches the join",
         ],
     },
@@ -1022,17 +1209,17 @@ fn main() -> status: ExitStatus pure {
   return n;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let c = box_array_filled::<u8>(count: 4_u64, value: 0_u8);
   for (i in 0_u64..2_u64) {
     let taken = measure(cell: move c);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "OWN-11",
         sentences: &[
-            r#"binding: "c""#,
+            "\n  binding: c\n",
             "one iteration must leave every outer binding in the status the next one starts from: commit a value back into it before the backedge, or declare and consume it inside the body",
         ],
     },
@@ -1047,7 +1234,7 @@ fn main() -> status: ExitStatus pure {
     // -------------------------------------------------------------------
     Probe {
         name: "an-affine-factor-that-is-not-a-measure.wf",
-        source: br#"fn main() -> status: ExitStatus pure {
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
   let limit = 4_u64;
   let seen = 0_u64;
   for (
@@ -1055,7 +1242,7 @@ fn main() -> status: ExitStatus pure {
     invariant bounded: seen <= imin(limit, limit)
   ) {
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "INV-1",
@@ -1114,12 +1301,15 @@ fn every_diagnostic_sentence_is_pinned_by_a_probe() {
             "{}: {failure}",
             probe.name
         );
+        // The complete record `whitefootc` prints, kind name included. Every
+        // field is one `\n  label: value` line; the closing newline lets a
+        // probe pin a last field as a complete line too.
+        let rendered = format!("{failure}\n");
         for sentence in probe.sentences {
             assert!(
-                failure.detail().contains(sentence),
-                "{}: the rendered rejection no longer carries this sentence.\nwanted: {sentence}\ngot:    {}",
+                rendered.contains(sentence),
+                "{}: the rendered rejection no longer carries this sentence.\nwanted: {sentence}\ngot:    {rendered}",
                 probe.name,
-                failure.detail()
             );
         }
     }

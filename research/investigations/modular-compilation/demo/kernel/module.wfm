@@ -1,0 +1,3 @@
+alias ExitStatus = std::process::ExitStatus;
+
+public fn start() -> status: ExitStatus pure doc "Runs one two-job batch with the queue held by value and returns 0 when the report matches; the kernel entry selects it with no_heap.";

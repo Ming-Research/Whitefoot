@@ -39,8 +39,18 @@ fn is_line_bearing(topology: &FinalizedTopology, node: NodeId) -> Result<bool, S
             | Production::GiveStmt
             // [GRAM-2, FORM-2] `program no_heap;` is a simple item.
             | Production::HeapDecl
+            // [GRAM-2, FORM-2] a file alias header and a module graph row
+            // each render on one line.
+            | Production::AliasDecl
+            | Production::ModuleRow
     );
-    if fixed || (record.production == Production::InvariantStmt && record.body_open.is_none()) {
+    // An invariant without a proof block and an entry without requirements
+    // are simple; their braced forms are block-bearing.
+    let simple_form = matches!(
+        record.production,
+        Production::InvariantStmt | Production::EntryDecl
+    ) && record.body_open.is_none();
+    if fixed || simple_form {
         return Ok(true);
     }
     if record.production != Production::LetStmt {
@@ -134,22 +144,30 @@ fn stated_space_open_paren(
 }
 
 fn is_block_bearing(record: &crate::syntax::parser::finalize::topology::NodeRecord) -> bool {
-    matches!(
+    // A `fn_decl` is block-bearing only through its body; an interface
+    // declaration ending in `;` or its `doc` entry has none [GRAM-2, FORM-2].
+    // An entry is block-bearing only with its requirement block.
+    let braced = matches!(
         record.production,
-        Production::StructDecl
-            | Production::EnumDecl
-            | Production::InterfaceDecl
-            | Production::BindingDecl
-            | Production::FnDecl
-            | Production::ContractBlock
-            | Production::LoopStmt
-            | Production::ForStmt
-            | Production::MatchStmt
-            | Production::ValueMatch
-            | Production::Arm
-            | Production::IfStmt
-            | Production::ValueIf
-    ) || (record.production == Production::InvariantStmt && record.body_open.is_some())
+        Production::FnDecl | Production::EntryDecl
+    ) && record.body_open.is_some();
+    braced
+        || matches!(
+            record.production,
+            Production::StructDecl
+                | Production::EnumDecl
+                | Production::InterfaceDecl
+                | Production::BindingDecl
+                | Production::ContractBlock
+                | Production::LoopStmt
+                | Production::ForStmt
+                | Production::MatchStmt
+                | Production::ValueMatch
+                | Production::Arm
+                | Production::IfStmt
+                | Production::ValueIf
+        )
+        || (record.production == Production::InvariantStmt && record.body_open.is_some())
 }
 
 fn same_source(topology: &FinalizedTopology, left: u64, right: u64) -> bool {
@@ -256,6 +274,24 @@ pub(super) fn build_gap_styles(
         // one space before their `(`, overriding the generic right attachment
         // of `(` exactly as the `for` header does.
         if let Some(open) = stated_space_open_paren(topology, node, record)? {
+            mark_before(&mut gaps, topology, open, GapStyle::Spaced)?;
+        }
+
+        // [FORM-2] a graph row keeps one space between its `:` and its
+        // dependency list's `[`, `pkg::runtime: [pkg::data];`, overriding the
+        // generic right attachment of `[` exactly as the `for` header does.
+        if record.production == Production::ModuleRow {
+            let children = topology
+                .node_children(node)
+                .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+            let row_path = children
+                .first()
+                .and_then(|child| topology.node(*child))
+                .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+            let open = row_path
+                .last_terminal()
+                .and_then(|last| last.checked_add(2))
+                .ok_or(CanonicalCompilerFailure::CounterOverflow)?;
             mark_before(&mut gaps, topology, open, GapStyle::Spaced)?;
         }
 
@@ -380,11 +416,35 @@ pub(super) fn build_gap_styles(
         else {
             return Err(CanonicalCompilerFailure::InvalidFinalizedTree.into());
         };
-        if left_source == right_source {
+        // [FORM-2] consecutive file alias headers, and consecutive graph
+        // rows, stand on consecutive lines; every other pair of neighbouring
+        // top-level nodes of one source is separated by one empty line.
+        let consecutive = (is_alias_item(topology, pair[0])? && is_alias_item(topology, pair[1])?)
+            || (left.production == Production::ModuleRow
+                && right.production == Production::ModuleRow);
+        if left_source == right_source && !consecutive {
             mark_before(&mut gaps, topology, right.first_terminal, GapStyle::Blank)?;
         }
     }
     Ok(gaps)
+}
+
+/// Whether a top-level node is an `item` whose declaration is a file alias
+/// header [GRAM-2].
+fn is_alias_item(topology: &FinalizedTopology, node: NodeId) -> Result<bool, Stop> {
+    let record = topology
+        .node(node)
+        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+    if record.production != Production::Item {
+        return Ok(false);
+    }
+    let children = topology
+        .node_children(node)
+        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+    Ok(children
+        .first()
+        .and_then(|child| topology.node(*child))
+        .is_some_and(|child| child.production == Production::AliasDecl))
 }
 
 /// How one terminal takes part in the [FORM-2] inline gap on each side: a
@@ -424,11 +484,11 @@ pub(super) fn attachment(
             .production
             == Production::CompareOp
     };
-    // [FORM-2] a destructuring consume's rest marker keeps one space after
-    // the `,` that precedes it, `let Conn(f: fh, ..) = move c;`, overriding
-    // the generic right attachment of `..`. The marker is the only `..` a
-    // `let_stmt` owns directly: `for_binding`, `range_tail`, and `erange`
-    // each own theirs [GRAM-4, GRAM-5, EFF-1]. With no bound field the
+    // [FORM-2] a destructuring consume's or match arm's rest marker keeps one
+    // space after the `,` that precedes it, `let Conn(f: fh, ..) = move c;`,
+    // overriding the generic right attachment of `..`. The marker is the only
+    // `..` a `let_stmt` or `arm` owns directly: `for_binding`, `range_tail`,
+    // and `erange` each own theirs [GRAM-4, GRAM-5, EFF-1]. With no bound field the
     // preceding terminal is `(`, whose left attachment still emits no byte,
     // so `let Conn(..) = move c;` is unaffected.
     let rest_marker = predicate == TerminalPredicate::Fixed(FixedTerminal::DotDot)
@@ -437,7 +497,7 @@ pub(super) fn attachment(
             .get(ordinal)
             .and_then(|record| record.owner)
             .and_then(|owner| topology.node(owner))
-            .is_some_and(|owner| owner.production == Production::LetStmt);
+            .is_some_and(|owner| matches!(owner.production, Production::LetStmt | Production::Arm));
     let actual_separator = predicate == TerminalPredicate::Fixed(FixedTerminal::Colon)
         && topology
             .terminals

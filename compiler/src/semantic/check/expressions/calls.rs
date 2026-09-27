@@ -21,7 +21,7 @@ use super::super::{
     CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, PreludeType, TypedExpression,
 };
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(in crate::semantic::check) fn check_call(
         &self,
         function: &FunctionSignature,

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], j: u64) -> result: u8 reads(b) {
   doc "This case admits the subscript only on ordinary executed control that establishes its real bound. A written proof conclusion creates a fact only after its premises are checked, so it cannot manufacture an unreachable state or use explosion to admit a partial operation [ENT-3, OP-4].";
   let spare = deref(b).len;

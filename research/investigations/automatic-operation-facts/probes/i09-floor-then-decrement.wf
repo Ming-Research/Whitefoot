@@ -1,0 +1,9 @@
+fn previous_index(start: u64) -> result: u64 pure {
+  let first = imax(start, 1_u64);
+  let previous = first - 1_u64;
+  return previous;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum EmptyEq {
 }
 
@@ -16,7 +19,7 @@ fn empty_compile_only(left: EmptyEq, right: EmptyEq) -> return_value: Bool pure 
 }
 
 fn main() -> return_value: ExitStatus pure {
-  let one = OneOnly();
+  let one = OneEq::OneOnly();
   let one_eq = eeq(one, one);
   let one_ne = ene(one, one);
   if one_eq {
@@ -28,9 +31,9 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 2_u8);
   }
-  let first = TrioFirst();
-  let second = TrioSecond();
-  let third = TrioThird();
+  let first = TrioEq::TrioFirst();
+  let second = TrioEq::TrioSecond();
+  let third = TrioEq::TrioThird();
   let eq00 = eeq(first, first);
   let ne00 = ene(first, first);
   if eq00 {

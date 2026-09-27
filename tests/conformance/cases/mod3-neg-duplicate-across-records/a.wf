@@ -1,0 +1,11 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn helper() -> result: u8 pure {
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = helper();
+  return exit_status(code: code);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Chain {
   End();
   Next(stamp: u64, tail: Box<Chain>);
@@ -5,10 +8,10 @@ enum Chain {
 
 fn main() -> status: ExitStatus pure {
   doc "A bare-pointer cursor traverses an owned chain iteratively across payload-arm exits, with no source wildcard or runtime reference validation.";
-  let end = End();
+  let end = Chain::End();
   let root = box_new::<Chain>(value: move end);
   for (i in 0_u64..32_u64) {
-    let item = Next(stamp: i, tail: move root);
+    let item = Chain::Next(stamp: i, tail: move root);
     set root = box_new::<Chain>(value: move item);
   }
   let cursor = &root.inner;

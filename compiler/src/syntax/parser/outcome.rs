@@ -352,16 +352,16 @@ impl SyntaxIssue {
 /// This value is not a finalized tree, `CanonicalSyntaxUnit`, portable syntax
 /// identity, semantic verdict, or compilation acceptance capability.
 #[derive(Debug)]
-pub struct ParsedBundle<'classified, 'lexed, 'source> {
-    pub(crate) classified: &'classified ClassifiedBundle<'lexed, 'source>,
-    pub(crate) tree: DerivationTree<'source>,
+pub struct ParsedBundle {
+    pub(crate) classified: ClassifiedBundle,
+    pub(crate) tree: DerivationTree,
 }
 
-impl<'classified, 'lexed, 'source> ParsedBundle<'classified, 'lexed, 'source> {
+impl ParsedBundle {
     /// Returns the exact classified source input retained by the derivation.
     #[must_use]
-    pub const fn classified_bundle(&self) -> &'classified ClassifiedBundle<'lexed, 'source> {
-        self.classified
+    pub const fn classified_bundle(&self) -> &ClassifiedBundle {
+        &self.classified
     }
 
     /// Returns the complete matched terminal-leaf count.
@@ -398,9 +398,9 @@ impl<'classified, 'lexed, 'source> ParsedBundle<'classified, 'lexed, 'source> {
 
 /// Failure-atomic result of complete active-specification grammar derivation.
 #[derive(Debug)]
-pub enum ParseOutcome<'classified, 'lexed, 'source> {
+pub enum ParseOutcome {
     /// Every source derived completely into one private postorder program tree.
-    Complete(ParsedBundle<'classified, 'lexed, 'source>),
+    Complete(ParsedBundle),
     /// The first grammar defect under exact DIAG-1 stage order.
     SourceIssue(SyntaxIssue),
     /// Explicit ceilings or host storage prevented completion or diagnosis.

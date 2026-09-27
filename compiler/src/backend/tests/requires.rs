@@ -37,18 +37,18 @@ fn forward(value: &u64) -> result: u64 reads(value) {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let zero = 0_u64;
   let one = 1_u64;
   let refused = forward(value: &zero);
   let accepted = forward(value: &one);
   if refused != 99_u64 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   if accepted != 7_u64 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -86,7 +86,7 @@ const OUTPUT_CAPACITY: &[u8] =
   return length;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let length = 4_u64;
   let output = box_slots_new::<u8>(capacity: length);
   for @clear (
@@ -109,17 +109,17 @@ fn main() -> status: ExitStatus pure {
   let held = source.inner.len;
   if held <= capacity {
   } else {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let written = copy_bytes(out: destination, source: move source);
   if written != length {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let trailing = output.inner[3_u64];
   if trailing != 7_u8 {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -128,10 +128,10 @@ fn an_ordinary_selected_function_keeps_its_contract_without_a_wrapper_check() {
     // C2 deletes FN-7's command-entry contract refusal. This ordinary source
     // requirement is statically true; the build caller proves it normally.
     let module = compile(
-        br#"fn main() -> status: ExitStatus pure contract {
+        br#"fn main() -> status: std::process::ExitStatus pure contract {
   requires 0_u64 == 0_u64;
 } {
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -140,10 +140,10 @@ fn an_ordinary_selected_function_keeps_its_contract_without_a_wrapper_check() {
     // A false requirement does not invalidate an ordinary declaration. The
     // build caller cannot prove it, so no executable entry is supplied.
     let library = compile(
-        br#"fn main() -> status: ExitStatus pure contract {
+        br#"fn main() -> status: std::process::ExitStatus pure contract {
   requires 0_u64 == 1_u64;
 } {
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -161,8 +161,8 @@ fn contradictory_requirements_emit_an_unreachable_body_without_a_trap() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -182,13 +182,13 @@ fn contract_define_is_symbolic_and_not_emitted_as_runtime_work() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let bits = ipopcount(0_u8);
   if bits == 0_u32 {
     let zero = identity(value: 0_u8);
-    return exit_status(code: zero);
+    return std::process::exit_status(code: zero);
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
 }
 "#,
@@ -209,14 +209,14 @@ fn contract_define_can_hold_a_float_endpoint_conversion_without_runtime_code() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let converted = cvt::<u8, f32>(1_u8);
   if feq(converted, 1.0_f32) {
     let one = identity(value: 1_u8);
     let code = one -wrap 1_u8;
-    return exit_status(code: code);
+    return std::process::exit_status(code: code);
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
 }
 "#,
@@ -241,13 +241,13 @@ fn ordinary_requirement_is_not_emitted_as_a_callee_prologue() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let value = 7_i32;
   let returned = bounded(value: value);
   if returned != 7_i32 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
@@ -271,10 +271,10 @@ fn a_requirement_must_be_discharged_at_each_ordinary_call() {
   return value;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let unknown = 0_i32;
   let returned = positive(value: unknown);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
     );

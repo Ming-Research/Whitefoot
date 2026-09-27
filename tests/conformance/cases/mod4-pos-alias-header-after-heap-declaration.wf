@@ -1,0 +1,9 @@
+program no_heap;
+
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The alias header follows the heap declaration, which opens the first record.";
+  return exit_status(code: 4_u8);
+}

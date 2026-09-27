@@ -629,8 +629,9 @@ width. For example, `cvt.wrap::<i8,u32>(-1_i8)` is 4294967295, not 255. This las
 case requires sign extension even with an unsigned destination. The historical
 baseline helper used destination signedness and would be wrong for that case;
 the exact-conversion implementation now selects extension from source signedness,
-so its shared integer cast supplies the wrapping result directly. The name describes modular value semantics and uses the
-existing mode vocabulary; no competing `itrunc` spelling is proposed. This
+so its shared integer cast supplies the wrapping result directly. The name
+describes modular value semantics and uses the existing mode vocabulary; no
+competing `itrunc` spelling is proposed. This
 mode publishes no exact input equality. It retains ordinary destination-type
 bounds and a typed modular expression identity; admitting that identity does
 not add an arithmetic rewrite or a new automatic proof family. Constant operands

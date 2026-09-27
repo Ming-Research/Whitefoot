@@ -1,5 +1,8 @@
-fn open_read(root: u64, path: u64) -> function_result: u64 pure {
-  doc "The source declaration duplicates an ordinary PRE-1 function name. Ordinary TYPE-6 declaration inventory rejects the collision; there is no system domain or qualification rank.";
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn box_new(root: u64, path: u64) -> function_result: u64 pure {
+  doc "The source declaration duplicates the ordinary PRE-1 function name box_new. Ordinary TYPE-6 declaration inventory rejects the collision; there is no system domain or qualification rank.";
   return root;
 }
 

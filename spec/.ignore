@@ -1,0 +1,5 @@
+# Search tools that honor .ignore files (ripgrep, and agent search built on it)
+# skip the released archives by default: their rule text is historical, and a
+# rule ID means what the active kernel-spec.md says. git grep and
+# `rg --no-ignore-dot` still read them.
+kernel-spec-v*.md

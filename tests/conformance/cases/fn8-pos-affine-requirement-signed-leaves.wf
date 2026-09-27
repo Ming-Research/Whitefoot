@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn headroom(a: u64, b: u64, limit: u64) -> result: u64 pure contract {
   define sum = a + b;
   define overflow = sum > limit;

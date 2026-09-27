@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn peek(value: &i32) -> result: i32 reads(value) {
   doc "A reference carries no region, no permission marker and no other qualifier: the declaration writes `&i32` and nothing else, and whether the callee may write is stated by the row alone [REF-1, EFF-1, GRAM-5].";
   return deref(value);

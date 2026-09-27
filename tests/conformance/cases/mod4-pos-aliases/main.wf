@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Point = pkg::data::Point;
+alias Pos = pkg::data::Sign::Pos;
+alias classify = pkg::data::sign_of;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+alias origin = pkg::data::origin;
+
+fn main() -> status: ExitStatus pure {
+  doc "A module alias, a struct alias, a variant alias, a function alias and a const alias each resolve to their target's own identity.";
+  let p = Point(x: 3_i32);
+  let wanted = Pos();
+  let sign = classify(value: p.x);
+  let also = data::sign_of(value: origin);
+  match sign {
+    Neg() => {
+      return exit_status(code: 1_u8);
+    }
+    Zero() => {
+      return exit_status(code: 2_u8);
+    }
+    Pos() => {
+    }
+  }
+  return exit_status(code: 0_u8);
+}

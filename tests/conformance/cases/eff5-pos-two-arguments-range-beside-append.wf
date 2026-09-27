@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn append_run_length(source: &Slots<u64, 8>, target: &Slots<u64, 8>, lo: u64, hi: u64) -> result: unit reads(source[lo..hi]), writes(target.next), writes(target.len) contract {
+  requires lo <= hi;
+  requires hi <= deref(source).len;
+  requires deref(target).len < deref(target).cap;
+} {
+  doc "Appends to target the length of the run source[lo..hi].";
+  let run = &deref(source)[lo..hi];
+  let count = deref(run).len;
+  place_back(window: target, value: count);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-5, WIN-2: one window reaches both arguments, so reads(source[lo..hi]) meets writes(target.next) on it. The call passes hi 2 and its entry state proves window.len equal to 2, so the run ends at the append slot's index and is separate from it; the program observes the appended run length.";
+  let window = slots_new::<u64, 8>();
+  place_back(window: &window, value: 1_u64);
+  place_back(window: &window, value: 2_u64);
+  append_run_length(source: &window, target: &window, lo: 0_u64, hi: 2_u64);
+  if window.len == 3_u64 {
+    if window[2_u64] == 2_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

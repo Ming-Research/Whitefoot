@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn measure<const n: u64>(source: Slots<u8, n>) -> size: u64 pure contract {
   ensures size == source.len;
 } {

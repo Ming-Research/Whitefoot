@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn window_of(storage: Array<u8, 2>) -> result: u64 pure {
   doc "A range reference formed over storage the callee owns cannot cross the return boundary: REF-3 refuses the returned reference and names the restructuring `return an index and let the caller form the reference`. The storage itself is released by the compiler-derived scope exit [STOR-3], so there is no cleanup obligation to carry out either.";
   return &storage[0_u64..2_u64];

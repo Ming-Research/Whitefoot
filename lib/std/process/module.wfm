@@ -1,0 +1,19 @@
+alias HandleFactory = pkg::io::HandleFactory;
+alias InputStream = pkg::io::InputStream;
+alias OutputStream = pkg::io::OutputStream;
+alias Args = pkg::text::Args;
+alias DirectoryRead = pkg::fs::DirectoryRead;
+
+public opaque nocopy struct ExitStatus {
+}
+
+public struct Inputs {
+  public args: Args;
+  public cwd: DirectoryRead;
+  public stdout: OutputStream;
+  public stderr: OutputStream;
+  public handles: HandleFactory;
+  public stdin: InputStream;
+}
+
+public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";

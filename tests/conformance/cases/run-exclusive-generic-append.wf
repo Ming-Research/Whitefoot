@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn append_one<T: drop, const n: u64>(values: &Slots<T, n>, value: T) -> result: unit writes(values) contract {
   requires deref(values).len < deref(values).cap;
   ensures deref(values).len == deref(entry(values)).len + 1_u64;

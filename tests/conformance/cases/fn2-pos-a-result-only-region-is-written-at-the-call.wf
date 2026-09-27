@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn nothing<T>() -> made: Option<T> pure {
   doc "Reports no value at all, over an element type no parameter position mentions.";
   return None<T>();

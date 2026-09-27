@@ -1025,7 +1025,7 @@ added only to discharge its missing relation does not establish that protocol.
 | Pool-indexed B-tree | Materialized vacant nodes can retain empty windows and copied child IDs, avoiding extraction/cleanup problems. Growth relocates materialized node storage and adds ID validation/reuse work. Existing Slab is bounded and its visit is read-only; it is not already this growing node pool. |
 | B+ tree | A copied leaf separator requires copy/clone K; stable IDs to centrally owned keys avoid that bound but add ownership, indirection and separator-refresh protocols. Retain for a concrete scan/identity requirement, without assuming the scalar split generalizes. |
 
-Current [target layout](../../../compiler/src/backend/target.rs) gives both
+Current [target layout](../../../compiler/src/target.rs) gives both
 `Option<Box<Node>>` and `Slots<Box<Node>,1>` 16 bytes; a native nullable pointer
 is 8. Do not charge an extra word to Slots relative to WF Option. Repeated Pair
 fields in Leaf/Branch variants duplicate storage under the current product
@@ -1091,7 +1091,7 @@ owners, edit returning an owned value, empty/inverted ranges and partial final
 cleanup. Hostile comparisons check bounded progress and ownership, not sorted
 semantics. The owning/nodrop chain must cover every operation above.
 
-The complete [library](../../../lib/containers/ordered-map.wf) and
+The complete [library](../../../lib/std/collections/ordered_map/ordered-map.wf) and
 [maintained caller](../../../tests/programs/containers/ordered-map-program.wf)
 now pass that chain through the existing container corpus harness. The
 independent sorted-array oracle observes each mutation and traversal; owning
@@ -1760,7 +1760,7 @@ contract, specification rule or compiler implementation.
 
 | ID | Exact witness/source | Status at the merged baseline | Next action |
 | --- | --- | --- | --- |
-| X1-P1 | Baseline `grow_vector_drain` used repeated `remove_at(..., index: 0_u64)`; OP-10 | The later Vector trial replaces quadratic movement with suffix reversal and back consumption in [grow-vector.wf](../../../lib/containers/grow-vector.wf). | The original-order callback contract is preserved. The [comparison](../../experiments/container-representation/vector-library/RESULTS.md) measures the remaining cost against a direct consumer; O(n) is not a minimum-transfer claim. |
+| X1-P1 | Baseline `grow_vector_drain` used repeated `remove_at(..., index: 0_u64)`; OP-10 | The later Vector trial replaces quadratic movement with suffix reversal and back consumption in [grow-vector.wf](../../../lib/std/collections/vector/grow-vector.wf). | The original-order callback contract is preserved. The [comparison](../../experiments/container-representation/vector-library/RESULTS.md) measures the remaining cost against a direct consumer; O(n) is not a minimum-transfer claim. |
 | X1-P2 | [unbounded-reserve.wf](../../experiments/container-representation/x1/unbounded-reserve.wf) records the old missing-requirement shape | Resolved in the shipped GrowVector: `const ceiling`, `requires total <= ceiling`, bounded doubling and saturation replace unrestricted growth. MSR-4 now supplies the specified affine-left/L0-right bridge needed by the ordinary caller proof. The deliberately unbounded probe should still reject under OP-9. | Keep the size requirement. A library/application Full outcome may return the offered owner when its selected limit is reached; heap allocation itself has no refusal arm. Do not carry this old finding forward as a compiler or current-library defect. |
 | X1-P3 | [linear-ring-publish.wf](../../experiments/container-representation/x1/linear-ring-publish.wf):18; OP-12 and WIN-3 versus the atomic-update paragraphs in [CANDIDATE-X1.md](../access-effects/CANDIDATE-X1.md) and [affine-replacement.md](../../../design/language/ownership/affine-replacement.md) | The active affine/copy restriction remains. A nodrop Ring cannot use this atomic-publication route; the candidate's general linear-assignment refusal also remains. The broader atomic paragraph alone does not establish a selected linear exception. | Obtain an explicit intended-domain ruling before changing OP-12 or its record. In parallel, test ordinary swap/contract and consuming-rebase alternatives without claiming all deque designs impossible. No language widening is part of this restoration. |
 
@@ -1779,7 +1779,8 @@ restoration. The cursor row records its subsequent change:
 
 The owner selected root `lib/` for reusable WF source. The restoration at
 `8c02e875` placed the merged GrowVector implementation, byte for byte, at
-[`lib/containers/grow-vector.wf`](../../../lib/containers/grow-vector.wf).
+`lib/containers/grow-vector.wf`, now the implementation record of
+[`std::collections::vector`](../../../lib/std/collections/vector/grow-vector.wf).
 Its caller and C allocation observer remain under `tests/programs/containers/`;
 the existing corpus test still builds the same source bundle in sequential
 and parallel modes, then executes each normally and with the observer. The
@@ -1817,13 +1818,13 @@ language questions in
 
 | Family or consumer | Established operation chain and source scope | Remaining cost boundary |
 | --- | --- | --- |
-| [Vector](../../../lib/containers/grow-vector.wf) | Reserve/growing append, insert, ordered and swap removal, truncate, ordered drain and release; copy/drop/nodrop callers | Selected library chain complete. Extra drain movement and short-cycle lowering costs remain measured questions. |
-| [Deque](../../../lib/containers/deque.wf) | Both endpoints, wrap, logical visitation, consuming grow/shrink rebase, drain and release | Selected endpoint/rebase chain complete. Automatic reference-based growth and Ring two-span access are separate interfaces; scalar costs remain unresolved. |
-| [Slab](../../../lib/containers/slab.wf) | Lazy bounded slots, validated visit/edit with owned results, returned-owner exhaustion, removal, reuse, expiry, generation retirement and consumption | Selected stable-slot chain complete; the indexed composite below exercises multi-object memberships. Aggregate transfers, the extra cell word, independent retention tickets and surviving references remain separate questions. |
-| [HashMap](../../../lib/containers/hash-map.wf) | Generic owning collision/replacement/removal/reuse, lookup/edit, growth/rehash, visitation and consumption | Selected map chain complete. The owner rejected the [inactive-payload omission trial](#inactive-payload-initialization-compiler-trial), retaining baseline production clearing; wide result/migration costs and double-backing peaks retain their own evidence. |
-| [PriorityQueue](../../../lib/containers/priority-queue.wf) | Arbitrary-T growth, peek/pop/replace-top, heapify, ordered drain and physical cleanup; copy/drop/nodrop callers and exact release ledgers | Plain chain and [matched comparison](../../experiments/container-representation/priority-library/RESULTS.md) complete, with qualified result-boundary and wide-sift costs. The [shared no-op comparison](#measured-shared-core-selection) shows no repeatable material regression; its remaining single-cohort possible benefit is not a speedup claim. |
+| [Vector](../../../lib/std/collections/vector/grow-vector.wf) | Reserve/growing append, insert, ordered and swap removal, truncate, ordered drain and release; copy/drop/nodrop callers | Selected library chain complete. Extra drain movement and short-cycle lowering costs remain measured questions. |
+| [Deque](../../../lib/std/collections/deque/deque.wf) | Both endpoints, wrap, logical visitation, consuming grow/shrink rebase, drain and release | Selected endpoint/rebase chain complete. Automatic reference-based growth and Ring two-span access are separate interfaces; scalar costs remain unresolved. |
+| [Slab](../../../lib/std/collections/slab/slab.wf) | Lazy bounded slots, validated visit/edit with owned results, returned-owner exhaustion, removal, reuse, expiry, generation retirement and consumption | Selected stable-slot chain complete; the indexed composite below exercises multi-object memberships. Aggregate transfers, the extra cell word, independent retention tickets and surviving references remain separate questions. |
+| [HashMap](../../../lib/std/collections/hash_map/hash-map.wf) | Generic owning collision/replacement/removal/reuse, lookup/edit, growth/rehash, visitation and consumption | Selected map chain complete. The owner rejected the [inactive-payload omission trial](#inactive-payload-initialization-compiler-trial), retaining baseline production clearing; wide result/migration costs and double-backing peaks retain their own evidence. |
+| [PriorityQueue](../../../lib/std/collections/priority_queue/priority-queue.wf) | Arbitrary-T growth, peek/pop/replace-top, heapify, ordered drain and physical cleanup; copy/drop/nodrop callers and exact release ledgers | Plain chain and [matched comparison](../../experiments/container-representation/priority-library/RESULTS.md) complete, with qualified result-boundary and wide-sift costs. The [shared no-op comparison](#measured-shared-core-selection) shows no repeatable material regression; its remaining single-cohort possible benefit is not a speedup claim. |
 | Indexed composite | [Multi-object weak/retained caller](../../../tests/programs/containers/indexed-membership-program.wf): Slab ownership, HashMap ID lookup/replacement, indexed reschedule/removal with reverse-position repair, expiry/reuse and complete owner cleanup | Complete correctness chain passes both lowering modes and exact 129-allocation ledgers. The owner selected shared-core reuse from the [matched comparison](../../experiments/container-representation/indexed-library/RESULTS.md#measured-result): all 48 indexed cells stay within variation in both series, while native costs depend on payload and operation. Independent tickets, unforgeable membership and surviving references remain unestablished; this is no native-parity claim. |
-| [OrderedMap](../../../lib/containers/ordered-map.wf) | Arbitrary owning keys/values, find/edit/insert/replace, split/promotion, delete/borrow/merge/root contraction, ordered/range visitation and complete cleanup; the [maintained caller](../../../tests/programs/containers/ordered-map-program.wf) checks 103 allocations and each owner identity | The [complete baseline comparison and two rejected insertion trials](../../experiments/container-representation/ordered-library/RESULTS.md) preserve replacement, node-transfer and occupancy costs; no default tree or native-parity claim. |
+| [OrderedMap](../../../lib/std/collections/ordered_map/ordered-map.wf) | Arbitrary owning keys/values, find/edit/insert/replace, split/promotion, delete/borrow/merge/root contraction, ordered/range visitation and complete cleanup; the [maintained caller](../../../tests/programs/containers/ordered-map-program.wf) checks 103 allocations and each owner identity | The [complete baseline comparison and two rejected insertion trials](../../experiments/container-representation/ordered-library/RESULTS.md) preserve replacement, node-transfer and occupancy costs; no default tree or native-parity claim. |
 
 The six libraries' maintained callers and the indexed composite are registered
 through
@@ -2016,7 +2017,7 @@ prerequisites for this implementation.
 
 ### PriorityQueue source and proof boundary
 
-The [ordinary library](../../../lib/containers/priority-queue.wf) implements
+The [ordinary library](../../../lib/std/collections/priority_queue/priority-queue.wf) implements
 the registered operation chain. The maintained
 [caller](../../../tests/programs/containers/priority-queue-program.wf) admits
 and executes under sequential and CLI-parallel lowering on the unchanged
@@ -2443,8 +2444,8 @@ contract is not a faster implementation of the same operation.
 
 ### Executed library boundary
 
-The [Slab](../../../lib/containers/slab.wf) and
-[Deque](../../../lib/containers/deque.wf) sources have complete native callers
+The [Slab](../../../lib/std/collections/slab/slab.wf) and
+[Deque](../../../lib/std/collections/deque/deque.wf) sources have complete native callers
 in the formal corpus, reusing its sequential and parallel modes and shared
 allocation observer. Slab covers copy, owned Box and nodrop elements, lazy
 materialization, genuine full outcomes, wrong/expired handles, reuse and

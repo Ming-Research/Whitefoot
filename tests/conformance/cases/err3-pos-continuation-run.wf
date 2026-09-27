@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum StepError {
   Negative();
 }
@@ -5,7 +8,7 @@ enum StepError {
 fn step(x: i32) -> result: Result<i32, StepError> pure {
   doc "Reports a negative input as an ordinary error value [ERR-1].";
   if x < 0_i32 {
-    let negative_atom_0001 = Negative();
+    let negative_atom_0001 = StepError::Negative();
     return Err<i32, StepError>(error: negative_atom_0001);
   } else {
     return Ok<i32, StepError>(value: x);

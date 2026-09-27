@@ -43,10 +43,10 @@ const OPTION_TARGS_EXPECTED: &str = "Option with its type argument written: as a
 /// sites, so five conditions cover six rejections.
 const EFF1_CATEGORY_ORDER: &str =
     "a row is written in the canonical order, every `reads` entry before every `writes` entry";
-const EFF1_CATEGORY_ORDER_FIX: &str = "move every `reads` entry ahead of the first `writes` entry; a category may appear more than once";
+const EFF1_CATEGORY_ORDER_FIX: &str = "write every `reads` entry before the first `writes` entry, and delete each entry whose path is a `writes` entry's path or lies below it, which that `writes` already covers";
 const EFF1_REPEATED_PATH: &str =
     "a row lists each path at most once per category, and this entry repeats one";
-const EFF1_REPEATED_PATH_FIX: &str = "delete the repeated entry; `writes(p)` already subsumes `reads(p)`, so the pair is never written for one path";
+const EFF1_REPEATED_PATH_FIX: &str = "delete the repeated entry";
 const EFF1_NON_PARAMETER_ROOT: &str = "every effect path is rooted at one formal value parameter of the same callable, and this root is not one";
 const EFF1_NON_PARAMETER_ROOT_FIX: &str = "root the path at a parameter of this function; a local, a result binder, a region, and an unrelated declaration are never effect roots";
 const EFF1_FIELD_OF_NON_STRUCT: &str = "each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type";
@@ -71,7 +71,7 @@ pub(super) enum SelectedPlaceType {
     UnresolvedWindowElement,
 }
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [TYPE-9] a runtime-capacity shape may appear only as the content of a
     /// `Box` — the type of its `inner` field — and never inline in another
     /// value and never as a local binding.
@@ -190,11 +190,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if self.has_fixed(node, FixedTerminal::F64)? {
             return Ok(CheckedType::Float(FloatType::F64));
         }
-        if self
-            .tree
-            .direct_token_with(node, TerminalPredicate::TypeIdentifier)?
-            .is_some()
-        {
+        if self.tree.names_nominal(node)? {
             let usage = self.use_at(node, LexicalUseRole::Type)?;
             match usage.target() {
                 ResolvedTarget::Prelude(id) if id == BuiltinPreludeId::BOOL => {
@@ -535,11 +531,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if self.tree.production(owner)? != Production::Type {
             return Ok(false);
         }
-        if self
-            .tree
-            .direct_token_with(owner, TerminalPredicate::TypeIdentifier)?
-            .is_none()
-        {
+        if !self.tree.names_nominal(owner)? {
             return Ok(false);
         }
         let usage = self.use_at(owner, LexicalUseRole::Type)?;
@@ -608,8 +600,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 
     /// [EFF-1] one written row: every `reads` entry before every `writes`
-    /// entry, each entry naming exactly one path, and each path written at
-    /// most once per category.
+    /// entry, each entry naming exactly one path, each path written at most
+    /// once per category, and no entry another entry covers: nothing at or
+    /// below the path of a `writes` entry, and no `reads` entry below the path
+    /// of another `reads` entry.
     ///
     /// `pure` is the unique spelling of the empty row. Allocation and release
     /// carry no effect entry at all [STOR-8], so the row has exactly these two
@@ -626,6 +620,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let mut previous = None;
         let mut declared = EffectSet::NONE;
         let mut written = [Vec::new(), Vec::new()];
+        // Every entry in written order with its category and `effect` node,
+        // for the subsumption judgment once the whole row is read.
+        let mut entries = Vec::new();
         for effect in effects {
             let ordinal = if self.has_fixed(effect, FixedTerminal::Reads)? {
                 0_usize
@@ -663,11 +660,45 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     );
                 }
                 written[ordinal].push(path.clone());
+                entries.push((path.clone(), ordinal == 1, effect));
                 if ordinal == 0 {
                     declared.add_read(path);
                 } else {
                     declared.add_write(path);
                 }
+            }
+        }
+        // [EFF-1] a `writes` entry states every access at or below its path
+        // and a `reads` entry every observation at or below its path, so an
+        // entry that another entry of the row covers is a second spelling of
+        // what that entry already states [FORM-1]: a `writes` entry covers
+        // every entry at or below it, and a `reads` entry every `reads` entry
+        // at or below it. "At or below" is [EFF-2]'s covering relation: one
+        // root and a step prefix. Two entries of one category and one path
+        // were already refused above as a repeated entry, so a cover of the
+        // same category reaching this pass is a proper prefix. The first such
+        // entry in written order is refused at its own `effect`, naming the
+        // first entry that covers it; EFF-1 names no restructuring, so none is
+        // carried.
+        for (index, (path, write, node)) in entries.iter().enumerate() {
+            let covering = entries
+                .iter()
+                .enumerate()
+                .find(|(other, (cover, cover_write, _))| {
+                    *other != index
+                        && (*cover_write || !*write)
+                        && cover.root == path.root
+                        && path.steps.starts_with(&cover.steps)
+                });
+            if let Some((_, (_, _, covering))) = covering {
+                return self.issue_node(
+                    SemanticRule::Eff1,
+                    *node,
+                    SemanticIssueKind::SubsumedEffectEntry {
+                        entry: self.tree.source_spelling(*node)?,
+                        covering: self.tree.source_spelling(*covering)?,
+                    },
+                );
             }
         }
         Ok(declared)
@@ -717,14 +748,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         base: NodeId,
         parameters: &[ParameterSignature],
     ) -> Result<(CheckedStatePath, SelectedPlaceType), CheckStop> {
-        let origin = self.tree.path(base)?;
         let usage = self
             .resolved
-            .lexical_uses()
-            .iter()
-            .find(|usage| {
-                usage.role() == LexicalUseRole::EffectRoot && usage.origin().node() == origin
-            })
+            .lexical_uses_at(base)
+            .find(|usage| usage.role() == LexicalUseRole::EffectRoot)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let ResolvedTarget::Source {
             declaration,
@@ -782,16 +809,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         if self.has_fixed(suffix, FixedTerminal::LeftBracket)? {
             return self.effect_index_step(suffix, selected, parameters);
         }
-        let origin = self.tree.path(suffix)?;
         let mut names = self
             .resolved
-            .deferred_uses()
-            .iter()
+            .deferred_uses_at(suffix)
             .filter(|field| {
                 matches!(
                     field.role(),
                     crate::DeferredUseRole::EffectField | crate::DeferredUseRole::PayloadVariant
-                ) && field.origin().node() == origin
+                )
             })
             .collect::<Vec<_>>();
         names.sort_by_key(|field| field.origin().role_ordinal());
@@ -822,6 +847,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 else {
                     return self.invalid_effect_row(path_node, EFF1_UNKNOWN_FIELD);
                 };
+                self.reject_inaccessible_field(
+                    nominal,
+                    Some(variant_ordinal),
+                    field_ordinal,
+                    field_use.spelling(),
+                    path_node,
+                )?;
                 Ok((
                     CheckedEffectStep::Payload {
                         variant: u32::try_from(variant_ordinal)
@@ -913,6 +945,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 else {
                     return self.invalid_effect_row(path_node, EFF1_UNKNOWN_FIELD);
                 };
+                self.reject_inaccessible_field(nominal, None, ordinal, spelling, path_node)?;
                 Ok((
                     CheckedEffectStep::Field(
                         u32::try_from(ordinal)
@@ -938,18 +971,19 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         selected: SelectedPlaceType,
         parameters: &[ParameterSignature],
     ) -> Result<(CheckedEffectStep, SelectedPlaceType), CheckStop> {
-        let origin = self.tree.path(suffix)?;
         let range = self.tree.first_child_with(suffix, Production::Erange)?;
         let range_origin = range.map(|node| self.tree.path(node)).transpose()?;
+        // A stable sort below orders the two nodes' uses; within one node
+        // both readers yield record order.
         let mut indices = self
             .resolved
-            .lexical_uses()
-            .iter()
-            .filter(|usage| {
-                usage.role() == LexicalUseRole::EffectIndex
-                    && (usage.origin().node() == origin
-                        || range_origin.is_some_and(|range| usage.origin().node() == range))
-            })
+            .lexical_uses_at(suffix)
+            .chain(
+                range
+                    .into_iter()
+                    .flat_map(|node| self.resolved.lexical_uses_at(node)),
+            )
+            .filter(|usage| usage.role() == LexicalUseRole::EffectIndex)
             .collect::<Vec<_>>();
         indices.sort_by_key(|usage| {
             (
@@ -1190,11 +1224,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // The construction shape is decided first: its direct tokens include
         // the field-label IDENTs, so the single-identifier reference reader
         // below must never see it.
-        if self
-            .tree
-            .direct_token_with(node, TerminalPredicate::TypeIdentifier)?
-            .is_some()
-        {
+        if self.tree.names_nominal(node)? {
             return self.parse_const_construction(node, expected);
         }
         if let Some(literal) = self
@@ -1303,7 +1333,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 SemanticIssueKind::InvalidConstValue,
             );
         };
-        let (constructor_name, declared_fields) = {
+        let declared_fields = {
             let nominal = self.nominal(id)?;
             let super::super::model::CheckedNominalKind::Struct { fields } = &nominal.kind else {
                 return self.issue_node(
@@ -1312,8 +1342,27 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     SemanticIssueKind::InvalidConstValue,
                 );
             };
-            (nominal.name.clone(), fields.clone())
+            fields.clone()
         };
+        // [MOD-5, TYPE-2] a const construction names every field, so outside
+        // the struct's declaring module each must be published and none may
+        // be readonly, exactly as for a runtime construction.
+        for (index, field) in declared_fields.iter().enumerate() {
+            self.reject_inaccessible_field(id, None, index, &field.name, node)?;
+            if field.readonly && self.field_withholds_writes(id, field) {
+                return self.issue_node(
+                    SemanticRule::Mod5,
+                    node,
+                    SemanticIssueKind::InaccessibleField {
+                        field: field.name.clone(),
+                        reason: "a readonly field takes its value only from its declaring module, so a construction outside that module is refused; use one of its operations",
+                    },
+                );
+            }
+        }
+        // The constructor is named as the source writes its type, with an
+        // instance's type and const arguments [GRAM-3].
+        let constructor_name = self.checked_type_name(expected)?;
         let (expected_template, expected_arguments) = self
             .source_nominal_instances
             .get(id.0 as usize)
@@ -1455,11 +1504,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         &self,
         node: NodeId,
     ) -> Result<Option<crate::ContainerShape>, CheckStop> {
-        if self
-            .tree
-            .direct_token_with(node, TerminalPredicate::TypeIdentifier)?
-            .is_none()
-        {
+        if !self.tree.names_nominal(node)? {
             return Ok(None);
         }
         let ResolvedTarget::Container(id) = self.use_at(node, LexicalUseRole::Type)?.target()

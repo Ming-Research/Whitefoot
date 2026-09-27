@@ -1,3 +1,30 @@
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias PriorityOrder = std::collections::priority_queue::PriorityOrder;
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
+alias Slab = std::collections::slab::Slab;
+alias SlabHandle = std::collections::slab::SlabHandle;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias priority_queue_free = std::collections::priority_queue::priority_queue_free;
+alias priority_queue_heapify = std::collections::priority_queue::priority_queue_heapify;
+alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
+alias priority_queue_peek = std::collections::priority_queue::priority_queue_peek;
+alias priority_queue_peek_at = std::collections::priority_queue::priority_queue_peek_at;
+alias priority_queue_push_indexed = std::collections::priority_queue::priority_queue_push_indexed;
+alias priority_queue_remove_at_indexed = std::collections::priority_queue::priority_queue_remove_at_indexed;
+alias priority_queue_replace_at_indexed = std::collections::priority_queue::priority_queue_replace_at_indexed;
+alias slab_edit = std::collections::slab::slab_edit;
+alias slab_find_index = std::collections::slab::slab_find_index;
+alias slab_free = std::collections::slab::slab_free;
+alias slab_insert = std::collections::slab::slab_insert;
+alias slab_new = std::collections::slab::slab_new;
+alias slab_remove = std::collections::slab::slab_remove;
+alias slab_visit = std::collections::slab::slab_visit;
+
 struct Record<T> {
   id: u64;
   payload: T;
@@ -188,7 +215,7 @@ fn record_store_insert<T, const ceiling: u64, const generation_limit: u64>(store
 
 fn record_store_info<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle) -> result: Result<RecordInfo, RecordStatus> reads(store.store_id), reads(store.objects) {
   if handle.store_id != deref(store).store_id {
-    let reason = RecordWrongStore();
+    let reason = RecordStatus::RecordWrongStore();
     return Err<RecordInfo, RecordStatus>(error: reason);
   }
   let empty = RecordEmpty();
@@ -198,7 +225,7 @@ fn record_store_info<T, const ceiling: u64, const generation_limit: u64>(store: 
       return Ok<RecordInfo, RecordStatus>(value: info);
     }
     Err(error: missing) => {
-      let reason = RecordExpired();
+      let reason = RecordStatus::RecordExpired();
       return Err<RecordInfo, RecordStatus>(error: reason);
     }
   }
@@ -206,7 +233,7 @@ fn record_store_info<T, const ceiling: u64, const generation_limit: u64>(store: 
 
 fn record_store_visit<T, E, R, fn observe(env: &E, value: &Record<T>) -> result: R reads(value), writes(env), const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle, env: &E) -> result: Result<R, RecordStatus> reads(store.store_id), reads(store.objects), writes(env) {
   if handle.store_id != deref(store).store_id {
-    let reason = RecordWrongStore();
+    let reason = RecordStatus::RecordWrongStore();
     return Err<R, RecordStatus>(error: reason);
   }
   let found = slab_visit::<Record<T>, E, R, fn observe, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: env);
@@ -215,7 +242,7 @@ fn record_store_visit<T, E, R, fn observe(env: &E, value: &Record<T>) -> result:
       return Ok<R, RecordStatus>(value: move observed);
     }
     Err(error: missing) => {
-      let reason = RecordExpired();
+      let reason = RecordStatus::RecordExpired();
       return Err<R, RecordStatus>(error: reason);
     }
   }
@@ -233,7 +260,7 @@ fn record_store_lookup<T, const ceiling: u64, const generation_limit: u64>(store
           if info.id == id {
             return Ok<RecordHandle, RecordStatus>(value: handle);
           }
-          let reason = RecordConflict();
+          let reason = RecordStatus::RecordConflict();
           return Err<RecordHandle, RecordStatus>(error: reason);
         }
         Err(error: reason) => {
@@ -242,7 +269,7 @@ fn record_store_lookup<T, const ceiling: u64, const generation_limit: u64>(store
       }
     }
     Err(error: missing) => {
-      let reason = RecordMissing();
+      let reason = RecordStatus::RecordMissing();
       return Err<RecordHandle, RecordStatus>(error: reason);
     }
   }
@@ -259,7 +286,7 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
     }
   }
   if info.id_member {
-    return RecordAlready();
+    return RecordStatus::RecordAlready();
   }
   let empty = RecordEmpty();
   let old = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &deref(store).by_id, key: &info.id, key_env: &deref(store).id_hash, visit_env: &empty);
@@ -267,16 +294,16 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
     Ok(value: previous) => {
       let same = record_handle_equal(left: previous, right: handle.object);
       if same {
-        return RecordAlready();
+        return RecordStatus::RecordAlready();
       }
       let present = slab_find_index::<Record<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: previous);
       match present {
         Ok(value: index) => {
-          return RecordConflict();
+          return RecordStatus::RecordConflict();
         }
         Err(error: expired) => {
           if deref(store).retained {
-            return RecordConflict();
+            return RecordStatus::RecordConflict();
           }
         }
       }
@@ -293,7 +320,7 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
         HashMapReplaced() => {
         }
         HashMapFull() => {
-          return RecordFull();
+          return RecordStatus::RecordFull();
         }
       }
     }
@@ -302,10 +329,10 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
   let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &member);
   match changed {
     Ok(value: done) => {
-      return RecordDone();
+      return RecordStatus::RecordDone();
     }
     Err(error: expired) => {
-      return RecordExpired();
+      return RecordStatus::RecordExpired();
     }
   }
 }
@@ -313,7 +340,7 @@ fn record_store_attach<T, const ceiling: u64, const generation_limit: u64>(store
 fn record_store_detach<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, id: u64, handle: RecordHandle) -> result: RecordStatus reads(store.store_id), reads(store.id_hash), writes(store.objects), writes(store.by_id) {
   doc "The explicit ID lets a weak caller retire an association after its object expires. A same-ID replacement is protected by comparing the full stored handle before removal.";
   if handle.store_id != deref(store).store_id {
-    return RecordWrongStore();
+    return RecordStatus::RecordWrongStore();
   }
   let empty = RecordEmpty();
   let found = hash_map_lookup::<RecordIdKey, SlabHandle, RecordEmpty, SlabHandle, fn record_read_handle, ceiling>(map: &deref(store).by_id, key: &id, key_env: &deref(store).id_hash, visit_env: &empty);
@@ -326,17 +353,17 @@ fn record_store_detach<T, const ceiling: u64, const generation_limit: u64>(store
           Some(value: pair) => {
             let absent = False();
             let changed = slab_edit::<Record<T>, Bool, unit, fn record_set_id_member::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &absent);
-            return RecordDone();
+            return RecordStatus::RecordDone();
           }
           None() => {
-            return RecordMissing();
+            return RecordStatus::RecordMissing();
           }
         }
       }
-      return RecordConflict();
+      return RecordStatus::RecordConflict();
     }
     Err(error: missing) => {
-      return RecordMissing();
+      return RecordStatus::RecordMissing();
     }
   }
 }
@@ -355,7 +382,7 @@ fn record_store_position<T, const ceiling: u64, const generation_limit: u64>(sto
     }
   }
   if info.position == ceiling {
-    let reason = RecordUnscheduled();
+    let reason = RecordStatus::RecordUnscheduled();
     return Err<u64, RecordStatus>(error: reason);
   }
   let length = priority_queue_len::<RecordDue, ceiling>(queue: &deref(store).due);
@@ -369,7 +396,7 @@ fn record_store_position<T, const ceiling: u64, const generation_limit: u64>(sto
       }
     }
   }
-  let reason = RecordInvalidPosition();
+  let reason = RecordStatus::RecordInvalidPosition();
   return Err<u64, RecordStatus>(error: reason);
 }
 
@@ -387,7 +414,7 @@ fn record_store_schedule<T, const ceiling: u64, const generation_limit: u64>(sto
     let member = record_store_position::<T, ceiling, generation_limit>(store: store, handle: handle);
     match member {
       Ok(value: position) => {
-        return RecordAlready();
+        return RecordStatus::RecordAlready();
       }
       Err(error: reason) => {
         return reason;
@@ -399,10 +426,10 @@ fn record_store_schedule<T, const ceiling: u64, const generation_limit: u64>(sto
   let pushed = priority_queue_push_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, value: due_item, order_env: &empty, position_env: &deref(store).objects);
   match pushed {
     Ok(value: done) => {
-      return RecordDone();
+      return RecordStatus::RecordDone();
     }
     Err(error: returned) => {
-      return RecordFull();
+      return RecordStatus::RecordFull();
     }
   }
 }
@@ -421,7 +448,7 @@ fn record_store_reschedule<T, const ceiling: u64, const generation_limit: u64>(s
   let due_item = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, ceiling>(queue: &deref(store).due, index: position, env: &empty);
   let replacement = RecordDue(deadline: deadline, id: due_item.id, handle: due_item.handle);
   let previous = priority_queue_replace_at_indexed::<RecordDueOrder, Slab<Record<T>, ceiling, generation_limit>, fn record_report_position::<T, ceiling, generation_limit>, ceiling>(queue: &deref(store).due, index: position, value: replacement, order_env: &empty, position_env: &deref(store).objects);
-  return RecordDone();
+  return RecordStatus::RecordDone();
 }
 
 fn record_store_cancel<T, const ceiling: u64, const generation_limit: u64>(store: &RecordStore<T, ceiling, generation_limit>, handle: RecordHandle) -> result: RecordStatus reads(store.store_id), writes(store.objects), writes(store.due.storage) {
@@ -440,10 +467,10 @@ fn record_store_cancel<T, const ceiling: u64, const generation_limit: u64>(store
   let cleared = slab_edit::<Record<T>, u64, unit, fn record_set_position::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &absent);
   match cleared {
     Ok(value: done) => {
-      return RecordDone();
+      return RecordStatus::RecordDone();
     }
     Err(error: expired) => {
-      return RecordExpired();
+      return RecordStatus::RecordExpired();
     }
   }
 }
@@ -462,11 +489,11 @@ fn record_store_replace<T, const ceiling: u64, const generation_limit: u64>(stor
   let changed = slab_edit::<Record<T>, T, unit, fn record_swap_payload::<T>, ceiling, generation_limit>(slab: &deref(store).objects, handle: handle.object, env: &payload);
   match changed {
     Ok(value: done) => {
-      let status = RecordDone();
+      let status = RecordStatus::RecordDone();
       return RecordReplacement<T>(status: status, payload: move payload);
     }
     Err(error: expired) => {
-      let status = RecordExpired();
+      let status = RecordStatus::RecordExpired();
       return RecordReplacement<T>(status: status, payload: move payload);
     }
   }
@@ -484,11 +511,11 @@ fn record_store_delete<T, const ceiling: u64, const generation_limit: u64>(store
   }
   if deref(store).retained {
     if info.id_member {
-      let reason = RecordBusy();
+      let reason = RecordStatus::RecordBusy();
       return Err<Record<T>, RecordStatus>(error: reason);
     }
     if info.position != ceiling {
-      let reason = RecordBusy();
+      let reason = RecordStatus::RecordBusy();
       return Err<Record<T>, RecordStatus>(error: reason);
     }
   }
@@ -498,7 +525,7 @@ fn record_store_delete<T, const ceiling: u64, const generation_limit: u64>(store
       return Ok<Record<T>, RecordStatus>(value: move owner);
     }
     None() => {
-      let reason = RecordExpired();
+      let reason = RecordStatus::RecordExpired();
       return Err<Record<T>, RecordStatus>(error: reason);
     }
   }

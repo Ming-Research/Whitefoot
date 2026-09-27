@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn demux(count: u64, ba: u64, bb: u64, bc: u64) -> done: u64 pure contract {
   requires count <= 1000_u64;
   requires ba <= 1000_u64;

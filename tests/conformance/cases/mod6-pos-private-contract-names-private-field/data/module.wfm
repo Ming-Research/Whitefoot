@@ -1,0 +1,8 @@
+public struct Counter {
+  public count: u64;
+  limit: u64;
+}
+
+public fn start() -> counter: Counter pure doc "Starts a counter with room for one step.";
+
+public fn step(counter: &Counter) -> result: unit writes(counter) doc "Counts one step when there is room.";

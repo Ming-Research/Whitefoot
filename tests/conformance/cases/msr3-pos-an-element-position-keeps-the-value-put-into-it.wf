@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-3: the element placement. A measured value committed at an element position keeps its measures as facts about P[i], so a window that passed through a written slot still discharges the window operation into it without re-reading cap - len. The retired replace statement also handed the displaced value the position's own facts; that direction has no successor, because one commit writes one place.";
   let blocks = slots_new::<Slots<u8, 8>, 2>();

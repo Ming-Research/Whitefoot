@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias fifo = pkg::runtime::queue;
+alias model = pkg::data;
+alias run_two = pkg::runtime::run_two;
+
+fn start() -> status: ExitStatus pure {
+  doc "An allocation-free entry workload, not a bootable operating system. Its queue owns fixed-capacity storage by value.";
+  let pending = fifo::new();
+  let first = model::Job(tag: 7_u8, payload: 250_u8);
+  fifo::push(queue: &pending, job: first);
+  let second = model::Job(tag: 9_u8, payload: 10_u8);
+  fifo::push(queue: &pending, job: second);
+  let report = run_two::<fn fifo::pop>(queue: &pending);
+  if report.first_tag != 7_u8 {
+    return exit_status(code: 1_u8);
+  }
+  if report.second_tag != 9_u8 {
+    return exit_status(code: 2_u8);
+  }
+  if report.digest != 4_u8 {
+    return exit_status(code: 3_u8);
+  }
+  if report.remaining != 0_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

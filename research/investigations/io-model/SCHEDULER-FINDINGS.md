@@ -9,8 +9,8 @@ experiments ran on a family of `codex/io-*` work branches on 2026-09-06 and
 it established, so the branches can go without the reasoning going with them.
 
 Most experiments moved a mechanism inside the unified compute/completion
-scheduler the tree retired on 2026-09-10 — see `mcts_mem/whitefoot/parallelism.md`,
-"2026-09-10 (6816e9bd) boundary", and `mcts_mem/whitefoot/system-interface.md`,
+scheduler the tree retired on 2026-09-10 — see [mcts_mem/whitefoot/parallelism.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/parallelism.md),
+"2026-09-10 (6816e9bd) boundary", and [mcts_mem/whitefoot/system-interface.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/system-interface.md),
 "2026-09-10 boundary". Compute joins now run on ordinary native thread stacks,
 there is no switchable-stack pool, the managed-stack enumerator is gone, and
 suspended user-call connection concurrency is temporarily unsupported. A result
@@ -22,7 +22,7 @@ references — io_uring, epoll, C++ coroutines, Go and Rayon — built and
 hash-pinned here and nowhere else.
 
 One correction belongs at the front. `RESULTS.md` and
-`mcts_mem/whitefoot/system-interface.md` both named reaper-local scheduling, a
+[mcts_mem/whitefoot/system-interface.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/system-interface.md) both named reaper-local scheduling, a
 per-thread ready list and a steal from idleness as the next performance work on
 this line. Experiment 1 built and measured exactly that and found no throughput
 gain. The prediction is retracted in place in `RESULTS.md`; this file holds the
@@ -1387,7 +1387,7 @@ requirement has no second site in the tree, and the benchmark's path remains
 optional, off by default and enabled by no screen.
 
 **Which of the branch's dated memory facts remain true?** The branch's
-`mcts_mem/whitefoot/system-interface.md` carries 36 dated 2026-09-0x facts
+[mcts_mem/whitefoot/system-interface.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/system-interface.md) carries 36 dated 2026-09-0x facts
 against three in the tree, every one written against the unified scheduler. The
 ones this record judges runtime-independent — packet policy, client width,
 storage accounting, coroutine frame elision, the send-operations-versus-packets

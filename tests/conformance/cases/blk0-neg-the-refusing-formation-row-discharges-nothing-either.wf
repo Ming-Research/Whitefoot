@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The same judgment over a heap construction record, whose published relations are all about the cell it made. Its relations are instantiated by the one path every record's are, so a defect there would reach every caller of it; the table read beside it is judged against the table's own length and is refused.";
   let table = slots_new::<u8, 4>();

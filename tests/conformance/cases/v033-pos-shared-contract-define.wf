@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bounded_index(values: Slots<u8, 8>, index: u64) -> output: u64 pure contract {
   define capacity = values.cap;
   requires index < capacity;

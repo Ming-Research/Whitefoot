@@ -38,7 +38,7 @@ fn retains_every_equal_width_reinterpret_pair() {
         }
     }
     source
-        .push_str("fn main() -> status: ExitStatus pure {\n  return exit_status(code: 0_u8);\n}\n");
+        .push_str("fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n");
 
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -82,10 +82,10 @@ fn retains_every_equal_width_reinterpret_pair() {
 #[test]
 fn reinterpret_shape_pair_and_operand_failures_keep_their_rule_owners() {
     for source in [
-        b"fn main() -> status: ExitStatus pure {\n  let value = reinterpret::<i32, i32>(1_i32);\n  return exit_status(code: 0_u8);\n}\n".as_slice(),
-        b"fn main() -> status: ExitStatus pure {\n  let value = reinterpret::<i8, u16>(1_i8);\n  return exit_status(code: 0_u8);\n}\n",
-        b"fn main() -> status: ExitStatus pure {\n  let value = reinterpret::<f32, f64>(1.0_f32);\n  return exit_status(code: 0_u8);\n}\n",
-        b"fn main() -> status: ExitStatus pure {\n  let value = reinterpret::<i32>(1_i32);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = reinterpret::<i32, i32>(1_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = reinterpret::<i8, u16>(1_i8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = reinterpret::<f32, f64>(1.0_f32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = reinterpret::<i32>(1_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
     ] {
         assert_rule(
             source,
@@ -94,7 +94,7 @@ fn reinterpret_shape_pair_and_operand_failures_keep_their_rule_owners() {
         );
     }
     assert_rule_kind(
-        b"fn main() -> status: ExitStatus pure {\n  let value = reinterpret::<i32, u32>(1_u32);\n  return exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = reinterpret::<i32, u32>(1_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
         |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );

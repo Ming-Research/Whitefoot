@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "+checked returns Result<T, Overflow> [OP-1]; i32::MAX + 1 must yield Err, while any unexpected Ok result returns a nonzero status.";
   let hi = 2147483647_i32;

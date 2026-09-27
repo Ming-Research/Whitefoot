@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn add_one(x: u64) -> return_value: u64 pure {
   doc "OP-2 constant-operand class: `x + 1_u64` carries the overflow obligation that the exact mathematical result belongs to u64. Nothing bounds x, so the fact state does not discharge the upper conjunct and the call is rejected citing OP-2 with residual `x <= 18446744073709551614`. Repairs include a dominating branch, requirement, invariant, checked source proof, or the explicit wrap, checked, or sat spelling.";
   let y = x + 1_u64;

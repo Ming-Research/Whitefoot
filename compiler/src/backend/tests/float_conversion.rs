@@ -73,63 +73,63 @@ const NUMERIC_TYPES: [NumericType; 10] = [
 
 #[test]
 fn every_total_conversion_with_a_float_endpoint_executes() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let i8_f32 = cvt::<i8, f32>(-8_i8);
   if feq(i8_f32, -8.0_f32) {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let i16_f32 = cvt::<i16, f32>(32767_i16);
   if feq(i16_f32, 32767.0_f32) {
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let u8_f32 = cvt::<u8, f32>(8_u8);
   if feq(u8_f32, 8.0_f32) {
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let u16_f32 = cvt::<u16, f32>(65535_u16);
   if feq(u16_f32, 65535.0_f32) {
   } else {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let i8_f64 = cvt::<i8, f64>(-8_i8);
   if feq(i8_f64, -8.0_f64) {
   } else {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let i16_f64 = cvt::<i16, f64>(-16_i16);
   if feq(i16_f64, -16.0_f64) {
   } else {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let i32_f64 = cvt::<i32, f64>(2147483647_i32);
   if feq(i32_f64, 2147483647.0_f64) {
   } else {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let u8_f64 = cvt::<u8, f64>(8_u8);
   if feq(u8_f64, 8.0_f64) {
   } else {
-    return exit_status(code: 8_u8);
+    return std::process::exit_status(code: 8_u8);
   }
   let u16_f64 = cvt::<u16, f64>(16_u16);
   if feq(u16_f64, 16.0_f64) {
   } else {
-    return exit_status(code: 9_u8);
+    return std::process::exit_status(code: 9_u8);
   }
   let u32_f64 = cvt::<u32, f64>(4294967295_u32);
   if feq(u32_f64, 4294967295.0_f64) {
   } else {
-    return exit_status(code: 10_u8);
+    return std::process::exit_status(code: 10_u8);
   }
   let f32_f64 = cvt::<f32, f64>(1.5_f32);
   if feq(f32_f64, 1.5_f64) {
   } else {
-    return exit_status(code: 11_u8);
+    return std::process::exit_status(code: 11_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -159,7 +159,7 @@ fn every_total_conversion_with_a_float_endpoint_executes() {
 
 #[test]
 fn every_partial_conversion_with_a_float_endpoint_has_exact_success_and_failure() {
-    let mut source = String::from("fn main() -> status: ExitStatus pure {\n");
+    let mut source = String::from("fn main() -> status: std::process::ExitStatus pure {\n");
     let mut conversion = 0;
     for source_type in NUMERIC_TYPES {
         for destination_type in NUMERIC_TYPES {
@@ -174,7 +174,7 @@ fn every_partial_conversion_with_a_float_endpoint_has_exact_success_and_failure(
             conversion += 1;
         }
     }
-    source.push_str("  return exit_status(code: 0_u8);\n}\n");
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
     assert_eq!(conversion, 23);
 
     let llvm = compile(source.as_bytes());
@@ -277,56 +277,56 @@ fn reject_f64_u64(value: f64) -> result: Bool pure {
   return rejected;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let i32_boundary = power_f32(exponent: 31_u32);
   let rejected_i32_boundary = reject_f32_i32(value: i32_boundary);
   if rejected_i32_boundary {
   } else {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
   let u32_boundary = power_f32(exponent: 32_u32);
   let rejected_u32_boundary = reject_f32_u32(value: u32_boundary);
   if rejected_u32_boundary {
   } else {
-    return exit_status(code: 2_u8);
+    return std::process::exit_status(code: 2_u8);
   }
   let i64_boundary = power_f64(exponent: 63_u32);
   let rejected_i64_boundary = reject_f64_i64(value: i64_boundary);
   if rejected_i64_boundary {
   } else {
-    return exit_status(code: 3_u8);
+    return std::process::exit_status(code: 3_u8);
   }
   let u64_boundary = power_f64(exponent: 64_u32);
   let rejected_u64_boundary = reject_f64_u64(value: u64_boundary);
   if rejected_u64_boundary {
   } else {
-    return exit_status(code: 4_u8);
+    return std::process::exit_status(code: 4_u8);
   }
   let nan_f32 = fnan::<f32>();
   let rejected_nan_f32 = reject_f32_i32(value: nan_f32);
   if rejected_nan_f32 {
   } else {
-    return exit_status(code: 5_u8);
+    return std::process::exit_status(code: 5_u8);
   }
   let infinity_f32 = finf::<f32>();
   let rejected_infinity_f32 = reject_f32_i32(value: infinity_f32);
   if rejected_infinity_f32 {
   } else {
-    return exit_status(code: 6_u8);
+    return std::process::exit_status(code: 6_u8);
   }
   let infinity_f64 = finf::<f64>();
   let negative_infinity = fneg(infinity_f64);
   let rejected_negative_infinity = reject_f64_u64(value: negative_infinity);
   if rejected_negative_infinity {
   } else {
-    return exit_status(code: 7_u8);
+    return std::process::exit_status(code: 7_u8);
   }
   let two_to_52 = power_f64(exponent: 52_u32);
   let one_ulp = fdiv.strict(1.0_f64, two_to_52);
   let not_f32 = fadd.strict(1.0_f64, one_ulp);
   match cvt.checked::<f64, f32>(not_f32) {
     Ok(value: rounded) => {
-      return exit_status(code: 8_u8);
+      return std::process::exit_status(code: 8_u8);
     }
     Err(error: narrow) => {
     }
@@ -336,11 +336,11 @@ fn main() -> status: ExitStatus pure {
     Ok(value: narrow_nan) => {
       if fne(narrow_nan, narrow_nan) {
       } else {
-        return exit_status(code: 9_u8);
+        return std::process::exit_status(code: 9_u8);
       }
     }
     Err(error: narrow_error) => {
-      return exit_status(code: 10_u8);
+      return std::process::exit_status(code: 10_u8);
     }
   }
   let narrowable_infinity = finf::<f64>();
@@ -349,20 +349,20 @@ fn main() -> status: ExitStatus pure {
       let expected_infinity = finf::<f32>();
       if feq(narrow_infinity, expected_infinity) {
       } else {
-        return exit_status(code: 11_u8);
+        return std::process::exit_status(code: 11_u8);
       }
     }
     Err(error: infinity_error) => {
-      return exit_status(code: 12_u8);
+      return std::process::exit_status(code: 12_u8);
     }
   }
   let narrow_nan_source = fnan::<f32>();
   let wide_nan = cvt::<f32, f64>(narrow_nan_source);
   if fne(wide_nan, wide_nan) {
   } else {
-    return exit_status(code: 13_u8);
+    return std::process::exit_status(code: 13_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let source = binary_value::extend_program(
@@ -463,8 +463,8 @@ fn total_domain_same(value: f64) -> result: Bool pure {
   return cvt.defined::<f64, f64>(value);
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -569,7 +569,7 @@ fn emit_success_case(
     };
     writeln!(
         source,
-        "  let success{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match success{conversion} {{\n    Ok(value: success_value{conversion}) => {{\n      if {equality} {{\n      }} else {{\n        return exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{conversion}) => {{\n      return exit_status(code: 1_u8);\n    }}\n  }}",
+        "  let success{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match success{conversion} {{\n    Ok(value: success_value{conversion}) => {{\n      if {equality} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
@@ -577,7 +577,7 @@ fn emit_success_case(
     let exact_equality = equality.replace("success_value", "exact_value");
     writeln!(
         source,
-        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    let exact_value{conversion} = cvt::<{source_type}, {destination}>({source_value});\n    if {exact_equality} {{\n    }} else {{\n      return exit_status(code: 2_u8);\n    }}\n  }} else {{\n    return exit_status(code: 3_u8);\n  }}",
+        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    let exact_value{conversion} = cvt::<{source_type}, {destination}>({source_value});\n    if {exact_equality} {{\n    }} else {{\n      return std::process::exit_status(code: 2_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 3_u8);\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
@@ -613,14 +613,14 @@ fn emit_failure_case(
     };
     writeln!(
         source,
-        "  let failure{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match failure{conversion} {{\n    Ok(value: failure_value{conversion}) => {{\n      return exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{conversion}) => {{\n    }}\n  }}",
+        "  let failure{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match failure{conversion} {{\n    Ok(value: failure_value{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{conversion}) => {{\n    }}\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
     .expect("write partial failure case");
     writeln!(
         source,
-        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    return exit_status(code: 4_u8);\n  }}",
+        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    return std::process::exit_status(code: 4_u8);\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )

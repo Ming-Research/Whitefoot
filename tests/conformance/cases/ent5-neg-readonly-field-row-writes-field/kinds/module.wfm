@@ -1,0 +1,8 @@
+public struct Node {
+  public readonly count: u64;
+  public weight: u64;
+}
+
+public fn widen(rows: &Slots<Node, 4>, i: u64) -> result: unit writes(rows[i].count) contract {
+  requires i < deref(rows).len;
+} doc "Sets element i's readonly count, which only this module may assign.";

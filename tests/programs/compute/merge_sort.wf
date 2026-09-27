@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: u64, next_upper: u64) reads(input) contract {
   requires deref(input).len <= 16777216_u64;
   requires lower < upper;

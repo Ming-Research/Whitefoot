@@ -1,3 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias ReadFile = std::fs::ReadFile;
+alias exit_status = std::process::exit_status;
+
 fn release_read_file(file: ReadFile) -> function_result: unit pure {
   doc "PROV-6: ReadFile is an ordinary linear opaque nominal. Returning without consuming or returning it is refused; its drop has no implicit close.";
   return unit;

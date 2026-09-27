@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn count_low(input: &[u64]) -> result: u64 reads(input) contract {
   requires deref(input).len <= 16777216_u64;
   ensures result <= deref(input).len;

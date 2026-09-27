@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-4, REF-4: a range reference's one measure is len, equal to hi - lo, and a subscript through it carries the ordinary bounds obligation against that len. The range covers two elements, so offset two is outside it.";
   let values = array_filled::<u8, 2>(value: 0_u8);

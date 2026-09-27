@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn retain(value: u64, limit: u64) -> result: unit pure contract {
   requires value <= limit;
 } {

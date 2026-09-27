@@ -38,8 +38,7 @@ fn fixed(set: &mut TerminalSet, terminal: FixedTerminal, spelling: &[u8]) -> boo
     true
 }
 
-fn membership(token: Token<'_>) -> Option<TerminalSet> {
-    let spelling = token.span().bytes();
+fn membership(token: Token, spelling: &[u8]) -> Option<TerminalSet> {
     let mut set = TerminalSet::empty();
     let valid_shape = match token.kind() {
         TokenKind::LowerWordForm => {
@@ -131,7 +130,7 @@ fn membership(token: Token<'_>) -> Option<TerminalSet> {
     (valid_shape && !set.is_empty()).then_some(set)
 }
 
-fn invalid_token(token: Token<'_>) -> TerminalCompilerFailure {
+fn invalid_token(token: Token) -> TerminalCompilerFailure {
     TerminalCompilerFailure::InvalidFormedToken {
         source: token.id().source(),
         start: token.id().start(),
@@ -147,11 +146,11 @@ fn invalid_token(token: Token<'_>) -> TerminalCompilerFailure {
 /// table, and it retains all matching predicates rather than choosing one by
 /// priority.
 #[must_use]
-pub fn classify_terminals<'lexed, 'source>(
-    lexed: &'lexed LexedBundle<'source>,
+pub fn classify_terminals(
+    lexed: &LexedBundle,
     specification: SpecHash,
     limits: TerminalLimits,
-) -> TerminalOutcome<'lexed, 'source> {
+) -> TerminalOutcome {
     if specification != TERMINAL_CONTRACT_SPEC_HASH {
         return TerminalOutcome::InvocationFailure(
             TerminalInvocationFailure::SpecificationMismatch {
@@ -201,7 +200,10 @@ pub fn classify_terminals<'lexed, 'source>(
             let Lexeme::Token(token) = lexeme else {
                 continue;
             };
-            let Some(terminals) = membership(*token) else {
+            let Some(spelling) = lexed.source_bundle().span_bytes(token.span()) else {
+                return TerminalOutcome::CompilerFailure(invalid_token(*token));
+            };
+            let Some(terminals) = membership(*token, spelling) else {
                 let owner = match token.kind() {
                     TokenKind::LowerWordForm => Some(TerminalIssueOwner::Form3),
                     TokenKind::NumberForm => Some(TerminalIssueOwner::Form5),
@@ -241,7 +243,7 @@ pub fn classify_terminals<'lexed, 'source>(
 
     TerminalOutcome::Complete(ClassifiedBundle {
         spec: specification,
-        lexed,
+        source: lexed.source_bundle().clone(),
         tokens,
         source_offsets,
     })

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "FN-7 and PROG-3: the entry is an ordinary function with an ordinary signature, and the heap is ambient with no source spelling at all [STOR-8]. The boxed runtime-capacity run is taken from that one heap, filled through the window boundary, read at two logical offsets, and released by the compiler-derived scope exit on the return edge [STOR-3]; allocation and release contribute no effect entry, so the row is `pure`.";
   let fresh = box_slots_new::<u8>(capacity: 4_u64);

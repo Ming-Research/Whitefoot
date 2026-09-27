@@ -1,0 +1,4 @@
+fn main() -> status: ExitStatus pure {
+  let b = cvt::<u32, u8>(256_u32);
+  return exit_status(code: b);
+}

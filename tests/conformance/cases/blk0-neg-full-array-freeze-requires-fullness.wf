@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "slots_into_array requires values.len == n. One initialized slot in a capacity-two run does not form a complete array; the conversion must not expose the raw second slot, and the undischarged requirement is an FN-8 call-site rejection.";
   let partial = slots_new::<u64, 2>();

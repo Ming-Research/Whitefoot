@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn f(cell: &Box<i32>, x: i32) -> function_result: i32 pure, reads(cell) {
   doc "pure is the unique spelling of the empty row and is not an entry that another entry may follow, so the comma after it fails the enclosing fn_decl continuation under DIAG-1/GRAM-2. The program still rejects and pure still cannot combine with another entry.";
   return x;

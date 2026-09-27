@@ -1,0 +1,20 @@
+struct Node {
+  value: u64;
+  next: Option<Box<Node>>;
+}
+
+fn exchange_with_child(root: &Node) -> result: u64 writes(root) {
+  match deref(root).next {
+    Some(value: child) => {
+      let descendant = &deref(child).inner;
+      swap(first: root, second: descendant);
+    }
+    None() => {
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

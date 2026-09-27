@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn mutable_clause(x: i32) -> result: i32 pure contract {
   define candidate = x;
   set candidate = candidate +wrap 1_i32;

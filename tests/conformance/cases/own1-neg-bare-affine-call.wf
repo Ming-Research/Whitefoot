@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn consume(buf: Slots<u8, 1>) -> return_value: unit pure {
   return unit;
 }

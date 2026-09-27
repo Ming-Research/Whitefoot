@@ -6,6 +6,24 @@ opportunity is a validation task: state its expected benefit, uncertainty, and
 criterion for deciding whether to pursue it. Entries do not select a design.
 Remove an item when its implementation and checks land, or its validation
 concludes with a recorded disposition; retain any selected follow-up work here.
+Add an item at the end of the section that owns its topic, so parallel branches
+rarely insert at the same place.
+
+## Numeric conversions and value evidence
+
+- **Validate matching operation origins across named call arguments.** With
+  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
+  `reduced == 1_u8` keeps the direct comparison and the fully expanded
+  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
+  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
+  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
+  through a parameter or passing the matching literal avoids this boundary.
+  Assess whether consistent call-side origin normalization would recover
+  useful proofs without enumerating intermediate expansion combinations.
+  Require matching aliases, replaced inputs, joins and bounded proof cost;
+  any additional accepted route needs its own specification decision. Defer
+  from the modular conversion operation, which adds no proof family; reopen
+  when a real caller needs this named-value form.
 
 - **Select the modular conversion companion.** The
   [conversion comparison](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
@@ -66,6 +84,60 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   Results or wider storage support makes this cost material. The language
   extensions below remain a separate question.
 
+## Checker precision and proof cost
+
+- **A module check's cost for a library interface still grows with the
+  module's functions.** Reading `std::process`'s closure (the `std::io`,
+  `std::text`, `std::fs` and `std::process` interfaces) costs a one-function
+  module 71.5 million instructions and a 16-function module 121.5 million
+  ([library-modules checker costs](../research/investigations/library-modules/DESIGN.md#the-checkers-per-function-costs-after-the-split)).
+  The nominal passes no longer contribute: the layout recursion judgment now
+  walks the nominal table only after it changed, and postcondition selector
+  admission indexes signatures by path. The remaining 50 million
+  instructions are resolution's table building and public-closure check
+  (`build_tables`, `check_public_closure` in `compiler/src/resolution/engine/`,
+  about 25 million), the entailment schedule of the function inventory
+  (`analyze_function_inventory` in `compiler/src/semantic/check.rs`, about 11
+  million), instantiation-cycle rejection (7 million) and concrete signature
+  collection (6 million). Impact: every check of a module that names a
+  library module, and every program returning `ExitStatus`, pays per
+  function for declarations it does not use. Change: find in each the work
+  repeated per function over every declaration or signature of the closure
+  and key it by declaration instead. Validate with the same comparison: H16
+  at most 1.1 times H1, verdicts unchanged. Reopen when check time limits an
+  experiment.
+
+- **A small module check is mostly parsing the prelude again.** Checking a
+  one-function module that names no library module executes 66.9 million
+  instructions, of which parsing takes 24.0 million and finalizing 16.5
+  million, and 97 percent of the bytes parsed are the 24 prelude records
+  (4,425 bytes against the module's 105); the parser's arm selection
+  (`row_score` under `select_arm` in `compiler/src/syntax/parser/diagnostic.rs`)
+  alone takes 13.9 million, since it scans every row of a decision
+  ([library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split),
+  W1 under callgrind). Impact: a fixed cost of every check and composition,
+  now the largest part of a small module check. Change: select a decision's
+  arm through an index by the first token's terminals instead of a scan, and
+  parse the prelude, which the compiler fixes at build time, once per
+  process rather than once per check. Validate with the same callgrind
+  comparison and unchanged parse outcomes over the corpus. Reopen when check
+  time limits an experiment.
+
+- **Some ENT-3 sources read no measure operand.** S5/S6 copies, S1
+  comparisons, S11 counted captures, every S7 operation row and a checked
+  integer row's success payload read an operand the specification calls an
+  admitted term or constant through one reader that includes the MSR-1
+  measure terms, so `let r = x % deref(src).len;` establishes
+  `r < deref(src).len`. Other flow readers of the same shape (subscript offset
+  terms, S13 index captures, allocation lengths, range-formation operands,
+  integer-domain operands, the `Ok` constructor's payload) are unverified;
+  affine images already cover some of them. Repair with the same reader, and
+  validate it with paired direct and let-bound cases for each source,
+  including a write that kills the measure, requiring no other verdict change.
+  Deferred from the counted-endpoint and operation-fact repairs, which changed
+  only S11's and S7's reading; reopen with the next entailment change or when
+  a program needs the direct form.
+
 - **Joined reference proofs lose useful target-relative information.** A
   reference selecting either of two freshly empty Slots cannot establish the
   append precondition from both constructors' facts; captured disjoint ranges
@@ -94,16 +166,6 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   this consumer change to the joined-reference work above; reopen when that
   work establishes point-current target authority or a real proof needs it.
 
-- **Validate reuse of selected-target element layouts during emission.**
-  [Zero-stride addressing](../compiler/src/backend/target.rs) currently queries
-  the ordinary layout calculator afresh for each element-address step. Repeated
-  accesses to a deeply nested nominal element may recompute the same layout.
-  Compare checking/emission cost on repeated nested-element accesses before
-  introducing shared layout storage; require identical qualification and emitted
-  addresses. The benefit and material cost are unmeasured, so keep the simple
-  query for now and reopen when measuring target-emission cost or extending its
-  layout consumers.
-
 - **Expose a failed callee proof behind an unavailable summary.** The
   [partially concrete reserve probe](../research/investigations/containers-and-resources/X1-LIBRARY.md#partially-concrete-reserve-diagnostic)
   reports INV-1 at `room` after `priority_queue_make_room<ProbeDue, ceiling>`.
@@ -113,9 +175,247 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   the bound in both reserve and caller, propagated through intervening helpers,
   then require the intended OP-9 rejection one element above it. Improve the
   diagnostic to identify the failed callee obligation and unavailable summary
-  without changing acceptance. Its benefit and exact attribution remain
-  unverified; defer this diagnostic work while the admitted generic standalone
-  control serves the experiment, and reopen when improving call-proof reports.
+  without changing acceptance. The GrowVector module witness met the same
+  report: a wrapper generic only over `ceiling` that returns
+  `grow_vector_append::<u64, ceiling>`'s length is refused at its own
+  postcondition (FN-9, identically by main's compiler), while the reserve
+  instance it reaches carries the same unbounded OP-9 `grow` obligation; the
+  conformance case `mod6-pos-grow-vector-boundary` therefore wraps with a
+  wrapper generic over the element type as well. Its benefit and exact
+  attribution remain unverified; defer this diagnostic work while the
+  admitted generic standalone control serves the experiment, and reopen when
+  improving call-proof reports.
+
+- **Descendant references retain precision opportunities.** A write through a
+  widened range can discard its previously established length facts, and
+  independent cursors within one descendant cover cannot use suffix spelling
+  alone to establish separation. The
+  [cursor investigation](../research/investigations/wildcard-path/DESIGN.md)
+  records these limits and the current checking-cost qualification. Preserving
+  unaffected extent facts or proving a relation between independently selected
+  targets could reduce repeated bound proofs and admit more range-edit programs;
+  the benefit and a sound representation remain unverified. Defer this work
+  because the maintained list/tree/cursor program needs neither extension.
+  Reopen when a concrete program needs that precision. Validate the proposed
+  gain with positive editing cases, ancestor/window/stale-capture negative
+  controls and the investigation's checking-cost criterion; do not equate
+  targets merely because their covers agree. Close this item when the gain is
+  implemented and qualified or the measured tradeoff supports declining it.
+
+- **Pair-scoped parallel proofs need scaling and coverage work.** The current
+  PAR-1 planner constructs questions for every ordered source pair in a segment
+  and retains range separation only for that pair's first-statement state;
+  repeated visits meet with logical AND. A segment of n members has n(n-1)/2
+  pairs, but that logical requirement does not mandate quadratic repeated
+  proof work. General index mapping through the first member's `ensures` is
+  still unavailable; missing evidence keeps sequential lowering. For windows
+  this means every [WIN-2] part-relative separation is refused when a member
+  before the later one writes that window's `len`, which also refuses a read
+  of an old slot after an append; the mapping would recover it. A cheaper
+  recovery needs no mapping: a place reached through a reference live at the
+  first statement's entry is interpreted in that state, and the reference's
+  validity gives `i < len` there, so WIN-2's single-state separation still
+  holds. That recovers the one pair this rule newly denies in the maintained
+  programs, `deque_push_back` against `let first_after_append =
+  deref(original_first)` at `tests/programs/containers/deque-program.wf:113`.
+  The ledger's denial should also name the length change as its cause; it
+  currently reports only the overlapping write and read. Investigate
+  indexing and reuse without losing statement identity, captured endpoints,
+  flow context or all-pairs composition. Close this item when larger segments
+  have measured costs and the intended proof coverage, retaining guarded,
+  nonadjacent and stale-capture negative controls.
+
+- **Large entering proof contexts still have substantial checking cost.**
+  In the [post-x1 comparison](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#post-x1-selection),
+  256 independent inequality pairs with 256 uses still take a median 2.337 s;
+  the same context with only three uses takes 0.264 s. Reusing the ordered
+  affine index within a certificate removes repeated premise preparation,
+  but complete matrix/index construction and long-target AUTO traversal
+  remain. This is not certificate-length cost alone: a fixed three-pair
+  context admits all 4096 uses in 377 ms. The 512-pair context was accepted
+  in exploratory runs; these results establish neither linear total cost
+  nor a universal cost for the full use ceiling.
+  Preserve the complete [ENT-6]/[PRF-1] rules when investigating that cost.
+
+- **Ordinary-fallback views still copy a fact state per materialization.**
+  The [current comparison](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#post-x1-selection)
+  checks `tests/programs/fixed_run_library.wf` in 134 ms and
+  `tests/programs/wfgrep.wf` in 834 ms. In `materialize_closure_at` in
+  [`semantic/entailment/state.rs`](../compiler/src/semantic/entailment/state.rs):
+  whenever a selected proof depends on a postcondition call, it clones the
+  state, removes the call-dependent candidates and closes that view again.
+  A [query-only ordinary projection](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#ordinary-fallback-attribution-and-candidate)
+  passed the transition checks but improved fixed-run only 1.03x and left
+  wfgrep unchanged, so it was not retained. Revisit the representation when
+  a current workload attributes a substantial share to this path. Kill-time
+  edge insertion and derivation interning for recreated cells also remain.
+
+- **Acyclic generic instantiation has no established practical bound.**
+  D7's unchanged-argument cycle rule establishes termination while acyclic
+  fan-out may still require exponentially many instances relative to written
+  source. The owner deferred this question in D7, whereas the current language
+  design rules out exponential checking work. The
+  [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#shared-semantic-boundary-and-exact-deltas)
+  records the accepted 1343-byte / 2047-instance witness, same-instance controls,
+  stage measurements and unresolved correspondence finding. No budget, timeout, new
+  source refusal, or measured asymptotic guarantee has been selected.
+  Reopen when generic container/behavior composition makes instance count or
+  checking cost material. Recheck the distinct-instance and repeated-instance
+  controls on that composition, separating semantic checking, lowering and
+  emitted-code size; faster duplicate lookup alone cannot close the bound.
+  The broader admission or sharing question remains deferred to an explicit
+  choice supported by those controls and a complexity argument.
+
+- **Acceptance and check removal are trusted to the whole checker.** Every
+  lowering authorization (a subscript without a check, an exact operation, a
+  discharged call goal) is issued by the same entailment engine that decides
+  acceptance, so the trusted base for "no unproved partial operation" is the
+  full front end plus entailment. The
+  [certificate packet](../research/investigations/proof-certificate-architecture/PACKET.md)
+  (v0.26, before the x1 ownership redesign) selects a staged route: the engine
+  records a positive derivation for every discharged obligation, and a small
+  verifier over a trusted proof-flow extraction checks them and jointly issues
+  the lowering capability, while rejections stay with the engine because a
+  missing certificate does not prove non-derivability. The compiler keeps a
+  derivation ledger; no verifier, extraction boundary or joint issuer exists.
+  Re-derive the packet's Envelope B against the current specification, then
+  prototype the verifier on `tests/programs/` and measure its size, proof size
+  and added compile time; a corrupted or missing certificate must never
+  authorize lowering. Close when a verifier jointly issues the capability, or
+  when the packet's stop gates record why the unified engine remains.
+
+- **Write kills do not submit their own OWN-7 separations.** An ENT-5 write
+  kill decides an index or range step against a fact's support only from the
+  separations already retained on the current edge, which are the EFF-5
+  pairwise and REF-2 preservation questions the structural checker submitted,
+  plus literal index inequality. OWN-7 makes two ranges disjoint whenever the
+  current ProofContext proves one of its four orderings, so a length fact over
+  `deref(head)[0_u64]` with `head = &rows[0_u64..1_u64]` should survive a write
+  through `rows[1_u64..3_u64]`, bound or formed at the call; today it dies and
+  the dependent subscript is rejected, and binding offsets proved distinct
+  only by a guard behave the same way. The effect is over-rejection, never an
+  unsound acceptance. Submitting one bounded question per written/support step
+  pair at each kill would admit these programs at a proof cost per fact per
+  write; a literal-endpoint range shortcut beside the literal index one would
+  cover constant ranges cheaply. Validate with the bound and inline spellings,
+  stale-capture and joined-origin negative controls, and a measured
+  checking-cost comparison. Reopen when a real program needs a fact to survive
+  a provably disjoint write; close when kill-time separation is implemented and
+  qualified or declined on measured cost.
+
+- **Call-argument consumers resolve through the function-wide origin
+  inventory.** The entailment flow (`argument_referents`), the permission
+  judgments (`argument_places`) and the place map now read one exhaustive
+  classification of how an expression names caller storage (`named_place` in
+  `compiler/src/semantic/places.rs`), so a new argument form can no longer be
+  missed by one consumer; dropping its range-formation arm fails five tests
+  across kills, permission and loop permission. They still resolve that place
+  through the function-wide origin inventory, and permission substitutes
+  unknown values for a row's index and range positions, while the structural
+  checker holds each actual's point-current paths and its exact substituted
+  row. `design/compiler/checker-facts.md` records the inventory as an
+  over-approximation, not point-current authority, so reading the checker's
+  facts instead could narrow kills and widen permissions: an acceptance and
+  actualization change, not a refactor. Measure how often the two
+  resolutions differ at calls on the corpus, and what verdicts and
+  permissions change, before proposing it; reopen when a consumer's precision
+  blocks a program or an experiment, and close when that comparison is made
+  and the owner rules on it.
+
+- **Rules recognized by spelling or implemented twice.** The checker's
+  operand-row table (`compiler/src/semantic/check/generics/operands.rs`)
+  recognizes the OP-10, OP-11 and OP-14 rows by their prelude spelling, and
+  an OP-14 record takes its rule from it; the backend recognizes OP-11's row
+  by symbol spelling (`compiler/src/backend/emitter.rs`). Both hold only
+  because TYPE-6 rejects a source declaration that collides with the
+  prelude. CALL-6's consistency check keeps its own closure
+  (`compiler/src/semantic/check/publication.rs`) beside the ENT-4 closure the
+  specification names, and INV-1 affine formation and call-goal images are
+  each formed in both the checker and the flow.
+  Select by PRE-1 operation identity, route CALL-6 through an isolated
+  ordinary query, and form each image once. Validate with identical verdicts
+  and a prelude-spelled source declaration that still reaches neither path.
+  Reopen when a prelude collision rule changes.
+
+- **Most repairs outside the goal families have no pinned pair.**
+  `compiler/diagnostic-repairs` pins every repair with its rejected source
+  and a program for each alternative, and keeps the words in one module;
+  `driver::pinned_repairs` holds 75 pairs, nearly all for goals, effect rows
+  and TYPE-2's opaque-struct refusals, while most of the eighty-odd sites
+  across the checker that print a fixed repair sentence have none. Among
+  them are TYPE-2's "build it with a construction function [OP-13]" for a
+  storage shape or a cell, OWN-1's "write `move p` for the affine place" and
+  "use the copy place without `move`", TYPE-9's inline-shape and
+  content-move repairs, and EFF-5's "these two entries of the callee's row
+  may reach overlapping places through one argument", whose pair v0.74
+  accepts now that an index and a range can be proved apart: every pair of
+  one argument's declared paths a call compares now has a position to
+  prove, so only a joined argument naming two places still reaches it. Some cannot be carried out as written: TYPE-9's
+  content-move repair writes `free_empty(move b)` without the argument name
+  GRAM-11 requires and offers the cell's scope-exit release to a content
+  whose elements are linear, and PROV-6's partial-consume repair writes the
+  placeholder `let N(f: a, ...) = move v;`. Pin each with a program per
+  alternative, rewording those that fail, and move the sentences into
+  `check/repairs.rs`; validate by the pair test. Found in the review of the
+  opaque-struct repair; reopen with the next diagnostics change or when an
+  agent follows an unpinned repair that fails.
+
+- **A cell taken apart with no binder is repaired by removing the
+  statement, even when its content is linear.** TYPE-2's repair for
+  `let Box(..) = move cell;` is "remove this statement", and so is the
+  repair for a binder over a place the checker cannot type as a cell. With
+  a linear content the removal leaves the cell to PROV-6's
+  LinearValueNotConsumed at scope exit, and with a binder its uses become
+  unresolved. DIAG-1 holds, since the refused judgment succeeds and the
+  later ones judge the program's own statements, but a repair that moves
+  the content out (`let content = move cell.inner;`) or names
+  `free_empty` for a runtime-capacity content would save a round. Validate
+  with a pinned pair for each; reopen when an agent is seen needing that
+  round.
+
+- **Four design nodes keep wording that later changes moved past.**
+  `language/ownership/copy-classification`'s second decision still says the
+  prelude declares `Box`, `Slots`, `Ring` and the fourteen host handles
+  `nocopy` or `nodrop`, although the host handles moved to the standard
+  library's host modules (the specification's OWN-1 already says so).
+  `language/system-interface/opaque-scalar-types` calls `exit_status` and
+  `socket_address_v4` construction functions, the term
+  `language/data-model/opaque-struct` now keeps for OP-13's rows, and
+  opaque-struct's third decision still names "the separate system
+  declaration domain the prelude is deliberately not" where the refused
+  domain concerns the standard library's host declarations too.
+  `compiler/diagnostic-repairs`' fourth decision places the pairs in the
+  pinned-sentence corpus, which now lives in `driver::pinned_repairs`. Each
+  needs an amendment and the owner's ruling; found in the second review of
+  the opaque-struct repair; reopen with the next change to any of these
+  nodes.
+
+- **Taking a storage shape apart is refused as a type mismatch.**
+  `let Slots(len: l, cap: c) = move w;`, and the same statement naming
+  `Array` or `Ring`, is rejected with TYPE-5 "found: a value of another type"
+  by `destructuring_shape_rejection` in `check/control/results.rs`, because
+  among the prelude's containers only `Box` reaches the TYPE-2 refusal there.
+  TYPE-9 makes a destructuring `let` naming any of the four a TYPE-2 refusal
+  with a repair, and no conformance case covers the three shapes. Refuse them
+  under TYPE-2 at the complete statement with a repair that reads the
+  measures as fields (`let l = w.len;`), pinned, and add a negative case per
+  shape. Found in the review of the opaque-struct repair; reopen with the
+  next change to destructuring or to the storage shapes.
+
+- **A field of a program's opaque struct cannot be read.** TYPE-2 says an
+  opaque struct's fields obey the ordinary field, ownership and release
+  rules, but the checker gives a source opaque struct the fieldless
+  `CheckedNominalKind::Opaque` (`compiler/src/semantic/model.rs`), so
+  `token.value` and `deref(token).value` on a parameter of a program's
+  `opaque struct Token { value: u64; }` are rejected with TYPE-5. No value of
+  such a struct is ever formed, so only functions no call can reach with a
+  value are refused, and host handles have no fields. Give the kind its
+  declared fields for reads, writes and moves out; validate with an accepted
+  read, write and move out on such a parameter. Found in the review of the
+  opaque-struct repair; reopen when a program has a reason to declare an
+  opaque struct with fields, or with the next change to nominal kinds.
+
+## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
@@ -168,19 +468,6 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   by retained reverse calls, a native-toolchain change or another material
   regression under the matched comparison.
 
-- **Upstream LLVM on Darwin does not yet support the selected stack-probe
-  spelling.** The [Deque comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
-  records LLVM 22.1.8 rejecting native construction of the unchanged baseline
-  with `Unsupported stack probing method`; the emitted
-  `"probe-stack"="__chkstk_darwin"` remains present. Parsing and optimization
-  succeed, and the native builder's Apple Clang path works, so this does not
-  establish a failure of the new address fact. Before offering upstream LLVM
-  as a native Darwin consumer, determine the supported probe form and link
-  requirements and validate large-frame and recursive exhaustion through the
-  existing floor tests. Disabling probes is not an acceptable workaround.
-  Defer this separate toolchain extension while the current native path is
-  supported; reopen when another native Darwin consumer is required.
-
 - **Slab aggregate results retain extra transfers and layout overhead.**
   The [Slab comparison](../research/experiments/container-representation/slab-library/RESULTS.md)
   separates the one-slot cell's extra word from its helper boundary: retained
@@ -206,9 +493,13 @@ concludes with a recorded disposition; retain any selected follow-up work here.
 - **PriorityQueue has distinct sift and return-boundary costs.** The
   [complete library comparison](../research/experiments/container-representation/priority-library/RESULTS.md)
   measures retained scalar pop/push at 1.510--1.722 times same-algorithm C for
-  16/256 elements. WF returns push's Result through a pointer and clears its
-  inactive payload; C returns the scalar result in registers. Their causal
-  shares are unmeasured. Normal wide replacement also costs 1.178--1.289 times
+  16/256 elements. In that comparison WF returned push's Result through a
+  pointer and cleared its inactive payload; C returns the scalar result in
+  registers. The scalar cohort's three-leaf `Result<unit, u64>` now returns in
+  registers too ([result-register investigation](../research/investigations/result-registers/DESIGN.md#selection)),
+  while the inactive payload is still cleared and the wide cohort keeps its
+  destination. The causal shares, and what that change recovered, are
+  unmeasured. Normal wide replacement also costs 1.178--1.289 times
   the swap control at those sizes, while retained replacement reverses the
   direction. Separately, wide hole-sift C halves counted movement on large
   complete traces; ordinary WF swaps cannot be credited with that algorithm's
@@ -222,6 +513,57 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   interference obligations; reopen for the indexed heap composition or an
   application dominated by these paths. Do not report universal native parity
   from the large scalar queue results.
+
+- **Small results beyond the per-leaf register budget still use a
+  destination.** A stored result returns in registers only when its scalar
+  leaves fit the x86-64 budget of three integer-class words and two floating
+  leaves ([result-register investigation](../research/investigations/result-registers/DESIGN.md#demotion-probe)).
+  A 16-byte result with four 32-bit fields, a small byte array and the 32-byte
+  opaque `ExitStatus` still pass through memory. So does every result with
+  four to eight integer words, or three to eight floating leaves, on AArch64.
+  Packing small integer leaves into shared words, or a per-target budget,
+  could carry some of these. Either one adds per-target lowering to emitted
+  code and to linked definitions. A third floating leaf on x86-64 cannot join
+  them: it returns through the x87 stack, which is not bit-exact for signaling
+  NaNs. Besides the launcher's `ExitStatus`, the maintained programs keep
+  eight surviving calls with four-word results, in `prefix_expression.wf`,
+  `owned_link_cursors.wf`, `option_slots.wf` and `containers/ordered.wf`,
+  which an AArch64 budget would return in registers
+  ([corpus](../research/investigations/result-registers/DESIGN.md#corpus)).
+  None is on a measured path, and the benefit is unmeasured. Reopen when a
+  maintained program keeps such a call on a measured path. Validate with
+  unchanged source and both lowerings compiled. Require the destination
+  round trip to disappear without a new demotion, a lost float bit pattern,
+  or a regression in the program's timing, on each target that changes.
+
+- **The hash-map `find` stays out of line because its probe loop is
+  unrolled first.** In `tests/programs/containers/hashmap.wf`, LLVM fully
+  unrolls `find`'s eight-slot probe loop while it optimizes `find` alone.
+  When the inliner then reaches `map_trace`, `find` costs 580 against the
+  `-O2` threshold of 225 (595 on main), so its seven calls stay out of line,
+  as do the three `remove` calls
+  ([lowering comparison](../research/investigations/result-registers/DESIGN.md#lowering)).
+  In that investigation's rejected merged-returns lowering, the loop was not
+  yet unrolled at that point. `find` cost 105 and `remove` 140, both were
+  inlined and then peeled, and the hash-map trace ran at 0.601 of main's time
+  against 0.956 for the selected lowering. Both lowerings return in
+  registers, so the inlining separates them. How much of that gain an
+  inlined, fully unrolled `find` keeps is unmeasured, as is whether other
+  small container operations with fixed probe loops behave the same way.
+  Candidate levers: loop metadata on the emitted probe loop that leaves it
+  to the late unroll pass, after inlining; an unroll threshold or pass order
+  in the pipeline the driver requests that runs full unrolling after the
+  inliner; or an inline hint on small container operations, which alone
+  raises the threshold only to 325. Each lever changes emitted code for every
+  program. Validate on unchanged source against a criterion fixed before
+  measuring: `find` and `remove` are inlined into `map_trace`, the
+  20,000,000-repetition hash-map trace gains beyond run-to-run variation,
+  `.text` across the maintained programs and container bundles stays within
+  a stated growth bound, and the maintained paired compute comparison
+  passes. Deferred because it is a host inlining-policy question separate
+  from the result ABI, with one program as evidence. Reopen when a
+  maintained workload's time is dominated by an out-of-line container
+  lookup, or when the driver's optimization pipeline is revisited.
 
 - **Indexed small-payload costs with retained boundaries need attribution.**
   The [native-cost record](../research/experiments/container-representation/indexed-library/RESULTS.md#remaining-native-costs)
@@ -312,6 +654,61 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   than a container-specific compiler path. Defer a change until these
   construction/consumption paths isolate its benefit; reopen when the transfers
   materially affect a measured consumer or lowering work reaches those paths.
+
+- **Box/window representation costs remain unqualified.** The current runtime-
+  capacity Box is one pointer to one header-first allocation; `grow` uses
+  allocation, memmove and free. A one-word owner, one allocation and header
+  placement are distinct choices: a fat descriptor can also own one element
+  allocation and make measure reads direct, while widening transport and
+  capture storage. Neither alternative is established as generally faster.
+  Keep the current implementation while separating owner width, measure loads,
+  allocation count, copying and linked layout in representative single-thread
+  and parallel comparisons. The successful bounded capture repair above is
+  evidence about the synthesized task ABI; it neither attributes the earlier
+  `records` failure nor proves that any one general layout choice caused it.
+  Keep the deferred general representation study separate, and close this item
+  only when the relevant costs and chosen tradeoffs have discriminating evidence.
+
+- **A target-layout failure names no allocation site or admitted bound.** A
+  program whose OP-9 proof retains a count bound the selected target cannot
+  hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,
+  passes checking and stops at [STOR-6] target qualification with
+  `target layout failure in TargetLayout: TargetLayout(Unrepresentable(RuntimeSizedAllocation))`,
+  which names no source site, no proved bound and no bound the target
+  admits. The numbers exist where the check fails, in the runtime-sized
+  allocation branch of the source-call validation in
+  `compiler/src/target.rs`: the retained bound, the element's target
+  stride, the descriptor header and `runtime_allocation_max()`, which give the
+  largest admitted count `(max - header) / stride`. Design: `IrSourceCall`
+  carries the call's node path, copied from the checked call during lowering;
+  a `TargetLayoutFailure` variant carries the site, the proved bound and the
+  admitted bound (the enum is `Copy` and crosses many `?` returns, so an index
+  into a side table keeps it `Copy`); the driver renders the site as a source
+  location beside the two numbers, still as a target-layout stop and never as
+  a source rejection [STOR-6]; and
+  `u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure`
+  in `compiler/src/driver/tests.rs`, which pins today's stop by
+  `RuntimeSizedAllocation` in its detail, changes with it. No specification
+  change. Validate with a program that proves the OP-9 ceiling and calls the
+  allocating function from its entry: the failure names the allocation's call
+  site, the proved bound and the selected target's largest admitted count,
+  while the same program bounded below that count builds. Deferred because the
+  OP-9 repair no longer offers the ceiling as the bound to write, which closes
+  the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
+  found into this stop; reopen when a writer report or a program meets the
+  unlocated failure.
+
+## Parallel lowering and runtime
+
+- **Validate reuse of selected-target element layouts during emission.**
+  [Zero-stride addressing](../compiler/src/target.rs) currently queries
+  the ordinary layout calculator afresh for each element-address step. Repeated
+  accesses to a deeply nested nominal element may recompute the same layout.
+  Compare checking/emission cost on repeated nested-element accesses before
+  introducing shared layout storage; require identical qualification and emitted
+  addresses. The benefit and material cost are unmeasured, so keep the simple
+  query for now and reopen when measuring target-emission cost or extending its
+  layout consumers.
 
 - **Parallel footprints omit ordinary result-list bindings.** The
   [sparse-routing trial](../research/investigations/compute-model/DESIGN.md#sparse-destination-routing-trial-2026-09-21)
@@ -582,7 +979,15 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   Its identical-image control nevertheless retained a `records` W4 suspect at
   0.962815708 with four adverse pairs. The concrete PR 70 regression is repaired,
   while its cause and the earlier and remaining control variation are not
-  attributed. The [PR 78 hosted records inspection](../research/investigations/compute-model/DESIGN.md#records-w4-hosted-comparison-remains-unresolved)
+  attributed. The
+  [result-register placement controls](../research/investigations/result-registers/DESIGN.md#hosted-compute-regression)
+  show on a local Intel host that shifting records' two loop copies by 16 to
+  48 bytes, with no executed instruction changed, moves main or that
+  investigation's rejected merged-returns lowering by up to 18% and reverses
+  their order at W2 and W4, while moving only the runtime does not. Its
+  selected lowering's byte-identical records images read 1.073 at W1 on an
+  EPYC 7763 and 0.855, a single-width suspect, on an EPYC 9V74. The
+  [PR 78 hosted records inspection](../research/investigations/compute-model/DESIGN.md#records-w4-hosted-comparison-remains-unresolved)
   retains repeated W4 suspects at `30198a19` and `53c68c29`: the latter has
   wall/CPU ratios 0.898002/0.908317 with four adverse pairs, while its records
   null is not suspect. Exact x86 objects show unchanged hot work and runtime
@@ -596,69 +1001,113 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   until the observations and measurement/detection tradeoff are explained by
   discriminating evidence, rather than a later pass or changed threshold.
 
-- **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
-  placement are distinct choices: a fat descriptor can also own one element
-  allocation and make measure reads direct, while widening transport and
-  capture storage. Neither alternative is established as generally faster.
-  Keep the current implementation while separating owner width, measure loads,
-  allocation count, copying and linked layout in representative single-thread
-  and parallel comparisons. The successful bounded capture repair above is
-  evidence about the synthesized task ABI; it neither attributes the earlier
-  `records` failure nor proves that any one general layout choice caused it.
-  Keep the deferred general representation study separate, and close this item
-  only when the relevant costs and chosen tradeoffs have discriminating evidence.
-- **Descendant references retain precision opportunities.** A write through a
-  widened range can discard its previously established length facts, and
-  independent cursors within one descendant cover cannot use suffix spelling
-  alone to establish separation. The
-  [cursor investigation](../research/investigations/wildcard-path/DESIGN.md)
-  records these limits and the current checking-cost qualification. Preserving
-  unaffected extent facts or proving a relation between independently selected
-  targets could reduce repeated bound proofs and admit more range-edit programs;
-  the benefit and a sound representation remain unverified. Defer this work
-  because the maintained list/tree/cursor program needs neither extension.
-  Reopen when a concrete program needs that precision. Validate the proposed
-  gain with positive editing cases, ancestor/window/stale-capture negative
-  controls and the investigation's checking-cost criterion; do not equate
-  targets merely because their covers agree. Close this item when the gain is
-  implemented and qualified or the measured tradeoff supports declining it.
-- **Pair-scoped parallel proofs need scaling and coverage work.** The current
-  PAR-1 planner constructs questions for every ordered source pair in a segment
-  and retains range separation only for that pair's first-statement state;
-  repeated visits meet with logical AND. A segment of n members has n(n-1)/2
-  pairs, but that logical requirement does not mandate quadratic repeated
-  proof work. General index mapping through the first member's `ensures` is
-  still unavailable; missing evidence keeps sequential lowering. Investigate
-  indexing and reuse without losing statement identity, captured endpoints,
-  flow context or all-pairs composition. Close this item when larger segments
-  have measured costs and the intended proof coverage, retaining guarded,
-  nonadjacent and stale-capture negative controls.
+- **A `propagate` statement cannot be a [PAR-1] window member.** The rule
+  admits only `let`-bound and scrutinee calls, so `let a = f(); let b =
+  propagate g();` never overlaps. Allowing a `propagate` second member would
+  need the lowering to join the hand-out before the `Err` return; a future
+  investigation, taken up when a real program shows the gap.
 
-- **Large entering proof contexts still have substantial checking cost.**
-  In the [post-x1 comparison](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#post-x1-selection),
-  256 independent inequality pairs with 256 uses still take a median 2.337 s;
-  the same context with only three uses takes 0.264 s. Reusing the ordered
-  affine index within a certificate removes repeated premise preparation,
-  but complete matrix/index construction and long-target AUTO traversal
-  remain. This is not certificate-length cost alone: a fixed three-pair
-  context admits all 4096 uses in 377 ms. The 512-pair context was accepted
-  in exploratory runs; these results establish neither linear total cost
-  nor a universal cost for the full use ceiling.
-  Preserve the complete [ENT-6]/[PRF-1] rules when investigating that cost.
-- **Ordinary-fallback views still copy a fact state per materialization.**
-  The [current comparison](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#post-x1-selection)
-  checks `tests/programs/fixed_run_library.wf` in 134 ms and
-  `tests/programs/wfgrep.wf` in 834 ms. In `materialize_closure_at` in
-  [`semantic/entailment/state.rs`](../compiler/src/semantic/entailment/state.rs):
-  whenever a selected proof depends on a postcondition call, it clones the
-  state, removes the call-dependent candidates and closes that view again.
-  A [query-only ordinary projection](../research/investigations/proof-certificate-architecture/CHECKING-COST.md#ordinary-fallback-attribution-and-candidate)
-  passed the transition checks but improved fixed-run only 1.03x and left
-  wfgrep unchanged, so it was not retained. Revisit the representation when
-  a current workload attributes a substantial share to this path. Kill-time
-  edge insertion and derivation interning for recreated cells also remain.
+- **Alias facts for worker-run loop chunks.** A synthesized loop-split chunk
+  or splitter has no source signature, so its range and reference captures
+  carry no `noalias`. The sequential world inlines the chunk into its source
+  function, which has the facts; a chunk run as a worker lane does not, so a
+  vectorizable chunk loop may keep a runtime overlap check. The facts would
+  need their own derivation from PAR-2 independence and the enclosing call's
+  EFF-5 result, since sibling chunks write other parts of the same captured
+  range concurrently. Impact and whether any current kernel pays such a check
+  are unmeasured. Validate by inspecting the optimized worker chunks of the
+  formal compute kernels for `vector.memcheck` and, where one appears,
+  comparing chunk time with and without a hand-added fact. Deferred because
+  the range-reference change covers source signatures only; reopen when a
+  measured parallel kernel shows the check.
+
+- **Compute-bench private adapters still pass aggregate ranges.**
+  `research/experiments/compute-bench/array_reference_host.ll`,
+  `first_index_host.ll`, `dag_fanin_host.ll` and the first-index observation
+  rewrite in that Makefile spell a range argument as one `{ ptr, i64 }`
+  aggregate. The compiler now passes it as pointer and count; the machine code
+  is identical on the admitted targets, but LLVM text bound into a WF module
+  must use the split form, and the first-index rewrite no longer matches the
+  emitted head and refuses. These dated research inputs were left unchanged;
+  update them before running those experiments with a compiler that includes
+  the split, keeping an older baseline arm on its own adapter.
+
+- **A discarded affine result's call never joins a hand-out group.** Its
+  expression statement runs the result's release immediately after the call,
+  reading the value between a hand-out and its join, so
+  `compiler/src/lowering/builder.rs` leaves that call unrecorded and it ends
+  any overlap group through it, although PAR-1 permits it exactly as the
+  let-bound call. It could instead be a group's last member, as an addressed
+  binding already may. No measured
+  program discards an affine result beside an independent call, so the
+  benefit is unverified. Reopen when such a program appears; validate by
+  emitting the call as the join site with its release after the join and
+  comparing published bytes at several worker counts with the sequential
+  lowering.
+
+- **A rebound reference parameter's holder read overlaps every access
+  through it.** PAR-1 reads a reference variable's own binding at each use,
+  which the `let` that forms it or a `set` that rebinds it writes. A
+  reference parameter's binding also stands for the place it names, so once
+  a body rebinds the parameter (`set values = &deref(values)[0_u64..8_u64];`),
+  that holder read overlaps every write through `values` and denies pairs
+  PAR-1 permits, such as a call writing one range of `values` beside a `let`
+  that forms another. Giving the holder a place root of its own, which
+  overlaps only itself, would separate the two. Validate with that pair
+  permitted again and the rebinding still ordered against the uses after it.
+  Found in the review of the holder-read fix; reopen when a program rebinds a
+  reference parameter on a parallel path.
+
+- **PAR-1 reads nothing for a range formed through a Box.** A `let` whose
+  initializer forms a reference records no read of the place the reference
+  starts from, so PAR-1 permits
+  `let data = box_array_filled::<u64>(count: 2000000_u64, value: 0_u64);`
+  beside `let all = &data.inner[0_u64..2000000_u64];`
+  (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
+  range loads the Box's pointer, which the first statement writes. No
+  program observes it: the lowering hands out only calls, and a member that
+  is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
+  in place needs only its address, so only a path through a Box's `inner`
+  reads its owner. Record a read of the owner above each `inner` step a
+  formed path passes; validate with that pair denied, the rest of the
+  quicksort ledger unchanged, and `let larger = &deref(v)[after..n];` still
+  permitted beside `quicksort(v: smaller);`. Found while checking the
+  parallelism article's ledger; reopen before the lowering admits a member
+  that is not a call.
+
+- **Parallel actualization is decided during translation.** A counted-loop
+  split is chosen while its body is being lowered
+  (`compiler/src/lowering/builder/split.rs`). The rescue mechanisms follow
+  from that order: an oversized candidate's finished graph is transferred into
+  its parent with every `IrFunction` field remapped by hand, ordinals are
+  reserved late and the ledger rotates. Offer policy is spread over lowering,
+  a scalar-leaf post-pass, the emitter's lane-fit filter and the launcher, and
+  the clone set is computed three times. Lowering the ordinary graph first and
+  actualizing in one IR-to-IR pass whose plan the emitter only renders (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.1) removes
+  the transfer and lowering's use of the target layout. It replaces the
+  graph-transfer decisions in
+  `design/compiler/parallel-lowering/two-worlds.md`, so it needs a ruling.
+  Validate with byte-identical LLVM for `tests/programs` and the `--par` test
+  sources. Reopen when the next parallel-lowering experiment has to change the
+  split.
+
+## Platforms and host interfaces
+
+- **Upstream LLVM on Darwin does not yet support the selected stack-probe
+  spelling.** The [Deque comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
+  records LLVM 22.1.8 rejecting native construction of the unchanged baseline
+  with `Unsupported stack probing method`; the emitted
+  `"probe-stack"="__chkstk_darwin"` remains present. Parsing and optimization
+  succeed, and the native builder's Apple Clang path works, so this does not
+  establish a failure of the new address fact. Before offering upstream LLVM
+  as a native Darwin consumer, determine the supported probe form and link
+  requirements and validate large-frame and recursive exhaustion through the
+  existing floor tests. Disabling probes is not an acceptable workaround.
+  Defer this separate toolchain extension while the current native path is
+  supported; reopen when another native Darwin consumer is required.
+
 - **Connection-level concurrency is not supplied by ordinary source order.**
   A loop that accepts and serves connections in source order
   completes the current handler before entering the next, so a handler waiting
@@ -671,31 +1120,354 @@ concludes with a recorded disposition; retain any selected follow-up work here.
   record that noncompletion without a throughput result. No replacement
   interface has been chosen. `WF_STACKS` is inert: the runtime has no
   switchable-stack pool for it to size, so it is neither read nor validated.
-- **Acyclic generic instantiation has no established practical bound.**
-  D7's unchanged-argument cycle rule establishes termination while acyclic
-  fan-out may still require exponentially many instances relative to written
-  source. The owner deferred this question in D7, whereas the current language
-  design rules out exponential checking work. The
-  [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#shared-semantic-boundary-and-exact-deltas)
-  records the accepted 1343-byte / 2047-instance witness, same-instance controls,
-  stage measurements and unresolved correspondence finding. No budget, timeout, new
-  source refusal, or measured asymptotic guarantee has been selected.
-  Reopen when generic container/behavior composition makes instance count or
-  checking cost material. Recheck the distinct-instance and repeated-instance
-  controls on that composition, separating semantic checking, lowering and
-  emitted-code size; faster duplicate lookup alone cannot close the bound.
-  The broader admission or sharing question remains deferred to an explicit
-  choice supported by those controls and a complexity argument.
+
 - **At most eight peers may wait at once on a host without a native ring.**
   On Darwin, and under `WF_IO_NO_NATIVE_RING`, a peer wait beyond the eighth
   concurrent one has no helper and queues with no timeout. The readiness-
   driven adapter that would lift this, one poll over every queued descriptor
   from inside the park, was never built.
-- **A `propagate` statement cannot be a [PAR-1] window member.** The rule
-  admits only `let`-bound and scrutinee calls, so `let a = f(); let b =
-  propagate g();` never overlaps. Allowing a `propagate` second member would
-  need the lowering to join the hand-out before the `Err` return; a future
-  investigation, taken up when a real program shows the gap.
+
+- **There is no source-level foreign-function boundary.** C enters only as a
+  trusted linked definition of an ordinary declaration [PRE-2, SCOPE-3], which
+  the checker cannot inspect, and a C program cannot call Whitefoot code
+  through a stated ABI. A real systems program needs both directions: calling
+  an existing C library, and exporting a Whitefoot component, which the next
+  entry covers. Import needs an explicit contract for ownership, layout,
+  callbacks, foreign threads and failure, and a statement of what the
+  compiler trusts; a checked wrapper and a source-level replacement are the
+  alternatives to compare on one real dependency. This interacts with the
+  module design for separate compilation. Close when a specified import
+  boundary and its conformance cases land, or the owner records why a
+  narrower boundary suffices.
+- **Deliver a Whitefoot component as a safe C library.** The owner wants both
+  delivery forms studied (2026-09-25): a C, C++ or Rust program should use a
+  Whitefoot component the way programs use Wuffs's decoders, without taking
+  on Whitefoot's lifetime and alias rules.
+  (a) Emit C source for the component, as Wuffs does: portable to any C
+  toolchain and reviewable, but the emitted C must never reach C's undefined
+  behavior where Whitefoot's meaning is defined (signed overflow, strict
+  aliasing, oversized shifts, uninitialized reads), may carry a proved fact
+  only through a C construct with the same meaning (`restrict`, an assumption),
+  and puts the C compiler in the trusted base in place of LLVM.
+  (b) Emit an object or static library and a generated header through the
+  existing LLVM backend, with a C-ABI export shim kept apart from the
+  compiler's internal function ABI, which can change without notice.
+  Either way the exported surface is where Whitefoot's guarantees meet an
+  unchecked caller, so, as the
+  [C ABI capsule idea](ideas.md#safe-c-abi-capsules) sketches, boundary code
+  validates every argument before Whitefoot code receives it (requirements,
+  lengths, overlapping buffers, handle generations, ownership transitions,
+  the calling thread), and a violation returns an error value with no partial
+  mutation; nothing a C caller passes is trusted. Validate one component, such
+  as raw DEFLATE decoding or UTF-8 validation, through each route: the capsule
+  misuse tests (stale handles, double drop, overlapping buffers, short
+  outputs, allocation failure), a C test harness, a fuzzing run through the C
+  API, and throughput against the Whitefoot-native build, recording what each
+  boundary check costs. The exported interface builds on the module design.
+  Take it up after the current correctness fixes land; close when one route
+  ships with its boundary specified and tested, or the owner records why one
+  route suffices.
+- **The driver's clang lookup is a fixed path.** `clang_executable()` in
+  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux/macOS
+  (`clang` on PATH on Windows), so a host whose clang lives only elsewhere — a versioned-only `clang-18`, a
+  Nix profile, or Homebrew LLVM — cannot run the driver even with clang
+  installed. Validate whether to accept an
+  explicit override, for example an environment variable, without changing
+  which clang CI uses. Close when the owner decides for or against the
+  override and, if accepted, its implementation lands.
+- **One rejection per compilation.** The pipeline stops at its first
+  violation, so an agent with several independent defects — two unproved
+  subscripts in different functions, say — meets them one compile at a time.
+  [DIAG-1] already leaves the order of violations at distinct nodes open, and
+  the [diagnostic record](../research/investigations/readable-diagnostics/DESIGN.md#the-record)
+  and its one-object-per-line JSON form can carry several. Reporting more than
+  one needs the semantic checker to continue past a `CheckStop` without
+  letting a later judgment consume an earlier failed premise, and stays
+  deterministic. Unverified benefit: validate with a writer trial counting
+  repair rounds on programs with two or more independent defects; reopen when
+  such a trial or an agent harness shows the extra rounds dominate.
+  One consumer is already promised: [ERR-2] says variant addition "surfaces
+  site-enumerated edit lists", yet adding a variant to an enum matched in two
+  functions reports only the first non-exhaustive `match` per run. Either
+  every ERR-2 site of one enum is listed in a run, or ERR-2's sentence, which
+  no other rule defines, is amended to what the toolchain provides.
+- **Validate the default diagnostic rendering.** Text by default is
+  provisional. The [readable-diagnostics investigation](../research/investigations/readable-diagnostics/DESIGN.md#default-format-text-with-json-on-request)
+  selected it on reading cost for an agent (the lean OP-4 and FN-8 records
+  measured there are 13-17% smaller than their JSON objects) and on the
+  familiar summary-line shape, not on a measured repair loop. Run a writer
+  trial over a fixed set of rejections covering lexical, grammar,
+  canonical-form and proof families, comparing text and JSON defaults and a
+  caret marker against a quoted span, with compile rounds to a fix as the
+  criterion. Reopen the default, and the marker form, when that trial or an
+  agent harness shows a difference.
+- **Structured fields for stops that are not source rejections: declined.**
+  Resource, invocation, internal-invariant, target-layout and backend stops
+  print their stage value's `Debug` text as one `payload` field. They have no
+  writer repair, and no consumer reads their fields separately. Reopen when a
+  harness or experiment acts on one of them, for example a resource ceiling a
+  writer can raise.
+- **Text lists are ambiguous when an item contains `, `.** A diagnostic list
+  such as `relations: [a, b]` prints items unquoted, so an item holding `, `
+  cannot be split exactly from text. The JSON form carries each item as its
+  own string and covers exact parsing; reopen only if an agent misreads such a
+  list in practice.
+- **The entailment fragment keeps a second resolved-place renderer.** Checker
+  payloads (EFF-5, OP-12, REF-2) spell resolved places through
+  `render_resolved_place` in `compiler/src/semantic/check/expressions/places.rs`,
+  while ENT-6 residuals and goals use `render_place` in
+  `compiler/src/semantic/entailment/flow/render.rs`, which still renders a payload
+  step by its variant and field ordinals and a literal subscript offset
+  without its `_u64` suffix. One renderer shared through a small naming seam
+  would remove the drift that produced the `<binding:N>` leak; the cost is
+  touching every pinned residual that spells a subscript or payload. Validate
+  by rendering both families from one function with the pinned-sentence
+  corpus unchanged except for the corrected spellings. Deferred from the
+  source-spelling fix because no current residual reaches either form in the
+  pinned corpus; reopen when one does or when either renderer next changes.
+- **A computed call argument has no source spelling in an EFF-5 path.** An
+  index position substituted from an argument that is neither a literal, a
+  const nor a binding, such as `first: indices[0_u64]`, renders as `?`,
+  because the checker captures only the value's identity and not the
+  argument's text. Rendering the argument's source extent would name it
+  exactly; validate that the extent is available at every capture site and
+  that capture identity stays unchanged. Deferred because the separation
+  proof already needs a binding there and the rejection names the call;
+  reopen when a writer report shows the `?` blocking a repair.
+- **A few payload strings still carry non-source forms.** The source-spelling
+  fix left three: the FN-9 `relation` field prints the normalized relation
+  with unsuffixed literals, such as `"w.value - 0 <= -1"` for
+  `ensures result < 0_T`; the goal-literal renderer in
+  `compiler/src/semantic/entailment/flow/render.rs` falls back to
+  `format!("{other:?}")` for a value it has no source form for, such as an
+  array or struct constant; and the SET-1 `InvalidSetTarget` payload prints
+  `root_class: format!("{class:?}")`, a resolver class name. Render each in
+  its source form, the relation through the same normalized-relation
+  renderer with suffixed literals; validate by the pinned-sentence corpus,
+  whose only change is the corrected spellings. Deferred because each needs
+  its own rendering decision and none blocked the reported repairs; close
+  when all three print source forms.
+
+- **A directory named through a symbolic link cannot be opened.**
+  `open_directory` opens one component without following a link, which the
+  walk relies on to leave enumerated links alone, and the prelude has no
+  directory open over a `RelativePath`; `open_read` follows links but opens
+  only regular files. So `wfgrep PATTERN ROOT` reports a root that is, or
+  passes through, a link to a directory as `cannot read`, where `grep -r`
+  follows a link named on its command line. Lifting it needs a prelude
+  addition, a directory open over a `RelativePath` resolved as `open_read`
+  resolves it, so it is a specification change deferred from the wfgrep root
+  fix. Validate with a wfgrep case whose root and whose middle root component
+  are links while an enumerated link stays unfollowed. Reopen when a program
+  must walk a user-named linked directory.
+
+- **`tests/programs/dir_walk.wf` truncates silently past its fixture.** It
+  collects into constant-capacity frame storage and stops recording after 64
+  entries in the whole walk, stops descending at depth 8, and clips a path at
+  126 bytes, all while exiting 0, although its doc says it records every
+  entry. Its one corpus case walks a three-level tree, so no check depends on
+  the bounds. Either report each bound or collect through growable storage as
+  `wfgrep.wf` now does; reopen when the program is pointed at a larger tree or
+  its constant-capacity form stops being the point of the case.
+
+- **A callee in another module is named without the path the call wrote.**
+  FN-8's `concrete_callee` renders a callee as its declaration name with its
+  instance arguments (`render_function_instance` in
+  `compiler/src/semantic/check/expressions.rs`), so a refuted call written
+  `stats::take(counter: &counter, amount: 12_u64)` through a module alias
+  prints `concrete_callee: take`. Two modules may each declare `take`
+  [MOD-5], so the name alone is ambiguous; the `requires_clause` location
+  points at the declaring record, but the payload does not give the spelling
+  the call wrote. Render the callee from the call's written callee path,
+  alias or `pkg::` prefix included, wherever a payload names a called
+  function; validate with a two-module probe in which both modules declare
+  the callee's name. Deferred because the location already locates the
+  declaration and the change reaches every payload that names a callee;
+  reopen when diagnostics for modules are next revised or an agent report
+  shows the ambiguity.
+
+- **FN-9 prints its relation in normalized form.** [DIAG-1] fixes the FN-9
+  payload as the instantiated normalized relation, so `ensures result <
+  10_u64` failing at `return 20_u64;` prints `relation: 20 - 10 <= -1`,
+  without type suffixes and with the comparison rewritten as an L0 bound; an
+  agent has to translate it back to the clause it wrote. Printing the clause
+  with the returned value substituted, `20_u64 < 10_u64`, beside or in place
+  of the normalized form would read as written, and needs a DIAG-1 payload
+  amendment plus the tests that pin the relation. Validate on the FN-9 probes
+  of the [repair-wording investigation](../research/investigations/repair-wording/DESIGN.md#probes)
+  and its writer trial; reopen when that work changes the FN-9 payload or a
+  writer report shows the normalized form costing a round.
+
+- **Compiler comments cite the retired DIAG-3.** DIAG-3 was the v0.39 runtime
+  claim-trap record, retired with claims in v0.40, yet four comments still
+  cite it: three for words that are now [DIAG-1]'s (byte identity only where
+  selection and encoding are fixed, and the `unproved` or `refuted`
+  disposition) in `compiler/src/driver/pinned_sentences.rs`,
+  `compiler/src/semantic/tests/postconditions.rs` and
+  `compiler/src/semantic/tests/requires.rs`, and one, the module doc of
+  `compiler/src/semantic/permission_ledger.rs`, for the retired record
+  itself. A reader following the reference finds no rule. Cite DIAG-1 in the
+  first three and drop the ledger's clause; reopen with the next edit of any
+  of these files.
+
+- **The callee-`ensures` route can name a call whose result no longer
+  reaches the goal.** `call_results` in `compiler/src/semantic/check/repairs.rs`
+  traces the values a goal reads back to call results through a closure that
+  ignores control flow and intervening writes. In
+  `ent5-neg-readonly-field-callee-writes-base`, the loop bound
+  `entries[1_u64].width` traces to the `make_entry` call that filled
+  `entries`, although the element that reaches the goal was replaced through
+  `widen`'s separate `make_entry` call, whose result a statement writes into
+  storage without binding it. No `ensures` on `make_entry` relates that width
+  to `cells.len`, so the route cannot be carried out there, while the guard
+  printed beside it works. The route states the condition it needs, so
+  [DIAG-1] holds; the repair is only less direct than it could be. Stop the
+  trace at a write that replaces the traced storage before the goal, or offer
+  the route only for a value bound from a call and not written since; validate
+  with that case and the existing callee-route pins, and reopen when a writer
+  report shows the route costing a round.
+
+## Modules and libraries
+
+- **Finish and qualify the modular incremental design.** The module
+  decisions in the [language](../design/language.md) and
+  [compiler](../design/compiler.md) design trees rest on the
+  [architecture](../research/investigations/modular-compilation/DESIGN.md),
+  [source rules](../research/investigations/modular-compilation/LANGUAGE.md)
+  and [complete specimen](../research/investigations/modular-compilation/demo/README.md);
+  the [build-cost measurements](../research/experiments/modular-build-cost/RESULTS.md)
+  record what the implementation costs. Remaining, each with the measurement
+  or limit that shows it: the later stage of the
+  [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
+  persistent formation, lookup, instance, summary and lowering queries inside
+  a composition through module build units, instance units and fact-based
+  entry checks, selected when edit-build measurements show the composition's
+  rerun to limit a current experiment (a build of an edited entry now forms,
+  resolves and type-checks the whole closure and reuses only its proof
+  analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
+  build of a 32-module chain, growing with the program); a cold build without
+  a cache, which checks each module and then the whole closure; the impact report,
+  which finds each further failing body by checking its module again with
+  the earlier ones set aside; ThinLTO's import threshold, which decays along
+  a deep cross-fragment call chain and left the innermost step of the
+  crossing benchmark's runtime-entry copy out of line (no measurable cost
+  there yet; watch for a workload where it shows, and compare import limits
+  or grouping); and an executable runner for entries that take other
+  parameters than `Inputs` or return other results than `ExitStatus` or
+  `unit`, which build only as libraries (`--emit-llvm`). Extract useful cases
+  into formal test ownership as each finer mechanism lands; no daily gate
+  depends on the research probe or specimen. Compare clean/warm verdicts and
+  executables across edits, including changed summary availability with
+  unchanged headers, published-field versus private-field changes, hidden
+  layout/heap changes, rejected import candidates becoming profitable, and
+  failed builds. Measure input-validation I/O, source/proof/planning/
+  backend/link work, runtime quality and peak memory separately on the queue,
+  GrowVector, wfgrep, SHA-256, a generic-heavy consumer and controlled
+  dependency scaling; an exploratory run found source checking and runtime
+  construction ahead of LLVM work at current sizes. A source module is not a
+  compulsory body/proof/object unit. Benefit: independently verified modules
+  for large projects and parallel architect/implementer agents without losing
+  runtime optimization; persistence correctness, LLVM integration cost and real
+  build/runtime and collaboration gains remain unverified. Reopen structural
+  choices when a discriminating control or matched workload fails; remove this
+  entry when the complete implementation evidence lands.
+  Defer resolved-public-surface CI reporting until
+  interface query values exist; its benefit is detecting capability/contract
+  changes that a `public` keyword diff misses. Validate same-identity alias
+  renames, retargeting and published or private representation edits before
+  wiring a report, with no additional approval gate. Named specification
+  projections, effect regions, representation-independent model properties
+  and mathematical functions remain deferred: they could keep client source
+  unchanged across representation edits or express algorithmic models, but add
+  abstraction and possibly termination/proof machinery. Reopen for a type that
+  must publish a quantity without publishing its storage, or a representation
+  migration or contract that makes this cost worthwhile; compare source edits,
+  invalidation, interface size and proof cost with published fields, retaining
+  deterministic polynomial checking and no runtime proof work. Measure the
+  conservative cross-module component rule on real higher-order code; reopen
+  it if it withholds postconditions that ordinary programs need. A persistent
+  LLVM planning adapter waits for warm-build measurements that show stock
+  ThinLTO planning to be a material share of edit latency. External-package
+  resolution and composition of libraries other than the standard library
+  remain deferred by scope; reopen only when selected by the owner, with
+  package identity/version/renaming cases.
+  Subtree-private independently compiled modules remain unselected; reconsider
+  for a concrete privacy consumer that cannot use one module's private
+  implementation files.
+
+## Code structure
+
+- **The entailment state module and its tests have outgrown one reader.**
+  `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
+  1,729-line inline test module, and the tests in
+  `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
+  tests. The flow itself is divided into its sub-contexts and component
+  modules (`design/compiler/engine-components.md`), none over 3,200 lines.
+  `state.rs` can move its test module to its own file and its dense-closure
+  algorithms apart from the fact state and ledger types; the tests can group
+  by the flow component they exercise. Validate that each move changes no
+  behavior: identical `make check` results and a diff of moved items and
+  module declarations only. Split when no open branch has large edits in
+  these files; close when both are under 4,000 lines.
+
+- **LLVM emission writes and then patches text.**
+  `compiler/src/backend/emitter.rs` inserts entry allocas by byte offset and
+  adds the stack-probe attribute by rewriting `define` lines. Which operations
+  open blocks, and so which predecessor a phi names, comes from a hand-kept
+  list (`definition_exit_label`) apart from the code that opens them, and
+  `compiler/src/backend/fragments.rs` re-parses the finished text to split it.
+  A structured function model printed once (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.2, a design
+  amendment) records exit labels, places allocas and cuts fragments from the
+  model. Validate with byte-identical output, which keeps the backend tests'
+  substring checks as the net. Reopen when an operation that opens blocks is
+  added.
+
+- **Machinery with no remaining consumer.** The checker keeps the region
+  machinery STOR-8 retired, though every value it produces is empty:
+  `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
+  function and nominal templates (always created empty), the
+  `elided_store_brand` cell, `CheckedNominalKind::Box`'s `region` field, a
+  call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
+  now asserts that the first two are empty and ignores the rest. The flow's
+  `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
+  `driver::check_module` has no caller. Finalize checks every parsed node
+  against its production again, the re-verification `design/compiler.md`
+  refuses. By reading, generic validation never takes its early return,
+  because the prelude's generic signatures are templates in every bundle, so
+  every nongeneric body is checked structurally twice; the cost is not
+  measured. Remove each with no behavior change (identical verdicts and LLVM),
+  timing the double check before and after. Close when each is removed or kept
+  with a stated consumer.
+
+- **Native construction lives in the CLI and repeats in the harnesses.**
+  The runtime-unit inventory, object caches, LTO flags and linking live in
+  `compiler/src/bin/whitefootc.rs`; `compiler/tests/support/mod.rs` keeps a
+  second unit inventory with different staged names, the program and
+  conformance harnesses link on their own, and `compiler/Makefile` holds a
+  third list. `lib.rs` re-exports modules by glob, so no public item is ever
+  reported unused, and the driver's fifteen entry points come in cached and
+  uncached twins that drop options: `--graph --check` without `--entry`
+  ignores `--cache`. `--no-overlap` now selects the default lowering while its
+  help text says the default actualizes completion I/O. One library module for
+  native construction and one request type (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p5-driver-and-api)'s P5.1 and P5.2)
+  remove the copies. Validate with identical executables and verdicts from the
+  CLI and every harness. Reopen when a runtime unit or entry point is
+  added.
+
+- **The checker reads raw syntax.** The checker makes 522 `self.tree` calls
+  and 443 `Production::` matches, learning which alternative was written by
+  probing children; the if/else split is decoded from brace offsets in both
+  `compiler/src/resolution/scopes.rs` and `compiler/src/semantic/tree.rs`; and
+  the checker joins resolution records by linear scans comparing
+  `(role, NodePath)` (`compiler/src/semantic/check/support.rs`). Per-node
+  indexes published by resolution (the
+  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1) remove
+  the scans without test changes; a typed syntax access layer (P3.4, a design
+  amendment) confines each grammar amendment to one place. Validate with
+  identical verdicts, timing resolution and checking before and after the
+  indexes. Reopen with the next grammar amendment.
 
 ## Open language questions
 
@@ -805,11 +1577,16 @@ each is resolved by a discussion and a tree change.
   growth or rebase dominates its work. Evaluate the already-open affine
   contract question below before choosing a new storage operation; require
   exact length, emptied-old-owner and unchanged element-order evidence.
-- **The automatic-fact menu is a leftover.** [ENT-3] admits a narrow and
-  asymmetric set of arithmetic idioms as automatic facts, each added for one
-  proof pattern, with no general criterion and no counterpart for rows it
-  omits, such as a lower bound from `ior`. The owner wants it made principled;
-  nobody has had the time.
+- **Exact images for non-wrapping wrap forms and lossless shifts.** A
+  wrapping add, subtract or multiply whose operand intervals prove it cannot
+  wrap, and a shift by a constant that loses no bit, receive their
+  [ENT-3.S7] interval and offset relations but not the [ENT-6] affine image
+  of the corresponding exact operation. The
+  [operation-fact investigation](../research/investigations/automatic-operation-facts/DESIGN.md#42-rejected-alternatives)
+  deferred that step (X): no recorded probe needed it, the exact row already
+  states the identity, and with the new intervals the exact row is provable
+  wherever the step would apply. Reopen when a proof needs the identity and
+  the writer cannot use the exact row.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
@@ -1014,19 +1791,176 @@ condition under which it is taken up.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
   `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
-  `nuw`/`nsw` on the exact family. The later qualified Ring payload-address
+  `nuw`/`nsw` on the exact family. A `&[T]` range parameter crosses calls as
+  its element pointer and count, and the pointer carries the same facts
+  except `dereferenceable` (`compiler/backend-facts`; the
+  [range-reference fact investigation](../research/investigations/range-reference-facts/DESIGN.md)
+  records the derivation and the removed vectorizer overlap check). The later
+  qualified Ring payload-address
   `llvm.assume` is measured in the [Deque comparison](../research/experiments/container-representation/deque-library/RESULTS.md);
   its remaining costs are tracked above. Not emitted: `memory(argmem: ...)` (the
   IR carries neither the declared row nor the allocation fact), scoped
   alias metadata and `llvm.loop.parallel_accesses` (the emitter has no
   metadata table). Build the metadata subsystem as its own step with a
   before/after benchmark.
-- **Subscripted integer places as terms.** Today a place with subscripts is
-  a term only when its last step is a readonly field. The kill machinery
-  (offset support, overlapping element writes) already serves measure terms
-  and whole-expression goals, so generalizing to every integer place is
-  cheap in mechanism; measure its effect on closure size and checking time
-  first.
+- **Subscripted integer places as terms.** A place with subscripts is a
+  term only when its last step is a readonly field, a measure or a writer's
+  own (v0.71, [investigation](../research/investigations/readonly-field-terms/DESIGN.md#alternatives)).
+  The kill machinery (offset support, overlapping element writes) serves
+  every such term, so generalizing to every integer place is cheap in
+  mechanism, but a field updated in place loses its facts at every element
+  write whose index is not proved distinct. Measure the effect on closure
+  size and checking time on a program that updates element fields in loops
+  before selecting it; reopen when such a program needs a fact about a
+  writable element field that a `let` copy cannot carry.
+- **Readonly-field terms stop at L0.** A readonly field below a subscript is
+  an ENT-2 term for comparisons, requirements, copies and counted endpoints,
+  but it is no FN-9 relation datum, no INV-1 atom and has no ENT-6 affine
+  image, so `ensures result <= deref(nodes)[i].count` is refused and
+  `requires deref(nodes)[i].first + deref(nodes)[i].count <= deref(kids).len`
+  gives the body no usable affine premise. FN-9 needs the formal offset
+  substituted on both the body and the caller side and an `ensures` place
+  judged where it is formed (see the next entry); affine images need their
+  kill to follow the term's support, as measure atoms do. Validate with paired published and local cases, a kill of
+  each support member, and unchanged verdicts elsewhere; reopen when an
+  index-based program needs one of these surfaces.
+- **FN-9 relations read a formal subscript as an unknown offset.** A
+  published relation over `deref(rows)[i].len` with `i` a formal renders as
+  `deref(entry(rows))[?].len`: the body side and the caller side
+  (`call_parameter_place`) turn `GoalProjection::FormalSubscript` into an
+  unknown capture instead of the parameter binding or the actual's offset,
+  as requirement instantiation already does. Nothing but standing facts is
+  provable about that term, so the relation is unusable rather than unsound
+  today, but any extension of what can be proved about it would conflate the
+  elements of two calls. Nothing judges the subscript of an `ensures` place
+  either: ENT-2 fixes where a requirement's places are formed, at body entry,
+  but not an `ensures` place's, and `ensures r <= deref(rows)[i].len` with
+  `i` unconstrained is accepted. The extension must form such a place where
+  its relation is judged, each selected return, with its subscripts owing
+  OP-4 there, and state that point in ENT-2. Substitute the formal on both
+  sides, judge the subscripts, then add a case whose caller publishes over
+  two different offsets and must not equate them. Owner (PR #118 ruling,
+  2026-09-25): later, by the same principle at each selected return.
+- **Tracked-place offsets with projections are not captured.** ENT-2 admits
+  any clause (a) term as an offset, but the compiler captures only literals,
+  consts and bare bindings. A measure read such as `table[s.k].len` and a
+  readonly-field read such as `nodes[n.parent_slot].count` or
+  `deref(nodes)[deref(r)].count` are reported unsupported, never rejected, and
+  so is such a place in a contract clause. Capture such offsets with their own
+  support (the field place, the reference's referent) and a spelling identity
+  that keeps `n.a` and `n.b` apart, so OWN-7 separation and ENT-5 kills read
+  them; validate with a write to the offset's field, to its root and to a
+  sibling field. Until then, bind the offset with `let` first.
+- **Readonly-field offsets.** ENT-2 admits a clause (a) or (c) term as an
+  offset. A clause (b) term, such as `nodes[nodes[i].parent].count` in a tree
+  with parent indices, is equally tracked by the fact system and would be a
+  principled recursive extension; it is refused today (no term) to keep the
+  offset rule non-recursive. Reopen when an index-based program needs it,
+  after the capture above; validate with kills of the inner element, the
+  inner offset and the outer element.
+- **PAR-1 proves no window liveness and no index outside a range.** WIN-2
+  separates `r[i]` from `r.next` and `r.free` only where `i < r.len` is
+  proved, and a range from them only where `hi <= r.len` is. PAR-1's
+  footprints carry an effect row's index and endpoints as unknown values,
+  and an offset no captured value names as the same value, so a statement
+  pair meeting on a part and such an index or range gets no overlap
+  permission even when the subscript or range was formed in the compared
+  state. PAR-1 also poses no query for OWN-7's index-and-range family, so
+  an index beside a range separates only by written literals. This loses
+  permission only. Reopen when a program needs it: carry the row's argument
+  captures into the footprint and ask the entailment fragment for the bound
+  or the ordering, as EFF-5 already does through
+  `CheckedCallSeparationPositions`.
+- **A kill event proves no two positions apart.** OWN-7 separates two
+  indices, two ranges, or an index and a range where the current
+  ProofContext proves them apart, but an ENT-5 kill asks only written
+  literals and the separations an EFF-5 call recorded in the flow's ledger.
+  So in a body that requires `i < j`, a fact over `deref(rows)[i].len` dies
+  at `set deref(rows)[j] = move fresh`, and a later read that needs it is
+  refused although the specification separates the two; a fact at an index
+  before a range a callee writes through dies the same way. Asking the
+  entailment fragment only for a fact whose place meets a written position
+  under the same base, as event liveness asks, keeps the added proofs
+  bounded. Validate with that body accepted and one requiring only
+  `i <= j` still refused. Found while adding OWN-7's index-and-range
+  family; the gap is older than the family.
+- **A call ends a window reference's bound without reading the callee's
+  `ensures`.** OP-10 keeps a reference into a window valid while the bound
+  it was formed under holds, and `place_back`'s `ensures` carries that bound
+  across the call. The checker instead ends it at every call of `take_back`,
+  `remove_at`, `append`, `split_off`, `place_front`, `take_front` or
+  `grow`, and at every other call whose row writes the window's `last` or
+  `filled`, whatever the callee ensures. So `&front[0_u64]` dies at
+  `append(destination: &front, source: &back)` although `append` ensures
+  `deref(destination).len >= deref(entry(destination)).len`, and a slot
+  reference dies at a user function declared `writes(window.last),
+  writes(window.next), writes(window.len)` that takes one element back,
+  places one back and ensures `deref(window).len ==
+  deref(entry(window)).len`. The v0.73 checker accepted the second, since it
+  ended no bound at a user call, which also let a reference outlive a user
+  function that took its slot back. This refuses programs only. Reopen when
+  a program needs such a reference: after the call, ask the entailment
+  fragment whether the bound still holds in the call's exit state, as an
+  event asks liveness in its entry state, and end the reference only where
+  it is unproved. Validate with both programs accepted, the same callee
+  without its `ensures` still ending the reference, and a reference below
+  the slot still dying by REF-2's prefix rule.
+- **Two range steps are identical only as one formation.** OWN-7 compares
+  two ranges, or an index and a range, under containing paths that are
+  identical step for step or differ only in index steps. The checker counts
+  two range steps as identical only when they come from one formation, so
+  after `let left = &deref(values)[a..b];` and
+  `let right = &deref(values)[a..b];`, with `a` and `b` unwritten between
+  them, a call passing `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` is refused with EFF-5 although both frames
+  captured the same endpoints. The v0.73 checker refuses it too. The
+  specification does not say whether two range steps whose captured
+  endpoints are equal are identical; whether the checker proves such steps
+  identical from their endpoints or OWN-7 defines a range step's identity by
+  its formation is the owner's choice. Validate with that call once the
+  ruling admits or refuses it. Found by the recheck of PR #141's
+  containing-path ruling.
+- **An EFF-5 refusal for runs below different range frames names the
+  runs.** For runs `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` of frames `left = &deref(values)[a..b]` and
+  `right = &deref(values)[c..d]`, the residual quotes the complete paths and
+  the repair asks to prove that one ends at or before the other starts,
+  which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
+  The unproved pair is the frames: proving `b <= c` separates everything
+  below them. Name the first pair of differing range steps and ask for their
+  ordering. Validate with `eff5-neg-ranges-below-different-range-frames-overlap`
+  and the same-endpoint program in the item above, each pinned with a
+  repaired source that is accepted. Found by the recheck of PR #141's
+  containing-path ruling.
+- **OP-11 admits equal-depth slots under one identical array or window
+  only.** The checker also admits them under containing paths that differ
+  only in index steps: `swap(first: &deref(outer)[i][k], second:
+  &deref(outer)[j][l])` with nothing relating `i` and `j` is accepted by the
+  v0.73 and v0.74 checkers. Two slots of equal depth are one storage or two
+  disjoint ones, so the acceptance is sound, but the checker admits calls
+  the specification's wording refuses, the gap the owner closed for OWN-7's
+  range families on 2026-09-26. Decide whether OP-11 states the relation
+  the checker implements or the checker requires one identical array or
+  window. Validate with that swap. Found by the recheck of PR #141's
+  containing-path ruling.
+- **A range below a subscript of a range reference is not formed.**
+  `&deref(strip)[i][1_u64..3_u64]`, where `strip` is a range reference, is
+  refused as the unsupported capability `ReferenceFormation` by the v0.73
+  and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
+  any step between the `deref` and the range. REF-4 admits the form, and
+  binding the row first, `let row = &deref(strip)[i];` and then
+  `&deref(row)[1_u64..3_u64]`, is accepted. Validate with the direct form
+  accepted and its separations and REF-2 invalidations matching the bound
+  form. Found by the recheck of PR #141's containing-path ruling.
+- **Member names `len`, `cap` and `head` are classified by spelling in two
+  paths.** Contract clauses and subscripted body places pick the measure
+  route by the member's name before its type is known, so a writer's field
+  named `len` fails: `requires k < s.len` over a struct field is an internal
+  `InvalidResolution`, and `spans[1_u64].len` is a TYPE-5 rejection. The
+  typed member walk already decides this for unsubscripted body places.
+  Select the measure route from the prefix type in `trailing_measure_member`'s
+  callers; validate with a readonly and a writable field named `len` in a
+  clause, below a subscript, and as a counted endpoint.
 - **Vocabulary no declaration can state.** The `len` of a range reference
   (`&[T]` is a kind, not a type) and the four effect-row part names `next`,
   `last`, `filled`, `free` remain specification vocabulary after the
@@ -1053,3 +1987,24 @@ condition under which it is taken up.
   required source work from removable lowering cost. Defer a broad repeat of all
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
+- **A write refused for a written index parameter does not name that
+  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  under `writes(window[index])` is refused with SET-1's "a reference whose
+  declared row does not write this path", and a call passing `index` with
+  EFF-2's repair `writes(window)`. Neither names the earlier write of
+  `index` that moved the access off the row's position, which a writer who
+  declared `writes(window[index])` needs to see. Name the write, and offer
+  the repair that keeps the row: read `index` into a new binding before
+  writing it. Validate with a pinned pair for each of the two rejections.
+  Found while fixing the EFF-2 attribution after a parameter write.
+- **A goal over an index no spelling names offers routes that cannot
+  establish it.** After `let wr = &rows[k];` and `set k = 1_u64;`, a call's
+  requirement through `wr` reads `rows[?].len`, and FN-8's repair offers an
+  `invariant` whose `use` steps name the facts implying it, or a guard whose
+  condition establishes it. No fact or condition names that row, so
+  neither can succeed, while binding the index first, `let k0 = k;` and
+  `let wr = &rows[k0];`, does. An index a loop-rebound holder carries, also
+  rendered `?`, gets the same two routes, and there forming the reference
+  after the rebinding is what works. Select the route from what the `?`
+  stands for, and pin each pair with a repaired source that is accepted.
+  Found while fixing the completion review of PR #145.

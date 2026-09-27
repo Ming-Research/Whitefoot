@@ -1,0 +1,8 @@
+struct Hidden {
+  inner: u8;
+}
+
+fn make() -> wrapper: Wrapper pure {
+  let hidden = Hidden(inner: 1_u8);
+  return Wrapper(value: 7_u8, secret: hidden);
+}

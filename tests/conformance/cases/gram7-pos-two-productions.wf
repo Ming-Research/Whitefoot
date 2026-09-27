@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Sign {
   Neg();
   Zero();
@@ -5,7 +8,7 @@ enum Sign {
 }
 
 fn classify(x: i32) -> return_value: Sign pure {
-  return Pos();
+  return Sign::Pos();
 }
 
 fn main() -> return_value: ExitStatus pure {

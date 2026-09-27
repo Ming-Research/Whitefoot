@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bounded(a: u64) -> result: u64 pure contract {
   define xs = slots_new::<u64, 4>();
   requires a < 8_u64;

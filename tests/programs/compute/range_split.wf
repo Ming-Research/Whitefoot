@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill_recursive(output: &[u64], depth: u64) -> result: u64 writes(output) contract {
   requires depth <= 64_u64;
 } {

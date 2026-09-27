@@ -1,0 +1,76 @@
+fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure contract {
+  ensures made.storage.inner.len == 0_u64;
+} {
+  let storage = box_slots_new::<T>(capacity: 0_u64);
+  let made = GrowVector<T, ceiling>(storage: move storage, tag: 0_u64);
+  return move made;
+}
+
+fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, total: u64) -> capacity: u64 writes(values.storage) contract {
+  requires total <= ceiling;
+  ensures capacity == deref(values).storage.inner.cap;
+  ensures capacity >= total;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+} {
+  doc "A module-private operation: the readonly storage field is an ordinary writable field here, because this module declares it.";
+  let current = deref(values).storage.inner.cap;
+  if current >= total {
+    return current;
+  }
+  grow(cell: &deref(values).storage, capacity: total);
+  return total;
+}
+
+fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
+  requires deref(values).storage.inner.len < ceiling;
+  ensures length == deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
+  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+} {
+  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
+  if spare > 0_u64 {
+    place_back(window: &deref(values).storage.inner, value: move value);
+    let reached = deref(values).storage.inner.len;
+    return reached;
+  }
+  let current = deref(values).storage.inner.cap;
+  if current == 0_u64 {
+    let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
+    place_back(window: &deref(values).storage.inner, value: move value);
+    let reached = deref(values).storage.inner.len;
+    return reached;
+  }
+  if current <= 9223372036854775807_u64 {
+    let doubled = current + current;
+    if doubled <= ceiling {
+      let widened = grow_vector_reserve::<T, ceiling>(values: values, total: doubled);
+      place_back(window: &deref(values).storage.inner, value: move value);
+      let reached = deref(values).storage.inner.len;
+      return reached;
+    }
+  }
+  let stretched = grow_vector_reserve::<T, ceiling>(values: values, total: ceiling);
+  place_back(window: &deref(values).storage.inner, value: move value);
+  let reached = deref(values).storage.inner.len;
+  return reached;
+}
+
+fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64) -> removed: T writes(values.storage) contract {
+  requires index < deref(values).storage.inner.len;
+  ensures deref(values).storage.inner.len + 1_u64 == deref(entry(values)).storage.inner.len;
+  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+} {
+  let count = deref(values).storage.inner.len;
+  let last = count - 1_u64;
+  swap(first: &deref(values).storage.inner[index], second: &deref(values).storage.inner[last]);
+  let removed = take_back(window: &deref(values).storage.inner);
+  return move removed;
+}
+
+fn grow_vector_free_empty<T, const ceiling: u64>(values: GrowVector<T, ceiling>) -> result: unit pure contract {
+  requires values.storage.inner.len <= 0_u64;
+} {
+  free_empty(window: move values.storage);
+  return unit;
+}

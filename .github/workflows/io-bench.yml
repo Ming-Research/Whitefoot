@@ -35,6 +35,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
+  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  CARGO_INCREMENTAL: 0
 
 jobs:
   bench-linux:

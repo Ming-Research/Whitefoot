@@ -1,0 +1,28 @@
+struct Pair<T> {
+  first: T;
+  second: T;
+}
+
+fn copy_second<T: copy>(pair: &Pair<T>) -> result: unit reads(pair), writes(pair.first) {
+  let whole = deref(pair);
+  set deref(pair).first = whole.second;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let wide = Pair<u64>(first: 1_u64, second: 2_u64);
+  copy_second::<u64>(pair: &wide);
+  let narrow = Pair<u8>(first: 1_u8, second: 3_u8);
+  copy_second::<u8>(pair: &narrow);
+  let seen_wide = wide.first;
+  let seen_narrow = narrow.first;
+  if seen_wide == 2_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  if seen_narrow == 3_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

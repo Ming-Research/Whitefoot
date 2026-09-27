@@ -1,0 +1,12 @@
+fn residue_byte(value: u64, modulus: u64) -> result: u8 pure contract {
+  requires 1_u64 <= modulus;
+  requires modulus <= 256_u64;
+} {
+  let residue = value % modulus;
+  let byte = cvt::<u64, u8>(residue);
+  return byte;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

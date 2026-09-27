@@ -1,5 +1,5 @@
 //! Derived recursive cleanup and precise diagnostic regressions on real programs.
-use super::{compile, compile_and_run, compile_rejection, emitted_function};
+use super::{compile, compile_and_run, compile_rejection, emitted_body};
 
 fn derived_drop<'module>(llvm: &'module str, prefix: &str) -> &'module str {
     let start = llvm
@@ -38,8 +38,16 @@ fn recursively_boxed_tree_executes_with_derived_cleanup() {
     let llvm = compile(include_bytes!(
         "../../../../tests/programs/recursive_tree.wf"
     ));
-    let count = emitted_function(&llvm, "count");
-    assert!(count.contains("call") && count.contains("@wf_count"));
+    // `count` returns in registers, so its recursion is in its
+    // destination-form body, which calls the public entry
+    // (compiler/src/backend/abi.rs).
+    let count = emitted_body(&llvm, "count");
+    assert!(
+        count
+            .lines()
+            .any(|line| line.contains("call ") && line.contains(" @wf_count(")),
+        "{count}"
+    );
     assert!(llvm.contains("call ptr @malloc"));
     assert!(llvm.contains("icmp ne ptr"));
     assert!(llvm.contains("call void @free"));
@@ -90,14 +98,14 @@ fn the_byte_accessor_without_its_length_branch_is_an_op4_rejection() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let bytes = array_filled::<u8, 4>(value: 7_u8);
   let whole = &bytes[0_u64..4_u64];
   let first = byte_at(s: whole, index: 0_u64);
   if first != 7_u8 {
-    return exit_status(code: 1_u8);
+    return std::process::exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let guarded = "  let within = index < stored;";

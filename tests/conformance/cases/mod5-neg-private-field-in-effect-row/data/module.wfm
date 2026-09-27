@@ -1,0 +1,8 @@
+public struct Pair {
+  public left: u8;
+  right: u8;
+}
+
+public fn make(left: u8, right: u8) -> pair: Pair pure doc "Builds a pair; only this module sets its private right half.";
+
+public fn right_of(pair: Pair) -> right: u8 pure doc "Reads the private right half.";

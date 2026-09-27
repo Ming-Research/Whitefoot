@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct Resource {
   id: u64;
   data0: u64;
@@ -116,16 +119,16 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
   match deref(slot) {
     Vacant() => {
-      return Stop();
+      return Probe::Stop();
     }
     Deleted() => {
-      return Skip();
+      return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
       if deref(present) == key {
-        return Match();
+        return Probe::Match();
       }
-      return Miss();
+      return Probe::Miss();
     }
   }
 }
@@ -142,7 +145,7 @@ fn fill_slots(slots: &Box<Slots<Slot>>, count: u64) -> result: unit writes(slots
     invariant bounded: deref(slots).inner.len <= index,
     invariant spare: deref(slots).inner.cap - deref(slots).inner.len + index >= count
   ) {
-    let vacant = Vacant();
+    let vacant = Slot::Vacant();
     place_back(window: &deref(slots).inner, value: move vacant);
   }
   invariant complete_min: deref(slots).inner.len >= count;
@@ -163,17 +166,17 @@ fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: P
     match action {
       Match() => {
         let tag = fingerprint(key: key);
-        let offered = Occupied(fingerprint: tag, key: key, payload: move payload);
+        let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
         swap(first: &deref(slots).inner[index], second: &offered);
         match move offered {
           Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
-            return Replaced(previous: move old_payload);
+            return PutOutcome::Replaced(previous: move old_payload);
           }
           Vacant() => {
-            return Inserted();
+            return PutOutcome::Inserted();
           }
           Deleted() => {
-            return Inserted();
+            return PutOutcome::Inserted();
           }
         }
       }
@@ -188,17 +191,17 @@ fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: P
           set destination = first_deleted;
         }
         let tag = fingerprint(key: key);
-        let offered = Occupied(fingerprint: tag, key: key, payload: move payload);
+        let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
         swap(first: &deref(slots).inner[destination], second: &offered);
         match move offered {
           Vacant() => {
-            return Inserted();
+            return PutOutcome::Inserted();
           }
           Deleted() => {
-            return Inserted();
+            return PutOutcome::Inserted();
           }
           Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
-            return Replaced(previous: move old_payload);
+            return PutOutcome::Replaced(previous: move old_payload);
           }
         }
       }
@@ -208,21 +211,21 @@ fn put(slots: &Box<Slots<Slot>>, key: u64, payload: Box<Resource>) -> outcome: P
   }
   if first_deleted < count {
     let tag = fingerprint(key: key);
-    let offered = Occupied(fingerprint: tag, key: key, payload: move payload);
+    let offered = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
     swap(first: &deref(slots).inner[first_deleted], second: &offered);
     match move offered {
       Vacant() => {
-        return Inserted();
+        return PutOutcome::Inserted();
       }
       Deleted() => {
-        return Inserted();
+        return PutOutcome::Inserted();
       }
       Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
-        return Replaced(previous: move old_payload);
+        return PutOutcome::Replaced(previous: move old_payload);
       }
     }
   }
-  return Full(offered: move payload);
+  return PutOutcome::Full(offered: move payload);
 }
 
 fn begin(source: Box<Slots<Slot>>, count: u64) -> result: Rehash pure contract {
@@ -231,7 +234,7 @@ fn begin(source: Box<Slots<Slot>>, count: u64) -> result: Rehash pure contract {
   doc "Allocation is total, so the migration state is built without a refusal arm; the source cell moves into the state unchanged.";
   let spare = box_slots_new::<Slot>(capacity: count);
   fill_slots(slots: &spare, count: count);
-  let held = Vacant();
+  let held = Slot::Vacant();
   let progress = Progress(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let state = Rehash(source: move source, target: move spare, progress: move progress);
   return move state;
@@ -285,7 +288,7 @@ fn remove(slots: &Box<Slots<Slot>>, key: u64) -> removed: Option<Box<Resource>> 
     }
     if control == tag {
       if present_key == key {
-        let deleted = Deleted();
+        let deleted = Slot::Deleted();
         swap(first: &deref(slots).inner[index], second: &deleted);
         match move deleted {
           Vacant() => {
@@ -395,7 +398,7 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
         set source_cursor = source_cursor + 1_u64;
         let full = occupied(slot: &deref(source).inner[index]);
         if full {
-          let held_slot = Deleted();
+          let held_slot = Slot::Deleted();
           swap(first: &deref(source).inner[index], second: &held_slot);
           swap(first: &deref(progress).held, second: &held_slot);
           set probe_cursor = 0_u64;
@@ -414,7 +417,7 @@ fn advance(source: &Box<Slots<Slot>>, target: &Box<Slots<Slot>>, progress: &Prog
         let full = occupied(slot: &deref(target).inner[index]);
         if full {
         } else {
-          let held_slot = Vacant();
+          let held_slot = Slot::Vacant();
           swap(first: &deref(progress).held, second: &held_slot);
           swap(first: &deref(target).inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
@@ -443,7 +446,7 @@ fn rehash_all(slots: &Box<Slots<Slot>>, count: u64) -> (code: u8, examined: u64,
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
   let target = box_slots_new::<Slot>(capacity: count);
-  let held = Vacant();
+  let held = Slot::Vacant();
   let progress = Progress(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   fill_slots(slots: &target, count: count);
   let (work, moved) = advance(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64);

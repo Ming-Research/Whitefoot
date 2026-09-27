@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Wrap {
   W(inner: i32);
   N();
@@ -5,7 +8,7 @@ enum Wrap {
 
 fn main() -> return_value: ExitStatus pure {
   doc "GRAM-8: named construction - declared field written once as IDENT:atom in order; nullary written K().";
-  let a = W(inner: 7_i32);
-  let b = N();
+  let a = Wrap::W(inner: 7_i32);
+  let b = Wrap::N();
   return exit_status(code: 0_u8);
 }

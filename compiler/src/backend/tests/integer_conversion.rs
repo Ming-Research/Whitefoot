@@ -102,7 +102,7 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
     // unobservable out-of-domain integer values, including negative widening.
     // Its expected values use mathematical modulo, not host numeric casts.
     let (mut source, wrapping_observations) = wrapping_sources();
-    source.push_str("fn main() -> status: ExitStatus pure {\n");
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
     let mut total_count = 0;
     let mut checked_count = 0;
     for (source_type, destination_type) in CONVERSION_CLASSES {
@@ -110,14 +110,14 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
             let value = total_value(source_type);
             writeln!(
                 source,
-                "  let total{total_count} = cvt::<{source_type}, {destination}>({value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return exit_status(code: 1_u8);\n  }}",
+                "  let total{total_count} = cvt::<{source_type}, {destination}>({value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return std::process::exit_status(code: 1_u8);\n  }}",
                 destination = destination_type.spelling,
                 source_type = source_type.spelling,
             )
             .expect("write total conversion");
             writeln!(
                 source,
-                "  if cvt.defined::<{source_type}, {destination}>({value}_{source_type}) {{\n  }} else {{\n    return exit_status(code: 2_u8);\n  }}\n  match cvt.checked::<{source_type}, {destination}>({value}_{source_type}) {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return exit_status(code: 4_u8);\n    }}\n  }}",
+                "  if cvt.defined::<{source_type}, {destination}>({value}_{source_type}) {{\n  }} else {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  match cvt.checked::<{source_type}, {destination}>({value}_{source_type}) {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return std::process::exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return std::process::exit_status(code: 4_u8);\n    }}\n  }}",
                 destination = destination_type.spelling,
                 source_type = source_type.spelling,
             )
@@ -129,14 +129,14 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
         let failure = failing_value(source_type, destination_type);
         writeln!(
             source,
-            "  let success{checked_count} = cvt.checked::<{source_type}, {destination}>(1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = cvt.checked::<{source_type}, {destination}>({failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
+            "  let success{checked_count} = cvt.checked::<{source_type}, {destination}>(1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = cvt.checked::<{source_type}, {destination}>({failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
         .expect("write checked conversion");
         writeln!(
             source,
-            "  if cvt.defined::<{source_type}, {destination}>(1_{source_type}) {{\n    let exact{checked_count} = cvt::<{source_type}, {destination}>(1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return exit_status(code: 6_u8);\n  }}\n  if cvt.defined::<{source_type}, {destination}>({failure}_{source_type}) {{\n    return exit_status(code: 7_u8);\n  }}",
+            "  if cvt.defined::<{source_type}, {destination}>(1_{source_type}) {{\n    let exact{checked_count} = cvt::<{source_type}, {destination}>(1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return std::process::exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 6_u8);\n  }}\n  if cvt.defined::<{source_type}, {destination}>({failure}_{source_type}) {{\n    return std::process::exit_status(code: 7_u8);\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
@@ -144,7 +144,7 @@ fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
         checked_count += 1;
     }
     source.push_str(&wrapping_observations);
-    source.push_str("  return exit_status(code: 0_u8);\n}\n");
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
     assert_eq!(total_count, 5);
     assert_eq!(checked_count, 12);
 
@@ -202,6 +202,10 @@ fn wrapping_sources() -> (String, String) {
             )
             .expect("write parameterized wrapping conversion");
             pair_count += 1;
+            // Keep each pair's observations in a bounded body so checking
+            // later pairs does not accumulate earlier pairs' value facts.
+            writeln!(helpers, "fn check_{name}() -> valid: Bool pure {{")
+                .expect("write wrapping observation helper");
             for &value in &inputs {
                 let modulus = 1_i128 << destination.width;
                 let residue = value.rem_euclid(modulus);
@@ -211,14 +215,20 @@ fn wrapping_sources() -> (String, String) {
                     residue
                 };
                 writeln!(
-                    observations,
-                    "  let wrapped{observation_count} = {name}(value: {value}_{source});\n  if wrapped{observation_count} == {expected}_{destination} {{\n  }} else {{\n    return exit_status(code: 8_u8);\n  }}",
+                    helpers,
+                    "  let wrapped{observation_count} = {name}(value: {value}_{source});\n  if wrapped{observation_count} == {expected}_{destination} {{\n  }} else {{\n    return False();\n  }}",
                     source = source.spelling,
                     destination = destination.spelling,
                 )
                 .expect("write independently expected wrapping result");
                 observation_count += 1;
             }
+            helpers.push_str("  return True();\n}\n\n");
+            writeln!(
+                observations,
+                "  if check_{name}() {{\n  }} else {{\n    return std::process::exit_status(code: 8_u8);\n  }}",
+            )
+            .expect("write wrapping helper observation");
         }
     }
     assert_eq!(pair_count, 64);

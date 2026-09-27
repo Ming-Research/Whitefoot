@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn scan(data: Array<u8, 5>) -> result: u8 pure {
   let total = 0_u8;
   for (i in 0_u64..5_u64) {

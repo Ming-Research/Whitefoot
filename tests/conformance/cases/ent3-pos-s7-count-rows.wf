@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u32, limit: u32) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn at_least(value: u32, floor: u32) -> result: unit pure contract {
+  requires floor <= value;
+} {
+  return unit;
+}
+
+fn rows(small: u8, word: u64) -> result: unit pure {
+  let nibble = iand(small, 15_u8);
+  let ones = ipopcount(nibble);
+  at_most(value: ones, limit: 4_u32);
+  let leading = iclz(nibble);
+  at_least(value: leading, floor: 4_u32);
+  at_most(value: leading, limit: 8_u32);
+  let odd = ior(nibble, 1_u8);
+  let trailing = ictz(odd);
+  at_most(value: trailing, limit: 3_u32);
+  let zeros = iclz(word);
+  at_most(value: zeros, limit: 64_u32);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,1 @@
+public fn main() -> status: ExitStatus pure doc "Runs the xorshift loop and exits with the low bits of its state.";

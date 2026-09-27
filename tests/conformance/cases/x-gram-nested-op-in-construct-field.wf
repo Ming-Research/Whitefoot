@@ -1,7 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Wrap { W(inner: i32); }
 
 fn main () -> status: ExitStatus pure {
   doc "GRAM-9: a call (iadd.wrap) in a construct-field atom position does not derive; the field value must be a bound name or literal.";
-  let x = W(inner: iadd.wrap::<i32>(3_i32, 4_i32));
+  let x = Wrap::W(inner: iadd.wrap::<i32>(3_i32, 4_i32));
   return exit_status(code: 0_u8);
 }

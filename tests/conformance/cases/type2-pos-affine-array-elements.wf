@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn keep(value: Array<Option<u32>, 2>) -> result: unit pure {
   return unit;
 }

@@ -6,7 +6,7 @@ use super::super::model::{
 };
 use super::{CheckStop, Checker};
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// [STOR-8, PROV-6] Validate every release graph reached by the checked
     /// cleanup traversal before [EFF-2] compares the body's ordinary effects.
     pub(super) fn validate_release_graphs(
@@ -43,10 +43,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     }
                     self.validate_expression_release_graphs(value)?;
                 }
-                CheckedStatement::Evaluate(value) => {
+                CheckedStatement::Evaluate { value, .. } => {
                     self.validate_expression_release_graphs(value)?;
                 }
-                CheckedStatement::DropExpression { value, drops } => {
+                CheckedStatement::DropExpression { value, drops, .. } => {
                     self.validate_expression_release_graphs(value)?;
                     for drop in drops {
                         self.release_graph_nodes(drop.ty)?;

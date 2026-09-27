@@ -1,0 +1,47 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn below(value: u64, limit: u64) -> result: unit pure contract {
+  requires value < limit;
+} {
+  return unit;
+}
+
+fn within(value: i32, low: i32, high: i32) -> result: unit pure contract {
+  requires low <= value;
+  requires value <= high;
+} {
+  return unit;
+}
+
+fn rows(count: u64, divisor: u64, seed: i32, signed_divisor: i32) -> result: unit pure {
+  let eighth = count / 8_u64;
+  at_most(value: eighth, limit: 2305843009213693951_u64);
+  at_most(value: eighth, limit: count);
+  if 0_u64 < divisor {
+    let quotient = count / divisor;
+    at_most(value: quotient, limit: count);
+    let remainder = count % divisor;
+    below(value: remainder, limit: divisor);
+    at_most(value: remainder, limit: count);
+  }
+  if 2_i32 <= signed_divisor {
+    if signed_divisor <= 5_i32 {
+      let residue = seed % signed_divisor;
+      within(value: residue, low: -4_i32, high: 4_i32);
+      let part = seed / signed_divisor;
+      within(value: part, low: -1073741824_i32, high: 1073741823_i32);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

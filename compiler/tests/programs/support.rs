@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use whitefoot::{
-    CompilationFailure, CompilerLimits, HOST_OPTIMIZATION_ARGUMENTS, OverlapLowering, SourceInput,
-    compile, compile_with_overlap, compile_with_permission_ledger,
+    CompilationFailure, CompilerLimits, FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS,
+    OverlapLowering, SourceInput, compile, compile_with_overlap, compile_with_permission_ledger,
+    split_module,
 };
 
 use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
@@ -106,18 +107,22 @@ fn invocation_argument(bytes: &[u8]) -> OsString {
 
 /// Links one emitted module with the same ordinary library as the driver.
 fn link_module(module: &Path, executable: &Path, llvm: &str, directory: &Path) {
-    link_module_with_driver_arguments(module, executable, llvm, directory, &[]);
+    link_module_with_driver_arguments(&[module], executable, llvm, directory, &[]);
 }
 
+/// Links the emitted module's units, each compiled on its own: the whole
+/// module, or the link fragments a modular build splits it into.
 fn link_module_with_driver_arguments(
-    module: &Path,
+    units: &[&Path],
     executable: &Path,
     llvm: &str,
     directory: &Path,
     driver_arguments: &[&str],
 ) {
     let mut command = Command::new(CLANG);
-    command.arg("-x").arg("ir").arg(module);
+    for unit in units {
+        command.arg("-x").arg("ir").arg(unit);
+    }
     command.args(COMPILE_ARGUMENTS);
     let driver = directory.join("driver.c");
     if driver.exists() {
@@ -149,6 +154,17 @@ fn link_module_with_driver_arguments(
     for name in ["completion", "sched"] {
         std::fs::remove_dir(directory.join(name)).expect("remove staged native source directory");
     }
+}
+
+/// The LLVM type name the emitter gives the nominal whose stable spelling is
+/// `spelling` [MOD-8]: the first sixteen hexadecimal digits of its SHA-256.
+pub fn nominal_type(spelling: &str) -> String {
+    let digest = whitefoot::content_digest(spelling.as_bytes());
+    let hex = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("%wf.t.{hex}")
 }
 
 pub fn compile_program(name: &str) -> String {
@@ -339,8 +355,53 @@ pub fn build_program_with_driver_arguments(
         std::fs::write(directory.join("driver.c"), driver).expect("write program host driver");
     }
     crate::support::timed("native-build", || {
-        link_module_with_driver_arguments(&module, &executable, llvm, &directory, driver_arguments);
+        link_module_with_driver_arguments(
+            &[&module],
+            &executable,
+            llvm,
+            &directory,
+            driver_arguments,
+        );
     });
+    CompiledProgram {
+        directory,
+        executable,
+    }
+}
+
+/// Builds the program from the link fragments a modular build splits its
+/// emitted module into [MOD-8], each compiled as its own unit without link
+/// time optimization, so a case observes exactly what the split's
+/// declarations, ownership and linkage make of it.
+pub fn build_program_from_fragments(
+    llvm: &str,
+    granularity: FragmentGranularity,
+) -> CompiledProgram {
+    let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "whitefoot-fragments-{}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("create unique program directory");
+    let executable = directory.join(format!("program{}", std::env::consts::EXE_SUFFIX));
+    let units = split_module(llvm, granularity)
+        .expect("the emitted module splits")
+        .iter()
+        .enumerate()
+        .map(|(index, fragment)| {
+            let unit = directory.join(format!("fragment-{index}.ll"));
+            std::fs::write(&unit, fragment).expect("write one link fragment");
+            unit
+        })
+        .collect::<Vec<_>>();
+    crate::support::timed("native-build", || {
+        let units = units.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+        link_module_with_driver_arguments(&units, &executable, llvm, &directory, &[]);
+    });
+    // A program that walks its working directory must not see the build.
+    for unit in units {
+        std::fs::remove_file(unit).expect("remove one link fragment");
+    }
     CompiledProgram {
         directory,
         executable,
@@ -696,6 +757,20 @@ pub fn emitted_function<'module>(module: &'module str, name: &str) -> &'module s
         .map(|offset| function_start + offset + 3)
         .expect("source function definition must close");
     &module[function_start..function_end]
+}
+
+/// The definition that carries one source function's emitted body: the
+/// function's own definition, or, for a result returned in registers, the
+/// internal destination-form body its public entry calls
+/// (compiler/src/backend/abi.rs). A check of what the body contains, or does
+/// not contain, reads this definition, because the entry holds only the call.
+pub fn emitted_body<'module>(module: &'module str, name: &str) -> &'module str {
+    let body = format!("{name}.body");
+    if module.contains(&format!(" @wf_{body}(")) {
+        emitted_function(module, &body)
+    } else {
+        emitted_function(module, name)
+    }
 }
 
 #[test]

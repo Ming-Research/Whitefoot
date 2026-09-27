@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], start: u64) -> result: u8 reads(b) {
   doc "A fact dies at a set commit whose resolved target overlaps the resolved place of any support member [ENT-5](a). The checked branch bounds offset, the later commit kills that old bound, and S5 establishes only offset = start; because start is unbounded, the subscript remains undischarged [OP-4].";
   let spare = deref(b).len;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bad(x: i32, y: i32) -> return_value: i32 pure {
   doc "Division and remainder carry no wrap mode [OP-2]; idiv.wrap names no table op and must be rejected.";
   return idiv.wrap::<i32>(x, y);

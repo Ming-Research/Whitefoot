@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The support of a length term is the descriptor storage of the place, not the place's element storage, so an element write never kills a length fact [ENT-5, MSR-2] -- a window is moved only by an operation that moves a boundary [OP-10]. The write through the first subscript leaves the length standing, and the later subscript still discharges [OP-4].";
   let seed = array_filled::<u8, 4>(value: 0_u8);

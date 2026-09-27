@@ -1,0 +1,4 @@
+public struct Node {
+  public readonly value: u64;
+  public children: Option<Box<Slots<Node, 2>>>;
+}

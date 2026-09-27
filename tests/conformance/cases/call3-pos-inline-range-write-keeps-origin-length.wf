@@ -1,0 +1,37 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clear(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {
+  requires at < deref(part).len;
+} {
+  doc "Replaces one element of the range with an empty run.";
+  let fresh = slots_new::<u64, 8>();
+  set deref(part)[at] = move fresh;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The survival half of [CALL-3] for a range formed at the call. The write through &rows[0_u64..2_u64] reaches that range's element storage and no measure of the origin place itself: rows[0_u64]'s own run dies with the replacement, while rows.len == 3_u64 survives the call, so rows[2_u64] is still in bounds without a new guard. The caller then reads back the empty run the callee stored.";
+  let rows = slots_new::<Slots<u64, 8>, 4>();
+  let first = slots_new::<u64, 8>();
+  let second = slots_new::<u64, 8>();
+  let third = slots_new::<u64, 8>();
+  place_back(window: &first, value: 5_u64);
+  place_back(window: &rows, value: move first);
+  place_back(window: &rows, value: move second);
+  place_back(window: &rows, value: move third);
+  if rows.len == 3_u64 {
+    clear(part: &rows[0_u64..2_u64], at: 0_u64);
+    let last = rows[2_u64].len;
+    let cleared = rows[0_u64].len;
+    if last == 0_u64 {
+    } else {
+      return exit_status(code: 1_u8);
+    }
+    if cleared == 0_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 3_u8);
+}

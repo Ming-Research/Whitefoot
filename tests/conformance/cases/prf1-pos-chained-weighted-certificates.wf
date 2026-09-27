@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn chained_bound(x: u32, lim_x: u32, y: u32, lim_y: u32, z: u32, lim_z: u32) -> result: unit pure contract {
   requires x <= lim_x;
   requires y <= lim_y;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "Wrapping overflow is total and produces the specified negative value. Ordinary control observes that expected result.";
   let hi = 2147483647_i32;

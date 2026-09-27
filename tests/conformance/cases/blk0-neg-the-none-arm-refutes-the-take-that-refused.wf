@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A branch that reads the measure back publishes a fact and not an absence: on the arm where the length is known to be zero, take_back's requires deref(window).len > 0_u64 is refuted rather than merely unproved, and the refusal is a static FN-8 rejection naming the operation.";
   let run = slots_new::<u8, 4>();

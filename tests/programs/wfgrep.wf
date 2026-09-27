@@ -1,3 +1,28 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectorySource = std::fs::DirectorySource;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias OutputStream = std::io::OutputStream;
+alias ReadFile = std::fs::ReadFile;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_directory_source = std::fs::close_directory_source;
+alias close_read = std::fs::close_read;
+alias directory_next = std::fs::directory_next;
+alias exit_status = std::process::exit_status;
+alias host_copy_bytes = std::text::host_copy_bytes;
+alias open_directory = std::fs::open_directory;
+alias open_directory_source = std::fs::open_directory_source;
+alias open_file = std::fs::open_file;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+alias write_once = std::io::write_once;
+
 const digit_glyphs: Array<u8, 10> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8];
 
 const usage_text: Array<u8, 27> =[117_u8, 115_u8, 97_u8, 103_u8, 101_u8, 58_u8, 32_u8, 119_u8, 102_u8, 103_u8, 114_u8, 101_u8, 112_u8, 32_u8, 80_u8, 65_u8, 84_u8, 84_u8, 69_u8, 82_u8, 78_u8, 32_u8, 82_u8, 79_u8, 79_u8, 84_u8, 10_u8];
@@ -18,6 +43,16 @@ const reason_long_line: Array<u8, 14> =[108_u8, 105_u8, 110_u8, 101_u8, 32_u8, 1
 
 const reason_unreadable: Array<u8, 12> =[99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 10_u8];
 
+const reason_broken_pipe: Array<u8, 12> =[98_u8, 114_u8, 111_u8, 107_u8, 101_u8, 110_u8, 32_u8, 112_u8, 105_u8, 112_u8, 101_u8, 10_u8];
+
+const reason_unwritable: Array<u8, 13> =[99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 119_u8, 114_u8, 105_u8, 116_u8, 101_u8, 10_u8];
+
+const reason_long_path: Array<u8, 14> =[112_u8, 97_u8, 116_u8, 104_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 108_u8, 111_u8, 110_u8, 103_u8, 10_u8];
+
+const reason_many_entries: Array<u8, 17> =[116_u8, 111_u8, 111_u8, 32_u8, 109_u8, 97_u8, 110_u8, 121_u8, 32_u8, 101_u8, 110_u8, 116_u8, 114_u8, 105_u8, 101_u8, 115_u8, 10_u8];
+
+const standard_output_name: Array<u8, 15> =[115_u8, 116_u8, 97_u8, 110_u8, 100_u8, 97_u8, 114_u8, 100_u8, 32_u8, 111_u8, 117_u8, 116_u8, 112_u8, 117_u8, 116_u8];
+
 const reason_pattern_too_long: Array<u8, 25> =[119_u8, 102_u8, 103_u8, 114_u8, 101_u8, 112_u8, 58_u8, 32_u8, 112_u8, 97_u8, 116_u8, 116_u8, 101_u8, 114_u8, 110_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 108_u8, 111_u8, 110_u8, 103_u8, 10_u8];
 
 const reason_root_too_long: Array<u8, 29> =[119_u8, 102_u8, 103_u8, 114_u8, 101_u8, 112_u8, 58_u8, 32_u8, 115_u8, 101_u8, 97_u8, 114_u8, 99_u8, 104_u8, 32_u8, 114_u8, 111_u8, 111_u8, 116_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 108_u8, 111_u8, 110_u8, 103_u8, 10_u8];
@@ -36,6 +71,11 @@ struct LineScan {
 struct ShiftedTail {
   tail: u64;
   status: u8;
+}
+
+struct RootSearch {
+  outcome: u8;
+  refused: u8;
 }
 
 fn io_class(error: IoError) -> result: u8 pure {
@@ -128,6 +168,15 @@ fn io_class(error: IoError) -> result: u8 pure {
   }
 }
 
+fn output_class(error: IoError) -> result: u8 pure {
+  doc "Reduces one refusal of the standard-output stream to wfgrep's two output statuses: 7 when the reader has gone away, a broken pipe, and 8 for every other refusal. Neither is a failure to read an input, so neither is ever reported against a searched path.";
+  let class = io_class(error: error);
+  if class == 4_u8 {
+    return 7_u8;
+  }
+  return 8_u8;
+}
+
 fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
   requires count <= 131072_u64;
   ensures made.inner.len >= count;
@@ -143,19 +192,90 @@ fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
   return move built;
 }
 
-fn zeroed_words(count: u64) -> made: Box<Slots<u64>> pure contract {
-  requires count <= 1024_u64;
-  ensures made.inner.len >= count;
-} {
-  doc "The same for word slots. A word window's byte extent is not its slot count, so the written bound is what discharges the allocation-size obligation [OP-9].";
-  let built = box_slots_new::<u64>(capacity: count);
-  for @fill (
-    at in 0_u64..count,
-    invariant grown: built.inner.len == at
-  ) {
-    place_back(window: &built.inner, value: 0_u64);
+fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
+  doc "Raises one byte window's capacity and length to total and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The written ceiling is what discharges the allocation-size obligation, and the fill is what lets a range reference cover the new slots [OP-9, OP-10, REF-4].";
+  let capacity = deref(cell).inner.cap;
+  let bounded = total <= 1073741824_u64;
+  let larger = total >= capacity;
+  if bounded {
+    if larger {
+      grow(cell: cell, capacity: total);
+    } else {
+      return False();
+    }
+  } else {
+    return False();
   }
-  return move built;
+  loop @fill {
+    let length = deref(cell).inner.len;
+    let done = length >= total;
+    if done {
+      break @fill;
+    }
+    let room = deref(cell).inner.len < deref(cell).inner.cap;
+    if room {
+      place_back(window: &deref(cell).inner, value: 0_u8);
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
+  doc "Appends one byte, doubling full backing, or taking 4096 bytes for an empty store, within the 2^32-byte collection ceiling, and reports False only at that ceiling. A directory's collected names therefore have no fixed entry count [OP-9, OP-10].";
+  let length = deref(cell).inner.len;
+  let capacity = deref(cell).inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give 4096_u64;
+    } else {
+      give capacity +wrap capacity;
+    }
+    let bounded = doubled <= 4294967296_u64;
+    let larger = doubled >= capacity;
+    if bounded {
+      if larger {
+        grow(cell: cell, capacity: doubled);
+      }
+    }
+  }
+  let room = deref(cell).inner.len < deref(cell).inner.cap;
+  if room {
+    place_back(window: &deref(cell).inner, value: value);
+    return True();
+  }
+  return False();
+}
+
+fn push_word(cell: &Box<Slots<u64>>, value: u64) -> pushed: Bool writes(cell) {
+  doc "The same for word slots, taking 512 for an empty store, within a 2^28-entry ceiling, which is also what discharges the word window's allocation-size obligation [OP-9].";
+  let length = deref(cell).inner.len;
+  let capacity = deref(cell).inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give 512_u64;
+    } else {
+      give capacity +wrap capacity;
+    }
+    let bounded = doubled <= 268435456_u64;
+    let larger = doubled >= capacity;
+    if bounded {
+      if larger {
+        grow(cell: cell, capacity: doubled);
+      }
+    }
+  }
+  let room = deref(cell).inner.len < deref(cell).inner.cap;
+  if room {
+    place_back(window: &deref(cell).inner, value: value);
+    return True();
+  }
+  return False();
 }
 
 fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
@@ -248,9 +368,9 @@ fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
 }
 
 fn name_before(names: &[u8], left: u64, right: u64) -> result: Bool reads(names) {
-  doc "Orders two collected entry records by their stored name bytes, a shorter prefix first.";
-  let left_base = left *wrap 1026_u64;
-  let right_base = right *wrap 1026_u64;
+  doc "Orders two collected entry records, named by their offsets in the record store, by their stored name bytes, a shorter prefix first.";
+  let left_base = left;
+  let right_base = right;
   let left_length_low_at = left_base +wrap 1_u64;
   let right_length_low_at = right_base +wrap 1_u64;
   let left_length_low = byte_at(store: names, index: left_length_low_at);
@@ -319,13 +439,10 @@ fn put_decimal(destination: &[u8], at: u64, value: u64) -> result: u64 writes(de
     }
     set cursor = cursor -wrap 1_u64;
     let digit = rest % 10_u64;
-    let known = digit < glyphs;
-    if known {
-      let writable = cursor < spare;
-      if writable {
-        let glyph = digit_glyphs[digit];
-        set deref(destination)[cursor] = glyph;
-      }
+    let writable = cursor < spare;
+    if writable {
+      let glyph = digit_glyphs[digit];
+      set deref(destination)[cursor] = glyph;
     }
     set rest = rest / 10_u64;
   }
@@ -397,6 +514,26 @@ fn assemble_failure(report: &[u8], capacity: u64, path: &[u8], path_length: u64,
   if status == 6_u8 {
     set named = 1_u8;
     let view = &reason_long_line[0_u64..14_u64];
+    set tail = append_slice(destination: report, capacity: report_capacity, filled: tail, text: view);
+  }
+  if status == 7_u8 {
+    set named = 1_u8;
+    let view = &reason_broken_pipe[0_u64..12_u64];
+    set tail = append_slice(destination: report, capacity: report_capacity, filled: tail, text: view);
+  }
+  if status == 8_u8 {
+    set named = 1_u8;
+    let view = &reason_unwritable[0_u64..13_u64];
+    set tail = append_slice(destination: report, capacity: report_capacity, filled: tail, text: view);
+  }
+  if status == 10_u8 {
+    set named = 1_u8;
+    let view = &reason_long_path[0_u64..14_u64];
+    set tail = append_slice(destination: report, capacity: report_capacity, filled: tail, text: view);
+  }
+  if status == 11_u8 {
+    set named = 1_u8;
+    let view = &reason_many_entries[0_u64..17_u64];
     set tail = append_slice(destination: report, capacity: report_capacity, filled: tail, text: view);
   }
   if named == 0_u8 {
@@ -522,10 +659,73 @@ fn shift_input_tail(input: &[u8], available: u64, scan: u64) -> result: ShiftedT
   return accepted;
 }
 
+fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], path_length: u64, line_number: u64, scratch: &[u8], input: &[u8], scan: u64, stop: u64) -> result: u8 reads(path), reads(input), writes(factory), writes(out), writes(scratch) {
+  doc "Publishes one `PATH:LINE:TEXT` record too long for the output batch straight from where its bytes already are: the path from its range, the line number through the emptied batch, and the line from the read window. The caller has published everything batched before it, so records stay in order. The result is 0, or the output status of the refused write.";
+  let path_room = deref(path).len;
+  let path_fits = path_length <= path_room;
+  if path_fits {
+  } else {
+    return 6_u8;
+  }
+  match publish_all(factory: factory, output: out, source: path, length: path_length) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      let refused = output_class(error: problem);
+      return refused;
+    }
+  }
+  let scratch_room = deref(scratch).len;
+  let opened = 0_u64 < scratch_room;
+  if opened {
+    set deref(scratch)[0_u64] = 58_u8;
+  } else {
+    return 6_u8;
+  }
+  let filled = put_decimal(destination: scratch, at: 1_u64, value: line_number);
+  let closing_room = filled < scratch_room;
+  if closing_room {
+    set deref(scratch)[filled] = 58_u8;
+  } else {
+    return 6_u8;
+  }
+  let numbered = filled +wrap 1_u64;
+  let numbered_fits = numbered <= scratch_room;
+  if numbered_fits {
+  } else {
+    return 6_u8;
+  }
+  match publish_all(factory: factory, output: out, source: scratch, length: numbered) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      let refused = output_class(error: problem);
+      return refused;
+    }
+  }
+  let ordered = scan <= stop;
+  let inside = stop <= deref(input).len;
+  if ordered {
+    if inside {
+      let line = &deref(input)[scan..stop];
+      let line_length = deref(line).len;
+      match publish_all(factory: factory, output: out, source: line, length: line_length) {
+        Ok(value: published) => {
+        }
+        Err(error: problem) => {
+          let refused = output_class(error: problem);
+          return refused;
+        }
+      }
+      return 0_u8;
+    }
+  }
+  return 6_u8;
+}
+
 fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern_length: u64, path: &[u8], path_length: u64, out: &OutputStream) -> result: u8 reads(pattern), reads(path), writes(factory), writes(file), writes(out) {
-  doc "Reads one open file and publishes `PATH:LINE:TEXT` for every line that holds the literal pattern bytes. Its two scratch windows are boxed runtime-capacity windows, each reached through one range reference [TYPE-9, REF-4].";
+  doc "Reads one open file and publishes `PATH:LINE:TEXT` for every line that holds the literal pattern bytes. The read window starts at 4096 bytes and doubles whenever one incomplete line fills it, so a line of any length up to widen_window's ceiling is searched and published whole, as a real grep does; the output batch stays 8192 bytes, and a record too long for it is published by publish_oversized. The low four bits of the result are the status (0, a read status of io_class, 6 for a line past the ceiling, or an output status of output_class) and the bit 16 reports a match. Both windows are boxed runtime-capacity windows, and the read window's range reference is formed again at the top of every chunk because widening remakes the cell [TYPE-9, REF-2, REF-4].";
   let input_cell = zeroed_bytes(count: 4096_u64);
-  let input = &input_cell.inner[0_u64..4096_u64];
   let batch_cell = zeroed_bytes(count: 8192_u64);
   let batch = &batch_cell.inner[0_u64..8192_u64];
   let batch_room = deref(batch).len;
@@ -543,6 +743,8 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
   let carry = 0_u64;
   let file_offset = 0_u64;
   loop @chunks {
+    let window = input_cell.inner.len;
+    let input = &input_cell.inner[0_u64..window];
     let chunk_room = deref(input).len;
     let carry_within_input = carry <= chunk_room;
     if carry_within_input {
@@ -622,7 +824,7 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
         let front = path_length +wrap 24_u64;
         let record = front +wrap span;
         let need = filled +wrap record;
-        let overfull = need > 8192_u64;
+        let overfull = need > batch_room;
         if overfull {
           let batch_fits = filled <= batch_room;
           if batch_fits {
@@ -630,7 +832,7 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
               Ok(value: published) => {
               }
               Err(error: problem) => {
-                set status = io_class(error: problem);
+                set status = output_class(error: problem);
               }
             }
           } else {
@@ -639,19 +841,26 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
           set filled = 0_u64;
         }
         if status == 0_u8 {
-          set filled = copy_range(destination: batch, at: filled, source: path, from: 0_u64, to: path_length);
-          let colon_room = filled < batch_room;
-          if colon_room {
-            set deref(batch)[filled] = 58_u8;
-            set filled = filled +wrap 1_u64;
+          let oversized = record > batch_room;
+          if oversized {
+            set status = publish_oversized(factory: factory, out: out, path: path, path_length: path_length, line_number: line_number, scratch: batch, input: input, scan: scan, stop: stop);
+          } else {
+            set filled = copy_range(destination: batch, at: filled, source: path, from: 0_u64, to: path_length);
+            let colon_room = filled < batch_room;
+            if colon_room {
+              set deref(batch)[filled] = 58_u8;
+              set filled = filled +wrap 1_u64;
+            }
+            set filled = put_decimal(destination: batch, at: filled, value: line_number);
+            let second_room = filled < batch_room;
+            if second_room {
+              set deref(batch)[filled] = 58_u8;
+              set filled = filled +wrap 1_u64;
+            }
+            set filled = copy_range(destination: batch, at: filled, source: input, from: scan, to: stop);
           }
-          set filled = put_decimal(destination: batch, at: filled, value: line_number);
-          let second_room = filled < batch_room;
-          if second_room {
-            set deref(batch)[filled] = 58_u8;
-            set filled = filled +wrap 1_u64;
-          }
-          set filled = copy_range(destination: batch, at: filled, source: input, from: scan, to: stop);
+        }
+        if status == 0_u8 {
         } else {
           break @lines;
         }
@@ -676,6 +885,16 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
       set status = shift_status;
       break @chunks;
     }
+    let saturated = carry >= chunk_room;
+    if saturated {
+      let doubled = chunk_room +wrap chunk_room;
+      let widened = widen_window(cell: &input_cell, total: doubled);
+      if widened {
+      } else {
+        set status = 6_u8;
+        break @chunks;
+      }
+    }
   }
   let pending = filled > 0_u64;
   if pending {
@@ -685,7 +904,7 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
         Ok(value: published) => {
         }
         Err(error: problem) => {
-          set status = io_class(error: problem);
+          set status = output_class(error: problem);
         }
       }
     } else {
@@ -725,21 +944,73 @@ fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, na
   return open_directory(factory: factory, root: root, name: name, start: start, end: end);
 }
 
+fn keep_entry(records: &Box<Slots<u8>>, starts: &Box<Slots<u64>>, entries: &[u8], kind: u8, length_low: u8, length_high: u8, name_at: u64, name_count: u64) -> kept: Bool reads(entries), writes(records), writes(starts) {
+  doc "Collects one enumerated entry: its offset in the record store goes to starts, then its kind, its two name-length bytes and its name bytes go to records. Both stores grow by doubling, so a directory's entry count is bounded only by the collection ceilings of push_byte and push_word, and the result is False only at one of them.";
+  let offset = deref(records).inner.len;
+  let offset_kept = push_word(cell: starts, value: offset);
+  if offset_kept {
+  } else {
+    return False();
+  }
+  let kind_kept = push_byte(cell: records, value: kind);
+  if kind_kept {
+  } else {
+    return False();
+  }
+  let low_kept = push_byte(cell: records, value: length_low);
+  if low_kept {
+  } else {
+    return False();
+  }
+  let high_kept = push_byte(cell: records, value: length_high);
+  if high_kept {
+  } else {
+    return False();
+  }
+  let entries_room = deref(entries).len;
+  let taken = 0_u64;
+  loop @copy_name {
+    let done = taken >= name_count;
+    if done {
+      break @copy_name;
+    }
+    let source_at = name_at +wrap taken;
+    let readable = source_at < entries_room;
+    if readable {
+    } else {
+      return False();
+    }
+    let byte = deref(entries)[source_at];
+    let byte_kept = push_byte(cell: records, value: byte);
+    if byte_kept {
+    } else {
+      return False();
+    }
+    set taken = taken +wrap 1_u64;
+  }
+  return True();
+}
+
 fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: u8 reads(dir), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) {
-  doc "Enumerates one directory in sorted order, searches the regular files it names, and descends into the subdirectories it names. The descent carries no source-level depth limit; stack availability remains outside this version's portable result model. Two program bounds remain and both are recorded as defects. One truncates silently: at most 64 entries per directory are retained, in the host's enumeration order, before sorting, and the walk returns normally, so that truncation is indistinguishable from a complete one. The other stops the descent: a display path past a thousand bytes refuses, which on a tree of one-byte directory names binds at roughly five hundred levels, and it reports by exit status alone with nothing on standard error.";
+  doc "Enumerates one directory in sorted order, searches the regular files it names, and descends into the subdirectories it names. Every entry is collected by keep_entry before sorting, so no fixed entry count truncates a directory; a directory past the collection ceiling is reported and left unsearched. The record and offset stores start at 4096 bytes and 512 entries, so only a larger directory pays for growth. The child display path is sized from the prefix, so a subdirectory is refused only past a 65536-byte display path, and that refusal is reported. The descent carries no source-level depth limit; stack availability remains outside this version's portable result model. The result packs 1 for a match, 2 for a reported failure, and 4 or 8 when standard output refused a write, a broken pipe or any other refusal; an output refusal stops the whole search, since nothing more can be published.";
   let matched = 0_u8;
   let failed = 0_u8;
+  let stopped = 0_u8;
+  let deep = prefix_length > 65536_u64;
+  if deep {
+    return 2_u8;
+  }
+  let child_capacity = prefix_length + 1025_u64;
+  let child_cell = zeroed_bytes(count: child_capacity);
+  let child = &child_cell.inner[0_u64..child_capacity];
+  let report_capacity = child_capacity + 64_u64;
+  let report_cell = zeroed_bytes(count: report_capacity);
+  let report = &report_cell.inner[0_u64..report_capacity];
   let entries_cell = zeroed_bytes(count: 8192_u64);
   let entries = &entries_cell.inner[0_u64..8192_u64];
-  let names_cell = zeroed_bytes(count: 65664_u64);
-  let names = &names_cell.inner[0_u64..65664_u64];
-  let order_cell = zeroed_words(count: 64_u64);
-  let order = &order_cell.inner[0_u64..64_u64];
-  let child_cell = zeroed_bytes(count: 1024_u64);
-  let child = &child_cell.inner[0_u64..1024_u64];
-  let report_cell = zeroed_bytes(count: 1280_u64);
-  let report = &report_cell.inner[0_u64..1280_u64];
-  let stored = 0_u64;
+  let records_cell = box_slots_new::<u8>(capacity: 4096_u64);
+  let starts_cell = box_slots_new::<u64>(capacity: 512_u64);
+  let overflowed = 0_u8;
   match open_source_from_factory(factory: factory, directory: dir) {
     Ok(value: list) => {
       loop @batches {
@@ -774,7 +1045,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
         let at = 0_u64;
         loop @stored_entry {
           let entries_room = deref(entries).len;
-          let names_room = deref(names).len;
           let header_end = at +wrap 3_u64;
           let complete = header_end <= produced;
           if complete {
@@ -854,48 +1124,12 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           let not_dotted = dotted == 0_u8;
           let component_fits = name_count <= 1023_u64;
           let usable = band(not_dotted, component_fits);
-          let room_left = stored < 64_u64;
           if usable {
-            if room_left {
-              let base = stored *wrap 1026_u64;
-              let kind_writable = base < names_room;
-              if kind_writable {
-                set deref(names)[base] = kind;
-              }
-              let stored_length_low_at = base +wrap 1_u64;
-              let length_low_writable = stored_length_low_at < names_room;
-              if length_low_writable {
-                set deref(names)[stored_length_low_at] = name_length_low;
-              }
-              let stored_length_high_at = base +wrap 2_u64;
-              let length_high_writable = stored_length_high_at < names_room;
-              if length_high_writable {
-                set deref(names)[stored_length_high_at] = name_length_high;
-              }
-              let target_start = base +wrap 3_u64;
-              let taken = 0_u64;
-              loop @store_name {
-                let done = taken >= name_count;
-                if done {
-                  break @store_name;
-                }
-                let source_at = name_at +wrap taken;
-                let readable = source_at < entries_room;
-                if readable {
-                } else {
-                  break @store_name;
-                }
-                let target_at = target_start +wrap taken;
-                let writable = target_at < names_room;
-                if writable {
-                } else {
-                  break @store_name;
-                }
-                let byte = deref(entries)[source_at];
-                set deref(names)[target_at] = byte;
-                set taken = taken +wrap 1_u64;
-              }
-              set stored = stored +wrap 1_u64;
+            let kept = keep_entry(records: &records_cell, starts: &starts_cell, entries: entries, kind: kind, length_low: name_length_low, length_high: name_length_high, name_at: name_at, name_count: name_count);
+            if kept {
+            } else {
+              set overflowed = 1_u8;
+              break @batches;
             }
           }
         }
@@ -906,21 +1140,21 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       set failed = 1_u8;
     }
   }
-  let seed = 0_u64;
-  loop @seed_order {
-    let order_room = deref(order).len;
-    let done = seed >= stored;
-    if done {
-      break @seed_order;
+  if overflowed == 1_u8 {
+    let report_room = deref(report).len;
+    let assembled = assemble_failure(report: report, capacity: report_room, path: prefix, path_length: prefix_length, status: 11_u8);
+    match publish_all(factory: factory, output: err, source: report, length: assembled) {
+      Ok(value: published) => {
+      }
+      Err(error: problem) => {
+      }
     }
-    let writable = seed < order_room;
-    if writable {
-    } else {
-      break @seed_order;
-    }
-    set deref(order)[seed] = seed;
-    set seed = seed +wrap 1_u64;
+    return 2_u8;
   }
+  let record_bytes = records_cell.inner.len;
+  let names = &records_cell.inner[0_u64..record_bytes];
+  let stored = starts_cell.inner.len;
+  let order = &starts_cell.inner[0_u64..stored];
   let selected = 0_u64;
   loop @sort {
     let order_room = deref(order).len;
@@ -987,9 +1221,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     } else {
       break @process;
     }
-    let index = deref(order)[visited];
+    let base = deref(order)[visited];
     set visited = visited +wrap 1_u64;
-    let base = index *wrap 1026_u64;
     let kind_readable = base < names_room;
     if kind_readable {
     } else {
@@ -1035,7 +1268,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     } else {
       give name_count;
     }
-    let fits = child_length <= 1000_u64;
+    let fits = child_length <= child_room;
     if fits {
     } else {
       set failed = 1_u8;
@@ -1107,6 +1340,16 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           set status = io_class(error: problem);
         }
       }
+      if status == 7_u8 {
+        set stopped = 4_u8;
+      }
+      if status == 8_u8 {
+        set stopped = 8_u8;
+      }
+      let halted = stopped != 0_u8;
+      if halted {
+        break @process;
+      }
       let reportable = status != 0_u8;
       if reportable {
         set failed = 1_u8;
@@ -1123,22 +1366,33 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     let descending = kind == 2_u8;
     if descending {
       let status = 0_u8;
-      match open_directory_from_factory(factory: factory, root: dir, name: names, start: name_at, end: name_end) {
-        Ok(value: opened) => {
-          let outcome = walk(factory: factory, dir: &opened, prefix: child, prefix_length: cursor, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
-          let found = iand(outcome, 1_u8);
-          let broke = iand(outcome, 2_u8);
-          if found == 1_u8 {
-            set matched = 1_u8;
+      let too_deep = cursor > 65536_u64;
+      if too_deep {
+        set status = 10_u8;
+      } else {
+        match open_directory_from_factory(factory: factory, root: dir, name: names, start: name_at, end: name_end) {
+          Ok(value: opened) => {
+            let outcome = walk(factory: factory, dir: &opened, prefix: child, prefix_length: cursor, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
+            let found = iand(outcome, 1_u8);
+            let broke = iand(outcome, 2_u8);
+            let halt = iand(outcome, 12_u8);
+            if found == 1_u8 {
+              set matched = 1_u8;
+            }
+            if broke == 2_u8 {
+              set failed = 1_u8;
+            }
+            set stopped = halt;
+            close_directory(factory: factory, directory: move opened);
           }
-          if broke == 2_u8 {
-            set failed = 1_u8;
+          Err(error: problem) => {
+            set status = io_class(error: problem);
           }
-          close_directory(factory: factory, directory: move opened);
         }
-        Err(error: problem) => {
-          set status = io_class(error: problem);
-        }
+      }
+      let halted = stopped != 0_u8;
+      if halted {
+        break @process;
       }
       let reportable = status != 0_u8;
       if reportable {
@@ -1164,20 +1418,112 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   } else {
     give 0_u8;
   }
-  let packed = ior(matched_bit, failed_bit);
+  let reached = ior(matched_bit, failed_bit);
+  let packed = ior(reached, stopped);
   return packed;
 }
 
+fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: u64, length: u64, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: RootSearch reads(dir), reads(name), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) {
+  doc "Opens the search root named by name[from..length) one component at a time below dir and walks the last one. open_directory opens exactly one component and refuses a separator, so a root such as `tests/programs` is reached by opening `tests` and then `programs` below it, each intermediate directory closed on the way back; empty components from repeated or trailing separators are skipped, as path resolution does. The result is walk's packed outcome, or the io_class status of the first component that could not be opened, or 5 when no component remains.";
+  let name_room = deref(name).len;
+  let start = from;
+  loop @leading {
+    let exhausted = start >= length;
+    if exhausted {
+      break @leading;
+    }
+    let readable = start < name_room;
+    if readable {
+    } else {
+      break @leading;
+    }
+    let byte = deref(name)[start];
+    let separator = byte == 47_u8;
+    if separator {
+    } else {
+      break @leading;
+    }
+    set start = start +wrap 1_u64;
+  }
+  let end = start;
+  loop @component {
+    let exhausted = end >= length;
+    if exhausted {
+      break @component;
+    }
+    let readable = end < name_room;
+    if readable {
+    } else {
+      break @component;
+    }
+    let byte = deref(name)[end];
+    let separator = byte == 47_u8;
+    if separator {
+      break @component;
+    }
+    set end = end +wrap 1_u64;
+  }
+  let next = end;
+  loop @trailing {
+    let exhausted = next >= length;
+    if exhausted {
+      break @trailing;
+    }
+    let readable = next < name_room;
+    if readable {
+    } else {
+      break @trailing;
+    }
+    let byte = deref(name)[next];
+    let separator = byte == 47_u8;
+    if separator {
+    } else {
+      break @trailing;
+    }
+    set next = next +wrap 1_u64;
+  }
+  let empty = start >= end;
+  if empty {
+    let missing = RootSearch(outcome: 0_u8, refused: 5_u8);
+    return missing;
+  }
+  let within = end <= name_room;
+  if within {
+  } else {
+    let missing = RootSearch(outcome: 0_u8, refused: 5_u8);
+    return missing;
+  }
+  let last = next >= length;
+  match open_directory_from_factory(factory: factory, root: dir, name: name, start: start, end: end) {
+    Ok(value: opened) => {
+      if last {
+        let outcome = walk(factory: factory, dir: &opened, prefix: prefix, prefix_length: prefix_length, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
+        close_directory(factory: factory, directory: move opened);
+        let walked = RootSearch(outcome: outcome, refused: 0_u8);
+        return walked;
+      }
+      let deeper = search_root(factory: factory, dir: &opened, name: name, from: next, length: length, prefix: prefix, prefix_length: prefix_length, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
+      close_directory(factory: factory, directory: move opened);
+      return deeper;
+    }
+    Err(error: problem) => {
+      let class = io_class(error: problem);
+      let refused = RootSearch(outcome: 0_u8, refused: class);
+      return refused;
+    }
+  }
+}
+
 fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) {
-  doc "Searches one directory tree recursively and publishes `PATH:LINE:TEXT` for the lines holding the literal pattern bytes; 0 matched, 1 none, 2 error. The search is complete only within `walk`'s two remaining fixed bounds: 64 entries per directory, beyond which it truncates and still returns normally, and a thousand-byte display path, beyond which the descent stops and the run exits 2 with nothing on standard error.";
+  doc "Searches one directory tree, or one regular file, named by a relative root and publishes `PATH:LINE:TEXT` for the lines holding the literal pattern bytes; 0 matched, 1 none, 2 error. The root may have any number of components; the display prefix is the root as written without its trailing separators, as grep prints it. Every bound that remains is reported on standard error rather than truncating silently: a root or pattern past 4096 bytes, a line past widen_window's ceiling, a directory past keep_entry's collection ceiling, and a subdirectory past walk's display-path ceiling. A refused write to standard output stops the search and is reported once against standard output, never against a searched path.";
   let pattern_cell = zeroed_bytes(count: 4096_u64);
   let pattern = &pattern_cell.inner[0_u64..4096_u64];
-  let root_name_cell = zeroed_bytes(count: 256_u64);
-  let root_name = &root_name_cell.inner[0_u64..256_u64];
-  let root_path_cell = zeroed_bytes(count: 1024_u64);
-  let root_path = &root_path_cell.inner[0_u64..1024_u64];
-  let report_cell = zeroed_bytes(count: 1280_u64);
-  let report = &report_cell.inner[0_u64..1280_u64];
+  let root_name_cell = zeroed_bytes(count: 4096_u64);
+  let root_name = &root_name_cell.inner[0_u64..4096_u64];
+  let root_path_cell = zeroed_bytes(count: 4096_u64);
+  let root_path = &root_path_cell.inner[0_u64..4096_u64];
+  let report_cell = zeroed_bytes(count: 4352_u64);
+  let report = &report_cell.inner[0_u64..4352_u64];
   let arguments = args_count(args: args);
   let startup = 0_u8;
   let pattern_length = 0_u64;
@@ -1281,25 +1627,49 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     set deref(root_path)[copied] = byte;
     set copied = copied +wrap 1_u64;
   }
+  let display = copied;
+  loop @trim {
+    let root_room = deref(root_path).len;
+    let trimmable = display > 1_u64;
+    if trimmable {
+    } else {
+      break @trim;
+    }
+    let last_at = display -wrap 1_u64;
+    let readable = last_at < root_room;
+    if readable {
+    } else {
+      break @trim;
+    }
+    let byte = deref(root_path)[last_at];
+    let separator = byte == 47_u8;
+    if separator {
+      set display = last_at;
+    } else {
+      break @trim;
+    }
+  }
   let matched = 0_u8;
   let failed = 0_u8;
+  let stopped = 0_u8;
   let root_status = 0_u8;
-  match open_directory(factory: files, root: cwd, name: root_name, start: 0_u64, end: root_length) {
-    Ok(value: root) => {
-      let outcome = walk(factory: files, dir: &root, prefix: root_path, prefix_length: copied, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
-      let found = iand(outcome, 1_u8);
-      let broke = iand(outcome, 2_u8);
-      if found == 1_u8 {
-        set matched = 1_u8;
-      }
-      if broke == 2_u8 {
-        set failed = 1_u8;
-      }
-      close_directory(factory: files, directory: move root);
+  let leading = byte_at(store: root_name, index: 0_u64);
+  let absolute = leading == 47_u8;
+  if absolute {
+    set root_status = 5_u8;
+  } else {
+    let searched = search_root(factory: files, dir: cwd, name: root_name, from: 0_u64, length: root_length, prefix: root_path, prefix_length: display, pattern: pattern, pattern_length: pattern_length, out: out, err: err);
+    let outcome = searched.outcome;
+    set root_status = searched.refused;
+    let found = iand(outcome, 1_u8);
+    let broke = iand(outcome, 2_u8);
+    if found == 1_u8 {
+      set matched = 1_u8;
     }
-    Err(error: problem) => {
-      set root_status = io_class(error: problem);
+    if broke == 2_u8 {
+      set failed = 1_u8;
     }
+    set stopped = iand(outcome, 12_u8);
   }
   let directory_refused = root_status != 0_u8;
   if directory_refused {
@@ -1332,11 +1702,37 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
       }
     }
   }
+  if root_status == 7_u8 {
+    set stopped = 4_u8;
+    set root_status = 0_u8;
+  }
+  if root_status == 8_u8 {
+    set stopped = 8_u8;
+    set root_status = 0_u8;
+  }
   let reportable = root_status != 0_u8;
   if reportable {
     set failed = 1_u8;
     let report_room = deref(report).len;
     let assembled = assemble_failure(report: report, capacity: report_room, path: root_path, path_length: copied, status: root_status);
+    match publish_all(factory: files, output: err, source: report, length: assembled) {
+      Ok(value: published) => {
+      }
+      Err(error: problem) => {
+      }
+    }
+  }
+  let output_refused = stopped != 0_u8;
+  if output_refused {
+    set failed = 1_u8;
+    let output_status = if stopped == 4_u8 {
+      give 7_u8;
+    } else {
+      give 8_u8;
+    }
+    let report_room = deref(report).len;
+    let subject = &standard_output_name[0_u64..15_u64];
+    let assembled = assemble_failure(report: report, capacity: report_room, path: subject, path_length: 15_u64, status: output_status);
     match publish_all(factory: files, output: err, source: report, length: assembled) {
       Ok(value: published) => {
       }

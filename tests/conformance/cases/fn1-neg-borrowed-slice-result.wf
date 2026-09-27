@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn borrowed_slice(value: &[u8]) -> result: &[u8] pure {
   doc "A result writes a value type [GRAM-3], so no reference kind derives in result position and a function cannot hand its range reference back [REF-3, FN-1].";
   return value;

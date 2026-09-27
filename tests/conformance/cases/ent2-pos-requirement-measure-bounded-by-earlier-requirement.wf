@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
+  requires i < deref(rows).len;
+  requires k < deref(rows)[i].len;
+} {
+  doc "ENT-2, FN-8, OP-4, MSR-1: the second requirement forms deref(rows)[i] at body entry, after the first discharges i < deref(rows).len; S4 then gives both bounds the nested read owes.";
+  return deref(rows)[i][k];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller discharges both instantiated requirements from its own guards and reads back the second element of the first row.";
+  let inner = slots_new::<u8, 8>();
+  place_back(window: &inner, value: 7_u8);
+  place_back(window: &inner, value: 9_u8);
+  let outer = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: &outer, value: move inner);
+  if 0_u64 < outer.len {
+    if 1_u64 < outer[0_u64].len {
+      let value = pick(rows: &outer, i: 0_u64, k: 1_u64);
+      if value == 9_u8 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}

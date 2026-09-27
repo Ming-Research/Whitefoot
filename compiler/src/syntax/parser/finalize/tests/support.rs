@@ -50,9 +50,7 @@ pub(super) const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
 
 pub(super) fn with_parsed<ResultValue>(
     inputs: &[SourceInput<'_>],
-    run: impl for<'classified, 'lexed, 'source> FnOnce(
-        ParsedBundle<'classified, 'lexed, 'source>,
-    ) -> ResultValue,
+    run: impl FnOnce(ParsedBundle) -> ResultValue,
 ) -> ResultValue {
     let Ok(bundle) = SourceBundle::with_limits(inputs, SOURCE_LIMITS) else {
         panic!("test source bundle must be valid");
@@ -69,13 +67,13 @@ pub(super) fn with_parsed<ResultValue>(
     ) else {
         panic!("test source must classify");
     };
-    let ParseOutcome::Complete(parsed) = parse(&classified, PARSE_LIMITS) else {
+    let ParseOutcome::Complete(parsed) = parse(classified, PARSE_LIMITS) else {
         panic!("test source must derive");
     };
     run(parsed)
 }
 
-pub(super) fn source_offsets(classified: &ClassifiedBundle<'_, '_>) -> Vec<usize> {
+pub(super) fn source_offsets(classified: &ClassifiedBundle) -> Vec<usize> {
     classified.source_offsets.clone()
 }
 
@@ -104,7 +102,7 @@ pub(super) fn rendered_bytes(source: &[u8]) -> Option<Vec<u8>> {
         TerminalOutcome::SourceIssue(_) => return None,
         other => panic!("generated source must not hit a non-source terminal outcome: {other:?}"),
     };
-    let parsed = match parse(&classified, PARSE_LIMITS) {
+    let parsed = match parse(classified, PARSE_LIMITS) {
         ParseOutcome::Complete(parsed) => parsed,
         ParseOutcome::SourceIssue(_) => return None,
         other => panic!("generated source must not hit a non-source parse outcome: {other:?}"),
@@ -143,7 +141,7 @@ pub(super) fn reaches_canonical_syntax(source: &[u8]) -> bool {
         TerminalOutcome::SourceIssue(_) => return false,
         other => panic!("generated source must not hit a non-source terminal outcome: {other:?}"),
     };
-    let parsed = match parse(&classified, PARSE_LIMITS) {
+    let parsed = match parse(classified, PARSE_LIMITS) {
         ParseOutcome::Complete(parsed) => parsed,
         ParseOutcome::SourceIssue(_) => return false,
         other => panic!("generated source must not hit a non-source parse outcome: {other:?}"),
@@ -152,7 +150,7 @@ pub(super) fn reaches_canonical_syntax(source: &[u8]) -> bool {
         super::super::FinalizeOutcome::Complete(finalized) => finalized,
         other => panic!("trusted generated derivation must finalize: {other:?}"),
     };
-    match super::super::audit_canonical(finalized, CANONICAL_LIMITS) {
+    match super::super::audit_canonical(*finalized, CANONICAL_LIMITS) {
         super::super::CanonicalOutcome::Complete(_) => true,
         super::super::CanonicalOutcome::SourceIssue(_) => false,
         other => panic!("generated source must not hit an internal canonical outcome: {other:?}"),

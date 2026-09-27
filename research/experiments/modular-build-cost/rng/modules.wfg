@@ -1,0 +1,4 @@
+pkg::rng: [];
+pkg: [pkg::rng];
+
+entry bench = pkg::main;

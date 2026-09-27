@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   doc "Source S1: a branch whose condition has comparison origin establishes that relation at the then-block's entry and its exact negation at the else-block's entry [ENT-3]. The guarded branch discharges the subscript with no runtime bounds branch [OP-4].";
   let spare = deref(b).len;

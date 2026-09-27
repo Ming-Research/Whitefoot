@@ -1,0 +1,20 @@
+struct Holder {
+  count: u64;
+  cell: Box<u64>;
+}
+
+fn replace_cell(holder: &Holder) -> result: unit reads(holder), writes(holder.cell) {
+  let seen = deref(holder).count;
+  let fresh = box_new::<u64>(value: seen);
+  set deref(holder).cell = move fresh;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let first = box_new::<u64>(value: 1_u64);
+  let holder = Holder(count: 4_u64, cell: move first);
+  let held = &holder.cell.inner;
+  replace_cell(holder: &holder);
+  let seen = deref(held);
+  return exit_status(code: 0_u8);
+}

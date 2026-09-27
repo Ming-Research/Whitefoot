@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn compare(left: u32, right: u32) -> return_value: Bool pure {
   return ene(left, right);
 }

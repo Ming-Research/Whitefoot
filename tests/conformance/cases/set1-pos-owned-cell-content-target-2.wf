@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn hold() -> result: unit pure {
   doc "An owned cell's content is also a legal affine exchange place: swap exchanges the two window values at the cell content and at a local, consuming neither root.";
   let bytes = slots_new::<u8, 1>();

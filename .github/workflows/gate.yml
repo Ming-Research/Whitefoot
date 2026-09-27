@@ -25,6 +25,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
+  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  CARGO_INCREMENTAL: 0
 
 jobs:
   groups:
@@ -41,35 +43,6 @@ jobs:
           groups=$(make --no-print-directory --silent check-groups)
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
-
-  design-readiness:
-    name: Design readiness
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Name main as a local ref
-        run: |
-          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
-          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
-            echo "checkout is on main"
-          else
-            git branch -f main origin/main
-          fi
-
-      - name: Select the design review base
-        env:
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          design_review_base=$(sh .github/design-review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
-          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
-          git log --oneline -1 "$design_review_base"
-
-      - name: Require settled design amendments
-        run: make design-ready
 
   gate:
     needs: groups
@@ -95,14 +68,19 @@ jobs:
       - name: Set the scratch root
         run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
 
-      # The desktop default reserves capacity for interactive work. Each CI
-      # job owns its VM, so retain the host-sized test pool there. Compiler
-      # builds remain bounded at two.
-      - name: Set dedicated-runner test parallelism
-        run: echo "RUST_TEST_THREADS=$(getconf _NPROCESSORS_ONLN)" >> "$GITHUB_ENV"
+      # The desktop default of two reserves capacity for interactive work and
+      # other agents' commands. Each CI job owns its VM, so compilation and the
+      # test pool both use the host. Building whitefootc from scratch on a
+      # four-CPU host took 72.6 s at two Cargo jobs and 43.1 s at four, with
+      # peak memory 1.27 and 1.37 GB.
+      - name: Set dedicated-runner build and test parallelism
+        run: |
+          processors=$(getconf _NPROCESSORS_ONLN)
+          echo "CARGO_BUILD_JOBS=$processors" >> "$GITHUB_ENV"
+          echo "RUST_TEST_THREADS=$processors" >> "$GITHUB_ENV"
 
-      # `spec-append-only` reads `main` as a local ref: no released
-      # specification archive may differ from main's. A CI checkout
+      # `spec-archives` reads `main` as a local ref: it compares released
+      # specification archives with the merge base. A CI checkout
       # has the remote-tracking ref only, so name it locally here. On a push to
       # main the checkout already sits on that branch, and git refuses to force
       # a branch the worktree has checked out, so the ref is only created when
@@ -129,11 +107,14 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
+      # A cached build links its ThinLTO fragments with LLD on Linux; the
+      # macOS toolchain's own linker does ThinLTO itself.
       - name: Install the host toolchain
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends clang
+            sudo apt-get install -y --no-install-recommends clang lld
+            ld.lld --version
           fi
           test -x /usr/bin/clang
           /usr/bin/clang --version

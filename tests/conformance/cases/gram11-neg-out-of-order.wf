@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn sub2(x: i32, y: i32) -> return_value: i32 pure {
   return x -wrap y;
 }

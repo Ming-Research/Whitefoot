@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "MSR-1, OP-4: a subscript inside a measure place is an ordinary OP-4 occurrence and owes i < base.len where the place is formed. One row was placed, so 1 < grid.len is not derivable and the measure term over that place never exists.";
   let row = slots_new::<u8, 8>();

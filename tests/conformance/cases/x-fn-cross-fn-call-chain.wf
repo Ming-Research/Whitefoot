@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn dbl(x: i32) -> function_result: i32 pure {
   doc "Leaf of the chain: doubles its argument with the total wrapping family [FN-1, OP-1].";
   return x +wrap x;

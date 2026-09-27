@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn release_now(cell: Box<Slots<u8>>) -> result: unit pure {
   doc "An affine value is released early by moving it into a function that consumes it and ends; this return edge runs exactly the walk the caller's scope exit would have run.";
   return unit;

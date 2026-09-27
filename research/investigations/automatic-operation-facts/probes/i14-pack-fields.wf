@@ -1,0 +1,12 @@
+fn pack_fields(low: u32, high: u32) -> result: u8 pure {
+  let low_bits = iand(low, 15_u32);
+  let high_field = iand(high, 15_u32);
+  let high_bits = ishl(high_field, 4_u32);
+  let packed = ior(low_bits, high_bits);
+  let byte = cvt::<u32, u8>(packed);
+  return byte;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

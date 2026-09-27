@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], pick: Bool) -> result: u8 reads(b) {
   doc "Facts attach to terms, not to spellings. The arm-local offset is bounded by a checked branch, but that fact dies on the edge leaving its scope [ENT-5](d) before any join, and the later binding of the same spelling is a different term inheriting nothing [ENT-2], so its subscript is undischarged [OP-4].";
   let spare = deref(b).len;

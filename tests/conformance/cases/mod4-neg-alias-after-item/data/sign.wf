@@ -1,0 +1,10 @@
+fn sign_of(value: i32) -> result: Sign pure {
+  doc "Compares the value against zero.";
+  if value < 0_i32 {
+    return Sign::Neg();
+  }
+  if value == 0_i32 {
+    return Sign::Zero();
+  }
+  return Sign::Pos();
+}

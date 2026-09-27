@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn inner(p: u64, k: u64, j: u64, n: u64) -> at: u64 pure contract {
   requires n <= 1000_u64;
   requires k <= 1000_u64;

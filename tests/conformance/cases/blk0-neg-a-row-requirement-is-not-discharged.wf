@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn overfill() -> result: Slots<u8, 2> pure {
   doc "A third placement into a two-slot run has cap - len == 0, and the record's own free-slot requirement is what refuses it.";
   let run = slots_new::<u8, 2>();

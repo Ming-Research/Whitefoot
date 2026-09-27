@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fill(destination: &Slots<u8, 64>, at: u64) -> result: u64 writes(destination) {
   doc "Writes one byte through the reference and returns the next position.";
   let spare = deref(destination).len;

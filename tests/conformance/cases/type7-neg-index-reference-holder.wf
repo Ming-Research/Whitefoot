@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "A reference variable denotes the reference [REF-1], so a subscript through it is written deref(holder)[offset]; the bare subscript on a reference holder is the missing dereference [TYPE-7, OP-4].";
   let items = array_filled::<u8, 2>(value: 5_u8);

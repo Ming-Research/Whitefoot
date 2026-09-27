@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn takesref(x: &i32) -> function_result: i32 reads(x) {
   doc "Parameter x is a reference &i32 [FN-1]; the storage it names is reached through deref(x) [TYPE-7].";
   return deref(x);

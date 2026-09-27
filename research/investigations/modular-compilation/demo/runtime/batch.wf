@@ -1,0 +1,17 @@
+alias fifo = pkg::runtime::queue;
+alias Job = pkg::data::Job;
+alias Report = pkg::data::Report;
+
+fn run_two<fn take(queue: &fifo::Queue) -> job: Job writes(queue.storage) contract {
+  requires deref(queue).storage.len > 0_u64;
+  ensures deref(queue).storage.len + 1_u64 == deref(entry(queue)).storage.len;
+}>(queue: &fifo::Queue) -> report: Report writes(queue.storage) contract {
+  requires deref(queue).storage.len >= 2_u64;
+  ensures deref(queue).storage.len + 2_u64 == deref(entry(queue)).storage.len;
+} {
+  doc "The function-kind argument is monomorphized to a direct call. The first call's postcondition proves that the second call still has one job available. The remaining length is a read of the queue's published ring; no getter is involved.";
+  let first = take(queue: queue);
+  let second = take(queue: queue);
+  let remaining = deref(queue).storage.len;
+  return summarize(first: first, second: second, remaining: remaining);
+}

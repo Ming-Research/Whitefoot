@@ -27,7 +27,7 @@ fn bundle(inputs: &[(&str, &[u8])]) -> SourceBundle {
     SourceBundle::with_limits(&inputs, SourceLimits::REPRESENTABLE).unwrap()
 }
 
-fn complete(source: &SourceBundle) -> LexedBundle<'_> {
+fn complete(source: &SourceBundle) -> LexedBundle {
     match crate::lex(source, generous_limits()) {
         LexOutcome::Complete(lexed) => lexed,
         outcome => panic!("expected complete lexical partition, got {outcome:?}"),

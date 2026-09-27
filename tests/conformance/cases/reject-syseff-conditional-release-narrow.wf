@@ -1,3 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias IoError = std::io::IoError;
+alias ReadFile = std::fs::ReadFile;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+
 fn close_open_outcome(factory: &HandleFactory, outcome: Result<ReadFile, IoError>) -> result: unit pure {
   doc "EFF-2: an explicit conditional close accesses the factory through this reference parameter, so omitting that ordinary call effect is rejected. Every source occurrence contributes, whether or not its branch is taken.";
   match outcome {

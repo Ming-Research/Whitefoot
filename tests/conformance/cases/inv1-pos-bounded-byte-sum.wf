@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn byte_sum(bytes: &[u8]) -> result: u32 reads(bytes) contract {
   requires deref(bytes).len <= 16_u64;
 } {

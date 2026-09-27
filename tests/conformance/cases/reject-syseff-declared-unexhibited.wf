@@ -1,3 +1,8 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias args_count = std::text::args_count;
+alias exit_status = std::process::exit_status;
+
 fn count_arguments(args: &Args) -> function_result: u64 pure {
   doc "args_count declares reads(args), so this caller exhibits an ordinary read through its own reference parameter and a pure row omits it. EFF-2 checks rows both ways.";
   let total = args_count(args: args);

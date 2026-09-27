@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn twice<T: copy>(value: T) -> (first: T, second: T) pure {
   doc "A body written for the copy class: under that bound the value may be duplicated, used bare, and dropped.";
   return value, value;

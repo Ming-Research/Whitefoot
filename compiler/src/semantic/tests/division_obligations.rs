@@ -8,13 +8,38 @@ use crate::{
     SemanticIssueKind, SemanticLocation, SemanticOutcome, SemanticRule, StaticObligationDisposition,
 };
 
-use super::super::entailment::{DerivationNode, ObligationFamily, S7DerivationKind, TermKind};
+use super::super::entailment::{
+    DerivationNode, FunctionEntailment, ObligationFamily, Relation, TermKind,
+};
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedIntegerOperation, MeasuredKind};
 use super::entailment::validate_derivations;
 use super::with_semantics;
 
-const DIVISION_FIX: &str = "when the relation must hold, establish the fixed `.defined` normalization with a verified requirement, a source invariant, or explicit finite proof steps; use a dominating branch only when its false edge is intended program behavior; otherwise use an available total non-exact row or restructure the arithmetic";
+/// [OP-2] one rejection's residual and disposition, and the fragment of its
+/// repair that shows which routes the goal's disposition and terms selected
+/// [DIAG-1]. The complete sentences are pinned with repaired programs in
+/// `driver::pinned_repairs`.
+fn assert_integer_domain(
+    kind: &SemanticIssueKind,
+    expected_residual: &str,
+    expected_disposition: StaticObligationDisposition,
+    route: &str,
+) {
+    let SemanticIssueKind::UndischargedIntegerDomainObligation {
+        residual,
+        disposition,
+        mechanical_fix,
+    } = kind
+    else {
+        panic!("expected an OP-2 domain rejection, got {kind:?}");
+    };
+    assert_eq!(
+        (residual.as_str(), *disposition),
+        (expected_residual, expected_disposition)
+    );
+    assert!(mechanical_fix.contains(route), "{mechanical_fix}");
+}
 
 fn named<'functions>(
     functions: &'functions [CheckedFunction],
@@ -61,8 +86,8 @@ fn a_positive_requirement_discharges_an_unsigned_site() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -93,8 +118,8 @@ fn a_canonical_branch_discharges_the_site() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -122,8 +147,8 @@ fn an_unconstrained_divisor_rejects_citing_op2_with_the_exact_residual() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -131,13 +156,11 @@ fn main() -> status: ExitStatus pure {
             panic!("an unconstrained divisor must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "n /defined d".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "n /defined d",
+            StaticObligationDisposition::Unproved,
+            "add `requires n /defined d;` to the `contract` of `ratio`",
         );
         let SemanticLocation::SourceNode(_, coordinate) = issue.location();
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");
@@ -160,8 +183,8 @@ fn the_remainder_row_carries_the_same_obligation() {
   return r;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -169,13 +192,11 @@ fn main() -> status: ExitStatus pure {
             panic!("an unconstrained remainder divisor must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "n %defined d".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "n %defined d",
+            StaticObligationDisposition::Unproved,
+            "add `requires n %defined d;` to the `contract` of `residue`",
         );
     });
 }
@@ -190,8 +211,8 @@ fn a_nonzero_constant_divisor_discharges_with_no_fact_source() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -211,10 +232,10 @@ fn main() -> status: ExitStatus pure {
 /// conjunct and is therefore rejected at every non-contradictory point.
 #[test]
 fn a_constant_zero_divisor_is_rejected_everywhere() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 10_i32;
   let q = x / 0_i32;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -222,13 +243,11 @@ fn a_constant_zero_divisor_is_rejected_everywhere() {
             panic!("a constant zero divisor must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "x /defined 0_i32".to_owned(),
-                disposition: StaticObligationDisposition::Refuted,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "x /defined 0_i32",
+            StaticObligationDisposition::Refuted,
+            "make `x /defined 0_i32` false",
         );
     });
 }
@@ -244,8 +263,8 @@ fn a_minus_one_divisor_demands_the_dividend_disequality() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -253,13 +272,11 @@ fn main() -> status: ExitStatus pure {
             panic!("an unconstrained dividend over -1 must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "n /defined -1_i32".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "n /defined -1_i32",
+            StaticObligationDisposition::Unproved,
+            "add `requires n /defined -1_i32;` to the `contract` of `negate`",
         );
     });
 }
@@ -275,8 +292,8 @@ fn a_bounded_dividend_over_minus_one_discharges() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -297,15 +314,15 @@ fn main() -> status: ExitStatus pure {
 /// value rather than a source rejection.
 #[test]
 fn a_checked_division_attaches_no_obligation() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let n = 10_i64;
   let d = 0_i64;
   match n /checked d {
     Ok(value: v) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     Err(error: e) => {
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
   }
 }
@@ -334,8 +351,8 @@ fn effect_mismatch_precedes_static_division_rejection() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -350,10 +367,10 @@ fn main() -> status: ExitStatus pure {
 /// the obligation-focused test entry.
 #[test]
 fn the_default_checker_rejects_a_constant_zero_divisor() {
-    let source = br#"fn main() -> status: ExitStatus pure {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 10_i32;
   let q = x / 0_i32;
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -361,15 +378,31 @@ fn the_default_checker_rejects_a_constant_zero_divisor() {
             panic!("the default path rejects a constant zero divisor: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "x /defined 0_i32".to_owned(),
-                disposition: StaticObligationDisposition::Refuted,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "x /defined 0_i32",
+            StaticObligationDisposition::Refuted,
+            "make `x /defined 0_i32` false",
         );
     });
+}
+
+/// [ENT-3.S7] the retained postcondition proof stands on the division row's
+/// order relation `quotient <= count`: the quotient, bound by a `let` or as a
+/// commit value, against the dividend's place.
+fn quotient_order_is_retained(summary: &FunctionEntailment) -> bool {
+    summary.derivations.nodes.iter().any(|node| {
+        matches!(
+            node,
+            DerivationNode::OperationFact {
+                relation: Relation::Bound { left, right, bound: 0 },
+                ..
+            } if matches!(
+                summary.inventory.terms[left.0 as usize],
+                TermKind::Place(..) | TermKind::CommitValue { .. }
+            ) && matches!(summary.inventory.terms[right.0 as usize], TermKind::Place(..))
+        )
+    })
 }
 
 #[test]
@@ -381,8 +414,8 @@ fn unsigned_literal_division_publishes_the_quotient_bound() {
   return quotient;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -392,21 +425,7 @@ fn main() -> status: ExitStatus pure {
         let function = named(&checked.data.functions, "half_floor");
         validate_derivations(&function.entailment);
         assert!(function.entailment.postconditions[0].aggregate.discharged);
-        assert!(
-            function
-                .entailment
-                .s7_derivations
-                .iter()
-                .any(|source| match source.kind {
-                    S7DerivationKind::UnsignedDivisionBound { divisor, .. } => {
-                        matches!(
-                            function.entailment.inventory.terms[divisor.0 as usize],
-                            TermKind::Constant(2)
-                        )
-                    }
-                    _ => false,
-                })
-        );
+        assert!(quotient_order_is_retained(&function.entailment));
     });
 }
 
@@ -425,8 +444,8 @@ fn runtime_division_publishes_its_quotient_bound_without_a_later_product() {
   return quotient;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "
         );
@@ -437,10 +456,7 @@ fn main() -> status: ExitStatus pure {{
             let function = named(&checked.data.functions, "quotient_bound");
             validate_derivations(&function.entailment);
             assert!(function.entailment.postconditions[0].aggregate.discharged);
-            assert!(function.entailment.s7_derivations.iter().any(|source| {
-                matches!(source.kind, S7DerivationKind::UnsignedDivisionBound { divisor, .. }
-                    if !matches!(function.entailment.inventory.terms[divisor.0 as usize], TermKind::Constant(_)))
-            }));
+            assert!(quotient_order_is_retained(&function.entailment));
         });
     }
 }
@@ -455,8 +471,8 @@ fn unsigned_literal_division_publishes_the_scaled_quotient_image() {
   return doubled;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -500,8 +516,8 @@ fn the_scaled_quotient_image_halves_into_an_automatic_midpoint_bound() {
   return byte;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -539,8 +555,8 @@ fn signed_literal_division_does_not_publish_unsigned_ordering_images() {
   return quotient;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -562,8 +578,8 @@ fn unsigned_zero_literal_still_fails_the_division_domain() {
   return quotient;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -591,8 +607,8 @@ fn replacing_the_dividend_does_not_retarget_the_old_division_image() {
   return difference;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -619,8 +635,8 @@ fn the_signed_zero_divisor_conjunct_is_discharged_by_its_own_mechanical_fix() {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(required, |outcome| {
@@ -643,8 +659,8 @@ fn main() -> status: ExitStatus pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(branched, |outcome| {
@@ -663,8 +679,8 @@ fn main() -> status: ExitStatus pure {
   return q;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(unproved, |outcome| {
@@ -672,13 +688,11 @@ fn main() -> status: ExitStatus pure {
             panic!("without either route the conjunct must stay undischarged: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
-        assert_eq!(
+        assert_integer_domain(
             issue.kind(),
-            &SemanticIssueKind::UndischargedIntegerDomainObligation {
-                residual: "100_i32 /defined d".to_owned(),
-                disposition: StaticObligationDisposition::Unproved,
-                mechanical_fix: DIVISION_FIX,
-            },
+            "100_i32 /defined d",
+            StaticObligationDisposition::Unproved,
+            "add `requires 100_i32 /defined d;` to the `contract` of `ratio`",
         );
     });
 }
@@ -711,8 +725,8 @@ fn active_invariants_prove_signed_division_and_remainder_domains() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -799,11 +813,11 @@ fn a_fixed_run_indexed_defined_guard_discharges_the_same_structural_exact_operat
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let filled = array_filled::<u8, 1>(value: 0_u8);
   let values = slots_from_array::<u8, 1>(values: filled);
   let result = increment(values: move values);
-  return exit_status(code: result);
+  return std::process::exit_status(code: result);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -848,11 +862,11 @@ fn writing_the_indexed_collection_invalidates_its_old_defined_fact() {
   }
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let filled = array_filled::<u8, 1>(value: 0_u8);
   let values = slots_from_array::<u8, 1>(values: filled);
   let result = increment_after_write(values: move values);
-  return exit_status(code: result);
+  return std::process::exit_status(code: result);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -890,8 +904,8 @@ fn a_referenced_run_indexed_defined_guard_discharges_the_same_structural_exact_o
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -945,8 +959,8 @@ fn a_range_reference_indexed_defined_guard_discharges_the_same_structural_exact_
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -995,8 +1009,8 @@ fn increment_other() -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1030,8 +1044,8 @@ fn increment_after_index_write() -> result: u8 pure {
   }
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {
@@ -1065,8 +1079,8 @@ fn runtime_unsigned_division_retains_the_checked_product_bound_in_either_order()
   return product;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         );
@@ -1108,8 +1122,8 @@ fn captured_runtime_division_values_survive_only_in_their_unchanged_aliases() {
   return product;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_semantics(source, |outcome| {

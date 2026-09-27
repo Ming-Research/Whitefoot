@@ -1,0 +1,9 @@
+public enum Sign {
+  Neg();
+  Zero();
+  Pos();
+}
+
+public fn sign_of(value: i32) -> result: Sign pure doc "Classifies a value by its sign.";
+
+public fn later(value: i32) -> result: i32 pure doc "Not implemented yet.";

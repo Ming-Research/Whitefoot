@@ -41,9 +41,9 @@ static void wf_text(wf_value *value, const void *text, uint64_t units) {
     value->words[1] = units;
 }
 
-uint64_t wf_args_count(const wf_value *args) { return args->words[1]; }
+uint64_t wf__body_args_count(const wf_value *args) { return args->words[1]; }
 
-void wf_arg_get(wf_value_result *result, const wf_value *args, uint64_t position) {
+void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t position) {
     const void *const *arguments = wf_value_pointer(args);
     memset(result, 0, sizeof(*result));
     if (position >= args->words[1]) {
@@ -58,7 +58,7 @@ void wf_arg_get(wf_value_result *result, const wf_value *args, uint64_t position
 #endif
 }
 
-uint64_t wf_host_bytes_len(const wf_value *value) {
+uint64_t wf__body_host_bytes_len(const wf_value *value) {
 #if defined(_WIN32)
     return value->words[1] * UINT64_C(2);
 #else
@@ -68,7 +68,7 @@ uint64_t wf_host_bytes_len(const wf_value *value) {
 
 void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
                        wf_view *destination, uint64_t start, uint64_t end) {
-    const uint64_t bytes = wf_host_bytes_len(value);
+    const uint64_t bytes = wf__body_host_bytes_len(value);
     memset(result, 0, sizeof(*result));
     if (bytes > end - start) {
         result->tag = 1;
@@ -114,7 +114,7 @@ static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
 }
 #endif
 
-void wf_host_utf8_len(wf_utf8_result *result, const wf_value *value) {
+void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value) {
     uint64_t length = value->words[1];
     memset(result, 0, sizeof(*result));
 #if defined(_WIN32)
@@ -131,7 +131,7 @@ void wf_host_utf8_len(wf_utf8_result *result, const wf_value *value) {
 void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value,
                       wf_view *destination, uint64_t start, uint64_t end) {
     wf_utf8_result measured;
-    wf_host_utf8_len(&measured, value);
+    wf__body_host_utf8_len(&measured, value);
     memset(result, 0, sizeof(*result));
     if (measured.tag != 0) {
         result->tag = 1;
@@ -155,7 +155,7 @@ void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value,
     result->value = start + measured.value;
 }
 
-void wf_relative_path(wf_value_result *result, const wf_value *value) {
+void wf__body_relative_path(wf_value_result *result, const wf_value *value) {
     const wf_value saved = *value;
     const unsigned char *text = wf_value_pointer(&saved);
     uint64_t length = saved.words[1];
@@ -171,7 +171,7 @@ void wf_relative_path(wf_value_result *result, const wf_value *value) {
     result->value = saved;
 }
 
-void wf_exit_status(wf_value *result, uint8_t code) {
+void wf__body_exit_status(wf_value *result, uint8_t code) {
     memset(result, 0, sizeof(*result));
     result->words[0] = code;
 }
@@ -180,7 +180,7 @@ uint8_t wf__ordinary_exit_code(const wf_value *status) {
     return (uint8_t)status->words[0];
 }
 
-void wf_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c,
+void wf__body_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c,
                           uint8_t d, uint16_t port) {
     memset(result, 0, sizeof(*result));
     result->words[0] = (uint64_t)a | ((uint64_t)b << 8) |
@@ -188,7 +188,7 @@ void wf_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c,
     result->words[2] = port;
 }
 
-void wf_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c,
+void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c,
                           uint16_t d, uint16_t e, uint16_t f, uint16_t g,
                           uint16_t h, uint16_t port) {
     const uint16_t groups[8] = { a, b, c, d, e, f, g, h };
@@ -447,7 +447,7 @@ static void wf_open(wf_open_result *result, wf_value *factory,
     wf_descriptor_value(&result->value, (int)descriptor);
 }
 
-void wf_open_read(wf_open_result *result, wf_value *factory,
+void wf__body_open_read(wf_open_result *result, wf_value *factory,
                   const wf_value *root, const wf_value *path) {
     wf_open(result, factory, root, wf_value_pointer(path), 0,
             WF_FILE_EXPECT_REGULAR, 1);
@@ -505,7 +505,7 @@ void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_valu
     wf_open_component(result, factory, root, name, start, end, 0);
 }
 
-void wf_open_directory_source(wf_open_result *result, wf_value *factory,
+void wf__body_open_directory_source(wf_open_result *result, wf_value *factory,
                               const wf_value *directory) {
 #if defined(_WIN32)
     /* NtCreateFile does not normalize the Win32 spelling ".". An empty
@@ -541,26 +541,26 @@ static void wf_close(wf_close_result *result, wf_value *factory,
     }
 }
 
-void wf_close_read(wf_close_result *result, wf_value *factory, const wf_value *file) {
+void wf__body_close_read(wf_close_result *result, wf_value *factory, const wf_value *file) {
     wf_close(result, factory, file, -1);
 }
-void wf_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory) {
+void wf__body_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory) {
     wf_close(result, factory, directory, -1);
 }
-void wf_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source) {
+void wf__body_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source) {
     wf_close(result, factory, source, -1);
 }
-void wf_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener) {
+void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener) {
     wf_close(result, factory, listener, -1);
 }
-void wf_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive) {
+void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive) {
     wf_close(result, factory, receive, WF_SOCKET_DIRECTION_RECEIVE);
 }
-void wf_close_send(wf_close_result *result, wf_value *factory, const wf_value *send) {
+void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send) {
     wf_close(result, factory, send, WF_SOCKET_DIRECTION_SEND);
 }
 
-void wf_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
+void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
     wf_completion_record record;
     int64_t descriptor;
     int error;
@@ -579,7 +579,7 @@ void wf_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *ad
     } else wf_descriptor_value(&result->value, (int)descriptor);
 }
 
-void wf_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address) {
+void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address) {
     wf_completion_record record;
     int64_t descriptor;
     int error;
@@ -601,7 +601,7 @@ void wf_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value
     }
 }
 
-void wf_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener) {
+void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener) {
     wf_completion_record record;
     int64_t descriptor;
     int error;

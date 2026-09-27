@@ -1,3 +1,5 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+
 fn main(args: DirectoryRead) -> owner: DirectoryRead pure {
   doc "FN-7: the parameter has the type its ordinary signature declares, independent of its binder spelling; the linear owner is returned.";
   return move args;

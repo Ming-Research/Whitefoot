@@ -1,0 +1,11 @@
+fn mix_bytes(left: u32, right: u32) -> result: u8 pure {
+  let low_left = iand(left, 255_u32);
+  let low_right = iand(right, 255_u32);
+  let mixed = ixor(low_left, low_right);
+  let byte = cvt::<u32, u8>(mixed);
+  return byte;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

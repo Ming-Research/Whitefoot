@@ -5301,7 +5301,7 @@ meant to move, and the time a lane stays hot before parking, which it was not.
 On this host the second dominates, and it dominates in the direction the
 recorded caution predicted — "backoff on the steal scan is monotonically worse
 because pickup latency dominates probe traffic"
-(`mcts_mem/whitefoot/parallelism/runtime.md`, 2026-08-22) — a lane that parks
+([mcts_mem/whitefoot/parallelism/runtime.md](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/parallelism/runtime.md), 2026-08-22) — a lane that parks
 sooner pays 16.3 us to be woken again more often than it saves by not scanning.
 
 So §5a as specified is not a one-variable change, and no probe with an unchanged

@@ -1,0 +1,7 @@
+public enum Sign {
+  Neg();
+  Zero();
+  Pos();
+}
+
+public fn sign_of(value: i32) -> result: Sign pure doc "Classifies a value by its sign.";

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn convert<S: Int, D: Int>(value: S) -> result: D pure contract {
   requires cvt.defined::<S, D>(value);
 } {

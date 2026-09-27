@@ -112,7 +112,7 @@ pub(in crate::semantic::check) struct MutationTarget {
     pub(in crate::semantic::check) unsupported: Option<UnsupportedSemanticFeature>,
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     /// Re-establish writability at the commit [SET-1, LIV-1].
     ///
     /// The loan state this re-read v0.59 is gone with the loans. What [SET-1]
@@ -148,7 +148,7 @@ pub(in crate::semantic::check) const WIN3_LINEAR_TARGET: &str =
 const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below deref of a reference whose \
      row declares that write";
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     pub(super) fn check_set_target(
         &self,
         function: &FunctionSignature,
@@ -463,32 +463,51 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 FloatType::F64 => "f64",
             }
             .to_owned(),
-            CheckedType::Generic(declaration) => {
-                format!("<type-parameter:{}>", declaration.index())
-            }
-            CheckedType::GenericInt(declaration) => {
-                format!("<Int-parameter:{}>", declaration.index())
-            }
-            CheckedType::GenericFloat(declaration) => {
-                format!("<Float-parameter:{}>", declaration.index())
-            }
-            // [S20] a nominal's region arguments are components of its type
-            // name [TYPE-2], so a diagnostic that reports two instances of one
-            // declaration has to spell them: the two sides of a [TYPE-5]
-            // mismatch between `BlockPool<'a>` and `BlockPool<'b>` are
-            // otherwise the same word twice.
+            // [FN-2] a type parameter is written by its own name, whatever
+            // its bound.
+            CheckedType::Generic(declaration)
+            | CheckedType::GenericInt(declaration)
+            | CheckedType::GenericFloat(declaration) => self.declaration_spelling(declaration)?,
+            // An instance of a generic declaration writes its type and const
+            // arguments after the declared name [GRAM-3, FN-2], and a `Box`
+            // its content type [TYPE-9]; the interned nominal name keys the
+            // instance and is not a source spelling. [S20] a nominal's region
+            // arguments are components of its type name [TYPE-2] and lead
+            // that list, so the two sides of a [TYPE-5] mismatch between
+            // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
             CheckedType::Nominal(id) => {
-                let name = self.nominal(id)?.name.clone();
-                match self.nominal_region_axis(id)? {
-                    Some(axis) if !axis.is_empty() => {
-                        let arguments = axis
-                            .iter()
-                            .map(|(_, actual)| self.region_spelling(*actual))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        format!("{name}<{arguments}>")
+                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
+                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
+                }
+                let written = match self.source_nominal_instance_entry(id)? {
+                    Some((template, substitution)) if substitution.len() > 0 => {
+                        match self.nominal_templates.get(template) {
+                            Some(template) => self
+                                .generic_argument_spellings(
+                                    &template.generic_parameters,
+                                    substitution,
+                                )?
+                                .map(|arguments| (template.name.clone(), arguments)),
+                            None => None,
+                        }
                     }
-                    _ => name,
+                    _ => None,
+                };
+                let (name, mut arguments) = match written {
+                    Some(written) => written,
+                    None => (self.nominal(id)?.name.clone(), Vec::new()),
+                };
+                if let Some(axis) = self.nominal_region_axis(id)? {
+                    let regions = axis
+                        .iter()
+                        .map(|(_, actual)| self.region_spelling(*actual))
+                        .filter(|spelling| !spelling.is_empty());
+                    arguments = regions.chain(arguments).collect();
+                }
+                if arguments.is_empty() {
+                    name
+                } else {
+                    format!("{name}<{}>", arguments.join(", "))
                 }
             }
             // [TYPE-9]'s own spellings: the constant-capacity placement
@@ -528,9 +547,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     pub(super) fn checked_const_name(&self, value: CheckedConst) -> Result<String, CheckStop> {
         Ok(match value {
             CheckedConst::Value(value) => value.to_string(),
-            CheckedConst::Parameter(declaration) => {
-                format!("<const-parameter:{}>", declaration.index())
-            }
+            CheckedConst::Parameter(declaration) => self.declaration_spelling(declaration)?,
             CheckedConst::Derived(id) => {
                 let derived = self.derived_const(id)?;
                 format!(
@@ -541,6 +558,99 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 )
             }
         })
+    }
+
+    /// One generic instance's written `targ` list [GRAM-3]: each parameter's
+    /// argument in declaration order, a type and a const in their canonical
+    /// spelling and a function argument as `fn` and the instance it names.
+    /// `None` when the substitution does not bind every parameter, which the
+    /// caller renders by the declared name alone.
+    fn generic_argument_spellings(
+        &self,
+        parameters: &[super::generics::GenericParameter],
+        substitution: &super::generics::GenericSubstitution,
+    ) -> Result<Option<Vec<String>>, CheckStop> {
+        let mut spellings = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            let key = parameter.key();
+            let Some((_, argument)) = substitution
+                .entries()
+                .iter()
+                .find(|(candidate, _)| *candidate == key)
+            else {
+                return Ok(None);
+            };
+            spellings.push(match *argument {
+                super::generics::GenericArgument::Type(ty) => self.checked_type_name(ty)?,
+                super::generics::GenericArgument::Const(value) => self.checked_const_name(value)?,
+                super::generics::GenericArgument::Function(function) => {
+                    format!("fn {}", self.function_argument_spelling(function)?)
+                }
+            });
+        }
+        Ok(Some(spellings))
+    }
+
+    /// The callee one function argument names [GRAM-2 `function_arg`]: the
+    /// instance it selects when one exists, and otherwise the declaration
+    /// or formal parameter it names.
+    fn function_argument_spelling(
+        &self,
+        function: super::behavior::FunctionArgument,
+    ) -> Result<String, CheckStop> {
+        if let Some(signature) = self
+            .function_argument_instance(function)
+            .ok()
+            .and_then(|instance| self.signatures.get(instance.0 as usize))
+        {
+            return self.render_function_instance(signature);
+        }
+        let declaration = match function {
+            super::behavior::FunctionArgument::Source { reference, .. } => {
+                self.function_reference(reference)?.declaration
+            }
+            super::behavior::FunctionArgument::Parameter(parameter) => match parameter {
+                super::generics::GenericParameterKey::Source(declaration)
+                | super::generics::GenericParameterKey::Member {
+                    member: declaration,
+                    ..
+                } => declaration,
+            },
+        };
+        self.declaration_spelling(declaration)
+    }
+
+    /// One function instance in the spelling a call writes to select it
+    /// [FN-2, GRAM-3]: the declared name, then `::` and the `targ` list of
+    /// its substitution. A nongeneric function is its name alone, and so is
+    /// an operand-directed [PRE-1] row, whose operand supplies its arguments
+    /// and whose call writes none [OP-10]. The instance's internal symbol
+    /// keys lowering and is not a source spelling.
+    pub(in crate::semantic::check) fn render_function_instance(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<String, CheckStop> {
+        let Some(template) = self
+            .templates_by_declaration
+            .get(&signature.declaration)
+            .and_then(|index| self.function_templates.get(*index))
+        else {
+            return Ok(signature.name.clone());
+        };
+        if template.generic_parameters.is_empty()
+            || signature.substitution.len() == 0
+            || self.operand_directed_row_index(template)?.is_some()
+        {
+            return Ok(signature.name.clone());
+        }
+        Ok(
+            match self
+                .generic_argument_spellings(&template.generic_parameters, &signature.substitution)?
+            {
+                Some(arguments) => format!("{}::<{}>", signature.name, arguments.join(", ")),
+                None => signature.name.clone(),
+            },
+        )
     }
 
     /// Resolves a run of field-selection suffixes over one starting type.
@@ -606,6 +716,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     ),
                 );
             };
+            self.reject_inaccessible_field(nominal_id, None, index, name, suffix)?;
             fields
                 .push(u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?);
             ty = field.ty;
@@ -1806,7 +1917,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 node,
                 SemanticIssueKind::ContainerConstruction {
                     nominal: constructor_name,
-                    mechanical_fix: "build it with a construction function [OP-13]",
+                    mechanical_fix: "build it with a construction function [OP-13]".to_owned(),
                 },
             );
         }
@@ -1896,7 +2007,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         node,
                         SemanticIssueKind::ContainerConstruction {
                             nominal: constructor_name,
-                            mechanical_fix: "build it with a construction function [OP-13, PRE-1]",
+                            mechanical_fix: super::repairs::opaque_struct_constructed(
+                                self.opaque_struct_kind(declaration)?,
+                            )
+                            .to_owned(),
                         },
                     );
                 }
@@ -1974,6 +2088,26 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             },
         };
+        // [MOD-5, TYPE-2] a construction names every field [GRAM-8], so
+        // outside the declaring module each must be published, and a
+        // readonly field takes no value there.
+        let (owner, variant) = match constructor {
+            Constructor::Struct(nominal) => (nominal, None),
+            Constructor::Enum { nominal, variant } => (nominal, Some(variant as usize)),
+        };
+        for (index, field) in declared_fields.iter().enumerate() {
+            self.reject_inaccessible_field(owner, variant, index, &field.name, node)?;
+            if field.readonly && self.field_withholds_writes(owner, field) {
+                return self.issue_node(
+                    SemanticRule::Mod5,
+                    node,
+                    SemanticIssueKind::InaccessibleField {
+                        field: field.name.clone(),
+                        reason: "a readonly field takes its value only from its declaring module, so a construction outside that module is refused; use one of its operations",
+                    },
+                );
+            }
+        }
         let written_fields = if let Some(list) = self
             .tree
             .first_child_with(node, Production::FieldinitList)?

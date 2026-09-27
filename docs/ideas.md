@@ -549,4 +549,5 @@ would stop the work. For a consumer of checked facts, ask:
 - Which result stops the work instead of expanding its scope?
 
 Record a selected experiment and its discriminating criterion in its existing
-research home, following [decision practice](practice.md#decision-work).
+research home, following [How work proceeds](../AGENTS.md#how-work-proceeds)
+and the [investigation skill](skills/investigation/SKILL.md).

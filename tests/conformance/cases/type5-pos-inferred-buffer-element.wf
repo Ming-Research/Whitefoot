@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-5: a let binder's mode and type are derived from its construction call alone, never written; the fill operand fixes the element type and the resulting array supports its declared measure [OP-13, OP-15].";
   let data = array_filled::<u8, 4>(value: 7_u8);

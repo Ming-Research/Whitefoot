@@ -168,6 +168,19 @@ enum StablePreludeType {
 }
 
 impl GenericSubstitution {
+    /// Every function-kind argument this substitution supplies, in binding
+    /// order.
+    pub(super) fn function_arguments(
+        &self,
+    ) -> impl Iterator<Item = super::behavior::FunctionArgument> + '_ {
+        self.bindings
+            .iter()
+            .filter_map(|(_, argument)| match argument {
+                GenericArgument::Function(function) => Some(*function),
+                _ => None,
+            })
+    }
+
     pub(super) fn from_bindings(
         bindings: Vec<(GenericParameterKey, GenericArgument)>,
     ) -> Result<Self, SemanticCompilerFailure> {
@@ -293,7 +306,7 @@ pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 5
     "grow",
 ];
 
-impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 'source> {
+impl<'unit> Checker<'unit> {
     /// Substitute captured brands without reintroducing scratch nominal IDs
     /// into the structural identity of a function argument.
     pub(super) fn substitute_stable_regions(
@@ -627,6 +640,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                             .is_some_and(|instance| instance.substitution == substitution)
                     });
                 if !already_present {
+                    self.record_instance_request(template.node, &substitution, call);
                     let result = if tolerate_source_failure {
                         self.instantiate_function_signature_for_postconditions(
                             template_index,
@@ -634,7 +648,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         )
                     } else {
                         self.instantiate_function_signature(template_index, substitution)
-                    };
+                    }
+                    .map_err(|stop| self.attribute_to_call(call, stop));
                     match result {
                         Ok(()) => {}
                         Err(
@@ -685,33 +700,24 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             return Ok(false);
         }
         for ty in self.tree.descendants_with(targs, Production::Type)? {
-            if self
-                .tree
-                .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-                .is_some()
-            {
-                let path = self.tree.path(ty)?;
-                if !self.resolved.lexical_uses().iter().any(|usage| {
+            if self.tree.names_nominal(ty)?
+                && !self.resolved.lexical_uses_at(ty).any(|usage| {
                     matches!(
                         usage.role(),
                         LexicalUseRole::Type | LexicalUseRole::TypeArgument
-                    ) && usage.origin().node() == path
-                }) {
-                    return Ok(false);
-                }
+                    )
+                })
+            {
+                return Ok(false);
             }
         }
         for constant in self.tree.descendants_with(targs, Production::Const)? {
             let identifiers = self.tree.direct_identifiers(constant)?;
             if !identifiers.is_empty() {
-                let path = self.tree.path(constant)?;
                 let uses = self
                     .resolved
-                    .lexical_uses()
-                    .iter()
-                    .filter(|usage| {
-                        usage.role() == LexicalUseRole::Const && usage.origin().node() == path
-                    })
+                    .lexical_uses_at(constant)
+                    .filter(|usage| usage.role() == LexicalUseRole::Const)
                     .collect::<Vec<_>>();
                 if uses.len() != identifiers.len() {
                     return Ok(false);
@@ -760,10 +766,11 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             .tree
             .first_child_with(call, Production::Callee)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let path = self.tree.path(callee)?;
-        let Some(usage) = self.resolved.lexical_uses().iter().find(|usage| {
-            usage.role() == LexicalUseRole::IdentifierCallee && usage.origin().node() == path
-        }) else {
+        let Some(usage) = self
+            .resolved
+            .lexical_uses_at(callee)
+            .find(|usage| usage.role() == LexicalUseRole::IdentifierCallee)
+        else {
             return Ok(None);
         };
         let declaration = match usage.target() {
@@ -1005,33 +1012,24 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 return Ok(false);
             }
             for ty in self.tree.descendants_with(node, Production::Type)? {
-                if self
-                    .tree
-                    .direct_token_with(ty, crate::TerminalPredicate::TypeIdentifier)?
-                    .is_some()
-                {
-                    let path = self.tree.path(ty)?;
-                    if !self.resolved.lexical_uses().iter().any(|usage| {
+                if self.tree.names_nominal(ty)?
+                    && !self.resolved.lexical_uses_at(ty).any(|usage| {
                         matches!(
                             usage.role(),
                             LexicalUseRole::Type | LexicalUseRole::TypeArgument
-                        ) && usage.origin().node() == path
-                    }) {
-                        return Ok(false);
-                    }
+                        )
+                    })
+                {
+                    return Ok(false);
                 }
             }
             for constant in self.tree.descendants_with(node, Production::Const)? {
                 let identifiers = self.tree.direct_identifiers(constant)?;
                 if !identifiers.is_empty() {
-                    let path = self.tree.path(constant)?;
                     let uses = self
                         .resolved
-                        .lexical_uses()
-                        .iter()
-                        .filter(|usage| {
-                            usage.role() == LexicalUseRole::Const && usage.origin().node() == path
-                        })
+                        .lexical_uses_at(constant)
+                        .filter(|usage| usage.role() == LexicalUseRole::Const)
                         .count();
                     if uses != identifiers.len() {
                         return Ok(false);
@@ -1048,6 +1046,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         substitution: GenericSubstitution,
         id: super::super::model::FunctionId,
     ) -> Result<FunctionSignature, CheckStop> {
+        let _module = self.enter_module(template.declaration);
         // [GRAM-2, FORM-3] no declaration carries a region parameter in
         // v0.60: a reference is a name for a path [REF-1] and its validity is
         // the [REF-2] flow fact, not a brand on the signature.
@@ -1142,10 +1141,29 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // call graph by the ordinary effect walk.
         declared_effects.allocates |=
             HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        // [MOD-3] functions of different modules may share a name, so a
+        // module other than the root prefixes its path; a source bundle's
+        // root-module symbols keep their plain names.
+        let base = self.module_symbol_base(template.declaration, &template.name);
         let symbol = if template.generic_parameters.is_empty() {
-            template.name.clone()
+            base
         } else {
-            format!("{}$instance${}", template.name, id.0)
+            // An instance's symbol names its template and a digest of its
+            // concrete arguments spelled by module-qualified declaration
+            // names, so it keeps its name while unrelated instances and
+            // declarations come and go and an unchanged link fragment keeps
+            // its bytes. An argument with no concrete spelling, or a symbol
+            // another instance already holds, falls back to the instance's
+            // ordinal, which is unique.
+            self.stable_instance_suffix(&substitution)
+                .map(|suffix| format!("{base}$instance${suffix}"))
+                .filter(|candidate| {
+                    !self
+                        .signatures
+                        .iter()
+                        .any(|signature| signature.symbol == *candidate)
+                })
+                .unwrap_or_else(|| format!("{base}$instance${}", id.0))
         };
         Ok(FunctionSignature {
             id,
@@ -1268,6 +1286,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             }
         }
         self.install_call_requirements(&mut phase_a)?;
+        self.form_obligation_records(&mut phase_a)?;
         let callees = self.entailment_callees()?;
         self.validate_generic_body_entailment(
             &mut phase_a,
@@ -1647,6 +1666,163 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         Ok(Some(stable))
     }
 
+    /// One type's spelling by module-qualified declaration names and its
+    /// arguments, the identity a [MOD-8] proof receipt key names it by;
+    /// symbolic parameters keep their written position. `None` for a type
+    /// with no such spelling.
+    pub(super) fn stable_type_spelling(&self, ty: CheckedType) -> Option<String> {
+        let stable = self
+            .stabilize_type(ty, 0, &mut HashSet::new(), true)
+            .ok()??;
+        let mut spelled = String::new();
+        self.spell_stable_type(&stable, &mut spelled).ok()?;
+        Some(spelled)
+    }
+
+    /// The digest part of an instance symbol: the first eight bytes of the
+    /// SHA-256 of its arguments' canonical spelling, or `None` when an
+    /// argument has no concrete spelling.
+    fn stable_instance_suffix(&self, substitution: &GenericSubstitution) -> Option<String> {
+        use core::fmt::Write as _;
+        let stable = self
+            .stabilize_substitution_with_visiting(substitution, 0, &mut HashSet::new(), false)
+            .ok()
+            .flatten()?;
+        let mut spelling = String::new();
+        self.spell_stable_substitution(&stable, &mut spelling)
+            .ok()?;
+        let digest = crate::spec::sha256::digest(spelling.as_bytes());
+        let mut suffix = String::with_capacity(16);
+        for byte in &digest[..8] {
+            let _ = write!(suffix, "{byte:02x}");
+        }
+        Some(suffix)
+    }
+
+    /// Spells a concrete substitution's arguments in binding order, each type
+    /// by module-qualified declaration names and each function by its
+    /// declaration and its own arguments.
+    fn spell_stable_substitution(
+        &self,
+        substitution: &StableGenericSubstitution,
+        out: &mut String,
+    ) -> Result<(), CheckStop> {
+        if substitution.bindings.is_empty() {
+            return Ok(());
+        }
+        out.push('<');
+        for (index, (_, argument)) in substitution.bindings.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            match argument {
+                StableGenericArgument::Type(ty) => self.spell_stable_type(ty, out)?,
+                StableGenericArgument::Const(value) => {
+                    out.push_str(&self.checked_const_name(*value)?);
+                }
+                StableGenericArgument::Function(super::behavior::FunctionArgument::Source {
+                    reference,
+                    ..
+                }) => {
+                    let reference = self.function_reference(*reference)?;
+                    let spelling = self
+                        .resolved
+                        .declaration(reference.declaration)
+                        .map(|declaration| declaration.spelling().to_owned())
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    out.push_str("fn ");
+                    out.push_str(&self.module_symbol_base(reference.declaration, &spelling));
+                    self.spell_stable_substitution(&reference.substitution, out)?;
+                }
+                StableGenericArgument::Function(super::behavior::FunctionArgument::Parameter(
+                    _,
+                )) => {
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                }
+            }
+        }
+        out.push('>');
+        Ok(())
+    }
+
+    fn spell_stable_type(&self, ty: &StableCheckedType, out: &mut String) -> Result<(), CheckStop> {
+        match ty {
+            StableCheckedType::Scalar(ty) => out.push_str(&self.checked_type_name(*ty)?),
+            StableCheckedType::SourceNominal {
+                template,
+                substitution,
+            } => {
+                let template = self
+                    .nominal_templates
+                    .get(*template)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                out.push_str(&self.module_symbol_base(template.declaration, &template.name));
+                self.spell_stable_substitution(substitution, out)?;
+            }
+            StableCheckedType::Prelude(prelude) => match prelude {
+                StablePreludeType::Option(value) => {
+                    out.push_str("Option<");
+                    self.spell_stable_type(value, out)?;
+                    out.push('>');
+                }
+                StablePreludeType::Result(value, error) => {
+                    out.push_str("Result<");
+                    self.spell_stable_type(value, out)?;
+                    out.push(',');
+                    self.spell_stable_type(error, out)?;
+                    out.push('>');
+                }
+                StablePreludeType::Overflow => out.push_str("Overflow"),
+                StablePreludeType::DivError => out.push_str("DivError"),
+                StablePreludeType::NarrowError => out.push_str("NarrowError"),
+            },
+            StableCheckedType::ResultList(results) => {
+                out.push('(');
+                for (index, (name, ty)) in results.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(name);
+                    out.push(':');
+                    self.spell_stable_type(ty, out)?;
+                }
+                out.push(')');
+            }
+            StableCheckedType::Boxed { referent, .. } => {
+                out.push_str("Box<");
+                self.spell_stable_type(referent, out)?;
+                out.push('>');
+            }
+            StableCheckedType::Array { element, length } => {
+                out.push_str("Array<");
+                self.spell_stable_type(&element.0, out)?;
+                out.push(',');
+                out.push_str(&self.checked_const_name(*length)?);
+                out.push('>');
+            }
+            StableCheckedType::Buffer { element } => {
+                out.push_str("Array<");
+                self.spell_stable_type(&element.0, out)?;
+                out.push('>');
+            }
+            StableCheckedType::Window {
+                shape,
+                element,
+                capacity,
+            } => {
+                out.push_str(shape.spelling());
+                out.push('<');
+                self.spell_stable_type(&element.0, out)?;
+                if let Some(capacity) = capacity {
+                    out.push(',');
+                    out.push_str(&self.checked_const_name(*capacity)?);
+                }
+                out.push('>');
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn stabilize_substitution_with_visiting(
         &self,
         substitution: &GenericSubstitution,
@@ -2009,7 +2185,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 });
                 continue;
             }
-            if let Some(application) = self.tree.first_child_with(node, Production::PackUse)? {
+            if let Some(application) = self.tree.group_application(node)? {
                 parameters.extend(self.expand_formal_parameters(application)?);
                 continue;
             }
@@ -2034,18 +2210,14 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             let declaration = self
                 .declaration_at(node, DeclarationRole::GenericType)?
                 .id();
-            let path = self.tree.path(node)?;
             // [GRAM-2, PROV-6] the bound is optional and never inferred: a
             // `capability_bound` atom, a numeric marker TYPEID, or nothing,
             // and an absent bound grants the body no capability, which is
             // the linear class read at the parameter.
             let bound = match self
                 .resolved
-                .lexical_uses()
-                .iter()
-                .find(|usage| {
-                    usage.role() == LexicalUseRole::GenericBound && usage.origin().node() == path
-                })
+                .lexical_uses_at(node)
+                .find(|usage| usage.role() == LexicalUseRole::GenericBound)
                 .map(|usage| (usage.target(), usage.origin().coordinate()))
             {
                 None => GenericBound::Class(
@@ -2348,7 +2520,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
     }
 }
 
-impl Checker<'_, '_, '_, '_> {
+impl Checker<'_> {
     fn collect_goal_nominals(
         &self,
         expression: &GoalExpression,

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn place_back(vector: u64, value: u64) -> result: u64 pure {
   doc "Declares a function whose spelling is a PRE-1 window operation's.";
   return vector;

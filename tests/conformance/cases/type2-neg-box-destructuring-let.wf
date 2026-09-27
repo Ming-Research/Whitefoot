@@ -1,5 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2: a destructuring let_stmt whose TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete let_stmt, with the restructuring build it with a construction function. A Box's content is reached by the ordinary field step inner, and the one unboxing spelling is let n = move b.inner [TYPE-9].";
+  doc "TYPE-2: a destructuring let_stmt whose TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete let_stmt, with a repair that reaches the content through inner. A Box's content is reached by the ordinary field step inner [TYPE-9]: a copy content such as this u64 is read as b.inner, and a content without copy moves out as move b.inner, which frees the cell [WIN-3], unless it is a runtime-capacity content, which stays in its cell.";
   let b = box_new::<u64>(value: 7_u64);
   let Box(inner: n) = move b;
   if n == 7_u64 {

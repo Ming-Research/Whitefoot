@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn escape_count(real: f64, imaginary: f64, limit: u64) -> result: u64 pure contract {
   requires limit <= 65536_u64;
 } {

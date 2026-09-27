@@ -1,0 +1,9 @@
+fn sign_of(value: i32) -> result: Sign pure contract {
+  requires value != 0_i32;
+} {
+  doc "A stronger requirement than the interface declares.";
+  if value < 0_i32 {
+    return Sign::Neg();
+  }
+  return Sign::Pos();
+}

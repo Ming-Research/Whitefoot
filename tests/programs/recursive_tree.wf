@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 enum Tree {
   Leaf();
   Branch(left: Box<Tree>, right: Box<Tree>);
@@ -5,14 +8,14 @@ enum Tree {
 
 fn boxed_leaf() -> made: Box<Tree> pure {
   doc "One leaf in its own heap cell. There is one heap, allocation is total, and the cell carries no brand, so the construction has no failure arm [STOR-8, TYPE-9].";
-  let leaf = Leaf();
+  let leaf = Tree::Leaf();
   let cell = box_new::<Tree>(value: move leaf);
   return move cell;
 }
 
 fn boxed_branch(left: Box<Tree>, right: Box<Tree>) -> made: Box<Tree> pure {
   doc "A branch owning two children. Dropping it releases both: the release walk visits a cell's content before the cell itself [PROV-6, STOR-3].";
-  let branch = Branch(left: move left, right: move right);
+  let branch = Tree::Branch(left: move left, right: move right);
   let cell = box_new::<Tree>(value: move branch);
   return move cell;
 }

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "The subscript of an element-position store is judged at the target place exactly as in read position, so an offset the program has not bounded against the window's len is refused with the ordinary OP-4 residual rather than admitted because the position is a target.";
   let empty = slots_new::<u8, 4>();

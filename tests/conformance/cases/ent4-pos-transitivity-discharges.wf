@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn get(b: &[u8], i: u64, j: u64) -> result: u8 reads(b) {
   doc "Closure rule (1): ordinary executed control establishes i at most j and j below spare, from which ENT-4 derives i below spare and discharges the subscript [OP-4]. No unchecked conclusion stands in for either caller-dependent branch.";
   let spare = deref(b).len;

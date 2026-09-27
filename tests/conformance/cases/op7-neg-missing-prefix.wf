@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn bad(a: i32, b: i32) -> return_value: i32 pure {
   doc "An arithmetic op carries a domain prefix whether or not a twin exists [OP-7]; unprefixed 'add.wrap' names no table op and must be rejected.";
   return add.wrap::<i32>(a, b);

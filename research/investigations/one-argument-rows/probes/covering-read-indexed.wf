@@ -1,0 +1,19 @@
+fn copy_first_to(values: &Array<u8, 4>, j: u64) -> result: unit reads(values), writes(values[j]) contract {
+  requires j < 4_u64;
+} {
+  let whole = deref(values);
+  set deref(values)[j] = whole[0_u64];
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u8, 4>(value: 1_u8);
+  set values[0_u64] = 9_u8;
+  copy_first_to(values: &values, j: 3_u64);
+  let seen = values[3_u64];
+  if seen == 9_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn risky_shl(x: i32, k: u32) -> result: i32 pure {
   return ishl(x, k);
 }

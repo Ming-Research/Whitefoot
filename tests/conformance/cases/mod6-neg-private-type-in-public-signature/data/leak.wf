@@ -1,0 +1,3 @@
+fn leak(value: Secret) -> result: i32 pure {
+  return value.value;
+}

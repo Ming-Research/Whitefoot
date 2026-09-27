@@ -12,12 +12,9 @@
 ; every element type here being `u64`, `f64` or `u8`, none of which [OP-9]
 ; aligns past 8. The same pointer is handed back as the retained handle, which
 ; is the only value the release row accepts.
+; A range argument crosses the call as its element pointer and count.
 define void @wf_bench_records(ptr %data, i64 %data_len, ptr %offsets, i64 %offsets_len, i64 %first, i64 %end, ptr %out, ptr %out_len, ptr %out_cell) {
-  %a = insertvalue { ptr, i64 } poison, ptr %data, 0
-  %b = insertvalue { ptr, i64 } %a, i64 %data_len, 1
-  %c = insertvalue { ptr, i64 } poison, ptr %offsets, 0
-  %d = insertvalue { ptr, i64 } %c, i64 %offsets_len, 1
-  %r = call ptr @wf_summarize_records({ ptr, i64 } %b, { ptr, i64 } %d, i64 %first, i64 %end)
+  %r = call ptr @wf_summarize_records(ptr %data, i64 %data_len, ptr %offsets, i64 %offsets_len, i64 %first, i64 %end)
   %n = load i64, ptr %r
   %p = getelementptr inbounds i8, ptr %r, i64 8
   store ptr %p, ptr %out

@@ -1,8 +1,10 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
-use super::support::{build_program, compile_program, compile_program_with_overlap};
-use whitefoot::module_requires_parallel_runtime;
+use super::support::{
+    build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
+};
+use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
 
 /// The recursive corpus program publishes one byte sequence whatever the
 /// recursion budget cuts, and whatever width it was cut for.
@@ -186,6 +188,100 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
     }
 }
 
+/// Every iteration of both loops adds one to the same element: the range the
+/// body cuts is `[i..i+1]` of `w = values.inner[last - i..n]`, so each call
+/// names `values.inner[last]` although its endpoints alone look like a
+/// per-iteration partition of `w`. The first loop forms that range at the
+/// call and the second binds it first.
+const SHIFTING_ORIGIN_PROGRAM: &str = r#"fn bump(output: &[u64], mark: u64) -> result: u64 writes(output) {
+  let count = deref(output).len;
+  for (x in 0_u64..count) {
+    let old = deref(output)[x];
+    let next = old +wrap mark;
+    set deref(output)[x] = next;
+  }
+  return count;
+}
+
+fn shifted_inline(values: &Box<Array<u64>>, n: u64) -> result: unit writes(values) contract {
+  requires 1_u64 <= n;
+  requires n <= deref(values).inner.len;
+} {
+  let last = n - 1_u64;
+  for (i in 0_u64..n) {
+    let lo = last - i;
+    let w = &deref(values).inner[lo..n];
+    let hi = i + 1_u64;
+    let painted = bump(output: &deref(w)[i..hi], mark: 1_u64);
+  }
+  return unit;
+}
+
+fn shifted_bound(values: &Box<Array<u64>>, n: u64) -> result: unit writes(values) contract {
+  requires 1_u64 <= n;
+  requires n <= deref(values).inner.len;
+} {
+  let last = n - 1_u64;
+  for (i in 0_u64..n) {
+    let lo = last - i;
+    let w = &deref(values).inner[lo..n];
+    let hi = i + 1_u64;
+    let u = &deref(w)[i..hi];
+    let painted = bump(output: u, mark: 1_u64);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let n = 200000_u64;
+  let last = n - 1_u64;
+  let values = box_array_filled::<u64>(count: n, value: 0_u64);
+  if n <= values.inner.len {
+    shifted_inline(values: &values, n: n);
+  }
+  if last < values.inner.len {
+    let once = values.inner[last];
+    if once == n {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  if n <= values.inner.len {
+    shifted_bound(values: &values, n: n);
+  }
+  if last < values.inner.len {
+    let twice = values.inner[last];
+    let expected = n + n;
+    if twice == expected {
+      return std::process::exit_status(code: 0_u8);
+    }
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 3_u8);
+}
+"#;
+
+/// [PAR-2] a range formed from a source bound inside the loop body is no
+/// proved range reference, so under the shipped `--par` policy both loops stay
+/// source-ordered and no update to the shared element is lost at any width.
+/// A grant here was observed to lose updates at two or more workers in every
+/// run. The oracle is the source-order count, not a second build.
+#[test]
+fn a_range_cut_from_a_per_iteration_origin_keeps_every_update() {
+    let parallel = build_program(&super::support::compile_sources_with_cli_parallel_defaults(
+        &[("shifting_origin.wf", SHIFTING_ORIGIN_PROGRAM.as_bytes())],
+    ));
+    for workers in ["1", "2", "4", "8"] {
+        let output = parallel.run_with_workers(Some(workers));
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "workers={workers}: {output:?}"
+        );
+        assert!(output.stderr.is_empty(), "workers={workers}: {output:?}");
+    }
+}
+
 /// One ordinary and one parallel build cover the real default-grain fold and
 /// unhooked runtime reports. The reference is independent Rust arithmetic.
 #[test]
@@ -258,6 +354,34 @@ fn range_fold_preserves_bytes_and_ordinary_runtime_reports() {
             "configuration must be refused before WF output"
         );
         assert_eq!(String::from_utf8_lossy(&output.stderr), expected_error);
+    }
+}
+
+/// The parallel lowering linked from the link fragments a modular build
+/// splits it into [MOD-8] publishes the same results: its thunks, recursion
+/// budget entries and runtime fallbacks each keep one definition across the
+/// fragment boundaries.
+#[test]
+fn layout_linked_from_its_fragments_preserves_both_results() {
+    let expected = b"420a993efa7437a1 41fa962893d45299\n";
+    let llvm = compile_program_with_overlap("par_layout.wf");
+    for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
+        let program = build_program_from_fragments(&llvm, granularity);
+        for workers in [None, Some("1"), Some("2")] {
+            let output = program.run_with_workers(workers);
+            assert!(
+                output.status.success(),
+                "{granularity:?} workers={workers:?}: {output:?}"
+            );
+            assert_eq!(
+                output.stdout, expected,
+                "{granularity:?} workers={workers:?}"
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "{granularity:?} workers={workers:?}"
+            );
+        }
     }
 }
 

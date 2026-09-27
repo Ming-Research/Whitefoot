@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn fetch_shifted(b: &[u8], i: u64, wide: Bool) -> result: u8 reads(b) {
   doc "One eligible delivery edge proves only that the delivered index is at most the length. The weakest delivered bound cannot become strict, so the receiving subscript is rejected [ENT-5, GIVE-1, OP-4].";
   let spare = deref(b).len;

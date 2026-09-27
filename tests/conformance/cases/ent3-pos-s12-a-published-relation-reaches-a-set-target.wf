@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn assemble(cap: u64) -> made: u64 pure contract {
   ensures made <= cap;
 } {

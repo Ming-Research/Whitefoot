@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn take_run(run: &Slots<u64>) -> result: u64 reads(run.len) {
   doc "TYPE-9: a runtime-capacity form may appear only as the content of a Box and never inline in another value and never as a local binding; every other position is a hard error at the complete type.";
   let n = deref(run).len;

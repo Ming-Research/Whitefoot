@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn within(value: i32, low: i32, high: i32) -> result: unit pure contract {
+  requires low <= value;
+  requires value <= high;
+} {
+  return unit;
+}
+
+fn residue(seed: i32, divisor: i32) -> result: unit pure {
+  if 2_i32 <= divisor {
+    if divisor <= 5_i32 {
+      let rest = seed % divisor;
+      within(value: rest, low: -3_i32, high: 4_i32);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

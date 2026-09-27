@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn crc32<const n: u64>(bytes: Array<u8, n>) -> function_result: u32 pure {
   doc "Folds the byte run; a by-value parameter carries no effect entry, so the declared row is the empty one [EFF-1].";
   let crc = 4294967295_u32;

@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn impossible(value: u8) -> output: u8 pure contract {
   requires value == 0_u8;
   requires value != 0_u8;

@@ -60,7 +60,7 @@
 
 use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 
-use super::{assert_accepts, assert_rule_kind};
+use super::{assert_accepts, assert_rule_kind, check_case_directory, check_module_sources};
 
 fn assert_op9_allocation_fit(source: &[u8], context: &str) {
     super::with_semantics(source, |outcome| match outcome {
@@ -148,27 +148,23 @@ fn member_spellings_reserve_nothing() {
 /// naming such a path at a written reference parameter is refused with it.
 #[test]
 fn a_readonly_field_is_never_a_write_target() {
-    for source in [
-        include_bytes!(
-            "../../../../tests/conformance/cases/type2-neg-readonly-field-set-target.wf"
-        )
-        .as_slice(),
-        include_bytes!(
-            "../../../../tests/conformance/cases/type2-neg-readonly-path-passes-through.wf"
-        )
-        .as_slice(),
-        include_bytes!(
-            "../../../../tests/conformance/cases/type2-neg-readonly-field-written-argument.wf"
-        )
-        .as_slice(),
+    // [TYPE-2, MOD-6] a source readonly field is public and withholds writes
+    // only from the modules that do not declare it, so these cases are
+    // module programs.
+    for case in [
+        "type2-neg-readonly-field-set-target",
+        "type2-neg-readonly-path-passes-through",
+        "type2-neg-readonly-field-written-argument",
     ] {
-        assert_rule_kind(source, SemanticRule::Type2, |kind| {
-            matches!(kind, SemanticIssueKind::ReadonlyWriteTarget { .. })
-        });
+        let failure = check_case_directory(case).expect_err("an external readonly write rejects");
+        assert_eq!(failure.rule_id(), Some("TYPE-2"), "{case}: {failure}");
+        assert!(
+            failure.to_string().contains(": ReadonlyWriteTarget\n"),
+            "{case}: {failure}"
+        );
     }
-    assert_accepts(include_bytes!(
-        "../../../../tests/conformance/cases/type2-pos-readonly-field-read-and-whole-replace.wf"
-    ));
+    check_case_directory("type2-pos-readonly-field-read-and-whole-replace")
+        .expect("reads, whole replacement and module-internal writes are accepted");
 }
 
 /// [TYPE-2] readonly provenance follows references and reborrows. A written
@@ -176,62 +172,32 @@ fn a_readonly_field_is_never_a_write_target() {
 /// through a reference to the enclosing value.
 #[test]
 fn readonly_provenance_survives_reference_aliases_and_reborrows() {
-    for source in [
-        br#"struct Record {
-  readonly value: u8;
-}
-
-fn put(cell: &u8) -> result: unit writes(cell) {
-  set deref(cell) = 9_u8;
-  return unit;
-}
-
-fn main() -> status: ExitStatus pure {
-  let record = Record(value: 1_u8);
-  let p = &record.value;
-  put(cell: p);
-  return exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-        br#"struct Record {
-  readonly value: u8;
-}
-
-fn put(cell: &u8) -> result: unit writes(cell) {
-  set deref(cell) = 9_u8;
-  return unit;
-}
-
-fn main() -> status: ExitStatus pure {
-  let record = Record(value: 1_u8);
-  let p = &record;
-  put(cell: &deref(p).value);
-  return exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-        br#"struct Record {
-  readonly value: u8;
-}
-
-fn put(cell: &u8) -> result: unit writes(cell) {
-  set deref(cell) = 9_u8;
-  return unit;
-}
-
-fn main() -> status: ExitStatus pure {
-  let record = Record(value: 1_u8);
-  let p = &record.value;
-  put(cell: &deref(p));
-  return exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
+    let graph = b"pkg::records: [];\npkg: [pkg::records, std::process];\n";
+    let interface = b"public struct Record {\n  public readonly value: u8;\n}\n\npublic fn make() -> record: Record pure doc \"Makes a record.\";\n";
+    let definition = b"fn make() -> record: Record pure {\n  return Record(value: 1_u8);\n}\n";
+    for writer in [
+        b"  let p = &record.value;\n  put(cell: p);\n".as_slice(),
+        b"  let p = &record;\n  put(cell: &deref(p).value);\n".as_slice(),
+        b"  let p = &record.value;\n  put(cell: &deref(p));\n".as_slice(),
     ] {
-        assert_rule_kind(source, SemanticRule::Type2, |kind| {
-            matches!(kind, SemanticIssueKind::ReadonlyWriteTarget { .. })
-        });
+        let mut main = b"alias records = pkg::records;\n\nfn put(cell: &u8) -> result: unit writes(cell) {\n  set deref(cell) = 9_u8;\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let record = records::make();\n".to_vec();
+        main.extend_from_slice(writer);
+        main.extend_from_slice(b"  return std::process::exit_status(code: 0_u8);\n}\n");
+        let failure = check_module_sources(
+            graph,
+            &[
+                ("records/module.wfm", interface.as_slice()),
+                ("records/record.wf", definition.as_slice()),
+                ("module.wfm", b"\n".as_slice()),
+                ("main.wf", main.as_slice()),
+            ],
+        )
+        .expect_err("an external readonly write through a reference rejects");
+        assert_eq!(failure.rule_id(), Some("TYPE-2"), "{failure}");
+        assert!(
+            failure.to_string().contains(": ReadonlyWriteTarget\n"),
+            "{failure}"
+        );
     }
 }
 
@@ -378,8 +344,8 @@ fn known_stored_layouts_keep_op9_in_symbolic_schemas() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -389,8 +355,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -405,8 +371,8 @@ fn unchecked<T>(count: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -416,8 +382,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -445,8 +411,8 @@ fn unresolved_stored_layouts_defer_to_every_concrete_replay() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(unresolved_schema);
@@ -471,12 +437,12 @@ fn forward<T>(count: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   forward::<u16>(count: 1_u64);
   forward::<Packet>(count: 1_u64);
   forward::<Box<u64>>(count: 1_u64);
   forward::<Slots<u64, 2>>(count: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(concrete_replays);
@@ -528,16 +494,16 @@ fn consume_word(value: u64) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(source.as_bytes());
     assert_accepts(
         source
             .replace(
-                "  return exit_status(code: 0_u8);",
-                "  empty_store::<u64, fn consume_word>();\n  return exit_status(code: 0_u8);",
+                "  return std::process::exit_status(code: 0_u8);",
+                "  empty_store::<u64, fn consume_word>();\n  return std::process::exit_status(code: 0_u8);",
             )
             .as_bytes(),
     );
@@ -566,9 +532,9 @@ fn relay<U>(count: u64) -> result: unit pure contract {{
   return unit;
 }}
 
-fn main() -> status: ExitStatus pure {{
+fn main() -> status: std::process::ExitStatus pure {{
   relay::<u64>(count: {upper}_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
         )
@@ -629,8 +595,8 @@ fn relay<{parameter}>(count: u64) -> result: u64 pure contract {{
   return produced;
 }}
 
-fn main() -> status: ExitStatus pure {{
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
 }}
 "#
             )
@@ -659,13 +625,13 @@ fn bounded_numeric_layouts_keep_their_exact_symbolic_op9_limit() {
     const LIMIT: u64 = u64::MAX / 8;
     for bound in ["Int", "Float"] {
         let source = format!(
-            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {LIMIT}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {LIMIT}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_accepts(source.as_bytes());
 
         let too_large = LIMIT + 1;
         let source = format!(
-            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {too_large}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: ExitStatus pure {{\n  return exit_status(code: 0_u8);\n}}\n"
+            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {too_large}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         assert_op9_allocation_fit(
             source.as_bytes(),
@@ -687,8 +653,8 @@ fn symbolic_const_array_layout_defers_only_until_concrete_replay() {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(schema);
@@ -701,9 +667,9 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   allocate::<4>(count: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_accepts(small);
@@ -716,9 +682,9 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   allocate::<2305843009213693952>(count: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_op9_allocation_fit(above_u64, "AboveU64 concrete const-array replay");
@@ -741,9 +707,9 @@ fn allocate<T>(count: u64) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   allocate::<Giant>(count: 1_u64);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     assert_op9_allocation_fit(source, "AboveU64 concrete aggregate replay");
@@ -779,31 +745,31 @@ fn free_empty_of_a_nonempty_window_is_refused() {
 #[test]
 fn free_empty_uses_the_current_length_for_every_window_shape() {
     for source in [
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<u8>(capacity: 2_u64);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let window = box_ring_new::<u8>(capacity: 2_u64);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = slots_new::<u8, 4>();
   free_empty(window: move slots);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let ring = ring_new::<u8, 4>();
   free_empty(window: move ring);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -811,15 +777,15 @@ fn free_empty_uses_the_current_length_for_every_window_shape() {
   Mark();
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<Ticket>(capacity: 2_u64);
-  let ticket = Mark();
+  let ticket = Ticket::Mark();
   place_back(window: &window.inner, value: move ticket);
   let taken = take_back(window: &window.inner);
   match move taken {
     Mark() => {
       free_empty(window: move window);
-      return exit_status(code: 0_u8);
+      return std::process::exit_status(code: 0_u8);
     }
   }
 }
@@ -830,11 +796,11 @@ fn main() -> status: ExitStatus pure {
     }
 
     for source in [
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<u8>(capacity: 4_u64);
   place_back(window: &window.inner, value: 7_u8);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -842,21 +808,21 @@ fn main() -> status: ExitStatus pure {
   value: u8;
 }
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure {
   let window = box_slots_new::<Token>(capacity: 1_u64);
   let token = Token(value: 7_u8);
   place_back(window: &window.inner, value: move token);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let window = box_ring_new::<Box<u8>>(capacity: 4_u64);
   let value = box_new::<u8>(value: 7_u8);
   place_back(window: &window.inner, value: move value);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -865,8 +831,8 @@ fn main() -> status: ExitStatus pure {
   return unit;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
@@ -877,25 +843,26 @@ fn main() -> status: ExitStatus pure {
     }
 
     for source in [
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = slots_new::<u8, 4>();
   let window = box_new::<Slots<u8, 4>>(value: move slots);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
-        br#"fn main() -> status: ExitStatus pure {
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let ring = ring_new::<u8, 4>();
   let window = box_new::<Ring<u8, 4>>(value: move ring);
   free_empty(window: move window);
-  return exit_status(code: 0_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
         .as_slice(),
     ] {
+        // The shape refusal carries its repair [OP-14, DIAG-1].
         assert_rule_kind(source, SemanticRule::Op14, |kind| {
-            matches!(kind, SemanticIssueKind::TypeMismatch { .. })
+            matches!(kind, SemanticIssueKind::UnadmittedOperandShape { .. })
         });
     }
 }

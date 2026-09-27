@@ -1,0 +1,10 @@
+fn narrow() -> result: u8 pure contract {
+  requires cvt.defined::<u32, u8>(256_u32);
+} {
+  return cvt::<u32, u8>(256_u32);
+}
+
+fn main() -> status: ExitStatus pure {
+  let b = narrow();
+  return exit_status(code: b);
+}

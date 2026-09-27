@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   doc "OP-10: place_front and take_front admit Ring alone and shift every logical index of the ring, and a ring position is a logical index whose wrap is the storage's business.";
   let r = ring_new::<u64, 4>();

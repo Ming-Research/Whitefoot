@@ -1,0 +1,72 @@
+public struct PriorityQueue<T, const ceiling: u64> {
+  public readonly storage: Box<Slots<T>>;
+}
+
+public interface PriorityOrder<T, E> {
+  fn compare(env: &E, left: &T, right: &T) -> order: i32 reads(env), reads(left), reads(right);
+}
+
+public fn priority_queue_new<T, const ceiling: u64>() -> made: PriorityQueue<T, ceiling> pure doc "An empty queue starts with zero capacity. The comparison sign selects priority: a negative result places left before right. Meaningful ordering requires a consistent comparison and environment; ownership, bounds, and sift progress require only that the callback returns. Equal priorities have no stability promise.";
+
+public fn priority_queue_len<T, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>) -> length: u64 reads(queue.storage) contract {
+  ensures length == deref(queue).storage.inner.len;
+} doc "Reports the number of queued values; its postcondition is the relation that proves a queue nonempty for peek, pop and replace_top.";
+
+public fn priority_queue_reserve<T, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, total: u64) -> capacity: u64 writes(queue.storage) contract {
+  requires total <= ceiling;
+  ensures capacity == deref(queue).storage.inner.cap;
+  ensures capacity >= total;
+  ensures deref(queue).storage.inner.cap >= deref(entry(queue)).storage.inner.cap;
+  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
+} doc "Reserve preserves the initialized heap and raises capacity only when necessary. The caller-proved ceiling bounds each concrete allocation site; allocation itself has no source-visible refusal outcome.";
+
+public fn priority_queue_push<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, env: &E) -> result: Result<unit, T> reads(env), writes(queue.storage) doc "Returns the offered owner unchanged in Err when the length has reached the ceiling. Otherwise the backing grows geometrically, saturating at the ceiling, and the inserted value rises into place. Every mutation borrows the queue rather than returning its owner.";
+
+public fn priority_queue_peek<T, F, R, fn observe(env: &F, value: &T) -> result: R reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, env: &F) -> result: R reads(queue.storage), writes(env) contract {
+  requires deref(queue).storage.inner.len > 0_u64;
+} doc "A proved nonempty queue lends the root only for this callback. Its environment must be disjoint from the queue, and its ordinary owned result cannot contain a reference.";
+
+public fn priority_queue_pop<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, env: &E) -> removed: T reads(env), writes(queue.storage) contract {
+  requires deref(queue).storage.inner.len > 0_u64;
+  ensures deref(queue).storage.inner.len + 1_u64 == deref(entry(queue)).storage.inner.len;
+  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+} doc "Removes and returns the first value in the order binding's order from a proved nonempty queue; capacity stays.";
+
+public fn priority_queue_replace_top<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, env: &E) -> removed: T reads(env), writes(queue.storage) contract {
+  requires deref(queue).storage.inner.len > 0_u64;
+  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
+  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+} doc "Exchanges the offered owner with the root and returns the previous root after one downward sift. Length and backing capacity stay unchanged.";
+
+public fn priority_queue_heapify<interface PriorityOrder<T, E>, const ceiling: u64>(storage: Box<Slots<T>>, env: &E) -> made: PriorityQueue<T, ceiling> reads(env) contract {
+  requires storage.inner.cap <= ceiling;
+} doc "Consumes an initialized boxed prefix without allocating or growing it. Visiting parents in reverse order builds each subtree before its parent; the sum of their sift heights is linear in the element count.";
+
+public fn priority_queue_push_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, value: T, order_env: &E, position_env: &P) -> result: Result<unit, T> reads(order_env), writes(queue.storage), writes(position_env) doc "Adds one entry and reports its initial resident position even when it does not rise. Every later swap reports both resident entries. Err returns the offered owner unchanged without invoking the reporter. The reporter's environment must be disjoint from the queue and order environment.";
+
+public fn priority_queue_peek_at<T, F, R, fn observe(env: &F, value: &T) -> result: R reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, env: &F) -> result: R reads(queue.storage), writes(env) contract {
+  requires index < deref(queue).storage.inner.len;
+} doc "Lends the entry currently at a caller-proved position. A position is not stable identity; a handle-based caller must check the observed entry before using that position for a later mutation. The result is ordinary owned data and cannot retain the reference.";
+
+public fn priority_queue_remove_at_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, order_env: &E, position_env: &P) -> removed: T reads(order_env), writes(queue.storage), writes(position_env) contract {
+  requires index < deref(queue).storage.inner.len;
+  ensures deref(queue).storage.inner.len + 1_u64 == deref(entry(queue)).storage.inner.len;
+  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+} doc "Returns the owner at the current position, replacing it with the last entry and repairing in one direction when necessary. Removing the last entry reports no placement. The caller explicitly retires the returned entry's membership; the reporter only receives entries still resident in the heap.";
+
+public fn priority_queue_replace_at_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, index: u64, value: T, order_env: &E, position_env: &P) -> removed: T reads(order_env), writes(queue.storage), writes(position_env) contract {
+  requires index < deref(queue).storage.inner.len;
+  ensures deref(queue).storage.inner.len == deref(entry(queue)).storage.inner.len;
+  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+} doc "Exchanges the offered owner with the selected entry, reports its placement and repairs upward or downward. A reschedule offers the same application identity with a new ordering key. Replacing a different identity requires the caller to retire the returned entry's old membership separately.";
+
+public fn priority_queue_heapify_indexed<interface PriorityOrder<T, E>, P, fn placed(env: &P, value: &T, index: u64) -> result: unit reads(value), writes(env), const ceiling: u64>(storage: Box<Slots<T>>, order_env: &E, position_env: &P) -> made: PriorityQueue<T, ceiling> reads(order_env), writes(position_env) contract {
+  requires storage.inner.cap <= ceiling;
+} doc "Reports every initial resident position, including leaves that never move, then builds bottom-up through the shared bounded sift. It consumes the initialized backing without allocating and makes a linear number of comparator and reporter calls.";
+
+public fn priority_queue_drain<interface PriorityOrder<T, E>, F, fn consume(env: &F, value: T) -> result: unit writes(env), const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, order_env: &E, consume_env: &F) -> result: unit reads(order_env), writes(queue.storage), writes(consume_env) contract {
+  ensures deref(queue).storage.inner.len == 0_u64;
+  ensures deref(queue).storage.inner.cap == deref(entry(queue)).storage.inner.cap;
+} doc "Consumes in repeated-pop order in O(n log n), retaining capacity for reuse. The consumer receives only its disjoint environment and the removed owner.";
+
+public fn priority_queue_free<T, F, fn consume(env: &F, value: T) -> result: unit writes(env), const ceiling: u64>(queue: PriorityQueue<T, ceiling>, env: &F) -> result: unit writes(env) doc "Consumes every remaining element in reverse physical-slot order in O(n), then releases the empty backing. This final cleanup needs no comparisons and supports nodrop elements through explicit consumption.";

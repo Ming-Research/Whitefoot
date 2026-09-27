@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn two_in_a_row(window: &Slots<u8, 4>) -> result: unit writes(window) contract {
   requires 1_u64 < deref(window).cap - deref(window).len;
 } {

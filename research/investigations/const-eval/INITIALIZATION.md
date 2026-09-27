@@ -86,7 +86,7 @@ choice. It does not demonstrate that a defaulting form would be unsafe, slower,
 or harder for an agent to use.
 
 The affected set is CONST-2's coverage requirement, its GRAM-8 construction
-dependency, and the [construction rationale](../../../mcts_mem/whitefoot/surface-form/construction-form.md).
+dependency, and the [construction rationale](https://github.com/mbbill/Whitefoot/blob/0f22b026b062c36ef2f8ce9c725ee4307e1fda64/mcts_mem/whitefoot/surface-form/construction-form.md).
 The [historical grounds assessment](../decision-workflow/RULE-GROUNDS.md#types-ownership-and-storage)
 also examined CONST-2's eligibility, lifetime, representation, and read rules;
 those arguments are not results of this initialization experiment or a current

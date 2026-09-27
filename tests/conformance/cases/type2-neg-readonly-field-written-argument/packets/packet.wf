@@ -1,0 +1,6 @@
+fn make(id: u64, size: u64) -> packet: Packet pure {
+  doc "TYPE-2: inside the declaring module a readonly field is ordinary, so the packet is renumbered in place.";
+  let p = Packet(id: 0_u64, size: size);
+  set p.id = id;
+  return p;
+}

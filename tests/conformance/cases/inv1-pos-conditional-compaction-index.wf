@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn compact(buf: &[u8]) -> result: u64 writes(buf) {
   doc "The sum<=i header proves each conditional destination index below the current input binder.";
   let n = deref(buf).len;
