@@ -1155,3 +1155,19 @@ boundary, not a performance observation. The candidate source was restored;
 no Deque timing or production API change resulted. A follow-up would have to
 re-evaluate the prelude operation's own row and its specification grounds
 before any code-generation comparison.
+
+### Follow-up discriminator: prelude `place_front` row precision
+
+The rejected source row points at the prelude boundary. A scratch-only follow-up
+will change the ordinary prelude declaration of `place_front` to
+`writes(window.head), writes(window.next), writes(window.len)` and add no new
+operation or syntax; the Deque wrapper will use the same three-field row. The
+candidate is admissible only if the prelude contract still covers the endpoint
+semantics and all existing users compile. Before timing, the scalar reverse
+inner loop must lose at least one repeated `cap` load, while the forward, wide,
+rebase and cleanup bodies remain unchanged apart from identity renaming. The
+complete Deque correctness, allocation, checksum and cleanup checks must pass.
+Any acceptance failure, unchanged optimized shape, extra transfer, or useful
+cell regression rejects the diagnostic. This is an investigation of a possible
+effect-row correction; it does not select a specification amendment or change
+the production branch.
