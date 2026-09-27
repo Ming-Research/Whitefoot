@@ -1,10 +1,11 @@
 # Ownership transfer and reference-access forms
 
 This investigation compares the remaining ownership surface after signature
-`own` was removed. Its baseline is specification v0.69 and repository revision
-`0f22b026b`. The concrete consumers are the maintained HashMap and Deque
-libraries and the owned-link cursor program. The active specification remains
-the language authority; candidate spellings below are not accepted syntax.
+`own` was removed. The first comparison used specification v0.69 at
+`0f22b026b`; its refresh uses v0.74 at `ad51e05df`. The concrete consumers
+are the maintained HashMap and Deque libraries and the owned-link cursor
+program. The active specification remains the language authority; candidate
+spellings below are not accepted syntax.
 
 ## Requirements and comparison criterion
 
@@ -31,6 +32,12 @@ stored linear fields, reference aliases versus referent reads, holder rebinding
 versus referent assignment, ancestor replacement, and effect overlap.
 An alternative that only shifts the same obligation into another mandatory
 declaration has not removed that obligation.
+
+The v0.74 refresh repeats the same source and grammar observations after the
+standard-library move. A changed verdict overturns a recorded limitation only
+if the same type range, proof contract and observed behavior are retained;
+an earlier module/name error is not the ownership or proof observation. No
+new timing comparison or writer trial is part of this refresh.
 
 ## Questions
 
@@ -66,21 +73,25 @@ distinctions.
 
 | Consumer | Actual ownership boundary | Conclusion |
 |---|---|---|
-| [HashMap](../../../lib/containers/hash-map.wf) | `try_put`, `put`, `remove`, `reserve`, `rehash` and `rebuild` take a reference to the map. Offered keys/values arrive by value; replacement or refusal returns a complete pair. | Ordinary mutation already avoids returning the map. Returning displaced or refused elements preserves ownership, including linear elements; dropping those results would change the contract. |
-| [Deque](../../../lib/containers/deque.wf) | Push/pop mutate through references. `rebase` consumes the old backing and returns a new one; `free_empty` consumes an empty backing. | Rebase deserves a same-contract reference comparison. Freeing and removing an element are genuine consuming operations. |
+| [HashMap](../../../lib/std/collections/hash_map/module.wfm) | `try_put`, `put`, `remove`, `reserve` and `rehash` take a reference to the map. Offered keys/values arrive by value; replacement or refusal returns a complete pair. | Ordinary mutation already avoids returning the map. Returning displaced or refused elements preserves ownership, including linear elements; dropping those results would change the contract. |
+| [Deque](../../../lib/std/collections/deque/module.wfm) | Push/pop mutate through references. `rebase` consumes the old backing and returns a new one; `free_empty` consumes an empty backing. | Rebase deserves a same-contract reference comparison. Freeing and removing an element are genuine consuming operations. |
 | [Owned-link cursor](../../../tests/programs/owned_link_cursors.wf) | `without_first` consumes a link and returns its successor; `remove_even` uses it in `set deref(cursor) = without_first(head: move deref(cursor));`. | The owned transformer supplies OP-12's indivisible replacement. Deleting its ownership boundary would require another complete implementation, not just a shorter signature. |
 
-HashMap rebuild is also a counterexample to the claim that a new allocation
-necessarily requires an owned interface: it swaps backing through a reference.
-Its current contract does not publish the extent relations that Deque rebase
-does, however. Those are different proof contracts.
+HashMap's private [rebuild helper](../../../lib/std/collections/hash_map/hash-map.wf)
+is also a counterexample to the claim that a new allocation necessarily
+requires an owned interface: it swaps backing through a reference. Its current
+contract does not publish the extent relations that Deque rebase does,
+however. Those are different proof contracts.
 
 ### Deque reference-rebuild probes
 
 The direct wrapper below is a checked research fragment, not a proposed
-library addition. Compile it with the existing Deque source and a main:
+library addition. On the current compiler, select the standard-library
+declaration with the alias below and compile the fragment with a main:
 
 ```wf
+alias deque_rebase = std::collections::deque::deque_rebase;
+
 fn deque_rebase_reference<T, const ceiling: u64>(values: &Box<Ring<T>>, capacity: u64) -> result: unit writes(values) contract {
   requires capacity >= deref(values).inner.len;
   requires capacity <= ceiling;
@@ -93,7 +104,7 @@ fn deque_rebase_reference<T, const ceiling: u64>(values: &Box<Ring<T>>, capacity
 }
 ```
 
-| Probe | Observed result at the baseline revision | Meaning |
+| Probe | Observed result at both v0.69 and v0.74 baselines | Meaning |
 |---|---|---|
 | Existing Deque program and existing owned-link cursor | Both compile and return native exit 0. | Controls exercise the current APIs and cursor replacement. |
 | Unbounded wrapper above | WIN-3 at the `set` target: linear assignment target. | OP-12 covers copy/affine targets; WIN-3 rejects a linear target. A `drop` bound would exclude supported `nodrop` elements. |
@@ -101,7 +112,9 @@ fn deque_rebase_reference<T, const ceiling: u64>(values: &Box<Ring<T>>, capacity
 | `T: drop` wrapper with all three `ensures` clauses removed | Compiles to LLVM. | A mechanism control only: weakening the contract is not a successful equivalent replacement. |
 | Transfer elements through the reference, then swap in the completed backing and free the old empty backing | OP-14 at the empty-input branch's `free_empty`: the old backing's zero length is unavailable after swap. | PRE-1 gives swap no postcondition and MSR-3 does not transport measures through swap. This is the already recorded descriptor-fact limitation, now affecting linear cleanup. |
 
-The last probe is reproduced from the existing `deque_rebase` body: change
+The last probe is reproduced from the existing
+[Deque implementation](../../../lib/std/collections/deque/deque.wf)'s
+`deque_rebase` body: change
 the signature and contract to the wrapper's; replace body `values.inner`
 with `deref(values).inner`; remove the explanatory `doc`; replace both
 `free_empty(window: move values); return move built;` sequences with
@@ -194,6 +207,13 @@ choice in OWN-13 and ERR-3 that the tree's existing explicit-move decision
 does not separately describe. It is awaiting a ruling and is not implemented
 in this research PR.
 
+The v0.74 module and variant changes do not remove these implicit consuming
+contexts. GRAM-10 now also permits `..` in an arm: an owned match releases
+covered affine fields and refuses covered linear fields; a reference match
+releases none. That existing cleanup rule remains in force under the proposal.
+Public payload access and constructor qualification are separate boundaries;
+neither an explicit `move` nor a reference step grants field visibility.
+
 ## Reference-place spelling
 
 The path model and its current syntax have different histories. The early
@@ -269,30 +289,47 @@ spelling; its second adds the spelling's selection ground. The node's remaining
 decisions and refused alternatives are unchanged. It is awaiting a ruling and
 is not implemented in this research PR.
 
+The existing review finding remains open: the node's first decision and the
+proposed replacement list locals and parameters as roots but omit named
+constants, which REF-1 already admits. The recommended correction is to add
+named constants to that list; it changes no language permission. The amendment
+is unchanged pending owner direction on that finding.
+
 ## Validation and remaining uncertainty
 
-The criteria above were published in commit `3ece3c54c` before the probes.
-All source observations use the unmodified v0.69 compiler built from baseline
-`0f22b026b` with `make -C compiler build` (gate profile, locked and offline).
+The original criteria were published in commit `3ece3c54c` before the v0.69
+probes. On v0.74, the same ownership and proof source observations were repeated
+using the unmodified compiler from `ad51e05df`, built on research revision
+`b519746b2` with `make -C compiler build` (gate profile, locked and offline).
 Native controls use the default ordinary compiler path, without compute mode.
-The build took about 49 seconds on this host; that is construction evidence,
-not a timing comparison between language alternatives.
+All source observations in the tables above and below retained their verdicts.
+
+The module migration changes reproduction: the compiler supplies the Deque
+module from its embedded standard library, selected by the caller's aliases;
+its implementation is no longer concatenated into the caller. The only
+adaptations to the scratch probes were the `deque_rebase` alias and the
+`std::process` aliases for the driver below. Existing formal cases and programs
+use their current source, including enum-owned constructor qualification.
+These adaptations change name resolution, not a probe's proof contract.
 
 For baseline reproduction from the repository root:
 
 ```sh
 make -C compiler build
 probe_dir=$(mktemp -d)
-perl .github/run-check.pl deque-control compiler/target/gate/whitefootc lib/containers/deque.wf tests/programs/containers/deque-program.wf -o "$probe_dir/deque"
+perl .github/run-check.pl deque-control compiler/target/gate/whitefootc tests/programs/containers/deque-program.wf -o "$probe_dir/deque"
 "$probe_dir/deque"
 perl .github/run-check.pl cursor-control compiler/target/gate/whitefootc tests/programs/owned_link_cursors.wf -o "$probe_dir/cursor"
 "$probe_dir/cursor"
 ```
 
 For source-only probes, use `whitefootc --emit-llvm SOURCE... -o output.ll`
-under the same guard. Supply the wrapper and Deque sources plus this main:
+under the same guard. Supply the wrapper fragment plus this main:
 
 ```wf
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }

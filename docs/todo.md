@@ -1505,6 +1505,11 @@ each is resolved by a discussion and a tree change.
   specification/compiler/conformance change. Keep the current container APIs
   pending the replacement-and-measure work below: a weaker contract or loss
   of `nodrop` support is not an equivalent reference interface.
+  The existing `language/ownership/reference-validity` decision and its pending
+  replacement omit named constants from the path roots that REF-1 already
+  admits. This understates the current language boundary; include named
+  constants when the owner rules on that review finding, without changing
+  source acceptance, and check the tree's root list against REF-1 then.
 - **Expression composition and canonical source policy.** Reassess mandatory
   three-address computation and intermediate names together with the ban on
   comments and rejection of noncanonical formatting. Compare authoring,
