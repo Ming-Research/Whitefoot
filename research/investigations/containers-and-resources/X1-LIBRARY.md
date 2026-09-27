@@ -1,5 +1,107 @@
 # Containers over the x1 language
 
+## Checked terminal consumption lowering candidate
+
+This is a pending compiler implementation choice under the unchanged source
+language and Vector algorithm. The [current practical comparison](../../experiments/container-representation/vector-library/RESULTS.md)
+supplies the reopening ground: the frozen forward-consumption plus ordinary
+behavior-hint diagnostic improves complete useful traces without an observed
+useful-cell regression in its one paired matrix. That manual LLVM experiment
+does not establish a general recognizer, arbitrary callback equivalence, or
+production performance. The separate behavior-hint proposal remains distinct.
+
+The first recognizer is deliberately closed. After ignoring erased proof
+statements, the whole own-unit body must contain an entry window length `n`,
+exact `n-r` and division by two, the counted first-half take-back/exchange/
+consumer loop, the final take-back/consumer loop to `r`, and a unit return.
+Both loops must have no extra runtime statements, releases, partial exits or
+other observations. The same resolved consumer receives the selected owner
+and unchanged incoming arguments at both sites; both physical call targets
+must agree. The compiler-owned take-back and exchange identities, typed
+places and binding identities select this shape, never user function names,
+the collection module, element size or concrete payload type.
+
+The window is a stable field/Box projection of an incoming reference, with
+no dynamic subscript or local reference alias in that projection. A declared
+write prefix covers its complete state. Other consumer actuals are unchanged
+incoming references rooted at distinct parameters, or unconsumed incoming
+copy values. The accepted enclosing boundary's EFF-5 separation therefore
+excludes callback access to this window; its environment may otherwise read,
+write, allocate, release, recurse or diverge under its ordinary contract.
+Function-wide possible-reference inventories are not point-current evidence.
+
+For removed values `x0..x(m-1)`, the first `floor(m/2)` iterations call the
+consumer on `x0..x(h-1)` and move rear values into those vacated positions.
+The remaining suffix is in reverse order, so the final back takes deliver
+`xh..x(m-1)`. A forward traversal delivers exactly that same sequence. Each
+call and every release or divergence prefix remains in order. Intermediate
+backing and length states cannot be observed within the selected closed
+region. STOR-7 permits relocation; no reference to the backing escapes.
+The consumer may retain the delivered owner in its environment: the same
+owner reaches the same call at the same ordinal in both traversals. No assumption
+about a consumer's arithmetic, purity, size, termination or willingness to inline is
+part of this equivalence.
+
+The lowering builder owns recognition and the replacement CFG. Existing
+`RunIndex` already transports owned values for `remove_at`; reuse it for the
+selected handoff and keep the consumer as an ordinary `Call` with source
+argument metadata. A private `RunConsumeFinish` publishes the retained length
+only after the nonempty traversal. An empty suffix returns before that store:
+this removes unnecessary work present in the diagnostic LLVM, whose wide
+suffix-zero controls regressed. The store's isolated time cost is unmeasured. Existing logical
+element addressing retains Ring wrapping and selected-target zero-stride
+normalization; logical counts themselves remain unchanged. No call ABI,
+alias attribute, source operation, proof rule or target qualification changes.
+
+The replacement's bounds are an implementation equivalence argument, not a
+new source OP-4 receipt. Acceptance of exact `n-r` gives `r<=n`, and the
+standing window domain gives `n<=cap`. The generated cursor starts at `r`;
+its guard establishes `cursor<n` for every read, and therefore
+`cursor+1<=n<=u64::MAX`. On a Ring, take-back and exchange preserve the entry
+head, so the same logical cursor uses the existing wrap calculation at that
+head. Positive stride uses the already qualified complete allocation extent;
+zero stride substitutes zero only in address formation, including logical
+coordinates above `i64::MAX`, and still executes every logical handoff.
+
+The cohesive matcher belongs beside the existing lowering-builder recognizers;
+the small final-boundary operation belongs with the typed run operations and
+their shared operand/emission consumers. This avoids a second optimizer in
+the structured LLVM printing model and an opaque operation hiding callbacks
+from ABI, dependency or scheduler consumers. Any unmatched body follows the
+existing lowering without changing acceptance.
+
+Before production selection, require renamed positive witnesses; empty,
+one-element, odd, even, full and retained-prefix outcomes; exact arbitrary
+owner/callback/release order; zero-byte logical elements and qualified address
+formation; and negative shapes with additional backing observations, changed
+consumers, partial exits or unsupported reference provenance retaining their
+ordinary lowering. Wrong owner order and missing release must falsify their
+oracles. Inspect actual optimized callers for avoided relocation and any
+replacement snapshots or boundaries. The complete unchanged practical matrix,
+both cohorts, accounting, controls and range qualifications must be rerun on
+the actual implementation before making a performance selection. A favorable
+manual LLVM result is not substituted for these obligations.
+
+The [focused implementation tests](../../../compiler/src/backend/tests/terminal_consumption.rs)
+now pass: four renamed helpers select the rewrite, four accepted near-matches
+keep ordinary lowering, and an independent native oracle checks 507 cases in
+each lowering mode. These include owner identity and callback/release order,
+retained prefixes, wrapped Ring heads, zero-stride logical indices beyond
+`i64::MAX`, and an observable intermediate-length case that must retain the
+original algorithm. Wrong release order, a skipped release and changed
+callback/release interleaving each fail their distinct oracle. The same oracle
+and all three faults first passed against the frozen ordinary compiler in both
+modes. Candidate native construction took 1.716 s and execution 1.268 s; the
+shared gate-profile test build took 72.267 s, followed by ten passing focused
+tests across six filtered runs in 9.388 s, including behavior-hint and floor
+controls. An earlier 104.980 s test build was followed by fixture-authoring repairs:
+noncanonical final whitespace, an invalid copy-value swap subsequently replaced
+by an explicit zero-byte `nocopy` owner, and incomplete C-link setup. Those
+repairs are test-authoring costs, not compiler failures; the separately found
+entryless-library emission defect has its own regression. Full family checks,
+accounting, final native-code inspection, performance comparison and the
+canonical gate remain outstanding for this implementation candidate.
+
 The reassessment and first Vector trial below use the merged PR #70 baseline,
 `36be8784e84a26d34bc24668babd789e0f4c96fb`, kernel v0.60, and their stated
 subsequent implementation revisions. The Box-placement and consumption

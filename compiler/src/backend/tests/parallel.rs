@@ -2278,6 +2278,59 @@ fn pinned(levels: u8) -> crate::RecursionBudget {
     crate::RecursionBudget::Pinned(std::num::NonZeroU8::new(levels).expect("a positive budget"))
 }
 
+#[test]
+fn function_actual_hints_cover_recursive_budget_entries_and_worlds() {
+    let source = br#"fn fold(depth: u64, seed: &u64) -> result: u64 reads(seed) {
+  if depth == 0_u64 {
+    return deref(seed);
+  }
+  let below = depth - 1_u64;
+  let left = fold(depth: below, seed: seed);
+  let right = fold(depth: below, seed: seed);
+  return left +wrap right;
+}
+
+fn invoke<fn work(depth: u64, seed: &u64) -> result: u64 reads(seed)>(depth: u64, seed: &u64) -> result: u64 reads(seed) {
+  return work(depth: depth, seed: seed);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let seed = 3_u64;
+  let total = invoke::<fn fold>(depth: 2_u64, seed: &seed);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for budget in [crate::RecursionBudget::RuntimeDerived, pinned(2)] {
+        let module = super::emit_lowered(
+            source,
+            crate::OverlapLowering::OnWithRecursionBudget {
+                budget,
+                maximum_scalar_leaf_operations: Some(16),
+                sequential_refusal: false,
+            },
+        );
+        for symbol in ["@wf_fold", "@wf__par_budget_fold", "@wf__par_seq_fold"] {
+            let definitions = module
+                .lines()
+                .filter(|line| line.starts_with("define ") && line.contains(&format!(" {symbol}(")))
+                .collect::<Vec<_>>();
+            assert_eq!(definitions.len(), 1, "{symbol}: {definitions:?}");
+            let header = definitions[0];
+            assert!(
+                header.split_whitespace().any(|part| part == "inlinehint"),
+                "{header}"
+            );
+            assert!(!header.contains("alwaysinline"), "{header}");
+            assert!(!header.contains("noinline"), "{header}");
+        }
+        assert_eq!(
+            module.contains("call i64 @wf__par_recursion_budget()"),
+            budget == crate::RecursionBudget::RuntimeDerived,
+            "the ordinary entry preserves the existing budget policy"
+        );
+    }
+}
+
 /// Self/mutual budget families and rejecting a task must compute every leaf.
 /// Sequential clones remove descendant attempts without changing result storage.
 /// A deferred granted root also checks that its callback spends a level of the

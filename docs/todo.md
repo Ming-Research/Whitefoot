@@ -815,6 +815,53 @@ rarely insert at the same place.
   merely to make a stale target pass. Defer that port because the practical
   Rust/C++ comparison does not select a historical candidate.
 
+- **Runtime-content swap exchanges only headers, losing the allocation extent.**
+  [OP-11 and TYPE-9](../spec/kernel-spec.md) admit the implicit `swap` instance
+  over two runtime `Slots` contents; no runtime-content local or move is needed.
+  The following sequence in a pure entry is accepted by both `--check` and
+  `--emit-llvm` with frozen compiler SHA-256
+  `e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`:
+
+  ```wf
+  let empty = box_slots_new::<u64>(capacity: 0_u64);
+  let full = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &full.inner, value: 7_u64);
+  swap(first: &empty.inner, second: &full.inner);
+  if empty.inner.len > 0_u64 {
+    let observed = empty.inner[0_u64];
+  }
+  ```
+
+  [Swap lowering](../compiler/src/lowering/builder/prelude.rs) emits two loads
+  and two stores of `{ i64, i64, [0 x i64] }`, exchanging only the descriptor.
+  Both Box pointers remain unchanged: the exchanged length permits an
+  eight-byte read at offset 16 in the original 16-byte empty allocation.
+  This invalid read was identified in emitted IR; no native execution of the
+  zero-capacity witness occurred. This is a lowering correctness defect,
+  separate from the whole-Box swap measure-fact gap below.
+
+  Assess retaining the owner slot in inferred runtime-content references and
+  resolving the backing on each use, so content swap can exchange owner
+  pointers. This candidate must preserve earlier same-path aliases under
+  REF-2, reference joins and captures, and every measure, index, transfer,
+  growth, release and admitted call-ABI consumer; rewriting only a direct
+  swap call is insufficient. Written `&Slots<u64>` user parameters remain
+  outside TYPE-9 admission. A separate helper taking two
+  `&Box<Array<Box<u64>>>` parameters, retaining an alias to the first `.inner`,
+  swapping the contents and reading through that alias is also source-accepted
+  by the same frozen compiler (`--check` exit 0), but `--emit-llvm` exits 1 with
+  `Lowering: InvalidCheckedProgram` and produces no LLVM bytes. Its inert main
+  does not construct or execute those owning Arrays. Repair and audit runtime
+  Array content lowering separately; do not confuse its unsupported lowering
+  with the Slots descriptor-only miscompilation. Require source-admission
+  controls, unequal capacities,
+  same-place swaps, live aliases, nested/linear ownership, zero-stride and
+  aligned payloads, and capture/linked-ABI checks. Use a padded or checked
+  allocator oracle before executing the cap0 witness. Repair lowering without
+  narrowing accepted source or selecting shared empty backing. Defer only
+  until the current Vector candidate validation finishes; reopen before any
+  shared-empty optimization.
+
 ## Parallel lowering and runtime
 
 - **Validate reuse of selected-target element layouts during emission.**

@@ -13,6 +13,7 @@ mod scalar_grain;
 mod split;
 mod storage;
 mod targets;
+mod terminal_consumption;
 mod work;
 
 use crate::CheckedProgram;
@@ -186,16 +187,19 @@ pub(crate) fn lower_checked_from(
                 function_results: &function_results,
                 synthesis: &synthesis,
             };
-            lower_function(
+            let mut lowered = lower_function(
                 function,
+                &checked.data.functions,
                 index,
                 &symbols[index],
                 context,
                 permission.and_then(|table| table.of(function.id)),
                 overlap,
-            )
+            )?;
+            lowered.function_actual = variant.function_actual;
+            Ok(lowered)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, LoweringFailure>>()?;
     #[cfg(test)]
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
@@ -417,6 +421,7 @@ fn lower_nominals(
 
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
+    functions: &[crate::semantic::CheckedFunction],
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -498,7 +503,7 @@ fn lower_function<'program>(
     if let Some(body) = &function.body {
         if uninhabited {
             builder.terminate(IrTerminator::Unreachable)?;
-        } else {
+        } else if !builder.lower_terminal_consumption(function, functions)? {
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
@@ -781,6 +786,7 @@ impl<'program> IrBuilder<'program> {
             name,
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
+            function_actual: false,
             source_signature: None,
             source_calls: self.source_calls,
             result: self.result,

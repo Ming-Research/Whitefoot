@@ -858,6 +858,9 @@ pub enum IrOperation {
     /// One discharged source subscript read of a run [OP-4, WIN-1]: the
     /// offset is a logical one and the storage read is slot
     /// `(head + i) mod cap`. See [`Self::ArrayIndex`] for the discharge.
+    /// A selected closed owned-consumption region can also generate a read:
+    /// its entry length and guarded cursor establish the same bounds without
+    /// inventing a source proof receipt.
     RunIndex {
         run: IrValueId,
         offset: IrValueId,
@@ -876,6 +879,15 @@ pub enum IrOperation {
     RunTaken {
         row: IrBoundary,
         run: IrValueId,
+    },
+    /// Publish the retained length after a selected closed forward-owned
+    /// consumption region. Its ordinary calls have consumed exactly the
+    /// suffix in logical order; no callback can observe this window, and the
+    /// generated empty edge bypasses this operation. Capacity and head stay
+    /// unchanged. This is a lowering operation, not a source storage row.
+    RunConsumeFinish {
+        run: IrValueId,
+        retained: IrValueId,
     },
     /// [OP-10] the one shift `insert_at` and `remove_at` each perform over
     /// `window.filled`, followed by the boundary move that shift makes room
@@ -1459,6 +1471,11 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
+    /// This concrete definition is supplied as a function-kind actual by an
+    /// emitted instance. It remains one definition when ordinary callers
+    /// also use it. The backend may prefer ordinary inlining; this fact is
+    /// neither a size/termination promise nor a different callable ABI.
+    pub(crate) function_actual: bool,
     /// Checked source modes, or `None` for a compiler-synthesized function.
     /// Internal transfer contracts must not be invented from representation.
     pub(crate) source_signature: Option<IrSourceSignature>,
@@ -1498,6 +1515,10 @@ impl IrFunction {
 
     pub(crate) const fn source_signature(&self) -> Option<&IrSourceSignature> {
         self.source_signature.as_ref()
+    }
+
+    pub(crate) const fn is_function_actual(&self) -> bool {
+        self.function_actual
     }
 
     pub(crate) fn source_calls(&self) -> &[IrSourceCall] {

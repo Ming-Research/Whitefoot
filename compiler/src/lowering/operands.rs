@@ -121,6 +121,7 @@ macro_rules! operation_operands {
             }
             IrOperation::ContainerMeasure { container, .. } => vec![$value(container)],
             IrOperation::RunIndex { run, offset, .. } => vec![$value(run), $value(offset)],
+            IrOperation::RunConsumeFinish { run, retained } => vec![$value(run), $value(retained)],
             IrOperation::RunBoundary { run, value, .. } => std::iter::once($value(run))
                 .chain(value.$iter().map($value))
                 .collect(),

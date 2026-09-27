@@ -914,6 +914,138 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
+/// A binding-only edit changes the hint on the selected concrete definition,
+/// including its fragment key material, even though that definition's source
+/// stays fixed. An entry which never reaches the binding stays unhinted.
+#[test]
+fn function_actual_hints_follow_imported_bindings_and_cached_entry_scope() {
+    const GRAPH: &[u8] = b"pkg::lib: [];\npkg: [pkg::lib, std::fs, std::io, std::process, std::text];\n\nentry bound = pkg::bound;\n\nentry plain = pkg::plain;\n";
+    const INTERFACE: &[u8] = br#"public interface Convert {
+  fn convert(value: u8) -> result: u8 pure;
+}
+
+public fn apply<interface Convert>(value: u8) -> result: u8 pure doc "Applies the supplied conversion.";
+
+public fn first(value: u8) -> result: u8 pure doc "Preserves the first value.";
+
+public fn second(value: u8) -> result: u8 pure doc "Preserves the second value.";
+"#;
+    const LIBRARY: &[u8] = br#"fn apply<interface Convert>(value: u8) -> result: u8 pure {
+  return Convert::convert(value: value);
+}
+
+fn first(value: u8) -> result: u8 pure {
+  return value;
+}
+
+fn second(value: u8) -> result: u8 pure {
+  return value;
+}
+"#;
+    const ROOT_INTERFACE: &[u8] = br#"public fn bound() -> status: std::process::ExitStatus pure doc "Uses the supplied conversion.";
+
+public fn plain() -> status: std::process::ExitStatus pure doc "Uses ordinary calls only.";
+"#;
+    const ROOT: &str = r#"binding Selected : pkg::lib::Convert {
+  convert = pkg::lib::first;
+}
+
+binding Forwarded : pkg::lib::Convert {
+  convert = Selected::convert;
+}
+
+fn forward<interface pkg::lib::Convert>(value: u8) -> result: u8 pure {
+  return pkg::lib::apply::<pkg::lib::Convert>(value: value);
+}
+
+fn bound() -> status: std::process::ExitStatus pure {
+  let selected = forward::<Forwarded>(value: 3_u8);
+  let one = pkg::lib::first(value: selected);
+  let two = pkg::lib::second(value: one);
+  return std::process::exit_status(code: two);
+}
+
+fn plain() -> status: std::process::ExitStatus pure {
+  let one = pkg::lib::first(value: 3_u8);
+  let two = pkg::lib::second(value: one);
+  return std::process::exit_status(code: two);
+}
+"#;
+    let directory = CacheDirectory::new("function-actual-hints");
+    let cache = directory.open();
+    let graph = crate::form_module_graph(
+        SourceInput::new("modules.wfg", GRAPH),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let build = |root: &str, entry: &str| {
+        let records = [
+            ("lib/module.wfm", INTERFACE),
+            ("lib/apply.wf", LIBRARY),
+            ("module.wfm", ROOT_INTERFACE),
+            ("main.wf", root.as_bytes()),
+        ];
+        let inputs = module_inputs(&graph, &records);
+        let cached = super::build_module_entry(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            Some(&cache),
+        )
+        .expect("the cached entry builds");
+        let cold = super::compile_module_program(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+        )
+        .expect("the cold entry builds");
+        assert_eq!(cached.0, cold, "cached and cold hints agree");
+        cached
+    };
+    let hinted = |module: &crate::LlvmModule, name: &str| {
+        module
+            .lines()
+            .find(|line| line.starts_with("define ") && line.contains(&format!("@wf_{name}(")))
+            .expect("both direct functions are emitted")
+            .contains(" inlinehint ")
+    };
+    let (bound, reused) = build(ROOT, "bound");
+    assert!(!reused);
+    assert!(hinted(&bound, "lib.first"));
+    assert!(!hinted(&bound, "lib.second"));
+    assert!(build(ROOT, "bound").1);
+    let (plain, reused) = build(ROOT, "plain");
+    assert!(!reused);
+    assert!(!hinted(&plain, "lib.first"));
+    assert!(!hinted(&plain, "lib.second"));
+    let edited = ROOT.replace("convert = pkg::lib::first;", "convert = pkg::lib::second;");
+    let (changed, reused) = build(&edited, "bound");
+    assert!(!reused, "the binding context invalidates the entry cache");
+    assert!(!hinted(&changed, "lib.first"));
+    assert!(hinted(&changed, "lib.second"));
+    assert!(build(&edited, "bound").1);
+    assert!(
+        build(ROOT, "bound").1,
+        "reverting reuses the original module"
+    );
+    let fragment = |module: &crate::LlvmModule| {
+        crate::split_module(module, crate::FragmentGranularity::Function)
+            .expect("module splits")
+            .into_iter()
+            .find(|fragment| fragment.contains("define i8 @wf_lib.first("))
+            .expect("the first definition has a fragment")
+    };
+    assert_ne!(
+        super::content_digest(fragment(&bound).as_bytes()),
+        super::content_digest(fragment(&changed).as_bytes()),
+        "native fragment cache keys include the changed hint"
+    );
+}
+
 /// [FN-2, MOD-8] a rejection raised while checking a concrete instance
 /// stays at the template's source, in the module that owns it, and names
 /// the call in another module that requested the instance. Here the

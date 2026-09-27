@@ -505,3 +505,65 @@ written recursive components. The finite `first<second<stop>>` counterexample
 is deliberately refused by this selected structural rule, while its acyclic
 variant is admitted. This is a rule-compliance repair, not evidence that that
 particular program would instantiate forever.
+
+## Ordinary inlining hints for supplied functions
+
+The current compiler candidate gives ordinary LLVM `inlinehint` to a concrete
+function definition supplied as a function-kind actual by an emitted instance.
+This extends the [Vector callback investigation](../../experiments/container-representation/vector-library/RESULTS.md#ordinary-behavior-hints-combined-k-gains-without-useful-cell-regression)
+into the ordinary compiler path; the raw-artifact experiment motivates a
+candidate, not a selected policy for every family. FN-2 and FN-5 supply a
+general category with concrete direct targets, but imply neither small bodies,
+frequent calls, termination nor a performance benefit from inlining.
+In that artifact the wide callback's observed cost remains 450 while the
+ordinary-hint threshold changes from 375 to 487; original-source F is unchanged.
+The combined forward-consumption/hint arm gains useful cells but regresses the
+three wide empty-suffix controls. Those diagnostic limitations remain part of
+the evidence; this implementation's cost is still unmeasured.
+
+The physical call inventory reads the checked instance's `function_actuals`
+identities after group expansion, imported resolution and forwarding. Only
+instances in the build's emitted inventory contribute. Repeated bindings name
+one physical definition; if ordinary calls also reach it, they see that same
+hint. Merely checking an unrelated instance does not affect a selected entry,
+and the hint does not make an otherwise uncalled definition reachable. Large,
+recursive and mixed-use actuals remain subject to the host inliner's ordinary
+cost and legality decisions. Bodyless linked source declarations receive no
+new hint; declarations synthesized into fragments from hinted definitions
+retain the definition's attribute.
+
+The provenance travels on the existing typed function into structured LLVM
+headers. One physical function identity can emit ordinary, destination-form,
+budgeted and sequential-world symbols; every such definition retains that
+identity's hint. A register-returned actual's entry and destination-form body
+both receive it. None is `alwaysinline`: the candidate preserves the existing
+body/entry structure and pipeline and requests no early mandatory inlining.
+Header checks alone do not establish LLVM's actual pass order or resulting
+body optimization; the production native audit must still inspect them.
+Source acceptance, bodies,
+call ABI, linkage, arithmetic and alias facts are unchanged. Structured
+fragment declarations retain the attribute, and serialized module headers and
+fragment bytes change with it. Entry-cache input already includes the selected
+composition's records and entry; a changed binding context must rebuild that
+module, while the fragment's changed bytes select a different native object.
+
+The discriminating checks are raw actuals, named groups, imported forwarding,
+repeated concrete bindings, mixed ordinary use, nonactual controls, selected
+entry scope, and cache reuse across a binding-only context change.
+
+All four `function_actual_hints` tests and the existing linked-native behavior-actual
+control passed. They cover the ordinary and `.body` headers, recursion-budget
+entry and sequential worlds, bodyless linked-declaration exclusion, mixed and
+forwarded bindings, physical deduplication, structured fragments and cache
+selection. These results establish the tested metadata and linked-call behavior;
+they do not establish LLVM optimization order or performance.
+
+The compiled candidate still owes the complete Vector comparison and functional evidence
+from the other container families. Cross-family performance, code growth and
+large/recursive actuals remain open costs. Reject or revise the heuristic if
+the production comparison loses its claimed benefit or exposes material
+regressions; a successful Vector artifact alone does not settle that question.
+The pending [compiler amendment](../../../design/amendments/function-actual-inlining.md)
+records this provisional choice. A global threshold, forced inlining,
+name-based selection and changed export visibility are separate alternatives,
+not part of this candidate.

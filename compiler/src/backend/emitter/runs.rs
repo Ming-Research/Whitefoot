@@ -335,6 +335,39 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 
+    /// Complete a closed owned-consumption region after all ordinary consumer
+    /// calls returned. The builder's empty edge never reaches this store.
+    pub(super) fn emit_run_consume_finish(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        run: IrValueId,
+        retained: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Unit
+            || !matches!(self.value_type(run), Some(IrType::Address(_)))
+            || self.value_type(retained)
+                != Some(IrType::Integer {
+                    width: 64,
+                    signed: false,
+                })
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let run_type = self.run_value_type(run)?;
+        let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+        let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let length_address =
+            self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
+        writeln!(
+            self.output,
+            "  store i64 {}, ptr {length_address}",
+            self.value_name(retained)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_constant(result, ty, IrConstant::Unit)
+    }
+
     /// [OP-10] capture the old physical slot, move the descriptor and return
     /// its element. Descriptor words and a nonempty element's bytes are
     /// disjoint in both Slots and Ring; a zero-sized element touches no bytes.
