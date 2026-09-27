@@ -1,0 +1,254 @@
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+index 8f6a8361f..c343ccc23 100644
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -2063,6 +2063,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 target_domain,
+             } => self.emit_run_index(result, ty, *run, *offset, *target_domain),
+             IrOperation::RunTaken { row, run } => self.emit_run_taken(result, ty, *row, *run),
++            IrOperation::RunReplaceBackFront { run, value } => {
++                self.emit_run_replace_back_front(result, ty, *run, *value)
++            }
+             IrOperation::RunConsumeFinish { run, retained } => {
+                 self.emit_run_consume_finish(result, ty, *run, *retained)
+             }
+diff --git a/compiler/src/backend/emitter/places.rs b/compiler/src/backend/emitter/places.rs
+index c0a8eca4a..2d48a6409 100644
+--- a/compiler/src/backend/emitter/places.rs
++++ b/compiler/src/backend/emitter/places.rs
+@@ -116,6 +116,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 self.emit_run_index(result, ty, *run, *offset, *target_domain)?;
+             }
+             IrOperation::RunTaken { row, run } => self.emit_run_taken(result, ty, *row, *run)?,
++            IrOperation::RunReplaceBackFront { run, value } => {
++                self.emit_run_replace_back_front(result, ty, *run, *value)?;
++            }
+             IrOperation::RunBoundary { row, run, value } => {
+                 self.emit_run_boundary(result, ty, *row, *run, *value)?;
+             }
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+index a998fe537..88e77d2d0 100644
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -396,6 +396,43 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         self.load_place_result(result, ty, &format!("%{element_pointer}"))
+     }
+ 
++    /// Scratch-only fused Ring operation: return the old back element, write
++    /// a replacement at the new front, and leave length unchanged.
++    pub(super) fn emit_run_replace_back_front(
++        &mut self,
++        result: IrValueId,
++        ty: IrType,
++        run: IrValueId,
++        value: IrValueId,
++    ) -> Result<(), BackendFailure> {
++        if !matches!(self.value_type(run), Some(IrType::Address(_))) {
++            return Err(BackendFailure::InvalidIr);
++        }
++        let run_type = self.run_value_type(run)?;
++        let Some(shape) = RunShape::of(run_type) else {
++            return Err(BackendFailure::InvalidIr);
++        };
++        if shape.shape != IrWindowShape::Ring
++            || shape.element_type(self.program)? != ty
++            || self.value_type(value) != Some(ty)
++        {
++            return Err(BackendFailure::InvalidIr);
++        }
++        // At full capacity the old back and new front can be one slot, so
++        // capture the result before storing the replacement.
++        let old_physical = self.boundary_slot(shape, run_type, run, IrBoundary::TakeBack)?;
++        let old_pointer = self.element_pointer(result, shape, run_type, run, &old_physical)?;
++        self.load_place_result(result, ty, &format!("%{old_pointer}"))?;
++        let new_physical = self.boundary_slot(shape, run_type, run, IrBoundary::PlaceFront)?;
++        let new_pointer = self.element_pointer(result, shape, run_type, run, &new_physical)?;
++        self.store_value_at(value, &format!("%{new_pointer}"))?;
++        let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
++        let field = shape.head_field().ok_or(BackendFailure::InvalidIr)?;
++        let head = self.aggregate_field_pointer(run_type, &destination, field as usize)?;
++        writeln!(self.output, "  store i64 {new_physical}, ptr {head}")
++            .map_err(|_| BackendFailure::TextEmission)
++    }
++
+     /// [OP-10] place an element, then move the boundary.
+     pub(super) fn emit_run_boundary(
+         &mut self,
+diff --git a/compiler/src/ir.rs b/compiler/src/ir.rs
+index 8edc99416..2e2aa3752 100644
+--- a/compiler/src/ir.rs
++++ b/compiler/src/ir.rs
+@@ -892,6 +892,11 @@ pub enum IrOperation {
+         row: IrBoundary,
+         run: IrValueId,
+     },
++    /// Scratch-only fused back removal plus front replacement for a Ring.
++    RunReplaceBackFront {
++        run: IrValueId,
++        value: IrValueId,
++    },
+     /// Publish the retained length after a selected closed forward-owned
+     /// consumption region. Its ordinary calls have consumed exactly the
+     /// suffix in logical order; no callback can observe this window, and the
+diff --git a/compiler/src/lowering.rs b/compiler/src/lowering.rs
+index 4406701e4..267330ae4 100644
+--- a/compiler/src/lowering.rs
++++ b/compiler/src/lowering.rs
+@@ -360,7 +360,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
+ /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
+ /// version has not built can never become a module that names a symbol
+ /// nothing defines.
+-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 20] = [
++pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 21] = [
+     // [OP-13] the nine construction functions.
+     "box_new",
+     "array_filled",
+@@ -381,6 +381,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 20] = [
+     "grow",
+     "place_front",
+     "take_front",
++    "replace_back_front",
+     // [OP-11] `swap` and [OP-14] `free_empty`.
+     "swap",
+     "free_empty",
+diff --git a/compiler/src/lowering/builder/prelude.rs b/compiler/src/lowering/builder/prelude.rs
+index 4cf4f5290..da5ea9057 100644
+--- a/compiler/src/lowering/builder/prelude.rs
++++ b/compiler/src/lowering/builder/prelude.rs
+@@ -50,6 +50,7 @@ impl IrBuilder<'_> {
+             "place_front" => self.row_place(IrBoundary::PlaceFront),
+             "take_back" => self.row_take(IrBoundary::TakeBack),
+             "take_front" => self.row_take(IrBoundary::TakeFront),
++            "replace_back_front" => self.row_replace_back_front(),
+             "insert_at" => self.row_insert_at(),
+             "remove_at" => self.row_remove_at(),
+             "append" => self.row_append(),
+@@ -337,6 +338,20 @@ impl IrBuilder<'_> {
+         self.return_value(taken)
+     }
+ 
++    fn row_replace_back_front(&mut self) -> Result<(), LoweringFailure> {
++        let [window, value] = self.row_parameters()?;
++        let (_, element, _) = self.window_parameter(window)?;
++        let element_type = self.element_type(element)?;
++        if self.value_type(value)? != element_type || self.result != element_type {
++            return Err(LoweringFailure::InvalidCheckedProgram);
++        }
++        let replaced = self.define(
++            element_type,
++            IrOperation::RunReplaceBackFront { run: window, value },
++        )?;
++        self.return_value(replaced)
++    }
++
+     /// `insert_at(window, index, value)`: one shift of `window.filled` up by
+     /// one from `index`, then the placement at the opened slot and the
+     /// boundary move [OP-10].
+diff --git a/compiler/src/lowering/operands.rs b/compiler/src/lowering/operands.rs
+index 4e6341ee5..255ab09c0 100644
+--- a/compiler/src/lowering/operands.rs
++++ b/compiler/src/lowering/operands.rs
+@@ -128,6 +128,9 @@ macro_rules! operation_operands {
+             IrOperation::RunTaken { run, .. } | IrOperation::SliceFromRun { run } => {
+                 vec![$value(run)]
+             }
++            IrOperation::RunReplaceBackFront { run, value } => {
++                vec![$value(run), $value(value)]
++            }
+             IrOperation::RunShift { run, index, .. } => vec![$value(run), $value(index)],
+             IrOperation::RunInsert { run, index, value } => {
+                 vec![$value(run), $value(index), $value(value)]
+diff --git a/compiler/src/prelude.rs b/compiler/src/prelude.rs
+index b35159a84..351dced87 100644
+--- a/compiler/src/prelude.rs
++++ b/compiler/src/prelude.rs
+@@ -223,6 +223,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
+   ensures deref(window).head >= 0_u64;
+   ensures deref(window).head <= deref(window).cap;
+ };
++"#,
++    ),
++    (
++        "prelude/replace_back_front.wf",
++        PreludeSource::Function,
++        r#"fn replace_back_front<W, T>(window: &W, value: T) -> removed: T writes(window) contract {
++  requires deref(window).len > 0_u64;
++  ensures deref(window).len == deref(entry(window)).len;
++  ensures deref(window).cap == deref(entry(window)).cap;
++};
+ "#,
+     ),
+     (
+diff --git a/compiler/src/semantic/check/expressions/calls/user.rs b/compiler/src/semantic/check/expressions/calls/user.rs
+index 6f20edba9..a543964be 100644
+--- a/compiler/src/semantic/check/expressions/calls/user.rs
++++ b/compiler/src/semantic/check/expressions/calls/user.rs
+@@ -1541,13 +1541,14 @@ impl<'unit> DeclarationInventory<'unit> {
+         entries: &[SubstitutedEntry],
+         bindings: &mut HashMap<DeclarationId, LocalBinding>,
+     ) -> Result<(), CheckStop> {
+-        const BOUND_ENDING_ROWS: [&str; 7] = [
++        const BOUND_ENDING_ROWS: [&str; 8] = [
+             "take_back",
+             "remove_at",
+             "append",
+             "split_off",
+             "place_front",
+             "take_front",
++            "replace_back_front",
+             "grow",
+         ];
+         let prelude = self.tree.is_prelude_node(signature.node)?;
+diff --git a/compiler/src/semantic/check/generics/operands.rs b/compiler/src/semantic/check/generics/operands.rs
+index 520891b70..36aff78ff 100644
+--- a/compiler/src/semantic/check/generics/operands.rs
++++ b/compiler/src/semantic/check/generics/operands.rs
+@@ -91,7 +91,7 @@ const WINDOW_AND_ELEMENT: &[OperandParameter] = &[
+     },
+ ];
+ 
+-/// The eleven rows [OP-10], [OP-11] and [OP-14] name. Every other [PRE-1]
++/// The twelve rows [OP-10], [OP-11] and [OP-14] name. Every other [PRE-1]
+ /// row, the nine construction functions [OP-13] included, writes its
+ /// arguments explicitly under [FN-2].
+ const OPERAND_ROWS: &[OperandRow] = &[
+@@ -174,6 +174,12 @@ const OPERAND_ROWS: &[OperandRow] = &[
+         admitted: AdmittedShapes::Ring,
+         parameters: WINDOW_AND_ELEMENT,
+     },
++    OperandRow {
++        name: "replace_back_front",
++        rule: SemanticRule::Op10,
++        admitted: AdmittedShapes::Ring,
++        parameters: WINDOW_AND_ELEMENT,
++    },
+     OperandRow {
+         name: "swap",
+         rule: SemanticRule::Op11,
+@@ -195,7 +201,7 @@ const OPERAND_ROWS: &[OperandRow] = &[
+ ];
+ 
+ impl<'unit> DeclarationInventory<'unit> {
+-    /// Whether this template is one of the eleven rows whose type parameters
++    /// Whether this template is one of the twelve rows whose type parameters
+     /// an operand supplies [OP-10, OP-11, OP-14].
+     ///
+     /// The spelling decides it because [TYPE-6] gives the whole closed unit
+diff --git a/research/experiments/container-representation/deque-library/deque-library.wf b/research/experiments/container-representation/deque-library/deque-library.wf
+index 43af8a12f..cb94c6d58 100644
+--- a/research/experiments/container-representation/deque-library/deque-library.wf
++++ b/research/experiments/container-representation/deque-library/deque-library.wf
+@@ -152,11 +152,10 @@ fn deque_library_trace<interface DequeElement<T>>(count: u64, rounds: u64, seed:
+         invariant length: values.inner.len == count,
+         invariant capacity: values.inner.cap == count
+       ) {
+-        let removed = deque_pop_back::<T>(values: &values);
+-        DequeElement::accept(env: &digest, value: move removed);
+         let next = base +wrap index;
+         let value = DequeElement::make(seed: next);
+-        let length = deque_push_front::<T>(values: &values, value: move value);
++        let removed = replace_back_front(window: &values.inner, value: move value);
++        DequeElement::accept(env: &digest, value: move removed);
+       }
+     }
+   } else {

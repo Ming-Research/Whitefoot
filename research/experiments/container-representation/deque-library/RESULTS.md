@@ -1208,3 +1208,33 @@ code criterion passes, the full qualified ecosystem matrix must show no useful
 cell regression; otherwise the fused lowering is rejected and all scratch
 compiler/source changes are restored. This experiment does not select a new
 prelude operation or amend the specification.
+
+The scratch lowering passed the code and oracle screens. It adds no call or
+payload transfer in the scalar reverse loop: the baseline optimized block
+loads the old length/head/capacity around two endpoint operations, whereas the
+candidate loads length and capacity once, captures the old back slot, writes
+the replacement front slot, and stores only the new head. The candidate reads
+the old value before the store, so the full-capacity same-slot case is covered.
+Both images passed 576 configurations and 2,592 executions, including the
+checksum and cleanup refusal controls; the 294 accounting rows have the same
+request, byte, peak and release ledger as baseline.
+
+The matched O3 matrix used the same work (`1048576`), seeds, seven samples,
+two cohorts and native controls. Baseline qualified as 14 pass, 5 deficit and
+5 inconclusive cells; the candidate qualified as 17 pass, 2 deficit and 5
+inconclusive. The three scalar 8-byte reverse-churn cells moved from
+`1.412/1.406`, `1.409/1.409` and `1.387/1.389` times C++ to
+`0.513/0.510`, `0.512/0.510` and `0.508/0.507` (cohorts 0/1). Scalar growth
+deficits remain; one wide reverse cell became inconclusive from sample overlap,
+not a measured slowdown. Baseline and candidate samples are retained in
+`ecosystem-replace-back-front-baseline-samples.csv` and
+`ecosystem-replace-back-front-candidate-samples.csv` (SHA-256
+`b731c9660942d0dc1e252840a191c709641751e9983d440871e47eb79c5965b2` and
+`7713699d175a3ca4b041e247e1df617f5eefae9d1e98818512aeb50394d20`), with the
+scratch source/compiler patch in `deque-replace-back-front.patch`.
+
+This is a measured floor, not a production change: it adds a compiler-owned
+prelude row and changes the witness call shape. The patch is therefore kept as
+research evidence and restored from the worktree. A production choice would
+need either an owner-selected compound deque operation or a general checked
+fusion rule; neither is silently selected here.
