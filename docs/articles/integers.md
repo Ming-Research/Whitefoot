@@ -3,8 +3,7 @@
 What does `a + b` mean for two 8-bit values that add up to 260?
 
 ```text
-C          unsigned char operands are promoted to int, so a + b is 260;
-           for signed int an overflow is undefined behavior
+C          the operands are promoted to int, so a + b is 260, an int
 Rust       a panic in a debug build; 4 in a release build, unless overflow
            checks are turned on
 Whitefoot  the program does not compile
@@ -232,7 +231,8 @@ does not exist.
 | Saturation, shifts and the other lowerings | OP-8 |
 
 Every program in this article is accepted, or rejected as shown, by the
-compiler at commit `e041772d8`. The two programs with a `main` were also
-built and run, and both exit with 0. The IR is `whitefootc --emit-llvm`
+compiler at commit `e041772d8`. The program in section 2 was also built and
+run and exits with 0, and so do small programs, not shown, that check the
+values given in sections 3, 4 and 6. The IR is `whitefootc --emit-llvm`
 output before optimization; the fragments are compiled inside a file with
 the standard `ExitStatus` aliases and a `main`.
