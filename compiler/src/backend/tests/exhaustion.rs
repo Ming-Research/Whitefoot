@@ -111,6 +111,76 @@ fn buffer_module() -> String {
         .clone()
 }
 
+/// A library has no generated runner, even when it defines a main whose
+/// signature the runner cannot call. Its LLVM must still link to an ordinary
+/// C caller. An executable retains the standalone floor and needs no C entry.
+#[test]
+fn libraries_and_executables_supply_only_their_own_entry_dependencies() {
+    let helper = r#"fn increment(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+"#;
+    let uncallable_main = r#"fn main() -> result: u64 pure {
+  return 7_u64;
+}
+"#;
+    let executable_main = r#"fn main() -> result: unit pure {
+  return unit;
+}
+"#;
+    let caller = r#"#include <stdint.h>
+extern uint64_t wf_increment(uint64_t);
+int main(void) {
+    return wf_increment(41) != 42 || wf_increment(UINT64_MAX) != 0;
+}
+"#;
+    let cases = [
+        ("entryless", helper.to_owned(), Some(caller)),
+        (
+            "uncallable-entry",
+            format!("{helper}\n{uncallable_main}"),
+            Some(caller),
+        ),
+        ("executable", executable_main.to_owned(), None),
+    ];
+    for (name, source, caller) in cases {
+        let module = compile(source.as_bytes());
+        let directory = test_directory();
+        let llvm = directory.join("program.ll");
+        let executable = directory.join("program");
+        std::fs::write(&llvm, &module).expect("write entry-boundary module");
+        let mut command = Command::new("/usr/bin/clang");
+        command.arg("-std=c11").arg(&llvm);
+        if let Some(caller) = caller {
+            let host = directory.join("caller.c");
+            std::fs::write(&host, caller).expect("write ordinary C caller");
+            command.arg(host);
+        }
+        let built = crate::native_test_support::timed("native-build", || {
+            command
+                .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+                .arg("-o")
+                .arg(&executable)
+                .output()
+                .expect("compile the entry-boundary module")
+        });
+        assert!(
+            built.status.success(),
+            "{name}: clang rejected the emitted module:\n{}\n{module}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let observed = crate::native_test_support::timed("native-run", || {
+            Command::new(&executable)
+                .output()
+                .expect("run the entry-boundary oracle")
+        });
+        assert!(observed.status.success(), "{name}: {observed:?}");
+        assert!(observed.stdout.is_empty(), "{name}: {observed:?}");
+        assert!(observed.stderr.is_empty(), "{name}: {observed:?}");
+        std::fs::remove_dir_all(directory).expect("remove entry-boundary artifacts");
+    }
+}
+
 /// Every definition the module emits carries the probe attribute, and the
 /// group it names is the host's.
 ///

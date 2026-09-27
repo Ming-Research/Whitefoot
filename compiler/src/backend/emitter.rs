@@ -42,7 +42,7 @@ use crate::{
 };
 use cleanup::{emit_resource_drop_helpers, emit_value_cleanup, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
-use floor::floor_runtime_fallback;
+pub(crate) use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
 pub(crate) use frontier::is_recursion_budget_symbol;
 use frontier::{Grain, RecursiveFrontiers, recursion_budget_symbol};
@@ -525,11 +525,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
         text.text("\n");
         text.append(functions);
     }
-    // Unconditional, unlike the parallel runtime's: every program can run out
-    // of stack, so every module names the floor and carries its own answer for
-    // a link that does not supply one.
-    text.text("\n");
-    text.append(floor_runtime_fallback()?);
     text.text("\n");
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     Ok(LlvmModule {
