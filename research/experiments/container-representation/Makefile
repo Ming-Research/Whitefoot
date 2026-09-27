@@ -5,7 +5,7 @@ WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 .DEFAULT_GOAL := x1-observe
 
 .PHONY: check measure compiler x1-observe slab-deque-check slab-deque-measure map-native-check map-check map-measure \
-        ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+        ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-summarize
 
 # Explicit research commands, wrapped externally by the shared run-check guard.
 # Recursive calls are sequential even under an outer parallel make. Callers
@@ -22,6 +22,15 @@ ecosystem-build ecosystem-check ecosystem-account ecosystem-measure:
 	  for family in $(ECOSYSTEM_FAMILIES); do \
 	  $(MAKE) -C $$family $@ WHITEFOOTC="$(WHITEFOOTC)" ABSEIL_PREFIX="$(ABSEIL_PREFIX)"; \
 	done
+
+# Summary validation and reduction are explicit research operations too. This
+# reads the default per-family sample files; alternate runs can be supplied
+# directly as family=path arguments to the same reducer.
+ecosystem-summarize:
+	@mkdir -p .build
+	perl summarize-ecosystem.pl --self-test
+	perl summarize-ecosystem.pl --complete $(foreach family,$(ECOSYSTEM_FAMILIES),$(patsubst %-library,%,$(family))=$(family)/.build/ecosystem/measurements.csv) > .build/ecosystem-summary.csv
+	@echo 'Grouped medians and matched ratios: .build/ecosystem-summary.csv'
 
 x1-observe:
 	$(MAKE) -C x1 observe WHITEFOOTC="$(WHITEFOOTC)"

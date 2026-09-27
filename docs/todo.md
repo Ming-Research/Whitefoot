@@ -454,6 +454,19 @@ rarely insert at the same place.
   by retained reverse calls, a native-toolchain change or another material
   regression under the matched comparison.
 
+  The fresh [standard-container series](../research/experiments/container-representation/deque-library/RESULTS.md#fresh-practical-timing)
+  makes the payload distinction explicit: scalar reverse churn costs
+  2.712–2.795 times Rust VecDeque across the measured populations, while
+  wide forward/reverse traces stay within ten percent of both native deques.
+  At 4096 elements the scalar reverse gap to the source ring-loop C control
+  is only 1.172–1.185 times, so the native gap alone cannot select a compiler
+  fix. Compare modulo/index handling and the generated churn loop with
+  the same ring representation before attributing a share. The wide growth
+  trace also exposes allocation-policy tradeoffs: WF makes six requests,
+  Rust nine including six reallocations, and C++ 1572, but C++ has the lowest
+  requested-byte peak. Preserve those distinctions; this is neither an
+  isolated growth-latency result nor a physical-memory measurement.
+
 - **Slab aggregate results retain extra transfers and layout overhead.**
   The [Slab comparison](../research/experiments/container-representation/slab-library/RESULTS.md)
   separates the one-slot cell's extra word from its helper boundary: retained
@@ -499,6 +512,19 @@ rarely insert at the same place.
   interference obligations; reopen for the indexed heap composition or an
   application dominated by these paths. Do not report universal native parity
   from the large scalar queue results.
+
+  The current-module [standard-container comparison](../research/experiments/container-representation/priority-library/RESULTS.md#practical-timing-results)
+  measures ordinary O3 after the register-result change; it does not isolate
+  that change from the earlier toolchain and trace. In the qualified work-64
+  series, wide pop/push costs 2.022–2.315 times Rust BinaryHeap across the
+  measured populations. At 4096 elements it costs 1.070–1.096 times swap C
+  and 1.827–1.882 times hole C, making sifting movement a useful source
+  discriminator. Wide replacement also remains 1.264–1.371 times Rust and
+  1.240–1.297 times swap C across populations; C++'s two-repair replacement is
+  a distinct algorithm. First compare a justified WF source shape and inspect
+  optimized transfers under the same owning contract; do not subtract the
+  whole-trace controls to assign a copy or ABI percentage. Preserve both work
+  settings because extending churn materially changes setup amortization.
 
 - **Small results beyond the per-leaf register budget still use a
   destination.** A stored result returns in registers only when its scalar
@@ -586,6 +612,18 @@ rarely insert at the same place.
   The [paired samples and limits](../research/experiments/container-representation/vector-library/RESULTS.md)
   are the starting evidence, not a claim of uniform improvement.
 
+  The current-module [Rust/C++ comparison](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-practical-timing)
+  reproduces a material gap at ordinary O3: 4096-element scalar reserved/reuse
+  traces cost 2.136–2.175 times Rust Vec, and wide one-element suffix cycles
+  cost 2.843–2.865 times Rust and 2.714–2.728 times C++ std::vector. The latter
+  also costs 2.523–2.554 times the take/swap C control with matching transfer
+  order and allocation policy. All useful native comparison cells meet the
+  duration and cohort-stability criteria. This supplies a current consumer
+  for the existing lowering discriminator; it does not attribute the gap to
+  copies or select a new consumption primitive. Compare unchanged-source
+  optimized loops, callback boundaries and surviving aggregate transfers
+  before choosing a change. Keep the zero-removal overhead control unranked.
+
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
   payload clear and its local pending-window clear while preserving active
@@ -640,6 +678,15 @@ rarely insert at the same place.
   than a container-specific compiler path. Defer a change until these
   construction/consumption paths isolate its benefit; reopen when the transfers
   materially affect a measured consumer or lowering work reaches those paths.
+
+  The current-module [native-library series](../research/experiments/container-representation/ordered-library/RESULTS.md#verified-practical-run)
+  supplies that consumer without reusing the old ABI timings. At 4096 wide
+  pairs, complete construction/cleanup costs 1.71–1.76 times Rust BTreeMap
+  and 1.69–1.75 times C++ std::map, while all five wide paths cost only
+  1.03–1.13 times the source C control. Reinspect current optimized IR before
+  treating the historical node copies as surviving costs. Keep the library's
+  node layout and repair policy separate from any compiler transfer fix;
+  closeness to source C alone does not assign either a causal percentage.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
   capacity Box is one pointer to one header-first allocation; `grow` uses
@@ -1720,6 +1767,28 @@ condition under which it is taken up.
   did not establish a recurring tag-check tax. A working library does not
   close either question or imply a universal native-performance ceiling.
 
+  The qualified [current Rust/C++ comparison](../research/experiments/container-representation/map-library/RESULTS.md#size-hashing-and-follow-up-interpretation)
+  separates two present consumers. With 3584 entries in WF's 4096 buckets,
+  aligned-hash misses cost 7.17–14.65 times the three native maps, while WF
+  is faster than direct sparse C (0.76–0.79 times). Native reserve semantics
+  and capacity rounding differ; WF's wide steady backing uses 1,114,128
+  requested bytes versus about 2.17 MB for Rust/Abseil. First vary occupancy
+  in unchanged WF source and record each native capacity geometry, then test
+  a justified probing alternative. This can discriminate load policy from
+  probing/layout before choosing extra metadata, a second representation or
+  a compiler primitive. Keep requested memory and both hash series visible.
+
+  Separately, wide replacement costs 1.95–2.25 times direct C across the
+  measured populations/hash series, large wide fill/free 1.50–1.52 times,
+  and reserve 1.60–1.63 times, with matching allocation counts and bytes.
+  Large scalar fill/free is near parity and aligned wide in-place edit is
+  faster than C. These contrasts supply current inputs for unchanged-source
+  transfer/initialization/cleanup attribution; they do not reverse the
+  rejected inactive-payload candidates above. Fifteen replay comparisons
+  remain unstable and are unranked. Defer production changes until the two
+  separate discriminators preserve complete returned owners, cleanup, timing
+  and memory outcomes without relying on those unstable cells.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
@@ -1738,6 +1807,13 @@ condition under which it is taken up.
   under the existing compiler items; a different return form alone no longer
   supplies the reopening ground.
 
+  In the qualified current-module native-library series, replacement-only
+  at 256 entries costs WF/source C 0.66–0.67 for scalars but 1.41 for wide
+  values, with identical allocation records. That payload-size contrast is
+  a concrete discriminator for the existing code-generation question, not
+  evidence that either rejected insertion form should return. Use unchanged
+  source and optimized transfer/stack/loop observations before another variant.
+
 - **Ordered-map occupancy and tree choice remain workload-dependent.** The
   [reserved-storage comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#allocations-and-reserved-storage)
   records 48.6% peak reserved-slot utilization during 4096-pair bundled-tree
@@ -1753,6 +1829,17 @@ condition under which it is taken up.
   concrete index supplies its governing
   workload; reopen before choosing a default ordered representation or when
   an index is dominated by wide reserved storage or churn.
+
+  The fresh [Rust/C++ comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#requested-allocation-storage)
+  preserves the same 363-to-562 peak-node growth at fixed cardinality. Wide
+  churn peaks at 2,373,888 requested bytes versus Rust's 1,673,656,
+  std::map's 1,212,416 and Abseil's 1,453,928, and costs WF 1.53–1.58 times
+  Rust and 2.11–2.17 times std::map at 4096 entries. Small scalar costs also
+  matter: at 256 entries hit/miss costs 1.66–1.82 times Rust, although WF
+  and source C are close. Reopen the occupancy/representation discriminator
+  with both sizes and payloads; tuning only the largest wide case can hide
+  a different search and fanout tradeoff. These synthetic streams supply
+  no real-application frequency weighting and select no replacement tree.
 
 - **Channel primitive.** An ownership-transfer queue in the trusted base for
   producer/consumer pipelines and work stealing; lock-free rings are not

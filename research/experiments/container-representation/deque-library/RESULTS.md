@@ -89,11 +89,23 @@ the CSV confirms equal complete checksums within every application cell,
 balanced allocation lifetimes, and the stated peak upper bound; every C
 control's allocation columns equal Whitefoot's corresponding row.
 
-The raw `.build/ecosystem/accounting.csv` SHA-256 is
+The existing O2 normal and retained drivers also passed 432 configurations
+and 1,296 executions each, totaling 2,592 historical-control executions with
+the current module imports. Their retained-helper call checks passed. This
+requalifies those reproduction paths without adding historical-series timing.
+
+A separate scratch mutation omitted the final newly appended owner from the
+C growth loop while leaving the oracle and allocation schedule unchanged.
+The check rejected it with `independent logical-order checksum`, exit 1, at
+`variant=1 path=3 count=0 rounds=1 seed=17 wide=0`. This observes the missing
+new owner in an initially empty deque and establishes that the growth oracle
+checks the added values, beyond the generic checksum-bit corruption control.
+The scratch mutation is outside the maintained driver and adds no timing data.
+
+The preserved [allocation CSV](ecosystem-accounting.csv) SHA-256 is
 `0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`. These are requested-storage observations
-from the accounting build, not timed results. Build/check phase durations
-belong to the central [experiment record](../ECOSYSTEM.md); fresh container
-timing is pending.
+from the accounting build, separate from the timing samples below. Build/check
+phase durations belong to the central [experiment record](../ECOSYSTEM.md).
 
 At population 4096, forward churn, reverse churn and setup-cleanup have
 identical allocation columns within each implementation and payload, despite
@@ -141,6 +153,76 @@ live peak answer different questions; none is an elapsed-cost or RSS result.
 Rust's possible-overlap column is an upper bound around realloc, so its
 relationship to Whitefoot's observed old/new overlap cannot establish a
 physical-memory ratio.
+
+### Fresh practical timing
+
+The complete [timing samples](ecosystem-samples.csv) and
+[allocation observations](ecosystem-accounting.csv) are preserved beside this
+record. They serve the standard-container comparison and remain its evidence
+until it is retired or superseded with that evidence preserved. Timing source
+revision is `0c3203aa6111f14247aa950e3794e83082d4f29c`. The measurement phase
+completed in 49.435 seconds, separate from construction and correctness.
+The timing CSV has 1,680 rows and SHA-256
+`3787a2e45c30fa4bb2ab2d1f11b852d8e76b87afdc560802ad406f145230a591`.
+
+All measured cells use `ECO_WORK=1048576`, seven ranked samples per
+implementation per cohort, and separately executed warmup. An independent
+read of the raw CSV verified the complete payload/path/population/variant
+matrix, sample IDs, both cohorts, exact checksums, and the shared summarizer's
+minimum, median and maximum values. These are fresh O3 controls and native
+baselines; no historical sample supplies a denominator.
+
+At population 4096, ranges below span the two cohort medians. Ratios divide
+Whitefoot's median by the comparator's median in the same cohort: above one
+means Whitefoot took longer. Time is the complete sample, including its stated
+rounds/repetitions, setup, all consumed words and cleanup. Path names have
+different operation denominators, so neither the time nor the ratio is an
+isolated operation latency.
+
+| Payload bytes | Path | WF whole trace ms | WF / Rust | WF / C++ | WF / loop C | WF / bulk C |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | forward-churn | 1.649–1.649 | 0.979–0.983 | 1.462–1.463 | 1.228–1.230 | 1.231–1.232 |
+| 8 | reverse-churn | 3.531–3.636 | 2.712–2.795 | 1.390–1.427 | 1.172–1.185 | 1.185–1.207 |
+| 8 | growth | 5.034–5.090 | 1.266–1.271 | 1.391–1.406 | 1.385–1.400 | 1.809–1.829 |
+| 8 | setup-cleanup | 1.614–1.615 | 0.865–0.870 | 0.865–0.881 | 1.394–1.407 | 1.404–1.412 |
+| 256 | forward-churn | 32.063–32.278 | 0.988–0.993 | 0.936–0.937 | 0.980–0.984 | 1.002–1.002 |
+| 256 | reverse-churn | 31.886–32.206 | 0.993–0.998 | 0.929–0.934 | 0.995–0.998 | 0.999–0.999 |
+| 256 | growth | 81.414–82.914 | 1.014–1.019 | 0.980–0.982 | 0.991–0.996 | 1.044–1.049 |
+| 256 | setup-cleanup | 36.228–36.496 | 0.995–1.001 | 0.874–0.883 | 0.964–0.974 | 0.971–0.972 |
+
+Scalar reverse churn is the clearest native-library gap: Whitefoot takes
+2.712–2.795 times Rust and 1.390–1.427 times C++ at population 4096.
+Across all tested populations, the Rust ratio remains 2.712–2.795. The fresh
+C loop control follows Whitefoot's ring layout, allocation policy and endpoint
+composition, yet its ratio is only 1.172–1.185 at population 4096. Endpoint
+lowering and native representation/API differences are therefore separate
+follow-up questions; the present matrix does not assign either a causal
+percentage. Scalar forward churn is close to Rust (0.979–0.983 at 4096) while
+still slower than C++ (1.462–1.463), which prevents a single scalar-deque
+ranking from representing both directions.
+
+Wide forward/reverse churn stays within 2% of Rust at population 4096 and
+within 10% of C++ throughout the tested populations. The same fresh C
+controls are close as well. The 32-word ordered checksum is material work
+in these cells; closeness here is not a general native-parity or pure data
+movement result. Setup-cleanup is measured separately and is never subtracted
+from a mutation trace to create an isolated operation latency.
+
+Growth changes with population. Scalar Whitefoot/Rust is 0.614–0.621 at 16,
+1.118–1.120 at 256 and 1.266–1.271 at 4096. The wide-value ratio is
+0.875–0.880, 1.136–1.138 and 1.014–1.019 respectively. Allocation observations
+show different capacity policies and request counts, but they do not isolate
+why those elapsed ratios change. At population 4096, scalar growth also
+costs 1.385–1.400 times loop C and 1.809–1.829 times bulk C. The loop/bulk
+pair changes rebase copying while preserving the application result; a
+same-source Whitefoot discriminator is still needed before attributing its
+cost to that composition or choosing an optimization.
+
+All 24 application cells and every native/C comparator pass the recorded
+sample-length and cohort-spread criteria: no paired minimum is below 1 ms
+and no ratio changes more than 10% between cohorts. Individual outliers are
+preserved in the raw samples; stable medians do not establish tail latency.
+No deque cell needs a longer replay for the conclusions stated here.
 
 ## Historical source-composition evidence
 

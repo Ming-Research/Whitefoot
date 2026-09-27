@@ -16,7 +16,8 @@ criteria in [ECOSYSTEM.md](../ECOSYSTEM.md). The current compiler imports
 `std::collections::priority_queue` through aliases in `priority-library.wf`;
 the single source passed to `--emit-llvm` keeps the two complete-trace C ABI
 entry points. The historical data below is unchanged and is not a denominator
-for the new comparison. Current execution results are pending.
+for the new comparison. The current measurements and their limits follow the
+reproduction contract below.
 
 ```sh
 perl .github/run-check.pl priority-ecosystem-build \
@@ -94,6 +95,148 @@ Default outputs are `.build/ecosystem/measurements.csv` and
 `configuration.txt` records compiler identities and construction flags beside
 those outputs. Retain every sample when reporting per-cell cohort medians;
 short or unstable cells need a longer bounded run before a ranking claim.
+
+### Recorded practical execution
+
+The 2026-09-26 run used source revision
+`0c3203aa6111f14247aa950e3794e83082d4f29c`, the frozen current compiler and
+toolchain identities in [ECOSYSTEM.md](../ECOSYSTEM.md), and `ECO_WORK=16`.
+The recorded family build took 3.876 s, correctness execution 1.486 s,
+allocation execution 0.155 s and the two-cohort measurement phase 15.036 s.
+An immediately preceding up-to-date construction check took 0.130 s; it is
+not part of container execution time. The timing intervals sum to 10.919 s;
+the phase also includes warmup, the independent oracle and output.
+
+Both timed and accounting images passed 3,600 complete scalar/wide traces
+and eight native refusal/retry chains. The deliberately corrupted checksum
+and simulated unreleased allocation each produced the expected nonzero
+failure. The current legacy normal/retained checks also passed; their
+different optimization and allocator conditions stay outside this ranking.
+The preserved practical files are:
+
+| Artifact | Rows | SHA-256 |
+| --- | ---: | --- |
+| [ecosystem-samples.csv](ecosystem-samples.csv) | 2,100 | `8ef7d3e0380b2631ab9db3e784cd08c5c064137a2c3fad3f17d86a8dd51f5b5c` |
+| [ecosystem-replay-samples.csv](ecosystem-replay-samples.csv) | 2,100 | `537ffa3be6240ebbf02d29b8c567c7fb95686dfb39b7e153422fc65ef7fc6a90` |
+| [ecosystem-accounting.csv](ecosystem-accounting.csv) | 150 | `ed77d5bf20c8c3c0a120b052de682e7e49d5692705b1933707ff8dd16cc667fc` |
+
+In each timing series, all 300 groups contain all seven seeds. The exact
+checksums agree across implementations and cohorts for all 210 workload/seed
+pairs. The accounting checksums agree across all five implementations for each of
+its 30 workloads. Every accounted live-byte total returns to zero, and each
+allocation request is matched by a deallocation or successful reallocation.
+
+At work multiplier 16, 339 sample rows are below 1 ms. They occur in 50 of
+the 300 implementation/cohort groups: scalar replacement and scalar raw
+cleanup. A paired comparison is short when either participant has such a
+sample; this marks 12 practical queue comparison groups, all scalar
+replacement. None of the cohort median ratios differs by more than 10%:
+the largest practical discrepancy is 8.755%, and the largest including C
+controls is 8.878%. This does not erase individual outliers: 19 groups have
+maximum/minimum above 1.2, and the scalar n=4096 replacement swap-C samples
+in cohort 1 range from 0.887 ms to 42.339 ms. The corresponding WF group
+ranges from 0.956 ms to 2.886 ms. All samples remain in the CSV.
+
+The same-source `ECO_WORK=64` replay took 56.063 s, with 42.544 s in its timing
+intervals. All 2,100 sample rows exceed 1 ms; the minimum is 1.166 ms. None
+of its 120 WF/comparator pairs has a cohort ratio discrepancy above 10%;
+the maximum is 6.604%. Fourteen implementation/cohort groups still have
+maximum/minimum above 1.2. Their samples remain preserved, including the
+wide n=4096 Rust pop/push group with a 32.380 ms minimum, 34.032 ms median
+and 70.091 ms maximum. The two-cohort medians below use this longer series.
+
+The replay increases the scalar denominator to 1,048,576 items and the wide
+denominator to 262,144 items. It is an extended-work series because longer
+reserved churn changes setup amortization and the length of the evolving
+input stream. At n=4096, WF replacement changes from 3.792–3.868 to
+1.920–1.925 ns/item for scalars and from 78.674–79.102 to 52.505–53.253 for
+wide values without changing any implementation. The two work levels are
+not pooled or described as an optimization speedup. Reproduce the replay
+with `ecosystem-measure ECO_WORK=64` and a separate `ECO_SAMPLE_FILE`.
+
+### Practical timing results
+
+These are the minimum and maximum of the two cohort medians at n=4096,
+using work multiplier 64, not confidence intervals. Ratios divide medians
+within the same cohort; values above one mean WF took longer. The two C
+columns are algorithm and implementation controls. The raw-storage path is
+excluded from this table.
+
+| Bytes | Queue trace | WF ns/item | WF / Rust | WF / C++ | WF / swap C | WF / hole C |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | pop-push | 49.404–49.528 | 0.833–0.838 | 1.147–1.151 | 1.039–1.043 | 1.060–1.063 |
+| 8 | replace-top | 1.920–1.925 | 0.861–0.882 | 0.046–0.046 | 1.045–1.053 | 0.852–0.854 |
+| 8 | grow-pop | 33.027–33.503 | 1.099–1.118 | 0.937–0.948 | 1.033–1.045 | 1.058–1.075 |
+| 8 | heapify-pop | 25.017–25.125 | 0.979–0.982 | 0.844–0.880 | 1.073–1.080 | 1.091–1.094 |
+| 256 | pop-push | 293.694–300.560 | 2.270–2.315 | 2.162–2.225 | 1.070–1.096 | 1.827–1.882 |
+| 256 | replace-top | 52.505–53.253 | 1.330–1.371 | 0.401–0.402 | 1.240–1.271 | 1.314–1.316 |
+| 256 | grow-pop | 174.824–175.732 | 1.445–1.497 | 1.684–1.688 | 1.070–1.083 | 1.377–1.420 |
+| 256 | heapify-pop | 151.886–154.160 | 1.318–1.319 | 1.605–1.620 | 0.993–1.010 | 1.518–1.538 |
+
+Wide pop/push is the clearest repeated follow-up: at n=16 WF/Rust is
+2.022–2.045 and WF/C++ is 1.686–1.692; at n=256 those ratios are
+2.257–2.303 and 2.061–2.080. Wide growing fill/pop at n=256 is
+1.436–1.439 times Rust and 1.777–1.783 times C++. Wide heapify/pop at n=16
+is faster than Rust (0.919–0.920) and slower than C++ (1.212–1.236),
+so the large-population result is not a uniform library ranking.
+
+Scalar pop/push costs 1.141–1.167 times C++ at n=16 and 1.216–1.221 at
+n=256, but its Rust ratios vary with population. Scalar growing fill/pop
+is 1.142 times Rust in both cohorts at n=16 and 0.975–0.983 at n=256. Scalar
+heapify/pop at n=256 is 0.837–0.838 times Rust and 0.879–0.880 times C++.
+Scalar replacement at n=16 is 0.837–0.852 times Rust and at n=256 is
+0.828–0.830; the longer replay resolves the initial short-sample concern
+under its stated churn duration.
+
+The separate wide raw-storage control at n=4096 is 1.099–1.104 times Rust
+and 0.956–0.964 times C++. Scalar raw storage at n=16 is 1.246–1.290 times
+Rust and 0.848–0.875 times C++; at n=4096 its two native ratios span
+0.994–1.057. These are complete construction/physical-cleanup observations, not
+amounts to subtract from a heap trace or entries in the queue ranking.
+
+### Allocation results and bounded attribution
+
+At n=4096, reserved WF traces make two requests: 32,800 scalar or 1,048,608
+wide requested bytes and the same peak. Rust/C++ make one request for the
+payload alone, 32,768 or 1,048,576 bytes. WF heapify/pop and raw cleanup each
+make one request containing a 16-byte header; native equivalents request
+only the payload. The C controls match every WF count, byte total and peak.
+Growing fill/pop exposes the larger allocation-policy difference:
+
+| Bytes | Implementation | Requests | Reallocations | Requested bytes | Logical peak bytes | Realloc overlap upper bound |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | WF | 14 | 0 | 65,752 | 49,184 | 49,184 |
+| 8 | Rust | 11 | 10 | 65,504 | 32,768 | 49,152 |
+| 8 | C++ | 13 | 0 | 65,528 | 49,152 | 49,152 |
+| 256 | WF | 14 | 0 | 2,097,120 | 1,572,896 | 1,572,896 |
+| 256 | Rust | 11 | 10 | 2,096,128 | 1,048,576 | 1,572,864 |
+| 256 | C++ | 13 | 0 | 2,096,896 | 1,572,864 | 1,572,864 |
+
+WF and the C controls explicitly allocate a replacement, move the initialized
+prefix and free the old backing. Rust's allocator performs its ordinary
+reallocations; the possible transient old-plus-new footprint is unobserved
+and has only the stated upper bound. These allocation differences are
+measured, but their share of elapsed time is not isolated.
+
+The same-source swap/hole C pair keeps storage, growth, comparison and trace
+conditions aligned while changing sifting movement. WF's wide pop/push is
+1.070–1.132 times swap C across the tested populations and 1.579–1.882 times
+hole C; that makes the sift
+algorithm a useful next discriminator without assigning a causal percentage
+to whole-slot movement. A WF/hole implementation comparison and current
+optimized-code inspection are needed before selecting an optimization.
+
+Replacement has another source-visible distinction: WF performs one downward
+sift, Rust repairs through `peek_mut`, and C++ uses `pop_heap` followed by
+`push_heap`. This explains why the comparison includes different algorithms;
+it does not assign the timing ratio to a language. Wide replacement remains
+slower than Rust and both C controls, including 1.264–1.277 times Rust at
+n=256. A bounded follow-up should inspect the current optimized aggregate
+transfers and surviving public/callback boundaries with unchanged algorithms.
+The practical `.ll` files are pre-O3 compiler outputs, so their visible
+copies and calls do not establish what survives optimization. Historical
+retained O2 observations have different visibility and allocator conditions
+and are not causal percentages of the practical O3 gaps.
 
 ## Historical matched C comparison
 

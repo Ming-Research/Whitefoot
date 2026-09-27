@@ -865,6 +865,127 @@ make -C research/experiments/container-representation/ordered-library ecosystem-
 The check target includes bounded negative controls: a deliberately corrupted
 checksum and a simulated unreleased allocation must each exit unsuccessfully
 with the matching diagnostic. Raw samples, accounting, clock resolution, and
-construction identities are written under `.build/ecosystem/`. Construction,
-execution results, and the practical comparison are pending; this source
-extension makes no performance claim and changes no specification rule.
+construction identities are written under `.build/ecosystem/`.
+
+### Verified practical run
+
+The measured sources are revision
+[`0c3203aa6111`](https://github.com/mbbill/Whitefoot/tree/0c3203aa6111f14247aa950e3794e83082d4f29c).
+The [original timing rows](ecosystem-samples.csv) and
+[longer replay](ecosystem-replay-samples.csv) each preserve all 2,520
+observations, including sample 0; the
+[allocation rows](ecosystem-accounting.csv) preserve 210 separate single-trace
+observations. The ordinary and accounting images
+each passed 330 independent-oracle configurations through all seven variants
+(2,310 executions), six C tree audits, and three native-container audits.
+Both negative controls failed with their expected diagnostic and status 1.
+The current normal/retained C/WF comparison also passed after its helper
+selectors were migrated; generated aggregate-result `.body` helpers remain
+outside the retained public boundary. No specification rule changed.
+
+| Separate stage | Wall seconds |
+| --- | ---: |
+| First successful ecosystem construction | 10.766 |
+| Ordinary/accounting correctness and negative controls | 1.786 |
+| Allocation observations | 0.355 |
+| Both timing cohorts, `ECO_SCALE=16` | 40.087 |
+| Both replay cohorts, `ECO_SCALE=64` | 158.153 |
+
+All timing tuples, variant/cohort checksums, sample identities, and summary
+medians were checked against the raw rows. The shared reducer's `--complete`
+check passes for the replay as a separate work setting. Every timed allocation
+field is zero, and all 30 accounting cells match WF to source C exactly. The
+observed clock quantum was 1,000 ns. Sample 0 is excluded from the following
+medians. The complete replay clears both registered criteria: its shortest
+ranked batch is 1.647 ms, and its largest between-cohort ratio spread is
+9.5957%, for scalar count-256 hit/miss against Rust. No short or unstable
+comparison remains under those criteria.
+
+The table reports the range of the two cohort medians at 4,096 entries. WF
+time is microseconds per complete trace, including construction, ordered
+visitation, and cleanup. Each ratio is WF elapsed time divided by the named
+native library's time; values above 1 mean WF took longer. All timing results
+below use `ECO_SCALE=64`; they are not pooled with the original samples.
+
+| Pair bytes | Path | WF µs/trace | WF / Rust `BTreeMap` | WF / C++ `std::map` | WF / Abseil `btree_map` |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 16 | Build/cleanup | 319–324 | 1.15–1.16 | 1.12–1.13 | 1.30–1.33 |
+| 16 | Hit/miss | 895–913 | 0.90–0.92 | 0.96–0.98 | 1.02–1.04 |
+| 16 | Replace/edit/remove/insert | 1,606–1,608 | 0.83–0.83 | 1.15–1.18 | 0.96–0.96 |
+| 16 | Range of at most 16 keys | 916–941 | 0.92–0.95 | 0.98–1.00 | 1.18–1.20 |
+| 16 | Replace only | 615–625 | 0.96–0.97 | 1.00–1.01 | 1.06–1.09 |
+| 264 | Build/cleanup | 904–913 | 1.71–1.76 | 1.69–1.75 | 1.30–1.31 |
+| 264 | Hit/miss | 1,678–1,697 | 1.20–1.21 | 1.24–1.26 | 0.96–0.97 |
+| 264 | Replace/edit/remove/insert | 4,449–4,572 | 1.53–1.58 | 2.11–2.17 | 1.32–1.34 |
+| 264 | Range of at most 16 keys | 3,400–3,496 | 1.09–1.11 | 1.14–1.16 | 0.96–0.96 |
+| 264 | Replace only | 1,409–1,422 | 1.24–1.32 | 1.24–1.25 | 0.97–0.99 |
+
+The C controls distinguish useful follow-up questions without establishing a
+causal share. At 4,096 entries, scalar WF/source-C ratios range from 0.90 to
+0.99 across the five paths; wide ratios range from 1.03 to 1.13. WF/direct-C
+ratios are 1.11–1.56 on every wide path, while scalar WF is faster
+on churn (WF/direct-C 0.91–0.92) and slower on hit/miss (1.11–1.15) and range
+(1.27–1.29). The AVL control is substantially faster on scalar hit/miss
+(WF/AVL 1.95–1.97), but slower on scalar range (0.85–0.85) and replacement
+(0.86–0.87). Its wide construction, hit/miss and churn ratios are 1.73–1.86.
+These are whole-trace comparisons with different layouts, algorithms and
+public result ABIs, not isolated lookup or transport costs.
+
+Size changes the ranking. At 256 scalar entries, churn takes WF 1.34–1.37
+times Rust and 1.76–1.78 times Abseil, while the 4,096-entry ratios favor WF
+or are close. Scalar hit/miss at 8 entries takes WF 1.73–1.75 times Rust,
+1.77–1.80 times `std::map`, and 1.63–1.65 times Abseil. At 256 entries those
+ratios are 1.66–1.82, 2.13–2.25 and 1.48–1.51, while source C is close to WF
+(WF/source-C 0.98–1.02). Wide construction at 256 entries takes WF 2.14–2.16
+times Rust, 2.25–2.26 times `std::map`, and 2.03–2.17 times Abseil. The
+scalar/wide replacement-only contrast also persists against source C at 256
+entries: 0.66–0.67 versus 1.41 despite identical allocation records. This
+motivates a controlled emitted-code comparison;
+transfers, call visibility and inlining remain hypotheses rather than measured
+causes. No practical ratio selects a library or compiler change by itself.
+
+### Requested allocation storage
+
+Peak live requested bytes at 4,096 entries follow below. Construction rows
+also represent the hit/miss, range, and replacement-only traces; churn can
+change the tree shape. WF and source C match in every field.
+
+| Representation | Scalar build peak | Scalar churn peak | Wide build peak | Wide churn peak |
+| --- | ---: | ---: | ---: | ---: |
+| WF / source C | 182,952 | 283,248 | 1,533,312 | 2,373,888 |
+| Direct C B-tree | 137,240 | 137,616 | 1,495,040 | 1,499,136 |
+| C AVL | 163,840 | 163,840 | 1,179,648 | 1,179,648 |
+| Rust `BTreeMap` | 115,968 | 115,968 | 1,673,656 | 1,673,656 |
+| C++ `std::map` | 196,608 | 196,608 | 1,212,416 | 1,212,416 |
+| Abseil `btree_map` | 88,320 | 88,320 | 1,431,216 | 1,453,928 |
+
+WF's peak node count grows from 363 during construction to 562 during
+fixed-cardinality churn. That observed growth justifies revisiting the existing
+occupancy question, with split/merge and per-node occupancy observations before
+choosing a repair or representation change. Allocation count alone does not
+predict elapsed time: WF makes 563 requests during the 4,096-entry churn trace,
+versus Rust's 619 and `std::map`'s 12,288, while both native libraries complete
+wide churn faster. At 256 entries, Rust instead makes 1,181 requests and WF
+36; this stream also changes allocation behavior with population.
+
+### Why the longer replay was needed
+
+The initial matrix left seven cells inconclusive under the registered
+duration/stability criteria. Scalar count-8 build/cleanup, hit/miss, range,
+and replacement contain batches below 1 ms (minima 0.772, 0.411, 0.969 and
+0.456 ms). Scalar count-256 hit/miss has 10.45–15.50% ratio spread between
+cohorts; its range cell has 12.22% spread against Abseil. Wide count-256
+hit/miss had 10.36% spread against direct C. The bounded same-source replay at
+`ECO_SCALE=64` resolved these duration/stability flags. It quadruples the
+whole-trace batch length and extends its seed sequence, leaving population,
+per-trace rounds, executable, and oracle unchanged. The original samples
+remain preserved; all final timing comparisons above consistently use the
+replay. Use the guarded measure command above with `ECO_SCALE=64` and
+`ECO_SAMPLE_FILE=.build/ecosystem/measurements-replay.csv`. From this directory,
+validate that file separately:
+
+```sh
+perl ../summarize-ecosystem.pl --complete ordered=.build/ecosystem/measurements-replay.csv
+```
+
+Combining the two work settings into one statistical input is invalid.

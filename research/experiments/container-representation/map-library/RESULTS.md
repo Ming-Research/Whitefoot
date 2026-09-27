@@ -31,8 +31,15 @@ The ordinary direct sparse C control is rebuilt from [map-costs.c](map-costs.c)
 with two whole-trace exports, reusing its existing algorithm. Its rows are
 labelled `c-sparse-direct`: an attribution control with the supplied mix64
 protocol, not a native default-map member or a clone of Whitefoot's source.
-Construction and execution results are pending; the historical timings below
-are not measurements of these adapters or the current bundled standard library.
+The measured source revision is `0c3203aa6111f14247aa950e3794e83082d4f29c`.
+Both ordinary and accounting images passed 18,390 independently checked traces;
+the corrupted checksum, simulated unreleased allocation, and eight omitted
+reserve controls failed with the expected reasons. The
+[baseline timing samples](ecosystem-samples.csv) contain 9,240 data rows, and
+the [allocation observations](ecosystem-accounting.csv) contain 420. Every
+allocation row balances requests and releases and ends with zero live bytes;
+its checksum matches sample zero in both baseline timing cohorts. The historical
+timings below are separate observations at their recorded source revisions.
 
 The measured capacity/population pairs are 3/2, 64/56 and 4096/3584, each with
 an 8-byte scalar or a move-only 256-byte inline value. The application observes
@@ -61,8 +68,10 @@ hasher. Whitefoot's library requires a supplied protocol; its salted mix64
 protocol is explicitly labelled in both series. `aligned-hash` supplies that
 same mix64 calculation to every implementation, with native layouts and load
 policies still intact. Forced collisions occur only in aligned correctness
-checks. Rust has no portable same-capacity rehash API, so that historical path
-is excluded from this common ranking.
+checks. Changing hash protocol also changes bucket distribution and hash-state
+construction; a default/aligned timing difference is not an isolated cost of
+hash instructions. Rust has no portable same-capacity rehash API, so that
+historical path is excluded from this common ranking.
 
 Reserve measurements request more entry capacity and verify existing values;
 they do not insert the additional population or measure a growth pause.
@@ -109,6 +118,160 @@ archives and measured source identities below remain unchanged; reproduce
 those results from their recorded revisions. This task does not migrate the
 older candidate libraries or retired `lib/containers` overlay controls to the
 current module and enum-constructor syntax.
+
+### Baseline sample qualification
+
+The initial run used `ECO_WORK=262144`, with two unrecorded checked warmups
+and eleven recorded samples per cell in each cohort. The complete timing
+phase took 76.333 seconds, separately from construction and correctness.
+Among 336 comparator cells across payload, population, path and hash series,
+114 include a sample below 1 ms and 14 have a cohort ratio spread above 10%;
+seven meet both conditions. Those cells are not ranked. The minimum observed
+sample is 351,000 ns. The completed same-source replay below uses `ECO_WORK=1048576` to resolve
+short samples and reassess cohort stability. More rounds also reduce the setup
+fraction of query/update batches, so ratios across work levels are not a
+causal attribution experiment.
+
+The baseline raw sample SHA-256 is
+`5a142672b1b5fe6f290adbdfd99f327f27606a4b20a79673363e9ee09c110b5c`;
+the accounting SHA-256 is
+`0a4729815dc1d2dba8d99fcc0868dff72daeb42910dda834b4b04c35c94b29b4`.
+Keep these files with this comparison; a successor may retire them only while
+preserving the dated evidence and its protocol.
+
+### Longer replay and large-population results
+
+The [longer replay](ecosystem-replay-samples.csv) has 9,240 data rows at
+`ECO_WORK=1048576` and took 307.876 seconds. Its source behavior is unchanged
+from the baseline; a trailing blank-line correction in the shared oracle
+caused a relink without changing the benchmark. The replay SHA-256 is
+`7898181381db9c5422f4244c8aec3a9e991f829be8b2f64d982dc7dd4b0e16fb`.
+All observed samples are at least 1,402,000 ns. Fifteen comparator cells still
+exceed the 10% cohort ratio-spread criterion: three at population 2, none at
+56, and twelve at 3584. They remain unranked; additional replay is not used to
+select a preferred answer.
+
+The following tables use only the longer replay at capacity/population
+4096/3584. Query, replacement, churn and edit batches execute one full trace
+with 292 rounds; fill/free executes 292 full traces, and reserve executes 292
+full traces with one reserve each. WF batch milliseconds include construction,
+all operations, full-value consumption and cleanup. Each cell is the range of
+the two cohort medians, not a confidence interval. Ratios are WF elapsed time
+divided by the named comparator's elapsed time: above 1 means WF took longer.
+Differences below the shared 10% triage threshold remain descriptive. A dagger
+marks an unstable comparison and excludes it from ranking. The final column
+is a fresh algorithm attribution control, separate from the native-library
+comparison.
+
+#### 8-byte values, native defaults
+
+| Path | WF batch ms | WF/Rust | WF/C++ unordered | WF/Abseil flat | WF/direct C attribution |
+|---|---:|---:|---:|---:|---:|
+| Hit | 10.33–10.46 | 1.45–1.45 | 5.24–5.58 | 4.97–5.06 | 0.85–0.90 |
+| Miss | 34.28–34.34 | 5.13–5.15 | 13.13–14.25 | 18.89–19.00 | 0.77–0.77 |
+| Replace old value | 11.17–11.44 | 1.26–1.30 | 2.77–2.87 | 3.39–3.41 | 1.04–1.06 |
+| Remove/churn | 98.15–99.16 | 3.14–3.18 | 3.53–3.69 | 6.31–6.43 | 0.80–0.82 |
+| Edit first word | 10.74–11.49 | 1.28–1.37 | 4.85–5.77† | 4.64–5.08 | 0.88–0.99† |
+| Fill/free | 19.74–19.76 | 1.52–1.52 | 0.74–0.75 | 2.53–2.61 | 0.99–0.99 |
+| Reserve more entries | 40.21–40.66 | 1.25–1.26 | 1.29–1.36 | 1.52–1.56 | 1.06–1.12 |
+
+#### 8-byte values, aligned hash
+
+| Path | WF batch ms | WF/Rust | WF/C++ unordered | WF/Abseil flat | WF/direct C attribution |
+|---|---:|---:|---:|---:|---:|
+| Hit | 9.98–10.72 | 3.74–4.06 | 1.94–2.24† | 3.65–3.90 | 0.84–0.86 |
+| Miss | 34.20–34.20 | 13.08–13.13 | 7.31–7.69 | 13.30–13.34 | 0.76–0.76 |
+| Replace old value | 11.78–11.80 | 2.67–2.76 | 1.24–1.33 | 2.19–2.25 | 0.99–1.00 |
+| Remove/churn | 98.13–98.92 | 6.66–6.80 | 2.30–2.35 | 4.95–4.97 | 0.81–0.82 |
+| Edit first word | 11.58–12.68 | 4.00–4.45† | 2.04–2.32† | 3.97–4.35 | 1.00–1.11† |
+| Fill/free | 19.92–20.44 | 2.91–3.00 | 0.61–0.64 | 2.03–2.23 | 0.98–1.02 |
+| Reserve more entries | 38.98–42.03 | 2.44–2.52 | 0.94–0.99 | 1.42–1.42 | 1.06–1.07 |
+
+#### 256-byte values, native defaults
+
+| Path | WF batch ms | WF/Rust | WF/C++ unordered | WF/Abseil flat | WF/direct C attribution |
+|---|---:|---:|---:|---:|---:|
+| Hit | 12.27–14.61 | 1.58–1.89† | 5.60–6.69† | 5.64–7.00† | 0.87–1.01† |
+| Miss | 40.36–40.62 | 5.85–5.98 | 13.17–13.26 | 19.82–20.81 | 0.78–0.79 |
+| Replace old value | 76.52–77.67 | 2.18–2.21 | 3.33–3.36 | 2.82–2.87 | 1.95–2.01 |
+| Remove/churn | 159.25–162.03 | 2.73–2.74 | 3.13–3.14 | 4.16–4.24 | 1.04–1.07 |
+| Edit first word | 11.38–12.43 | 1.20–1.32 | 4.41–4.82 | 4.97–5.32 | 0.76–0.88† |
+| Fill/free | 71.88–71.91 | 1.92–1.92 | 1.29–1.30 | 2.26–2.27 | 1.51–1.51 |
+| Reserve more entries | 123.77–124.47 | 1.77–1.78 | 1.96–1.97 | 2.29–2.30 | 1.62–1.63 |
+
+#### 256-byte values, aligned hash
+
+| Path | WF batch ms | WF/Rust | WF/C++ unordered | WF/Abseil flat | WF/direct C attribution |
+|---|---:|---:|---:|---:|---:|
+| Hit | 13.41–14.42 | 4.38–4.54 | 2.56–2.79 | 4.71–5.19† | 0.91–1.00 |
+| Miss | 40.38–40.62 | 14.12–14.65 | 7.17–7.51 | 14.45–14.64 | 0.79–0.79 |
+| Replace old value | 76.70–76.73 | 2.79–2.81 | 2.52–2.52 | 2.62–2.63 | 1.95–1.96 |
+| Remove/churn | 158.98–160.49 | 4.51–4.55 | 2.24–2.25 | 3.32–3.40 | 1.05–1.05 |
+| Edit first word | 11.52–11.69 | 3.36–3.37 | 1.92–1.95 | 3.79–3.84 | 0.74–0.76 |
+| Fill/free | 71.65–71.74 | 2.14–2.14 | 1.13–1.13 | 2.21–2.22 | 1.50–1.52 |
+| Reserve more entries | 123.99–124.11 | 2.20–2.20 | 1.63–1.63 | 2.17–2.21 | 1.60–1.61 |
+
+The three unstable population-2 comparisons are scalar aligned-hash miss
+against C++ unordered, scalar native-default reserve against Rust, and wide
+native-default miss against direct C. Large-cell instabilities are marked in
+the tables. In particular, the wide native-default hit row is not ranked
+against any comparator. All original and replay samples remain available;
+the two work levels are never combined into one median.
+
+### Size, hashing and follow-up interpretation
+
+Size changes the practical result. For scalar hits with native defaults,
+WF/Rust is 0.37 at population 2, 0.77 at 56, and 1.45 at 3584. With aligned
+hashing, the same ratios are 1.04–1.05, 2.10–2.11 and 3.74–4.06. Scalar
+replacement against Rust defaults similarly changes from 0.47–0.48 through
+0.74–0.75 to 1.26–1.30. These are separately measured outcomes, not a pure
+hash-cost decomposition. Small scalar churn is favorable to WF: its C++
+ratio is 0.42 with defaults and 0.39 aligned, whereas the small wide churn
+ratios are 1.32–1.34 and 1.21. A scalar result does not describe wide owners.
+
+Large misses are the strongest table-policy follow-up. The penalty persists
+with aligned hashing: both payloads take 7.17–14.65 times the native elapsed
+time across the three libraries and both cohorts. WF/direct-C is instead
+0.76–0.79. That control does not identify the cause, but it makes probing,
+occupancy and native capacity policy a better first discriminator than a
+claim that generated WF code alone causes the complete miss gap. A same-source
+comparison at a lower occupancy, with native capacity geometry recorded,
+would separate part of that question before changing a library algorithm.
+
+Wide replacement is a separate emitted-code and ownership-transfer question.
+Across all populations and both hash series, WF/direct-C is 1.95–2.25;
+large wide fill/free is 1.50–1.52 and reserve is 1.60–1.63. The corresponding
+large scalar fill/free comparison is near 1.00. Conversely, wide in-place edit
+against aligned direct C is 0.74–0.76 at the large population. Allocation
+counts and requested bytes match WF and direct C, so request totals alone do
+not explain the owned-value path differences. Inspecting normal optimized
+transfers, inactive initialization and cleanup is the next bounded question;
+any causal attribution still needs a same-source before/after discriminator.
+No percentage of the native-library gap is assigned to a mechanism by
+subtracting these different implementations' timings.
+
+### Allocation observations
+
+Accounting uses the baseline work count and observes ordinary container
+requests in separate instrumented images. Hash choice leaves all recorded
+allocation counts and byte totals unchanged in this run. At population 3584,
+peak live requested bytes are:
+
+| Value | Phase | Whitefoot | Rust | C++ unordered | Abseil flat | Direct C |
+|---|---|---:|---:|---:|---:|---:|
+| 8 B | Filled map | 98,320 | 139,272 | 147,456 | 139,184 | 98,320 |
+| 8 B | Reserve for more entries | 294,944 | 417,808 | 212,992 | 417,712 | 294,944 |
+| 256 B | Filled map | 1,114,128 | 2,170,888 | 1,036,288 | 2,169,312 | 1,114,128 |
+| 256 B | Reserve for more entries | 3,342,368 | 6,512,656 | 1,101,824 | 6,510,824 | 3,342,368 |
+
+The filled-map row is shared by the lookup, replace, edit, churn and fill/free
+paths. Each complete fill/free trace makes one backing request for Whitefoot,
+Rust, Abseil and direct C; C++ unordered makes 3585 requests for its buckets
+and nodes. Reserve adds one request in each implementation. The baseline
+churn batch makes 265,217 C++ requests while the other four retain one backing
+request. All are reclaimed. Native capacity rounding and node/table layout
+remain part of these practical outcomes; these bytes do not measure RSS or
+prove an allocation-time explanation for elapsed differences.
 
 ## Contract fixed before measurement
 

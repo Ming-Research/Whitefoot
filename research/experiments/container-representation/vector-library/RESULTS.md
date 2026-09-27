@@ -89,11 +89,15 @@ the CSV confirms equal complete checksums within every application cell,
 balanced allocation lifetimes, and the stated peak upper bound; every C
 control's allocation columns equal Whitefoot's corresponding row.
 
-The raw `.build/ecosystem/accounting.csv` SHA-256 is
+The existing O2 normal and retained drivers also passed 1,260 configurations
+and 6,300 executions each, totaling 12,600 historical-control executions with
+the current module imports. Their retained-helper call checks passed. This
+requalifies those reproduction paths without adding historical-series timing.
+
+The preserved [allocation CSV](ecosystem-accounting.csv) SHA-256 is
 `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`. These are requested-storage observations
-from the accounting build, not timed results. Build/check phase durations
-belong to the central [experiment record](../ECOSYSTEM.md); fresh container
-timing is pending.
+from the accounting build, separate from the timing samples below. Build/check
+phase durations belong to the central [experiment record](../ECOSYSTEM.md).
 
 At population 4096, the three-round growth trace produced the following
 allocation totals. All four C controls have the Whitefoot entries shown.
@@ -125,6 +129,90 @@ native request/release for the entire trace. Their peaks are 32,808 versus
 extra initial request is visible even where large-population byte totals are
 close. These policy and representation observations motivate timing; they
 do not assign a causal elapsed percentage.
+
+### Fresh practical timing
+
+The complete [timing samples](ecosystem-samples.csv) and
+[allocation observations](ecosystem-accounting.csv) are preserved beside this
+record. They serve the standard-container comparison and remain its evidence
+until it is retired or superseded with that evidence preserved. Timing source
+revision is `0c3203aa6111f14247aa950e3794e83082d4f29c`. The measurement phase
+completed in 85.578 seconds, separate from construction and correctness.
+The timing CSV has 4,116 rows and SHA-256
+`6d505c349a3820b28e1a707e6167aa2f8bd06bca970d8867ead928b2f4087898`.
+
+All measured cells use `ECO_WORK=1048576`, seven ranked samples per
+implementation per cohort, and separately executed warmup. An independent
+read of the raw CSV verified the complete payload/path/population/variant
+matrix, sample IDs, both cohorts, exact checksums, and the shared summarizer's
+minimum, median and maximum values. These are fresh O3 controls and native
+baselines; no historical sample supplies a denominator.
+
+At population 4096, ranges below span the two cohort medians. Ratios divide
+Whitefoot's median by the comparator's median in the same cohort: above one
+means Whitefoot took longer. Time is the complete sample, including its stated
+rounds/repetitions, setup, all consumed words and cleanup. Path names have
+different operation denominators, so neither the time nor the ratio is an
+isolated operation latency.
+
+| Payload bytes | Path | WF whole trace ms | WF / Rust | WF / C++ | WF / take-swap C | WF / direct C |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 3.343–3.375 | 2.136–2.169 | 1.578–1.609 | 1.585–1.613 | 1.941–2.055 |
+| 8 | growth | 3.749–3.766 | 1.896–1.945 | 1.537–1.546 | 1.494–1.524 | 1.795–1.819 |
+| 8 | reuse | 3.276–3.279 | 2.173–2.175 | 1.571–1.575 | 1.614–1.616 | 2.012–2.018 |
+| 8 | suffix-0 (control) | 1.342–1.360 | 1.328–1.335 | 1.322–1.343 | 1.343–1.353 | 0.471–0.483 |
+| 8 | suffix-1 | 4.550–4.599 | 2.892–2.922 | 1.512–1.540 | 1.382–1.383 | 1.610–1.622 |
+| 8 | suffix-2 | 3.639–3.659 | 2.774–2.789 | 2.206–2.222 | 1.064–1.077 | 1.238–1.360 |
+| 8 | suffix-3 | 2.769–2.809 | 2.106–2.131 | 1.582–1.594 | 1.146–1.180 | 1.966–1.982 |
+| 256 | reserved | 50.688–50.995 | 1.232–1.233 | 1.157–1.165 | 1.172–1.179 | 1.176–1.183 |
+| 256 | growth | 62.639–63.039 | 1.506–1.513 | 1.194–1.198 | 1.113–1.123 | 1.133–1.140 |
+| 256 | reuse | 50.821–51.734 | 1.239–1.250 | 1.158–1.175 | 1.170–1.177 | 1.163–1.167 |
+| 256 | suffix-0 (control) | 2.261–2.270 | 1.953–1.959 | 0.770–0.774 | 0.532–0.533 | 0.769–0.770 |
+| 256 | suffix-1 | 45.574–45.687 | 2.843–2.865 | 2.714–2.728 | 2.523–2.554 | 2.878–2.886 |
+| 256 | suffix-2 | 43.613–43.946 | 1.993–1.995 | 1.996–2.006 | 1.955–1.956 | 1.984–1.998 |
+| 256 | suffix-3 | 43.844–43.881 | 1.728–1.730 | 1.667–1.669 | 1.398–1.398 | 1.734–1.734 |
+
+All 36 mutating workload cells (six paths, two payloads, three populations)
+show Whitefoot more than 10% slower than both native vectors in both cohorts.
+This is a triage result for these synthetic traces, without an application
+frequency weighting. The largest representative wide-value gap is suffix-1:
+2.843–2.865 against Rust and 2.714–2.728 against C++. A gap of 2.523–2.554
+also remains against the C take/swap control, which follows the library's
+transfer order and allocation policy. That makes emitted transfers and
+callback boundaries a useful next discriminator; it does not yet separate
+WF source composition, ABI choices and optimizer behavior into causal shares.
+
+The scalar reserved/reuse paths at population 4096 are 2.136–2.175 times Rust
+and 1.585–1.616 times take/swap C. Their direct-C ratios of 1.941–2.055 show
+that changing the consumption composition remains a separate comparison.
+The older reverse-C composition happens to be much closer (1.164–1.177 here);
+that one control cannot stand in for the ordinary native-library outcome.
+No subtraction of those whole-trace times attributes a causal percentage.
+
+Size matters. Scalar reuse is 2.881–2.890 times Rust at population 16 versus
+2.173–2.175 at 4096. Scalar growth moves from 1.199–1.212 to 1.896–1.945;
+wide growth moves from 1.206–1.208 to 1.506–1.513. Different capacities and
+allocation/reallocation policies accompany those changes, so this is a
+follow-up question, not proof that a specific allocation explains the gap.
+Wide suffix-1 remains large across populations: the Rust ratio is
+2.843–2.887 across all six cohort/population observations. The record's
+32-word digest is included throughout; these figures do not isolate movement
+bandwidth or establish nested-owner behavior.
+
+Every native comparison for a mutating path has paired sample minima of at
+least 1 ms and cohort-ratio spread below 10%. The only greater-than-10%
+cohort spread among operational C comparisons is scalar suffix-2 at
+population 256 against direct C: 1.574 versus 1.147, a 37.190% spread.
+That particular attribution remains inconclusive pending a focused replay;
+it supplies no conclusion above or in the population-4096 table.
+
+Fourteen comparator cells have a paired minimum below 1 ms, all in suffix-0:
+scalar values at all three populations against reverse C, take/swap C, Rust
+and C++, plus wide values at populations 16 and 256 against Rust. Their
+minimum samples are 0.975–0.997 ms. Suffix-0 is retained as an unranked
+overhead control, including the displayed ratios; it makes no operational
+performance claim. Replaying the whole matrix merely to promote this control
+would not resolve a current native-container ranking question.
 
 ## Historical source-composition evidence
 

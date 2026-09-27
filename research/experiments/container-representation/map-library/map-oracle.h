@@ -64,4 +64,3 @@ static uint64_t oracle(bool wide, uint64_t count, uint64_t rounds,
     }
     return finish(digest);
 }
-
