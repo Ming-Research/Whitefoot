@@ -1453,7 +1453,7 @@ rarely insert at the same place.
   validation replays bodies in a scratch nominal suffix that it rolls back
   (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`),
   carrying what must survive the rollback in a `Stable*` mirror of the
-  checked types. 22 of the `Checker`'s 51 fields are `Cell` or `RefCell`,
+  checked types. 24 of the `Checker`'s 53 fields are `Cell` or `RefCell`,
   mutated through shared references. A type context that interns during body
   checks, a read-only declaration inventory and a per-attempt body checker
   with explicit context parameters (the
@@ -1466,7 +1466,7 @@ rarely insert at the same place.
   LLVM on the corpus and the module graphs. Reopen when a checker change is
   blocked by the restarts or the cells; close when both are done or declined.
 
-- **The checker reads raw syntax.** The checker's non-test sources make 507
+- **The checker reads raw syntax.** The checker's non-test sources make 508
   `self.tree` calls and 449 `Production::` matches, learning which
   alternative was written by probing children, and the if/else split is
   decoded from brace offsets in both `compiler/src/resolution/scopes.rs` and
