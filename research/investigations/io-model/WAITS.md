@@ -127,6 +127,36 @@ What this does not establish:
 - that the result holds on the hosted runner or on hardware with more cores;
 - anything about files, or about a context that computes between waits.
 
+## Experiment 2: the compiled context server
+
+### Design
+
+`tests/programs/tcp_contexts.wf` is the Whitefoot server this design makes
+possible: the entry accepts, and each accepted connection is served by
+`mustpar serve(...)` in a context of its own, which receives into a 16 KiB
+inline window and sends back what it received until its peer finishes. It is
+compiled by the ordinary compiler with no flag, and it runs every context on
+the entry's one thread with one ring (`design/amendments/compiler-waiting-contexts.md`).
+
+The references are the three C servers of Experiment 1 under the same
+`linux-net-bench.sh measure` protocol, each run twice: at its default of one
+thread per online CPU, and with `--threads 1`, the one-driver shape the
+compiled server has.
+
+### What would distinguish the hypotheses, stated before measuring
+
+- The lowering and runtime add no material cost to the shape if, at one
+  driver each, the compiled server's median rate is at least 0.90 of
+  `waiting_echo --threads 1` at 64 and at 1024 connections with 64-byte
+  messages, and its bytes per second at least 0.90 of it with 64 KiB
+  messages. Below 0.90, the cost is attributed (the switch, the scan for
+  completed records, the emitted receive and send path) before anything else
+  is built on it.
+- Against the references at their default thread counts, the ratio measures
+  what the single driver costs. It decides nothing here; it is the number the
+  `docs/todo.md` entry on one driver thread reopens on.
+- One connection is reported but not judged, as in Experiment 1.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text

@@ -1107,48 +1107,49 @@ rarely insert at the same place.
   sources. Reopen when the next parallel-lowering experiment has to change the
   split.
 
-- **A handed-out call may block on a peer while a join waits beneath it.**
-  `sched/core.c` assumes that compute callbacks never block on I/O, and
-  `wf__par_wait` lets a joining lane run other published work on its own
-  stack. Nothing in permission or lowering keeps a call that reaches a
-  blocking host operation out of a hand-out. Under `--par --par-ledger`,
-  two adjacent calls of a helper that wraps `receive_next` on two different
-  connections are permitted and chained, and the emitted `pair` publishes
-  one of them through `wf__par_publish`. A direct pair of `receive_next`
-  calls is not handed out, but only because its addressed result ends the
-  group. A lane that runs such a task while it helps a join therefore blocks
-  on the network with that join's continuation stranded below it. Take a
-  run of three independent statements: A forks compute and then sends on one
-  connection, B receives on another, C is anything. If a lane running A helps
-  with B, and the peer answers B only after A's send, the parallel program
-  hangs where the sequential one completes. This hang is reasoned from the
-  scheduler code; no run has shown it. Blocking file reads have the same
-  stacking but end on their own; their cost is lost compute.
+- **Every waiting context runs on the one thread that runs the entry.**
+  The runtime keeps every context [WAIT-2] on the floor's thread with one
+  completion ring, so a server's I/O uses one core however many it has; the
+  [waiting runtime shape](../research/investigations/io-model/WAITS.md#experiment-1-the-waiting-runtime-shape-against-the-native-echo-servers)
+  that met the bar ran one ring and one set of contexts per core. Several
+  drivers need a ring each, a group count and a handle budget that another
+  thread can change, and a rule for which driver a started context joins.
+  Reopen when the echo comparison of a compiled context server against
+  `uring_echo` on the same cores shows the single driver as the limit.
 
-  The fix belongs to the I/O model under discussion: no handed-out or helping
-  task may wait, and a blocking call must be recognizable from its signature.
-  Until then, the minimal repair is to treat a call that reaches a blocking
-  host operation as not offerable. Validate with a harness test that runs the
-  three-statement shape against a peer that answers only after the send, at
-  `WF_WORKERS` 2 and 4.
+- **A context's operation with no readiness form still blocks the thread
+  every context shares.** With other contexts live, a socket receive, send
+  or accept waits in the ring or, with no ring, for its descriptor's
+  readiness. Every other host call a context makes that the ring does not
+  take runs on that thread and blocks it: a read or write of a pipe such as
+  standard input or output, a connect to a remote peer, and on a host with no
+  ring every open, close and directory operation. A context reading a pipe
+  that another context of the same program writes would stop both. Route such
+  operations to the helper pool whenever other contexts are live, with the
+  context parked on its record; validate with two contexts joined by a pipe,
+  on both routes.
 
-- **Overlap can produce host effects that no sequential execution produces.**
-  [PAR-2] says that when an iteration does not reach its continuation, the
-  overlapped execution "produces none" of the later observables. Yet a
-  counted loop whose body passes `&deref(all)[i..after]` to a helper that
-  calls `send_once` is permitted and split under `--par`. If iteration 0's
-  send never completes, a later iteration's send still reaches its peer.
-  [PAR-1] promises only that state places are equal, so a first statement
-  that never finishes, next to a second that sends, shows the same gap.
-  File and stream output avoid it only because every such call writes the one
-  `HandleFactory`.
+- **Waiting contexts are found by scanning.** A context parked on a record is
+  found ready by a pass over every parked context after each wake, and with
+  no ring every readiness wait is one `poll` over every waiting descriptor.
+  Both are linear in the waiting contexts per wake rather than per completion.
+  A record that names its waiter, and an `epoll` or `kqueue` registration,
+  would make both proportional to the completions. Reopen when a many-context
+  measurement attributes time to either pass.
 
-  The language has not said whether source order between two proved-independent
-  statements orders their host effects. Either answer needs a ruling. If order
-  holds, overlap may not start a later member's host effect before the earlier
-  member completes. If order does not hold, [PAR-2]'s clause is restated for
-  state places, and the host traces of independent statements may interleave.
-  Reopen with the concurrent I/O design.
+- **A context's stack reservation is fixed.** A started context gets 64 MiB of
+  reserved stack with a guard page, and the root keeps the entry's 1 GiB; the
+  stack ledger reports neither for contexts, and `WF_STACKS` is still not
+  read. A program whose started call recurses deeper than the reservation
+  ends in the stack record. Reopen when a program needs a larger context stack
+  or the ledger is asked to bound one.
+
+- **Windows contexts are fibers that no local run has exercised.** The
+  Windows floor implements the context contract with `CreateFiberEx` and
+  `SwitchToFiber`, arming the emergency stack guarantee on each fiber. The
+  Windows host job (`io-hosts.yml`) compiles it, but no test starts a context
+  on Windows. Add a context program to that job's runs; until then treat a
+  Windows context server as unvalidated.
 
 ## Platforms and host interfaces
 
@@ -1164,25 +1165,6 @@ rarely insert at the same place.
   existing floor tests. Disabling probes is not an acceptable workaround.
   Defer this separate toolchain extension while the current native path is
   supported; reopen when another native Darwin consumer is required.
-
-- **Connection-level concurrency is not supplied by ordinary source order.**
-  A loop that accepts and serves connections in source order
-  completes the current handler before entering the next, so a handler waiting
-  on a silent peer holds up every later connection, and 1024 open connections
-  are not 1024 independently resumable handlers. The source is accepted and
-  compiled through ordinary calls. The retained multi-client TCP protocol can
-  wait forever when the first handler awaits EOF while clients close only
-  after every peer has finished; the
-  [C2 measurements](../research/experiments/io-completion-bench/C2-RESULTS.md)
-  record that noncompletion without a throughput result. No replacement
-  interface has been chosen. `WF_STACKS` is inert: the runtime has no
-  switchable-stack pool for it to size, so it is neither read nor validated.
-
-- **At most eight peers may wait at once on a host without a native ring.**
-  On Darwin, and under `WF_IO_NO_NATIVE_RING`, a peer wait beyond the eighth
-  concurrent one has no helper and queues with no timeout. The readiness-
-  driven adapter that would lift this, one poll over every queued descriptor
-  from inside the park, was never built.
 
 - **There is no source-level foreign-function boundary.** C enters only as a
   trusted linked definition of an ordinary declaration [PRE-2, SCOPE-3], which
