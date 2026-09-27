@@ -167,8 +167,14 @@ rarely insert at the same place.
   postcondition (FN-9, identically by main's compiler), while the reserve
   instance it reaches carries the same unbounded OP-9 `grow` obligation; the
   conformance case `mod6-pos-grow-vector-boundary` therefore wraps with a
-  wrapper generic over the element type as well. Its benefit and exact
-  attribution remain unverified; defer this diagnostic work while the
+  wrapper generic over the element type as well. The
+  [Vector append placement trial](../research/experiments/container-representation/vector-library/RESULTS.md#append-placement-experiment-criteria-recorded-before-running)
+  supplies another witness: a shared placement's unproved `len < cap`
+  precondition (FN-8), exposed by a reduced caller, first appears in the full
+  fixture as the caller's fill-loop backedge failure (INV-1). This is a
+  diagnostic visibility issue, not a demonstrated source-acceptance defect.
+  Its benefit and exact attribution remain unverified; defer this diagnostic
+  work while the
   admitted generic standalone control serves the experiment, and reopen when
   improving call-proof reports.
 

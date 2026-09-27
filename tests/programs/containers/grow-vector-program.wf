@@ -220,6 +220,17 @@ fn main() -> status: ExitStatus pure {
   }
   let first = grow_vector_append::<u64, 3>(values: &values, value: 11_u64);
   let second = grow_vector_append::<u64, 3>(values: &values, value: 33_u64);
+  let saturated = grow_vector_append::<u64, 3>(values: &values, value: 55_u64);
+  if saturated != 3_u64 {
+    return exit_status(code: 23_u8);
+  }
+  if values.storage.inner.cap != 3_u64 {
+    return exit_status(code: 24_u8);
+  }
+  let temporary = grow_vector_remove::<u64, 3>(values: &values, index: 2_u64);
+  if temporary != 55_u64 {
+    return exit_status(code: 25_u8);
+  }
   let before_insert = values.storage.inner.len;
   if before_insert == 2_u64 {
   } else {

@@ -214,6 +214,84 @@ overhead control, including the displayed ratios; it makes no operational
 performance claim. Replaying the whole matrix merely to promote this control
 would not resolve a current native-container ranking question.
 
+### Append placement experiment: criteria recorded before running
+
+The next source trial keeps the comparison above and its raw files frozen.
+It changes only append's library implementation: choose the existing growth
+capacity when full, reserve once, then place the incoming owner at one shared
+site.
+The empty, doubled and saturated capacities, allocation sequence, public
+contracts and every consuming callback remain unchanged. This is a general
+library control-flow change for every element type and ceiling, with no
+payload- or workload-specific branch. The selected suffix-consumption
+algorithm and header-first storage representation are not changed.
+
+Inspection of the baseline O3 native image gives a concrete discriminator.
+Scalar append remains a call inside `vector_library_work`. Wide append copies
+all 256 incoming bytes to a stack snapshot before its capacity test; its
+spare-capacity branch then reads the original argument again. Wide suffix-1
+has no first-half exchange, and the optimized truncate remainder reads the
+backing directly into the digest. Its gap therefore does not by itself
+indict the take/swap algorithm or establish a callback-copy cost. The four
+placement branches are a plausible cause of append's retained call and
+unnecessary hot-path snapshot, not yet a measured explanation.
+
+Before selecting the candidate:
+
+- Compile the ordinary library and pass the existing scalar, owning and
+  must-consume vector program in both lowering modes. Pass the full ecosystem
+  behavior and allocation checks, including the negative controls. The
+  allocation columns must remain identical to the baseline for every cell.
+  The formal scalar chain now appends a third value at ceiling three, checks
+  that length and capacity, and removes/checks that owner before its existing
+  insertion. This exercises append's saturation branch, which neither the
+  previous program nor the ceiling-8193 timing fixture reached. It moves the
+  previous scalar growth allocation earlier; owning insert still exercises
+  saturation and the program's allocation expectation remains unchanged.
+- Compare final O3 code with the same source fixture, flags and compiler
+  implementation. Check whether append calls disappear from the fill/tail
+  loops or whether the no-growth record snapshot disappears. Raw IR copies
+  alone do not answer that question. Unchanged calls and snapshot falsify
+  this particular explanation even if an elapsed-time difference appears.
+- Measure the same complete matrix in both order cohorts with baseline and
+  candidate artifacts kept separate. Wide suffix-1 and scalar reserved/reuse
+  are the primary affected cells; growth and other suffix sizes expose costs
+  from the changed control flow. Require the existing duration and cohort-stability
+  qualifications before ranking. A reproducible target-cell improvement
+  without a useful-cell regression supports retaining the simplification;
+  otherwise record the failure and revisit the explanation. This first trial
+  does not promise to reach the owner's final native-comparator target.
+
+Insertion/removal still use the compiler's generic logical-index shift. A
+contiguous Slots bulk move is a separate candidate for reserved/reuse, with
+its own semantic and design review; combining it with append would prevent
+this trial from isolating the branch-shape change. Direct forward consumption,
+prefix rotation, optional-element storage and blanket inlining are not
+selected by this diagnosis. The earlier refusal grounds below still apply.
+
+The first source form did not reach code generation. After joining its
+capacity-selection branches, `place_back` could not prove `len < cap`
+(FN-8). The complete unchanged fixture instead first reported its caller's
+fill-loop backedge (INV-1), because append's proof was unavailable to that
+caller. A reduced caller with no postcondition or following mutation exposed
+the callee's exact failure. Keeping reserve calls inside the capacity branches
+and restoring the original `spare > 0` branch polarity still left the shared
+placement obligation unproved. Explicit `len < cap` facts inside every branch
+also failed to establish that relation after the join. These observations
+concern source proof structure and diagnostic visibility, not measured
+performance or a demonstrated acceptance defect.
+
+A reduced helper variant compiled successfully: a private
+`grow_vector_make_room` uses the existing PriorityQueue helper's control-flow
+shape, proving `cap > len`, nondecreasing capacity and unchanged length at
+each return. Append receives that ordinary call contract and places its
+incoming owner once. The candidate now uses this shape. The helper owns only
+capacity preparation, receives no element owner and adds no public interface.
+Its cost is an additional potential helper boundary, so the final-code and
+timing discriminators above still decide whether this separation helps.
+No caller invariant, contract or runtime behavior was weakened, and no
+compiler implementation or specification rule was changed for these probes.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
