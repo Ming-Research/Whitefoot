@@ -11,9 +11,7 @@
 //! start; the wrapper runs later, in its own context.
 
 use crate::semantic::{CheckedExpression, CheckedProjectedDrop};
-use crate::{
-    IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
-};
+use crate::{IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath};
 
 use super::IrBuilder;
 

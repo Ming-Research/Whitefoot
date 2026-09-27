@@ -203,7 +203,11 @@ impl Synthesis {
         Ok((ordinal, name))
     }
 
-    pub(super) fn file(&mut self, ordinal: u32, function: IrFunction) -> Result<(), LoweringFailure> {
+    pub(super) fn file(
+        &mut self,
+        ordinal: u32,
+        function: IrFunction,
+    ) -> Result<(), LoweringFailure> {
         let slot = ordinal
             .checked_sub(self.base)
             .and_then(|offset| self.functions.get_mut(offset as usize))

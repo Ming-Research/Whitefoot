@@ -74,7 +74,9 @@ pub(super) fn keeps_context_group(function: &IrFunction) -> bool {
 
 /// The entry-block lines that reserve and zero the group.
 pub(super) fn context_group_prelude() -> String {
-    format!("  {GROUP} = alloca [2 x i64], align 8\n  store [2 x i64] zeroinitializer, ptr {GROUP}\n")
+    format!(
+        "  {GROUP} = alloca [2 x i64], align 8\n  store [2 x i64] zeroinitializer, ptr {GROUP}\n"
+    )
 }
 
 impl FunctionEmitter<'_, '_> {
@@ -125,21 +127,23 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         self.output.references.extend(&frame_references);
-        let thunk = self.parallel.register_context(self.function.name(), |symbol| {
-            thunk_definition(
-                symbol,
-                &ThunkFrame {
-                    ty: &frame_type,
-                    field_types: &field_types,
-                    result: result_field,
-                    budget: None,
-                    references: &frame_references,
-                },
-                &abi,
-                &callee,
-                &result_type,
-            )
-        })?;
+        let thunk = self
+            .parallel
+            .register_context(self.function.name(), |symbol| {
+                thunk_definition(
+                    symbol,
+                    &ThunkFrame {
+                        ty: &frame_type,
+                        field_types: &field_types,
+                        result: result_field,
+                        budget: None,
+                        references: &frame_references,
+                    },
+                    &abi,
+                    &callee,
+                    &result_type,
+                )
+            })?;
         self.output.symbol(thunk.trim_start_matches('@'));
         self.output.symbol("wf__context_prepare");
         self.output.symbol("wf__context_launch");

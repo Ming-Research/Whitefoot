@@ -4,8 +4,8 @@
 
 use crate::syntax::NodeId;
 use crate::{
-    FixedTerminal, NodePath, Production, SemanticCompilerFailure, SemanticIssue,
-    SemanticIssueKind, SemanticLocation, SemanticRule, TerminalPredicate,
+    FixedTerminal, NodePath, Production, SemanticCompilerFailure, SemanticIssue, SemanticIssueKind,
+    SemanticLocation, SemanticRule, TerminalPredicate,
 };
 
 use super::super::loop_permission::LoopVerdict;
@@ -71,7 +71,6 @@ impl DeclarationInventory<'_> {
 }
 
 impl Checker<'_, '_> {
-
     /// Reject a marked call written where no form of [PAR-4] admits one:
     /// outside a statement's own call, including a contract clause and a
     /// constant, which the body check never reaches.
@@ -83,7 +82,10 @@ impl Checker<'_, '_> {
             .descendants_with(self.types.declarations.tree.root(), Production::Call)?
         {
             if self.types.declarations.is_mustpar_marked(call)?
-                && matches!(self.types.declarations.call_position(call)?, CallPosition::Other)
+                && matches!(
+                    self.types.declarations.call_position(call)?,
+                    CallPosition::Other
+                )
             {
                 return self.types.declarations.invalid_mustpar(
                     call,
@@ -104,7 +106,9 @@ impl Checker<'_, '_> {
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        let CallPosition::ExpressionStatement(statement) = self.types.declarations.call_position(node)? else {
+        let CallPosition::ExpressionStatement(statement) =
+            self.types.declarations.call_position(node)?
+        else {
             return self.types.declarations.invalid_mustpar(
                 node,
                 "a mustpar call whose callee waits is the call of an expression statement",
@@ -147,7 +151,12 @@ impl Checker<'_, '_> {
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
         let mut independent = Vec::new();
-        for node in self.types.declarations.tree.descendants_with(signature.node, Production::ForStmt)? {
+        for node in self
+            .types
+            .declarations
+            .tree
+            .descendants_with(signature.node, Production::ForStmt)?
+        {
             if self.types.declarations.is_mustpar_marked(node)? {
                 let path = self.types.declarations.tree.path(node)?.clone();
                 independent.push(CheckedMustpar {
@@ -157,7 +166,12 @@ impl Checker<'_, '_> {
                 });
             }
         }
-        for call in self.types.declarations.tree.descendants_with(signature.node, Production::Call)? {
+        for call in self
+            .types
+            .declarations
+            .tree
+            .descendants_with(signature.node, Production::Call)?
+        {
             if !self.types.declarations.is_mustpar_marked(call)? {
                 continue;
             }
@@ -194,7 +208,9 @@ impl Checker<'_, '_> {
         functions: &[CheckedFunction],
         permissions: &[FunctionPermissions],
     ) -> Result<(), CheckStop> {
-        let source = PermissionLedgerSource { tree: &self.types.declarations.tree };
+        let source = PermissionLedgerSource {
+            tree: &self.types.declarations.tree,
+        };
         let mut refused: Vec<(NodePath, String)> = Vec::new();
         for (function, table) in functions.iter().zip(permissions) {
             for marked in &function.waiting.independent {
@@ -245,7 +261,10 @@ impl Checker<'_, '_> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         Err(CheckStop::source_issue(SemanticIssue {
             rule: SemanticRule::Par4,
-            location: SemanticLocation::SourceNode(marker, self.types.declarations.tree.coordinate(node)?),
+            location: SemanticLocation::SourceNode(
+                marker,
+                self.types.declarations.tree.coordinate(node)?,
+            ),
             kind: SemanticIssueKind::InvalidMustpar { condition },
             request: None,
         }))

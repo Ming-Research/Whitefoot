@@ -92,9 +92,10 @@ enum wf_socket_direction {
  * bits of a 32-bit word whose bit 16 selects the family.  Byte `i` of the
  * address occupies bits `8 * (i % 8)` of word `i / 8`, so the same rule reads
  * the value on either endianness and an IPv4 address simply leaves bytes 4
- * through 15 zero.  The emitter builds this layout in `socket_address_v4` and
- * `socket_address_v6` (`emitter/system.rs`); this is the same layout read and
- * written by the runtime, and the two must stay one fact.
+ * through 15 zero.  `wf__body_socket_address_v4` and
+ * `wf__body_socket_address_v6` (`ordinary_values.c`) build this layout; this
+ * is the same layout read and written by the runtime, and the two must stay
+ * one fact.
  *
  * The port is the number the program wrote, in host order; the leaf converts
  * it to network order when it builds the native record. */
@@ -147,12 +148,11 @@ typedef struct wf_file_request {
             unsigned has_mode;
             enum wf_file_expected_kind expected_kind;
             /* Which resource this descriptor will become, on a target whose
-             * open needs to know before it opens.  It is the one place an ABI
-             * the emitter emits per target reaches this record: the Windows
+             * open needs to know before it opens.  It is the one place a
+             * per-target ABI reaches this record: the Windows
              * `wf__completion_file_open_at_submit` carries the extra argument
              * and fills this, every other target fills zero and no leaf reads
-             * it (`emitter/completion.rs`,
-             * COMPLETION_WINDOWS_RUNTIME_DECLARATIONS). */
+             * it (`wf_open` in `ordinary_values.c`). */
             unsigned descriptor_class;
         } open_at;
         struct {

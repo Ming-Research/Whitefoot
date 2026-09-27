@@ -315,8 +315,15 @@ fn collect<'check>(
             ..
         } = statement
         {
-            let mut loop_permission =
-                judge(program, places, obligations, node_path.clone(), *id, *binder, body);
+            let mut loop_permission = judge(
+                program,
+                places,
+                obligations,
+                node_path.clone(),
+                *id,
+                *binder,
+                body,
+            );
             // [PAR-2] a body that waits has no overlap to offer whatever else
             // it does, so this refusal replaces any other. Every call node
             // lies inside the node of the loop holding it, so the body holds

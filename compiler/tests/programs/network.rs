@@ -401,7 +401,10 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 #[test]
 fn every_connection_is_served_in_its_own_context_on_both_routes() {
     let llvm = compile_program("tcp_contexts.wf");
-    assert!(llvm.contains("@wf__context_launch("), "the accept loop starts contexts");
+    assert!(
+        llvm.contains("@wf__context_launch("),
+        "the accept loop starts contexts"
+    );
     let program = build_program(&llvm);
     for native_ring in [true, false] {
         let port = free_port();

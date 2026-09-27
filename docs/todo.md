@@ -1111,13 +1111,15 @@ rarely insert at the same place.
   context parked on its record; validate with two contexts joined by a pipe,
   on both routes.
 
-- **Waiting contexts are found by scanning.** A context parked on a record is
-  found ready by a pass over every parked context after each wake, and with
-  no ring every readiness wait is one `poll` over every waiting descriptor.
-  Both are linear in the waiting contexts per wake rather than per completion.
-  A record that names its waiter, and an `epoll` or `kqueue` registration,
-  would make both proportional to the completions. Reopen when a many-context
-  measurement attributes time to either pass.
+- **A readiness wait and a helper's completion are found by scanning.** A
+  record published on the thread that runs the contexts wakes its context by
+  address, but one a helper thread publishes is found by a pass over every
+  parked context, and with no ring every readiness wait is one `poll` over
+  every waiting descriptor. Both are linear in the waiting contexts per wake.
+  An `epoll` or `kqueue` registration, and a helper publication that queues
+  its waiter, would make them proportional to the completions. Reopen when a
+  many-context measurement on the helper or no-ring route attributes time to
+  either pass.
 
 - **A context's stack reservation is fixed.** A started context gets 64 MiB of
   reserved stack with a guard page, and the root keeps the entry's 1 GiB; the
@@ -1132,6 +1134,18 @@ rarely insert at the same place.
   Windows host job (`io-hosts.yml`) compiles it, but no test starts a context
   on Windows. Add a context program to that job's runs; until then treat a
   Windows context server as unvalidated.
+
+- **The compiled context server trails the hand-written shape by 12 percent
+  at 64 connections.** At one driver thread each, `tcp_contexts.wf` holds
+  0.88 of `waiting_echo --threads 1` at 64 connections with 64-byte messages
+  in two full runs, below Experiment 2's 0.90 bar, and the gap is not
+  attributed (`research/investigations/io-model/WAITS.md`, Experiment 2).
+  The candidates are the park path, which waits in `epoll_wait` and then
+  enters the ring where the hand-written driver enters once, the ring locks
+  taken on every submit and reap pass, and the emitted receive and send path.
+  Attribute with a `perf` profile of both servers at 64 connections before
+  changing the runtime; reopen with the next change to the context scheduler
+  or when a program's rate depends on it.
 
 ## Platforms and host interfaces
 
@@ -1347,6 +1361,23 @@ rarely insert at the same place.
   the route only for a value bound from a call and not written since; validate
   with that case and the existing callee-route pins, and reopen when a writer
   report shows the route costing a round.
+
+- **The I/O research record and two runtime comments describe retired
+  states.** `research/investigations/io-model/NETWORK.md` says the hand-out
+  of a may-suspend call to a pool stack landed and serves `tcp_fanout.wf`'s
+  peers concurrently, which [PAR-4] contexts replace; `DESIGN.md` still says
+  canonical `make check` stops on a v0.37 `CANDIDATE` identity; the
+  concurrency catalog's retired PAR-3 text and staged-loop sketch predate the
+  current rule; the join comment in `compiler/src/backend/completion/bridge.h`
+  describes pool stacks rather than contexts; the `.wf` programs under
+  `research/experiments/io-completion-bench/programs/` use the retired
+  `&uniq` syntax and no longer compile; and `.github/workflows/io-bench.yml`
+  says the gate compiles those programs, which it does not. A reader following
+  any of them is misled about what runs. Mark the research passages
+  superseded with a pointer to `WAITS.md`, rewrite the `bridge.h` comment
+  against the context scheduler, and either migrate the benchmark programs
+  and wire their compilation or delete them with the workflow sentence;
+  reopen with the next edit of any of these files.
 
 ## Modules and libraries
 
