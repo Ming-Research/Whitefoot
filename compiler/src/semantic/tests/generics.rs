@@ -1269,8 +1269,9 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let pair_instances = checked
             .data
-            .nominals
+            .executable_nominals
             .iter()
+            .map(|id| &checked.data.nominals[id.0 as usize])
             .filter(|nominal| nominal.name.starts_with("Pair<"))
             .collect::<Vec<_>>();
         assert_eq!(pair_instances.len(), 2);
@@ -1315,8 +1316,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
+                .map(|id| &checked.data.nominals[id.0 as usize])
                 .filter(|nominal| nominal.name.starts_with("Choice<"))
                 .count(),
             2
@@ -1349,8 +1351,9 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let mut packet_lengths = checked
             .data
-            .nominals
+            .executable_nominals
             .iter()
+            .map(|id| &checked.data.nominals[id.0 as usize])
             .filter(|nominal| nominal.name.starts_with("Packet<"))
             .map(|nominal| match &nominal.kind {
                 CheckedNominalKind::Struct { fields } => match fields[0].ty {
@@ -1369,8 +1372,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
+                .map(|id| &checked.data.nominals[id.0 as usize])
                 .filter(|nominal| nominal.name.starts_with("Holder<"))
                 .count(),
             1
@@ -1539,10 +1543,10 @@ fn main() -> status: std::process::ExitStatus pure {
 // position can no longer name one.
 
 /// A concrete nominal written inside an otherwise symbolic function remains a
-/// concrete descendant of that source schema.  Rebuilding the concrete
-/// inventory must therefore retain both the nominal and the callee instance.
+/// concrete descendant of that source schema. The ordinary view must
+/// therefore retain both the nominal and the callee instance.
 #[test]
-fn schema_written_concrete_nominal_arguments_are_rebuilt_after_the_symbolic_checkpoint() {
+fn schema_written_concrete_nominal_arguments_retain_one_shared_identity() {
     let source = br#"struct Pair<T: Int> {
   value: T;
 }
@@ -1563,29 +1567,88 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
-            panic!("the concrete nominal substitution must be rebuilt: {outcome:?}");
+            panic!("the concrete nominal substitution must remain available: {outcome:?}");
         };
-        assert!(
+        let concrete = program
+            .data
+            .executable_functions()
+            .filter(|function| function.name == "consume")
+            .collect::<Vec<_>>();
+        let [consume] = concrete.as_slice() else {
+            panic!("the schema-written call selects exactly one ordinary instance");
+        };
+        let ty = consume.parameters[0].ty;
+        assert_eq!(
             program
                 .data
                 .functions
                 .iter()
-                .any(|function| function.name == "consume")
+                .filter(|function| {
+                    function.name == "consume" && function.parameters[0].ty == ty
+                })
+                .count(),
+            1,
+            "symbolic discovery and ordinary checking share this instance"
         );
-        assert!(
-            program
-                .data
-                .nominals
-                .iter()
-                .any(|nominal| nominal.name.starts_with("Pair<"))
-        );
+        let CheckedType::Nominal(pair) = ty else {
+            panic!("the concrete argument retains its nominal identity");
+        };
+        assert!(program.data.executable_nominals.contains(&pair));
+        let CheckedNominalKind::Struct { fields } = &program.data.nominals[pair.0 as usize].kind
+        else {
+            panic!("Pair remains a source struct");
+        };
+        assert_eq!(fields[0].ty, CheckedType::Integer(IntegerType::U8));
+        let wrapper = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "wrapper")
+            .expect("the uncalled generic body was still checked");
+        assert!(!program.data.executable_functions.contains(&wrapper.id));
+        lower_checked(*program, OverlapLowering::Off)
+            .expect("only the ordinary view reaches lowering");
     });
 }
 
-/// A partially concrete call chain contributes only the nominal arguments
-/// whose complete type is known at the symbolic checkpoint.
 #[test]
-fn partial_schema_rebuild_keeps_only_the_truly_concrete_nominal_instance() {
+fn symbolic_only_inventory_growth_preserves_executable_output() {
+    let base = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    let extended = format!(
+        "{base}\nstruct Pair<T: Int> {{\n  value: T;\n}}\n\nfn unused<T: Int>(value: T) -> result: Pair<T> pure {{\n  return Pair<T>(value: value);\n}}\n"
+    );
+    let compile = |source: &str| {
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("both inventories must check: {outcome:?}");
+            };
+            let functions = program.data.functions.len();
+            let nominals = program.data.nominals.len();
+            let ir = lower_checked(*program, OverlapLowering::Off).expect("ordinary types lower");
+            let llvm = crate::backend::emit_llvm(&ir).expect("ordinary bodies emit");
+            (functions, nominals, llvm.into_string())
+        })
+    };
+    let original = compile(base);
+    let expanded = compile(&extended);
+    assert!(
+        expanded.0 > original.0,
+        "the symbolic function stays interned"
+    );
+    assert!(
+        expanded.1 > original.1,
+        "the symbolic nominal stays interned"
+    );
+    assert_eq!(
+        expanded.2, original.2,
+        "symbolic-only identities never change LLVM"
+    );
+}
+
+/// A partially concrete call chain contributes only the nominal arguments
+/// whose complete type is known in the symbolic view.
+#[test]
+fn partial_schema_selection_keeps_only_the_truly_concrete_nominal_instance() {
     let source = br#"struct Pair<T: Int> {
   left: T;
   right: T;
@@ -1611,13 +1674,13 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
-            panic!("partial rebuilding must retain concrete descendants: {outcome:?}");
+            panic!("ordinary selection must retain concrete descendants: {outcome:?}");
         };
         let pairs = program
             .data
-            .nominals
+            .executable_nominals
             .iter()
-            .take(program.data.executable_nominal_count)
+            .map(|id| &program.data.nominals[id.0 as usize])
             .filter(|nominal| nominal.name.starts_with("Pair<"))
             .collect::<Vec<_>>();
         let [pair] = pairs.as_slice() else {
@@ -1635,21 +1698,20 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.name == "sink")
                 .count(),
             1
         );
         lower_checked(*program, OverlapLowering::Off)
-            .expect("the concrete-only rebuilt inventory must lower");
+            .expect("the concrete-only selected inventory must lower");
     });
 }
 
 /// A symbolic argument in one position must not hide an independent concrete
 /// descendant in another position of the same call.
 #[test]
-fn partial_schema_rebuild_still_discovers_an_independent_concrete_descendant() {
+fn partial_schema_selection_still_discovers_an_independent_concrete_descendant() {
     let source = br#"struct Pair<T: Int> {
   left: T;
   right: T;
@@ -1675,21 +1737,20 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
-            panic!("partial rebuilding must project its concrete descendant: {outcome:?}");
+            panic!("ordinary selection must include its concrete descendant: {outcome:?}");
         };
         assert!(
             program
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
-                .take(program.data.executable_nominal_count)
+                .map(|id| &program.data.nominals[id.0 as usize])
                 .all(|nominal| !nominal.name.starts_with("Pair<"))
         );
         assert_eq!(
             program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.name == "sink")
                 .count(),
             1
@@ -1697,8 +1758,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| function.name != "next")
         );
         lower_checked(*program, OverlapLowering::Off)
@@ -1933,11 +1993,11 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// Concrete generic calls are rebuilt after the symbolic inventory is rolled
-/// back. A `Box` type argument must retain its referent through that rebuild,
+/// Concrete generic calls share their identity across checking views. A
+/// `Box` type argument must retain its referent through that selection,
 /// including when the call is inside an uncalled ordinary helper.
 #[test]
-fn generic_replay_preserves_a_box_type_argument() {
+fn generic_view_selection_preserves_a_box_type_argument() {
     let source = br#"fn pass<T>(value: T) -> result: T pure {
   return move value;
 }
@@ -1952,7 +2012,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("generic replay must preserve each Box type argument: {outcome:?}");
+            panic!("view selection must preserve each Box type argument: {outcome:?}");
         };
         let relay = checked
             .data
@@ -2040,7 +2100,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn general_elements_reify_nominal_children_after_the_schema_checkpoint() {
+fn general_elements_retain_nominal_children_across_checking_views() {
     let source = br#"struct Pair<T: Int> {
   value: T;
 }
@@ -2067,12 +2127,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("schema-created nominal element children must be reified: {outcome:?}");
+            panic!("schema-created nominal element children must remain available: {outcome:?}");
         };
         let consume = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "consume")
             .expect("the schema-written concrete call is retained");
         let mut ty = consume.parameters[0].ty;
@@ -2088,12 +2147,12 @@ fn main() -> status: std::process::ExitStatus pure {
             assert_eq!(capacity, Some(CheckedConst::Value(1)));
             ty = checked
                 .element_type(element)
-                .expect("a reified element handle");
+                .expect("a retained element handle");
         }
         let CheckedType::Nominal(id) = ty else {
             panic!("the terminal element remains a source nominal");
         };
-        assert!((id.0 as usize) < checked.data.executable_nominal_count);
+        assert!(checked.data.executable_nominals.contains(&id));
         let nominal = &checked.data.nominals[id.0 as usize];
         assert!(nominal.name.starts_with("Pair<"));
         let CheckedNominalKind::Struct { fields } = &nominal.kind else {

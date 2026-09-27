@@ -80,7 +80,7 @@ impl<'unit> Checker<'_, 'unit> {
             {
                 continue;
             }
-            let checkpoint = self.types.nominal_checkpoint();
+            let checkpoint = self.types.view.clone();
             let result = (|| {
                 let substitution = Checker::symbolic_nominal_substitution(
                     &template.generic_parameters,
@@ -89,7 +89,7 @@ impl<'unit> Checker<'_, 'unit> {
                 self.ensure_source_nominal_instance(check_context, template_index, substitution)?;
                 self.types.reject_recursive_nominal_layouts()
             })();
-            self.types.restore_nominal_checkpoint(checkpoint)?;
+            self.types.select_view(checkpoint);
             match result {
                 Ok(()) => {}
                 Err(
@@ -103,6 +103,45 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         Ok(())
+    }
+
+    fn substitute_function_argument_regions(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        argument: super::behavior::FunctionArgument,
+        regions: &[(crate::DeclarationId, crate::DeclarationId)],
+    ) -> Result<super::behavior::FunctionArgument, CheckStop> {
+        use super::generics::GenericArgument;
+        let super::behavior::FunctionArgument::Source { reference, .. } = argument else {
+            return Ok(argument);
+        };
+        if regions.is_empty() {
+            return Ok(argument);
+        }
+        let reference = self.types.function_reference(reference)?;
+        let mut bindings = Vec::new();
+        for (key, argument) in reference.substitution.entries() {
+            let argument =
+                match argument {
+                    GenericArgument::Type(ty) => GenericArgument::Type(
+                        self.substitute_type_regions(check_context, *ty, regions)?,
+                    ),
+                    GenericArgument::Function(value) => GenericArgument::Function(
+                        self.substitute_function_argument_regions(check_context, *value, regions)?,
+                    ),
+                    GenericArgument::Const(value) => GenericArgument::Const(*value),
+                };
+            bindings.push((*key, argument));
+        }
+        let axis = reference
+            .substitution
+            .region_arguments()
+            .iter()
+            .map(|(formal, actual)| (*formal, Checker::substituted_region(regions, *actual)))
+            .collect();
+        let substitution = GenericSubstitution::from_bindings(bindings)?.with_regions(axis);
+        self.types
+            .intern_function_reference(reference.declaration, &substitution)
     }
 
     pub(super) fn complete_nominals(
@@ -587,20 +626,15 @@ impl<'unit> Checker<'_, 'unit> {
         check_context: &CheckContext<'_>,
     ) -> Result<(), CheckStop> {
         let mut index = 0_usize;
-        while index < self.types.nominals.len() {
+        while index < self.types.view.nominals.len() {
+            let id = self.types.view.nominals[index];
             if self
                 .types
                 .source_nominal_instances
-                .get(index)
+                .get(id.0 as usize)
                 .is_some_and(Option::is_some)
             {
-                self.complete_source_nominal_instance(
-                    check_context,
-                    NominalId(
-                        u32::try_from(index)
-                            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                    ),
-                )?;
+                self.complete_source_nominal_instance(check_context, id)?;
             }
             index = index
                 .checked_add(1)
@@ -613,7 +647,7 @@ impl<'unit> Checker<'_, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
     ) -> Result<(), CheckStop> {
-        let checkpoint = self.types.nominal_checkpoint();
+        let checkpoint = self.types.view.clone();
         for template_index in 0..self.types.nominal_templates.len() {
             let parameters = self.types.nominal_templates[template_index]
                 .generic_parameters
@@ -644,7 +678,8 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         self.types.reject_recursive_nominal_layouts()?;
-        self.types.restore_nominal_checkpoint(checkpoint)
+        self.types.select_view(checkpoint);
+        Ok(())
     }
 
     /// The instance one `construct` names, at the regions its own field
@@ -681,6 +716,8 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .source_nominal_instance(declaration, &substitution)
         {
+            self.types.activate_nominal(existing)?;
+            self.complete_source_nominal_instance(check_context, existing)?;
             return Ok(existing);
         }
         self.ensure_source_nominal_instance(check_context, site.template, substitution)
@@ -698,7 +735,7 @@ impl<'unit> Checker<'_, 'unit> {
             .copied()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
         {
-            2 => return Ok(()),
+            2 => return self.types.activate_nominal_fields(id),
             1 => return Ok(()),
             0 => {}
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
@@ -743,7 +780,13 @@ impl<'unit> Checker<'_, 'unit> {
                 _ => return Err(CheckStop::from(SemanticCompilerFailure::InvalidResolution)),
             })
         })();
-        let kind = kind?;
+        let kind = match kind {
+            Ok(kind) => kind,
+            Err(stop) => {
+                self.types.nominal_states[id.0 as usize] = 0;
+                return Err(stop);
+            }
+        };
         self.types
             .nominals
             .get_mut(id.0 as usize)
@@ -1022,9 +1065,11 @@ impl<'unit> Checker<'_, 'unit> {
                             super::generics::GenericArgument::Const(*value)
                         }
                         super::generics::GenericArgument::Function(value) => {
-                            let substituted = self
-                                .types
-                                .substitute_function_argument_regions(*value, regions)?;
+                            let substituted = self.substitute_function_argument_regions(
+                                check_context,
+                                *value,
+                                regions,
+                            )?;
                             changed |= substituted != *value;
                             super::generics::GenericArgument::Function(substituted)
                         }
@@ -1558,49 +1603,6 @@ impl<'unit> TypeContext<'unit> {
             .find(|instance| instance.substitution == *substitution)
             .map(|instance| instance.id)
     }
-    pub(super) fn nominal_checkpoint(&self) -> usize {
-        self.nominals.len()
-    }
-    pub(super) fn restore_nominal_checkpoint(
-        &mut self,
-        checkpoint: usize,
-    ) -> Result<(), CheckStop> {
-        if checkpoint > self.nominals.len() {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
-        // Element identities are append-only because a retained generic goal
-        // may still carry a scratch structural handle until its bridge is
-        // reified. Never reuse a key whose nominal identity is being retired.
-        // Unreachable historical entries are not executable type roots.
-        let mut retained = HashSet::new();
-        for (index, ty) in self.elements.iter().copied().enumerate() {
-            let mut nominals = Vec::new();
-            self.collect_type_nominals(ty, &mut nominals)?;
-            if nominals.iter().all(|id| (id.0 as usize) < checkpoint) {
-                retained.insert(CheckedElement(
-                    u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                ));
-            }
-        }
-        self.element_ids.retain(|_, id| retained.contains(id));
-        self.nominals.truncate(checkpoint);
-        self.nominal_table_changed();
-        self.nominal_nodes.truncate(checkpoint);
-        self.nominal_states.truncate(checkpoint);
-        self.source_nominal_instances.truncate(checkpoint);
-        self.prelude_types.truncate(checkpoint);
-        self.nominals_by_declaration.retain(|_, instances| {
-            instances.retain(|instance| (instance.id.0 as usize) < checkpoint);
-            !instances.is_empty()
-        });
-        self.prelude_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        self.box_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        self.result_list_nominals
-            .retain(|_, id| (id.0 as usize) < checkpoint);
-        Ok(())
-    }
     pub(super) fn declare_nominals(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -1642,6 +1644,12 @@ impl<'unit> TypeContext<'unit> {
         };
         let declaration = self.declarations.declaration_at(node, role)?;
         let declaration_id = declaration.id();
+        if self
+            .nominal_templates_by_declaration
+            .contains_key(&declaration_id)
+        {
+            return Ok(());
+        }
         // Parse every source-bearing premise before publishing any table
         // entry, so a tolerant scratch failure is atomic.
         let generic_parameters = self.parse_generic_parameters(check_context, node)?;
@@ -1723,6 +1731,10 @@ impl<'unit> TypeContext<'unit> {
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if let Some(id) = self.source_nominal_instance(template.declaration, &substitution) {
+            self.activate_substitution(&substitution)?;
+            if self.view.add_nominal(id) {
+                self.nominal_layouts_acyclic_at = None;
+            }
             return Ok(id);
         }
         let id = NominalId(

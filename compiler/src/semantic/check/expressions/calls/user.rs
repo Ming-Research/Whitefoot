@@ -1,7 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{
@@ -897,15 +897,7 @@ impl<'unit> TypeContext<'unit> {
         };
         let layout_ceiling = match self.instantiated_layout_ceiling(element) {
             Some(ceiling) => ceiling,
-            None if self
-                .stabilize_substitution_with_visiting(
-                    &signature.substitution,
-                    0,
-                    &mut HashSet::new(),
-                    false,
-                )?
-                .is_none() =>
-            {
+            None if !self.concrete_substitution_identity(&signature.substitution)? => {
                 // [ENT-1, FN-2] only a layout depending on an unresolved
                 // type or const parameter may defer the schema obligation.
                 // This includes an opaque parameter inside an aggregate,

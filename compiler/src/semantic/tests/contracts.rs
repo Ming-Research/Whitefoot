@@ -76,8 +76,7 @@ fn group_contracts_publish_only_after_implied_actual_proofs() {
             assert!(
                 checked
                     .data
-                    .functions
-                    .iter()
+                    .executable_functions()
                     .all(|function| !function.formal_hypothesis)
             );
             assert!(!checked.data.contract_queries.is_empty());
@@ -530,8 +529,7 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let produce = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.name == "produce")
             .collect::<Vec<_>>();
         assert_eq!(produce.len(), 2, "both concrete wrappers must be checked");
@@ -575,8 +573,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let allocation_fact = |name| {
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .find(|function| function.name == name)
                 .unwrap_or_else(|| panic!("missing {name} function"))
                 .allocates
@@ -935,8 +932,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .all(|function| !function.formal_hypothesis)
         );
         let lowered = lower_checked(*checked, OverlapLowering::Off)
@@ -1372,15 +1368,16 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
+                .map(|id| &checked.data.nominals[id.0 as usize])
                 .any(|nominal| nominal.name.starts_with("Wrapper<"))
         );
-        let semantic_nominal_count = checked.data.nominals.len();
+        let semantic_nominal_count = checked.data.executable_nominals.len();
         let lowered = lower_checked(*checked, OverlapLowering::Off)
             .expect("conformance-only nominal metadata must not affect ordinary lowering");
-        // FN-3 expansion leaves only concrete nominal instances here; the
-        // retired conformance-subject placeholder is no longer in this table.
+        // FN-3 expansion selects concrete nominal instances for the ordinary
+        // view; symbolic instances stay outside the lowered inventory.
         assert_eq!(lowered.nominals().len(), semantic_nominal_count);
     });
 }
@@ -1406,11 +1403,12 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             checked
                 .data
-                .nominals
+                .executable_nominals
                 .iter()
+                .map(|id| &checked.data.nominals[id.0 as usize])
                 .any(|nominal| nominal.name.starts_with("Wrapper<"))
         );
-        let semantic_nominal_count = checked.data.nominals.len();
+        let semantic_nominal_count = checked.data.executable_nominals.len();
         let lowered = lower_checked(*checked, OverlapLowering::Off)
             .expect("contract-only nominal metadata must not affect ordinary lowering");
         // A formal signature contributes its concrete type, not a separate
@@ -1446,7 +1444,12 @@ fn main() -> status: std::process::ExitStatus pure {
             let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("unused symbolic formals must check: {outcome:?}");
             };
-            let executable = &checked.data.nominals[..checked.data.executable_nominal_count];
+            let executable = checked
+                .data
+                .executable_nominals
+                .iter()
+                .map(|id| &checked.data.nominals[id.0 as usize])
+                .collect::<Vec<_>>();
             let wrappers = executable
                 .iter()
                 .filter(|nominal| nominal.name.starts_with("Envelope<"))

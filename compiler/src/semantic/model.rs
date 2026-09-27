@@ -2674,8 +2674,8 @@ pub(crate) enum CheckedEffectStep {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedFunction {
-    /// A function-kind hypothesis exists only during symbolic template
-    /// checking. The concrete inventory and lowering contain none.
+    /// A function-kind hypothesis belongs to symbolic template checking.
+    /// The ordinary view and lowering contain none.
     pub(crate) formal_hypothesis: bool,
     pub(crate) id: FunctionId,
     pub(crate) declaration: DeclarationId,
@@ -2840,12 +2840,12 @@ pub(crate) struct CheckedProgramData {
     /// element handles directly, so together these retain every value's set.
     #[allow(dead_code)]
     pub(crate) nominal_confinement: Vec<Vec<DeclarationId>>,
-    /// Append-only structural elements, including unreachable replay history.
+    /// Append-only structural elements, including symbolic-only identities.
     /// Only handles reachable from executable types belong to lowering.
     pub(crate) elements: Vec<CheckedType>,
-    // Nominal instances discovered by the ordinary function path form this
-    // prefix. Later instances exist only to type-check static metadata.
-    pub(crate) executable_nominal_count: usize,
+    /// Ordinary checking's ordered nominal view. Symbolic-only identities
+    /// remain in the inventory for proof metadata and have no executable root.
+    pub(crate) executable_nominals: Vec<NominalId>,
     /// For each nominal, the instance it lowers as: itself, or the first
     /// instance of the same region-erased source family whose complete
     /// reclamation graph agrees [S20, PROV-1].
@@ -2878,6 +2878,9 @@ pub(crate) struct CheckedProgramData {
     #[allow(dead_code)]
     pub(crate) derived_consts: Vec<DerivedConst>,
     pub(crate) functions: Vec<CheckedFunction>,
+    /// The ordinary view in source discovery order. Other retained function
+    /// identities belong to symbolic judgments and are not executable roots.
+    pub(crate) executable_functions: Vec<FunctionId>,
     /// Each successful FN-4 implication, in its own declaration-only proof
     /// namespace. Lowering reads no contract query; this is retained DIAG-2
     /// evidence for the binding decision.
@@ -2904,6 +2907,16 @@ pub(crate) struct CheckedProgramData {
     /// compile, and no mandatory record, no normative output, and no lowering
     /// decision reads it.
     pub(crate) permission_ledger: Vec<super::permission_ledger::LedgerLine>,
+}
+
+impl CheckedProgramData {
+    /// Ordinary checking's functions in discovery order. The backing arena
+    /// also retains symbolic judgments addressed by their shared identities.
+    pub(crate) fn executable_functions(&self) -> impl Iterator<Item = &CheckedFunction> {
+        self.executable_functions
+            .iter()
+            .map(|id| &self.functions[id.0 as usize])
+    }
 }
 
 /// One accepted function-kind contract implication. Clause paths are source

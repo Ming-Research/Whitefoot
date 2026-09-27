@@ -1437,21 +1437,22 @@ rarely insert at the same place.
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker still has generic rollback.**
-  P2.2 now interns types and callables directly, uses explicit lexical
-  contexts and gives each function attempt its own scratch. Place judgments
-  share member formation and offset checking; owned reads and writes consume
-  the same elaborated place. The composition entry point's effect-row
-  judgments moved beside effect attribution in `references.rs`.
-  Generic validation still replays bodies in a scratch nominal suffix
-  (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`), carrying
-  what must survive rollback in a `Stable*` mirror. P2.3's grow-only inventory
-  and validation views remove that rollback and mirror under the approved
-  `generic-validation-scope` decision; implementation remains pending. See the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries).
-  Validate each step with identical verdicts, diagnostics and LLVM on the
-  corpus and module graphs plus `make check`. Reopen for the P2.3
-  implementation; close when its inventory and views are implemented.
+- **Shared checking identities still retain separate judgment work.** P2.3
+  removes the rollback, structural type mirror and discovery replay, but
+  symbolic and ordinary views conservatively recheck their selected bodies
+  and analyses. This preserves the distinct selector universes and consumed
+  callee claims; retained symbolic bodies also remain in checked-program
+  metadata while lowering selects only the ordinary view. Whether repeated
+  judgment work or retained body storage matters is unmeasured. A later
+  consumer could key reusable judgments by substitution, checking context and
+  consumed claims, or discard unconsumed bodies while retaining their
+  identities. Both changes affect the checker, proof metadata and consumers
+  that address functions by identity. Defer this extra cache/projection
+  machinery until a compiler-cost investigation identifies this work or
+  storage as a blocker; compare cached and fresh verdicts, diagnostics and
+  emitted output and measure the saved work and retained memory before
+  selecting either change. See the
+  [inventory design](../research/investigations/compiler-architecture/DESIGN.md#p23-one-inventory-without-rollback).
 
 - **Syntax views eagerly build the node-path index.** The shared view now
   serves the graph reader and interface fingerprinting as well as checking;

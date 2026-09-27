@@ -6,6 +6,7 @@ mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod generics;
+mod inventory;
 mod linearity;
 mod nominal_instances;
 mod nominals;
@@ -54,7 +55,8 @@ use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
-use generics::{GenericParameter, GenericSubstitution, PendingGenericRequirement};
+use generics::{GenericParameter, GenericSubstitution};
+use inventory::InventoryView;
 use references::ReferenceInfo;
 
 /// The syntax tree, as the permission ledger's citations reach it.
@@ -514,13 +516,14 @@ struct DeclarationInventory<'unit> {
 }
 
 /// Formed types, constants, templates and callable instances. Body checks can
-/// extend this context directly; generic validation still owns its checkpoint.
+/// extend this context directly; checking phases select ordered views of it.
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
+    view: InventoryView,
     nominals: Vec<CheckedNominal>,
-    /// Counts the changes to `nominals`: an instance appended or completed,
-    /// or a checkpoint restored. The table's layout recursion is judged again
-    /// only after it changed [`TypeContext::reject_recursive_nominal_layouts`].
+    /// Counts the changes to `nominals`: an instance appended or completed.
+    /// Changing the selected view separately invalidates the layout judgment
+    /// in [`TypeContext::reject_recursive_nominal_layouts`].
     nominal_generation: u64,
     /// The generation at which the table was last judged to hold no
     /// recursive layout.
@@ -614,8 +617,9 @@ struct AnalysisState {
     /// by every concrete instance of the same declaration; see
     /// [`AnalysisState::written_body_effects`].
     written_body_effect_rows: HashMap<DeclarationId, EffectSet>,
-    pending_generic_requirements: Vec<PendingGenericRequirement>,
     generic_requirements: Vec<CheckedGenericRequirement>,
+    symbolic_functions: Vec<CheckedFunctionInventory>,
+    schema_written_instances: Vec<FunctionId>,
     postcondition_selectors: Vec<CheckedPostconditionSelector>,
     postcondition_unavailable_declarations: Vec<DeclarationId>,
     /// Per concrete function: whether its analysis stands on a receipt
@@ -696,8 +700,8 @@ fn check_semantics_with(
     receipts: Option<&dyn receipts::ProofReceipts>,
 ) -> SemanticOutcome {
     let result = DeclarationInventory::new(resolved).and_then(|declarations| {
+        let mut types = TypeContext::new(&declarations);
         if !resolved.postconditions().is_empty() {
-            let mut types = TypeContext::new(&declarations);
             let mut body = BodyChecker::default();
             let mut analysis = AnalysisState::default();
             let mut checker = Checker::new(
@@ -710,7 +714,11 @@ fn check_semantics_with(
             let items = checker.types.declarations.item_declarations()?;
             checker.preflight_postcondition_selectors(&CheckContext::default(), &items)?;
         }
-        let mut types = TypeContext::new(&declarations);
+        types.select_view(InventoryView::default());
+        types.constants.clear();
+        types.checked_constants.clear();
+        types.behavior.declaration_arguments.clear();
+        types.instance_requests.clear();
         let mut body = BodyChecker::default();
         let mut analysis = AnalysisState::default();
         let mut checker = Checker::new(
@@ -1089,12 +1097,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.collect_function_signatures(check_context, &items)?;
         self.admit_postcondition_selectors(check_context)?;
         self.validate_generic_templates(check_context)?;
-        if self
-            .types
-            .signatures
-            .iter()
-            .any(|signature| signature.formal_parameter.is_some())
-        {
+        if self.types.signatures.iter().any(|signature| {
+            self.types.view.contains_function(signature.id) && signature.formal_parameter.is_some()
+        }) {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
 
@@ -1106,14 +1111,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // an operand-directed [PRE-1] instance [OP-10, OP-11, OP-14] the
         // syntax could not name; those signatures are appended here and are
         // checked by this same loop before phase B reads the inventory.
-        let mut function_inventory = Vec::with_capacity(self.types.signatures.len());
-        let mut index = 0_usize;
-        while index < self.types.signatures.len() {
-            function_inventory.push(self.check_function(check_context, index)?);
-            index = index
-                .checked_add(1)
-                .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-        }
+        let prior = std::mem::take(&mut self.analysis.symbolic_functions);
+        let mut function_inventory = self.check_function_view(check_context, prior)?;
+        let executable_functions = self.types.view.functions.clone();
+        let ordinary = self
+            .types
+            .signatures
+            .iter()
+            .map(|signature| self.types.view.contains_function(signature.id))
+            .collect::<Vec<_>>();
         // Body checking may first instantiate a nominal through the fields of
         // an ordinary constructor. FN-6 has already checked the written finite
         // dependency graph, and ensure_source_nominal_instance has completed
@@ -1156,21 +1162,26 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             })
             .collect::<Vec<_>>();
         for checked in &mut function_inventory {
+            if !ordinary[checked.function.id.0 as usize] {
+                continue;
+            }
             checked.function.permission_separation_queries =
                 plan_permission_separations(&checked.function, &permission_signatures);
         }
         let optimistic_batch = function_inventory.iter().any(|checked| {
-            !checked.function.postconditions.is_empty()
-                || Checker::statements_contain_value_if(
-                    checked.function.body.as_deref().unwrap_or_default(),
-                )
+            ordinary[checked.function.id.0 as usize]
+                && (!checked.function.postconditions.is_empty()
+                    || Checker::statements_contain_value_if(
+                        checked.function.body.as_deref().unwrap_or_default(),
+                    ))
         });
 
         let postcondition_schedule = self.analyze_function_inventory(
             &mut function_inventory,
             &callees,
             optimistic_batch,
-            None,
+            Some(&ordinary),
+            true,
         )?;
         let baseline_functions = function_inventory
             .iter()
@@ -1180,6 +1191,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             let mut rejections = Vec::new();
             let mut rejected = vec![false; baseline_functions.len()];
             for (index, function) in baseline_functions.iter().enumerate() {
+                if !ordinary[index] {
+                    continue;
+                }
                 // A receipt stands for an accepted analysis of exactly these
                 // inputs [MOD-8].
                 if self.analysis.analysis_reused(index) {
@@ -1226,7 +1240,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if optimistic_batch {
             for (index, function) in functions.iter_mut().enumerate() {
                 // A receipt's analysis retains no derivation to prune.
-                if !self.analysis.analysis_reused(index) {
+                if ordinary[index] && !self.analysis.analysis_reused(index) {
                     finalize_function_entailment(&mut function.entailment);
                 }
             }
@@ -1238,10 +1252,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // the corresponding checked allocation node. This is the sole
         // semantic-to-target handoff: lowering receives a conclusion, not the
         // proof arena, and performs no proof reconstruction.
-        Checker::install_source_allocation_bounds(&mut functions)?;
+        for id in &executable_functions {
+            Checker::install_source_allocation_bounds(std::slice::from_mut(
+                &mut functions[id.0 as usize],
+            ))?;
+        }
 
-        let executable_nominal_count = self.types.nominals.len();
-        self.materialize_generic_requirements(check_context)?;
+        let executable_nominals = self.types.view.nominals.clone();
         let derived_consts = self.types.derived_consts.clone();
         for (index, derived) in derived_consts.iter().enumerate() {
             for operand in [derived.left, derived.right] {
@@ -1254,7 +1271,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // program. The affine-map rule consumes a successful OP-4 disposition
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
-        let permission = analyze_permission(&functions, &permission_signatures);
+        let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
         // The ledger is rendered here because only the checker still holds the
         // syntax tree the citations name. It is pure presentation over the
         // table above and reaches no decision.
@@ -1263,8 +1280,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .iter()
             .any(|permissions| !permissions.pairs.is_empty() || !permissions.loops.is_empty())
         {
+            let ordered = super::permission::PermissionMetadata {
+                functions: executable_functions
+                    .iter()
+                    .map(|id| permission.functions[id.0 as usize].clone())
+                    .collect(),
+            };
             render_ledger(
-                &permission,
+                &ordered,
                 &PermissionLedgerSource {
                     tree: &self.types.declarations.tree,
                 },
@@ -1285,7 +1308,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 })
                 .collect::<Result<_, _>>()?,
             elements: self.types.elements.clone(),
-            executable_nominal_count,
+            executable_nominals,
             nominal_lowering_alias: self.types.nominal_lowering_aliases()?,
             nominal_physical_alias: self.types.nominal_physical_aliases()?,
             constants: self.types.checked_constants.clone(),
@@ -1309,6 +1332,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .collect(),
             derived_consts,
             functions,
+            executable_functions,
             contract_queries: self.analysis.contract_queries.clone(),
             postcondition_schedule,
             generic_requirements: self.analysis.generic_requirements.clone(),
@@ -1409,7 +1433,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .tree
                 .first_child_with(node, Production::Type)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let checkpoint = self.types.nominal_checkpoint();
+            let checkpoint = self.types.view.clone();
             match self.ensure_nominal_type(check_context, ty, &GenericSubstitution::default()) {
                 Ok(()) => {}
                 Err(
@@ -1417,7 +1441,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     | CheckStop::Unsupported(_)
                     | CheckStop::PostconditionPrerequisiteUnavailable,
                 ) => {
-                    self.types.restore_nominal_checkpoint(checkpoint)?;
+                    self.types.select_view(checkpoint);
                     self.analysis.mark_postcondition_unavailable(declaration);
                     continue;
                 }
@@ -1931,12 +1955,18 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         });
         // Only the canonical instances are judged below, and a judged body
         // reads another function's analysis solely through the postcondition
-        // summaries of its callees. The other bodies of this scratch
-        // inventory — every nongeneric function among them — are analyzed
+        // summaries of its callees. The other bodies of this symbolic
+        // view — every nongeneric function among them — are analyzed
         // again by the concrete phase, so analyzing them here would repeat
         // that whole cost for a result nothing reads.
         let analyzed = Checker::generic_validation_scope(functions, canonical)?;
-        self.analyze_function_inventory(functions, callees, optimistic_batch, Some(&analyzed))?;
+        self.analyze_function_inventory(
+            functions,
+            callees,
+            optimistic_batch,
+            Some(&analyzed),
+            false,
+        )?;
         if optimistic_batch {
             for (checked, analyzed) in functions.iter_mut().zip(&analyzed) {
                 if *analyzed {
@@ -2000,6 +2030,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         callees: &[EntailmentCallee],
         optimistic_batch: bool,
         analyzed: Option<&[bool]>,
+        allow_receipts: bool,
     ) -> Result<PostconditionSchedule, CheckStop> {
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
         let contract_queries = self.analysis.contract_queries.clone();
@@ -2008,7 +2039,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // the symbolic validation of generic templates always runs afresh.
         let receipts = self
             .receipts
-            .filter(|_| analyzed.is_none() && self.reject_entailment);
+            .filter(|_| allow_receipts && self.reject_entailment);
         let items = receipts
             .map(|_| self.types.declarations.receipt_items())
             .transpose()?;
@@ -2081,9 +2112,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                                 .postconditions
                                 .iter()
                                 .filter(|proof| {
-                                    proof.summary.as_ref().is_some_and(|summary| {
-                                        summary.component < component.ordinal
-                                    })
+                                    selected(checked.function.id.0 as usize)
+                                        && proof.summary.as_ref().is_some_and(|summary| {
+                                            summary.component < component.ordinal
+                                        })
                                 })
                                 .filter_map(|proof| {
                                     checked
@@ -2103,9 +2135,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                                 .postconditions
                                 .iter()
                                 .filter(|proof| {
-                                    proof.summary.as_ref().is_some_and(|summary| {
-                                        summary.component < component.ordinal
-                                    })
+                                    selected(checked.function.id.0 as usize)
+                                        && proof.summary.as_ref().is_some_and(|summary| {
+                                            summary.component < component.ordinal
+                                        })
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -2204,6 +2237,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|checked| checked.function.requirements.clone())
             .collect::<Vec<_>>();
         for checked in functions {
+            if !self.types.view.contains_function(checked.function.id) {
+                continue;
+            }
             if let Some(body) = &mut checked.function.body {
                 self.install_statement_call_requirements(check_context, body, &requirements)?;
             }
@@ -3221,11 +3257,13 @@ impl<'unit> TypeContext<'unit> {
         if signature.substitution.len() == 0 {
             Ok(0)
         } else {
-            function
-                .id
-                .0
-                .checked_add(1)
-                .ok_or(SemanticCompilerFailure::CounterOverflow)
+            let ordinal = self
+                .view
+                .functions
+                .iter()
+                .position(|id| *id == function.id)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            u32::try_from(ordinal + 1).map_err(|_| SemanticCompilerFailure::CounterOverflow)
         }
     }
     /// Completes [EFF-3]'s finite allocation fact over the checked call graph.
@@ -3904,6 +3942,7 @@ impl<'unit> TypeContext<'unit> {
     fn new(declarations: &'unit DeclarationInventory<'unit>) -> Self {
         Self {
             declarations,
+            view: InventoryView::default(),
             nominal_templates: Default::default(),
             prelude_nominals: Default::default(),
             nominal_layouts_acyclic_at: Default::default(),

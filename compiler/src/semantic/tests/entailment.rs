@@ -101,8 +101,7 @@ fn entailments(source: &[u8], function: &str) -> Vec<FunctionEntailment> {
         };
         checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|candidate| candidate.name == function)
             .map(|candidate| candidate.entailment.clone())
             .collect()
@@ -10859,8 +10858,7 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         let instances: Vec<_> = checked
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.name == "first")
             .collect();
         assert_eq!(instances.len(), 2);

@@ -65,7 +65,7 @@ impl CheckedProgram {
         module: crate::ModuleId,
         name: &str,
     ) -> Option<&CheckedFunction> {
-        self.data.functions.iter().find(|function| {
+        self.data.executable_functions().find(|function| {
             !function.formal_hypothesis
                 && function.name == name
                 && resolved

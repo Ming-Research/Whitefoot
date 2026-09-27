@@ -18,7 +18,6 @@ use super::super::model::CheckedStatePath;
 use super::super::model::FunctionId;
 use super::generics::{
     GenericArgument, GenericParameter, GenericParameterKey, GenericSubstitution,
-    StableGenericSubstitution,
 };
 use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate};
 
@@ -43,7 +42,7 @@ impl FunctionArgument {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct FunctionReference {
     pub(super) declaration: DeclarationId,
-    pub(super) substitution: StableGenericSubstitution,
+    pub(super) substitution: GenericSubstitution,
 }
 
 #[derive(Clone)]
@@ -62,7 +61,7 @@ pub(super) struct ActualGroup {
 }
 
 struct BindingSite {
-    substitution: StableGenericSubstitution,
+    substitution: GenericSubstitution,
     key: GenericParameterKey,
     source: NodeId,
 }
@@ -139,7 +138,7 @@ impl<'unit> Checker<'_, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
     ) -> Result<(), CheckStop> {
-        let checkpoint = self.types.nominal_checkpoint();
+        let checkpoint = self.types.view.clone();
         let members = self
             .types
             .declarations
@@ -240,51 +239,35 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<FunctionId, CheckStop> {
         match argument {
             FunctionArgument::Source { reference, .. } => {
-                if let Some(id) = self.types.function_reference_instance(reference)? {
-                    return Ok(id);
-                }
                 let value = self.types.function_reference(reference)?;
-                let substitution =
-                    self.reify_concrete_substitution(check_context, &value.substitution)?;
+                self.types.activate_substitution(&value.substitution)?;
                 let template = *self
                     .types
                     .templates_by_declaration
                     .get(&value.declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let id = FunctionId(
-                    u32::try_from(self.types.signatures.len())
-                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                );
-                self.instantiate_function_signature(check_context, template, substitution)?;
-                Ok(id)
+                self.instantiate_function_signature(check_context, template, value.substitution)
             }
             FunctionArgument::Parameter(key) => {
-                if let Some(signature) = self
-                    .types
-                    .signatures
-                    .iter()
-                    .find(|signature| signature.formal_parameter == Some(key))
-                {
-                    return Ok(signature.id);
-                }
                 let context = self.types.symbolic_formal_context(check_context, key)?;
                 let template = self.types.declarations.formal_template(key)?;
                 let substitution = self
                     .types
                     .formal_substitution(check_context, key, &context)?;
+                if let Some(id) =
+                    self.types
+                        .function_instance(template.declaration, &substitution, Some(key))
+                {
+                    self.types.activate_function(id)?;
+                    return Ok(id);
+                }
                 self.ensure_nominals_in_function(check_context, template.node, &substitution)?;
                 let id = FunctionId(
                     u32::try_from(self.types.signatures.len())
                         .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
                 );
                 let signature = self.formal_signature(check_context, key, &context, id)?;
-                self.types
-                    .functions_by_declaration
-                    .entry(signature.declaration)
-                    .or_default()
-                    .push(id);
-                self.types.signatures.push(signature);
-                Ok(id)
+                self.types.retain_signature(signature)
             }
         }
     }
@@ -805,11 +788,19 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut contexts = self
             .types
-            .signatures
+            .view
+            .functions
             .iter()
+            .map(|id| &self.types.signatures[id.0 as usize])
             .map(|signature| (signature.node, signature.substitution.clone()))
             .collect::<Vec<_>>();
-        for (template, substitution) in self.types.source_nominal_instances.iter().flatten() {
+        for (template, substitution) in self
+            .types
+            .view
+            .nominals
+            .iter()
+            .filter_map(|id| self.types.source_nominal_instances[id.0 as usize].as_ref())
+        {
             if substitution.is_concrete(&self.types.elements) {
                 contexts.push((
                     self.types.nominal_templates[*template].node,
@@ -843,9 +834,9 @@ impl<'unit> Checker<'_, 'unit> {
 
 impl<'unit> TypeContext<'unit> {
     /// Diagnostic provenance is not part of function or nominal instance
-    /// identity. Stabilize its type axis because discovery rolls back scratch
-    /// nominal IDs; an independently attached region vector is not an argument
-    /// of a function-kind formal and does not select its binding site.
+    /// identity. The retained substitution names the binding directly; an
+    /// independently attached region vector is not an argument of a
+    /// function-kind formal and does not select its binding site.
     pub(super) fn record_behavior_binding_sites(
         &self,
         substitution: &GenericSubstitution,
@@ -855,23 +846,18 @@ impl<'unit> TypeContext<'unit> {
             return Ok(());
         }
         let arguments = substitution.clone().with_regions(Vec::new());
-        let Some(stable) =
-            self.stabilize_substitution_with_visiting(&arguments, 0, &mut HashSet::new(), true)?
-        else {
-            return Ok(());
-        };
         let mut sites = self.behavior.binding_sites.borrow_mut();
         for (key, source) in sources {
             if let Some(site) = sites
                 .iter_mut()
-                .find(|site| site.key == *key && site.substitution == stable)
+                .find(|site| site.key == *key && site.substitution == arguments)
             {
                 if source.index() < site.source.index() {
                     site.source = *source;
                 }
             } else {
                 sites.push(BindingSite {
-                    substitution: stable.clone(),
+                    substitution: arguments.clone(),
                     key: *key,
                     source: *source,
                 });
@@ -886,17 +872,12 @@ impl<'unit> TypeContext<'unit> {
         substitution: &GenericSubstitution,
     ) -> Result<NodeId, CheckStop> {
         let arguments = substitution.clone().with_regions(Vec::new());
-        let Some(stable) =
-            self.stabilize_substitution_with_visiting(&arguments, 0, &mut HashSet::new(), true)?
-        else {
-            return Ok(fallback);
-        };
         Ok(self
             .behavior
             .binding_sites
             .borrow()
             .iter()
-            .find(|site| site.key == key && site.substitution == stable)
+            .find(|site| site.key == key && site.substitution == arguments)
             .map_or(fallback, |site| site.source))
     }
     pub(super) fn function_argument_instance(
@@ -930,13 +911,7 @@ impl<'unit> TypeContext<'unit> {
                 .signatures
                 .get(id.0 as usize)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            let stable = self.stabilize_substitution_with_visiting(
-                &signature.substitution,
-                0,
-                &mut HashSet::new(),
-                true,
-            )?;
-            if stable.as_ref() == Some(&value.substitution) {
+            if signature.substitution == value.substitution {
                 return Ok(Some(*id));
             }
         }
@@ -948,18 +923,14 @@ impl<'unit> TypeContext<'unit> {
         substitution: &GenericSubstitution,
     ) -> Result<FunctionArgument, CheckStop> {
         let concrete = substitution.is_concrete(&self.elements);
-        // Reference identity outlives speculative nominal rollback. Only the
-        // structural bridge enters this pool; no scratch NominalId does.
-        let substitution = self
-            .stabilize_substitution_with_visiting(substitution, 0, &mut HashSet::new(), true)?
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let substitution = substitution.clone();
         let value = FunctionReference {
             declaration,
             substitution,
         };
-        self.intern_stable_function_reference(value, concrete)
+        self.intern_function_reference_value(value, concrete)
     }
-    fn intern_stable_function_reference(
+    fn intern_function_reference_value(
         &self,
         value: FunctionReference,
         concrete: bool,
@@ -980,22 +951,6 @@ impl<'unit> TypeContext<'unit> {
             reference,
             concrete,
         })
-    }
-    pub(super) fn substitute_function_argument_regions(
-        &self,
-        value: FunctionArgument,
-        regions: &[(DeclarationId, DeclarationId)],
-    ) -> Result<FunctionArgument, CheckStop> {
-        let FunctionArgument::Source {
-            reference,
-            concrete,
-        } = value
-        else {
-            return Ok(value);
-        };
-        let mut reference = self.function_reference(reference)?;
-        self.substitute_stable_regions(&mut reference.substitution, regions)?;
-        self.intern_stable_function_reference(reference, concrete)
     }
     pub(super) fn function_reference(
         &self,

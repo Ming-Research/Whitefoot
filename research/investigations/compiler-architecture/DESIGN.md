@@ -414,9 +414,9 @@ and applied (`design/log.md`, 2026-09-25).
    moved in this stage receive their owner directly. Immutable `CheckContext` and
    `FunctionContext` values replace the module, template-authority and
    postcondition scope cells. These are implementation boundaries within the
-   existing checker-facts and generic-validation decisions: preflight still
-   gets its own type inventory, generic validation still rolls back, and the
-   `Stable*` bridge remains. They do not implement P2.3 or P3.4.
+   existing checker-facts and generic-validation decisions. That component
+   stage left preflight duplication, generic rollback and the `Stable*`
+   bridge for the subsequent P2.3 inventory migration described below.
 
    Place formation now shares type-directed member selection for ordinary
    fields, Box contents, addressed storage and borrowed paths. `ElaboratedPlace`
@@ -438,11 +438,11 @@ and applied (`design/log.md`, 2026-09-25).
 3. **Generic validation without rollback.** Grow-only interning keyed by
    structure, the executable set chosen by reachability, and validation and
    preflight as views over one inventory. This removes the table rollback,
-   the `Stable*` type mirror and the preflight duplicates and, by reading,
-   the second structural check of every body. Cost: large. Tree: it removes
-   the ground of the refusal in `design/compiler/generic-validation-scope.md`
-   (identities discarded at the checkpoint). The owner approved its
-   replacement; implementation remains pending.
+   the `Stable*` type mirror, preflight identity duplicates and discovery
+   replay. Body and analysis reuse requires equal judgment inputs; the
+   implemented migration conservatively retains separate checks. Cost: large.
+   The owner-approved replacement of the scratch-inventory decision in
+   `design/compiler/generic-validation-scope.md` is implemented below.
 
 ### P3. Identity and ownership
 
@@ -540,8 +540,8 @@ and applied (`design/log.md`, 2026-09-25).
    cut from the model instead of re-parsed text. Cost: medium to large.
    Validation: byte-identical output, which keeps the backend tests' 547
    substring checks (`.contains(`) as the regression net. Tree:
-   `design/compiler/structured-emission.md` (owner-approved; implementation
-   pending).
+   `design/compiler/structured-emission.md` (owner-approved and implemented
+   on this branch).
 3. **Remove region specialization** down to the call table, reachability and
    interning. Cost: small. No tree change. Done on this branch: the
    `$release$` symbols proved unreachable, since every function has one
@@ -616,9 +616,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 
 P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
 described in [Approved architectural decisions](#approved-architectural-decisions).
-P3.4's shared views follow P2.2's shared place formation on this branch;
-P4.2's structured emission is also implemented. P2.3 implementation remains
-pending.
+P2.3's retained inventories, P3.4's shared syntax views and P4.2's
+structured emission follow P2.2's shared place formation on this branch.
 P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
@@ -647,8 +646,7 @@ with a cache.
 The owner approved P2.3, P3.4 and P4.2 before implementation, including the
 review finding that P4.2's model must retain named type definitions, their
 transitive dependencies and attribute-group uses. Their decisions now live
-under `design/compiler/`; P3.4 and P4.2 are implemented, while P2.3 remains
-pending.
+under `design/compiler/`; all three are implemented on this branch.
 They change compiler structure, not language rules. P2.2's shared place
 formation precedes these implementations.
 
@@ -688,6 +686,24 @@ proposed views. Validation must compare the corpus and module graphs as in
 Order, cover uncalled generic bodies, schema-written concrete instances,
 symbolic publication and cached/uncached agreement, and demonstrate that
 symbolic-only inventory growth does not reach executable output.
+
+The implementation gives ordered checking membership its own home in
+`compiler/src/semantic/check/inventory.rs`, alongside type formation. This
+serves shared nominal and callable identity across preflight, symbolic and
+ordinary judgments; it is removed if these judgments no longer share an
+inventory. A view retains discovery order as well as membership, because the
+ordinary view's order determines executable type and function order. Lowering
+uses explicit maps from retained identities to that view instead of assuming
+an executable prefix. A failed preflight formation retains its identity but
+must retry incomplete formation in a later judgment. Structural spelling and
+the existing schema-discovery ordering key walk the retained types directly;
+neither builds a mirrored type graph for later reconstruction. Judgment
+products keep their checking context: retaining a header alone does not
+authorize reusing a body's proof or a consumed callee claim. The implementation
+conservatively checks each selected body and its analyses afresh in the
+symbolic and ordinary views; existing cross-invocation proof receipts still
+require their complete canonical input key. Retained symbolic judgments do
+not publish summaries into the ordinary view.
 
 ### P3.4: typed syntax access
 

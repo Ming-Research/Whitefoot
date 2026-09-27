@@ -414,6 +414,9 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(), CheckStop> {
         let empties_run = self.release_rows()?;
         for checked in functions {
+            if !self.view.contains_function(checked.function.id) {
+                continue;
+            }
             checked.function.obligations = obligation_records(&checked.function, &empties_run);
         }
         Ok(())

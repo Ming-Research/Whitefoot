@@ -119,9 +119,9 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// Performs the one semantic subjudgment that DIAG-1 interleaves into
-    /// resolution. This checker is throwaway: it reuses the ordinary nominal,
-    /// constant, generic-cycle, signature, and FN-2 implementations, but none
-    /// of the scratch identities or tables are published to the real checker.
+    /// resolution. Its availability and judgment state are local to the
+    /// preflight view; formed type and callable identities stay interned for
+    /// ordinary checking, which still runs all required source judgments.
     pub(super) fn preflight_postcondition_selectors(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -305,8 +305,10 @@ impl<'unit> Checker<'_, 'unit> {
             .collect::<Result<Vec<_>, _>>()?;
         let mut eligible = self
             .types
-            .signatures
+            .view
+            .functions
             .iter()
+            .map(|id| &self.types.signatures[id.0 as usize])
             .filter(|signature| {
                 signature.formal_parameter.is_some()
                     || group_functions.contains(&signature.id)
@@ -440,7 +442,7 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// Builds final selector metadata after the ordinary H0 signature path.
     /// The verdict-bearing form of the same validation already ran in the
-    /// throwaway preflight; any divergence here is a compiler invariant
+    /// preflight view; any divergence here is a compiler invariant
     /// failure.
     pub(super) fn admit_postcondition_selectors(
         &mut self,
@@ -491,9 +493,9 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// Builds selectors for the ordinary locally reachable set plus concrete
-    /// instances replayed from an uninstantiated generic source body. Those
-    /// replayed calls were already checked in the schema pass, but their final
-    /// FunctionIds are not reachable from a nongeneric concrete caller.
+    /// instances retained from an uninstantiated generic source body. Those
+    /// calls were discovered in the symbolic view, but their FunctionIds
+    /// are not reachable from a nongeneric concrete caller.
     pub(super) fn admit_postcondition_selectors_including(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -1994,7 +1996,9 @@ impl<'unit> TypeContext<'unit> {
     ) -> HashMap<crate::NodePath, Vec<usize>> {
         let eligible: std::collections::HashSet<FunctionId> = eligible.iter().copied().collect();
         let mut by_function: HashMap<crate::NodePath, Vec<usize>> = HashMap::new();
-        for (index, signature) in self.signatures.iter().enumerate() {
+        for id in &self.view.functions {
+            let index = id.0 as usize;
+            let signature = &self.signatures[index];
             if !eligible.contains(&signature.id) {
                 continue;
             }

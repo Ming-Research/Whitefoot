@@ -1316,8 +1316,7 @@ impl CheckedProgram {
         let mut found = Vec::new();
         for function in self
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| functions.contains(&function.name))
         {
             let summary = &function.entailment;
@@ -1361,8 +1360,7 @@ impl CheckedProgram {
     #[cfg(test)]
     pub fn function_count(&self) -> usize {
         self.data
-            .functions
-            .iter()
+            .executable_functions()
             .filter(|function| function.body.is_some())
             .count()
     }

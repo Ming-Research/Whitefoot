@@ -57,6 +57,7 @@ impl<'unit> Checker<'_, 'unit> {
 impl<'unit> TypeContext<'unit> {
     /// Appends one nominal instance, a change to the table.
     pub(super) fn push_nominal(&mut self, nominal: CheckedNominal) {
+        self.view.add_nominal(nominal.id);
         self.nominals.push(nominal);
         self.nominal_table_changed();
     }
@@ -114,16 +115,15 @@ impl<'unit> TypeContext<'unit> {
         self.prelude_types.get(id.0 as usize).copied().flatten()
     }
     /// Rejects a nominal whose layout contains itself other than through a
-    /// `Box`. The judgment reads only the table, so a table unchanged since
-    /// it last found no recursion holds none now; the whole table is walked
-    /// again only after an instance was appended or completed or a
-    /// checkpoint restored.
+    /// `Box`. The selected roots and their dependencies are walked again
+    /// only after an instance was appended or completed or the selected
+    /// view changed; each such change invalidates the cached judgment.
     pub(super) fn reject_recursive_nominal_layouts(&mut self) -> Result<(), CheckStop> {
         if self.nominal_layouts_acyclic_at == Some(self.nominal_generation) {
             return Ok(());
         }
         let mut colors = vec![0_u8; self.nominals.len()];
-        for root in 0..self.nominals.len() {
+        for root in self.view.nominals.iter().map(|id| id.0 as usize) {
             if colors[root] != 0 {
                 continue;
             }
@@ -201,8 +201,9 @@ impl<'unit> TypeContext<'unit> {
         &mut self,
         referent: CheckedType,
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.box_nominals.get(&referent) {
-            return Ok(*id);
+        if let Some(id) = self.box_nominals.get(&referent).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())
@@ -234,8 +235,9 @@ impl<'unit> TypeContext<'unit> {
         &mut self,
         results: &[(String, CheckedType)],
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.result_list_nominals.get(results) {
-            return Ok(*id);
+        if let Some(id) = self.result_list_nominals.get(results).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())
@@ -281,8 +283,9 @@ impl<'unit> TypeContext<'unit> {
         &mut self,
         ty: PreludeType,
     ) -> Result<NominalId, CheckStop> {
-        if let Some(id) = self.prelude_nominals.get(&ty) {
-            return Ok(*id);
+        if let Some(id) = self.prelude_nominals.get(&ty).copied() {
+            self.activate_nominal(id)?;
+            return Ok(id);
         }
         let id = NominalId(
             u32::try_from(self.nominals.len())
