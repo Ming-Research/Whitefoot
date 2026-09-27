@@ -315,10 +315,7 @@ fn drain_guard(
         match arm.tag {
             0 if body.is_empty() => (),
             1 if matches!(body.as_slice(), [CheckedStatement::Break { target, drops }]
-                if *target == loop_id && drops.is_empty()) =>
-            {
-                ()
-            }
+                if *target == loop_id && drops.is_empty()) => {}
             _ => return false,
         }
     }
