@@ -344,11 +344,29 @@ rarely insert at the same place.
   content-move repair writes `free_empty(move b)` without the argument name
   GRAM-11 requires and offers the cell's scope-exit release to a content
   whose elements are linear, and PROV-6's partial-consume repair writes the
-  placeholder `let N(f: a, ...) = move v;`. Pin each with a program per
+  placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
+  offers that placeholder as its second route for every linear binding,
+  although an opaque host handle such as `ReadFile` cannot be taken apart
+  [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
+  value of an unbounded type parameter can only be moved whole; the
+  [beyond-memory article](articles/beyond-memory.md) shows it for
+  `ReadFile`. Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
   agent follows an unpinned repair that fails.
+
+- **A no-heap bundle stops the compiler when `box_new` names a type holding
+  a `Box`.** Under `program no_heap;`, a struct or enum with a `Box` field
+  together with a call `box_new::<ThatType>(...)` stops with
+  `compiler failure in Semantics: InvalidResolution` instead of STOR-8's
+  HeapTypeUnderNoHeap at the field type; `tests/programs/tail_list.wf` with
+  the declaration prepended reproduces it. The same type with
+  `box_new::<u64>`, or with no such call, is rejected under STOR-8 as it
+  should be, and no program is accepted: the run stops without a verdict.
+  Report the rejection the stable traversal reaches first and pin it with a
+  regression test over these variants. Found while writing the
+  [beyond-memory article](articles/beyond-memory.md).
 
 - **A cell taken apart with no binder is repaired by removing the
   statement, even when its content is linear.** TYPE-2's repair for
