@@ -131,6 +131,11 @@ the candidate still measured `1.143–1.202` against the slower standard
 container and gave no broad useful-cell improvement. The loop controller is
 therefore a confirmed contributor, but this source-only replacement is not a
 selected lowering or a Vector completion.
+A follow-up tail-boundary `inlinehint` was then tested on the same frozen
+wide image. It left the optimized object and executable assembly byte-for-byte
+unchanged and retained the trace-to-tail call, so the preregistered boundary
+criterion failed before timing; the patch and hashes are recorded with the
+[rejected diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#wide-tail-boundary-inlinehint-completed-and-rejected).
 
 The first recognizer is deliberately closed. After ignoring erased proof
 statements, the whole own-unit body must contain an entry window length `n`,

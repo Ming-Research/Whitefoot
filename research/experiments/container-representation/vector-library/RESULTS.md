@@ -2495,23 +2495,26 @@ target. The exact source-only body patch is retained in
 [`consumer-counter.patch`](consumer-counter.patch); no production lowering or
 specification rule is selected.
 
-### Next discriminator: expose the wide tail boundary
+### Wide tail-boundary `inlinehint`: completed and rejected
 
-The remaining wide suffix-one cost has one concrete boundary to test. The
-frozen actual-forward-hint LLVM has a call from the wide trace to
-`vector_library_tail_work`, and that helper calls the wide
-`grow_vector_truncate`. The next diagnostic will add one ordinary `inlinehint`
-to the wide `vector_library_tail_work` definition only. It keeps source, ABI,
-callback, allocation policy, native inputs and all scalar bodies fixed. The
-criterion is recorded before construction: optimized code must remove the
-wide trace-to-tail call without adding a payload snapshot, spill/reload or new
-per-owner transfer; the scalar trace and all native objects must retain
-normalized code identity. If that code criterion passes, both complete
-correctness/accounting images and one full 4,116-row-per-arm pair are required.
-Any useful-cell regression or new wide frame/placement cost rejects the
-candidate; a suffix-one improvement alone is insufficient. This tests the
-call/placement package, not a general inlining policy, and does not authorize a
-production change.
+The preregistered discriminator added one ordinary `inlinehint` to the wide
+`wf_vector_library_tail_work$instance$c3abe4db44181f7a` definition in both the
+timed and accounting LLVM images. Source, ABI, callback, allocation policy,
+native inputs and every scalar body stayed frozen. The exact two-file patch is
+[`tail-boundary-inlinehint.patch`](tail-boundary-inlinehint.patch).
+
+The code criterion failed before timing: optimized wide assembly still has the
+same trace-to-tail call and the same separate tail body. The control and
+candidate timed objects are byte-identical
+(`7e9667d18069e0e196b98d2cce6f070f1e5b11a3d8ce6f69cfb3a3175e7b9278`); the
+accounting objects are also byte-identical
+(`89a078ac2aad2d324d540286b87c1501329f2dad914a7db1fb14a7fa4377831b`). The
+linked executable disassemblies differ only in their path header, and the
+wide call remains at the same site. Thus no new frame, payload snapshot,
+spill/reload or per-owner transfer was introduced, but there is also no
+exposure of the boundary to measure. The candidate is rejected without a
+4,116-row timing pair; the call/placement package remains unresolved and this
+LLVM hint does not authorize a production policy.
 
 ### Empty allocation: two-edge exposure does not remove the allocation
 
