@@ -361,8 +361,8 @@ start from the examples above:
 5. [Integers](docs/articles/integers.md) — every operation states its meaning.
 6. [One build](docs/articles/one-build.md) — no panic, no debug/release
    split, a fixed record on resource exhaustion.
-7. Beyond memory — no heap, linear resources, and the plan for a
-   maximum-safety mode.
+7. [Beyond memory](docs/articles/beyond-memory.md) — no heap, linear
+   resources, and the plan for a maximum-safety mode.
 8. What a reviewer reads — contracts and effect rows as the review surface.
 9. The trusted base — what is trusted, and the plan to shrink it.
 10. Where the speed comes from — every way the proofs are used.

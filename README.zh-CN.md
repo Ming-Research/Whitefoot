@@ -185,7 +185,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 4. [拒绝告诉你什么](docs/articles/what-a-rejection-tells-you.md)——为负责修复代码的 agent 编写的诊断信息。
 5. [整数](docs/articles/integers.md)——每个运算都写明自己的含义。
 6. [只有一种构建](docs/articles/one-build.md)——没有 panic，没有 debug/release 之分，资源耗尽时输出固定的记录。
-7. 从内存到资源——不用堆、线性资源，以及最高安全模式的计划。
+7. [从内存到资源](docs/articles/beyond-memory.md)——不用堆、线性资源，以及最高安全模式的计划。
 8. 审查者读什么——把契约和效应行作为审查的对象。
 9. 可信基——哪些东西被信任，以及缩小它的计划。
 10. 速度从哪里来——证明被利用的每一种方式。
