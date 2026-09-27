@@ -179,6 +179,23 @@ pub(crate) enum LoopCombine {
     ExclusiveOr,
 }
 
+crate::semantic::products::record_enum!(LoopActualization {
+    0 => IndependentMap,
+    1 => Reduction { accumulator, combine },
+});
+crate::semantic::products::record_enum!(LoopCombine {
+    0 => AddWrap,
+    1 => MultiplyWrap,
+    2 => BitAnd,
+    3 => BitOr,
+    4 => BitXor,
+    5 => Minimum,
+    6 => Maximum,
+    7 => And,
+    8 => Or,
+    9 => ExclusiveOr,
+});
+
 impl LoopCombine {
     /// The [OP-1] spelling the ledger prints.
     pub(crate) const fn spelling(self) -> &'static str {

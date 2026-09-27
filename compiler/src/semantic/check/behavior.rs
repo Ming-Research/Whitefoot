@@ -60,13 +60,14 @@ pub(super) struct ActualGroup {
     pub(super) bindings: Vec<NodeId>,
 }
 
-struct BindingSite {
+#[derive(Clone, Eq, PartialEq)]
+pub(super) struct BindingSite {
     substitution: GenericSubstitution,
     key: GenericParameterKey,
     source: NodeId,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct BehaviorInventory {
     pub(super) formals: HashMap<DeclarationId, FormalGroup>,
     pub(super) actuals: HashMap<DeclarationId, ActualGroup>,
@@ -848,6 +849,11 @@ impl<'unit> TypeContext<'unit> {
         let arguments = substitution.clone().with_regions(Vec::new());
         let mut sites = self.behavior.binding_sites.borrow_mut();
         for (key, source) in sources {
+            self.record_product_binding(BindingSite {
+                substitution: arguments.clone(),
+                key: *key,
+                source: *source,
+            });
             if let Some(site) = sites
                 .iter_mut()
                 .find(|site| site.key == *key && site.substitution == arguments)
@@ -1742,10 +1748,29 @@ impl FunctionReferenceId {
 }
 
 impl BehaviorInventory {
-    pub(super) fn product_counts(&self) -> (usize, usize) {
-        (
-            self.references.borrow().len(),
-            self.binding_sites.borrow().len(),
-        )
+    pub(super) fn import_binding_sites(&self, sites: Vec<BindingSite>) {
+        let mut current = self.binding_sites.borrow_mut();
+        for site in sites {
+            if let Some(known) = current
+                .iter_mut()
+                .find(|known| known.key == site.key && known.substitution == site.substitution)
+            {
+                if site.source.index() < known.source.index() {
+                    known.source = site.source;
+                }
+            } else {
+                current.push(site);
+            }
+        }
+    }
+
+    pub(super) fn reference_count(&self) -> usize {
+        self.references.borrow().len()
     }
 }
+
+crate::semantic::products::record_struct!(BindingSite {
+    substitution,
+    key,
+    source
+});

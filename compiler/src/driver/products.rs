@@ -7,6 +7,7 @@ pub(super) struct CheckProducts<'a> {
     cache: &'a BuildCache,
     modules: Vec<Option<Vec<u8>>>,
     names: Vec<String>,
+    reuse_proofs: bool,
 }
 
 impl<'a> CheckProducts<'a> {
@@ -14,6 +15,7 @@ impl<'a> CheckProducts<'a> {
         cache: &'a BuildCache,
         resolved: &ResolvedSyntaxUnit,
         limits: CompilerLimits,
+        reuse_proofs: bool,
     ) -> Self {
         let bundle = resolved.syntax().classified_bundle().source_bundle();
         let modules = (0..bundle.modules().len())
@@ -98,16 +100,21 @@ impl<'a> CheckProducts<'a> {
             cache,
             modules,
             names,
+            reuse_proofs,
         }
     }
 }
 
 impl crate::semantic::ProofReceipts for CheckProducts<'_> {
     fn load(&self, key: &[u8]) -> Option<Vec<u8>> {
-        crate::semantic::ProofReceipts::load(self.cache, key)
+        self.reuse_proofs
+            .then(|| crate::semantic::ProofReceipts::load(self.cache, key))
+            .flatten()
     }
     fn store(&self, key: &[u8], bytes: &[u8]) {
-        crate::semantic::ProofReceipts::store(self.cache, key, bytes);
+        if self.reuse_proofs {
+            crate::semantic::ProofReceipts::store(self.cache, key, bytes);
+        }
     }
     fn products(&self) -> Option<&dyn crate::semantic::ModuleProducts> {
         Some(self)

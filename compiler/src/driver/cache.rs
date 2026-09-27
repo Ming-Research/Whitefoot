@@ -29,6 +29,8 @@ static PUBLICATIONS: AtomicU64 = AtomicU64::new(0);
 /// The cache family of proof receipts [MOD-8].
 const PROOF_RECEIPTS: &str = "proof-receipts";
 
+type MemoryRecords = HashMap<(String, Vec<u8>), Vec<u8>>;
+
 /// One cache directory, scoped to the compiler that reads and writes it.
 #[derive(Clone, Debug)]
 pub struct BuildCache {
@@ -41,11 +43,14 @@ pub struct BuildCache {
     headers_checked: Cell<u64>,
     bodies_reused: Cell<u64>,
     body_modules: RefCell<std::collections::BTreeMap<String, (u64, u64)>>,
+    lowerings: RefCell<std::collections::BTreeMap<String, (u64, u64)>>,
     /// Whether each verdict this handle already settled for exact inputs
     /// was an acceptance, by the digest of its key material: one
     /// invocation's checks consult each module's interface verdict once for
     /// every module whose closure holds it [MOD-8].
     settled: RefCell<HashMap<[u8; 32], bool>>,
+    /// Invocation-local products when no persistent directory was requested.
+    memory: Option<RefCell<MemoryRecords>>,
 }
 
 impl BuildCache {
@@ -60,14 +65,25 @@ impl BuildCache {
         Ok(Self {
             root: root.to_path_buf(),
             compiler,
+            memory: None,
+            ..Self::ephemeral()
+        })
+    }
+
+    pub(super) fn ephemeral() -> Self {
+        Self {
+            root: PathBuf::new(),
+            compiler: [0; 32],
             receipts_reused: Cell::new(0),
             receipts_recorded: Cell::new(0),
             bodies_checked: Cell::new(0),
             headers_checked: Cell::new(0),
             bodies_reused: Cell::new(0),
-            body_modules: RefCell::new(std::collections::BTreeMap::new()),
-            settled: RefCell::new(HashMap::new()),
-        })
+            body_modules: RefCell::default(),
+            lowerings: RefCell::default(),
+            settled: RefCell::default(),
+            memory: Some(RefCell::default()),
+        }
     }
 
     /// Whether the verdict this handle settled for exactly `material` was
@@ -105,6 +121,16 @@ impl BuildCache {
             .collect()
     }
 
+    /// Function CFGs built and imported, grouped by declaring module.
+    #[must_use]
+    pub fn lowering_counts(&self) -> Vec<(String, u64, u64)> {
+        self.lowerings
+            .borrow()
+            .iter()
+            .map(|(module, (built, reused))| (module.clone(), *built, *reused))
+            .collect()
+    }
+
     /// Body-less callable boundaries checked by this invocation.
     #[must_use]
     pub fn header_checks(&self) -> u64 {
@@ -131,6 +157,12 @@ impl BuildCache {
     /// exactly `material`, when one is present.
     #[must_use]
     pub fn load(&self, family: &str, material: &[u8]) -> Option<Vec<u8>> {
+        if let Some(memory) = &self.memory {
+            return memory
+                .borrow()
+                .get(&(family.to_owned(), material.to_vec()))
+                .cloned();
+        }
         let scoped = self.scoped(material);
         let bytes = std::fs::read(self.record_path(family, &scoped)).ok()?;
         decode(&bytes, &scoped)
@@ -144,6 +176,12 @@ impl BuildCache {
     /// Returns the I/O error that prevented the publication; no partial
     /// record is left under the record's name.
     pub fn store(&self, family: &str, material: &[u8], payload: &[u8]) -> std::io::Result<()> {
+        if let Some(memory) = &self.memory {
+            memory
+                .borrow_mut()
+                .insert((family.to_owned(), material.to_vec()), payload.to_vec());
+            return Ok(());
+        }
         let scoped = self.scoped(material);
         let path = self.record_path(family, &scoped);
         let directory = self.root.join(family);
@@ -169,6 +207,12 @@ impl BuildCache {
     ///
     /// Returns the I/O error that prevented creating the directory.
     pub fn area(&self, name: &str) -> std::io::Result<PathBuf> {
+        if self.memory.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "an invocation-local cache has no native tool directory",
+            ));
+        }
         let area = self.root.join(name);
         std::fs::create_dir_all(&area)?;
         Ok(area)
@@ -187,6 +231,24 @@ impl BuildCache {
 
     fn record_path(&self, family: &str, scoped: &[u8]) -> PathBuf {
         self.root.join(family).join(hex(&digest(scoped)))
+    }
+}
+
+impl crate::LoweringProducts for BuildCache {
+    fn load(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.load("lowered-functions", key)
+    }
+    fn store(&self, key: &[u8], product: &[u8]) {
+        let _ = self.store("lowered-functions", key, product);
+    }
+    fn lowered(&self, module: &str, reused: bool) {
+        let mut counts = self.lowerings.borrow_mut();
+        let counts = counts.entry(module.to_owned()).or_default();
+        if reused {
+            counts.1 += 1;
+        } else {
+            counts.0 += 1;
+        }
     }
 }
 

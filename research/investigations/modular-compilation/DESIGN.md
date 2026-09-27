@@ -1458,6 +1458,57 @@ representation if it is replaced; they are not a second model or generated
 syntax inventory. The driver owns source dependency keys and storage, while
 the checker owns product formation, identity import and current judgments.
 
+The queue checkpoint in the [build-cost results](../../experiments/modular-build-cost/RESULTS.md#structural-import-checkpoint)
+shows why discovery is part of a module product: importing only bodies that
+leave the existing inventory unchanged still repeats queue and callback walks.
+The remaining adapter must retain the discovered instances, activations and
+request origins together, and validate a retained FN-4 query against the complete
+current formal and actual claims. Use the resolver's existing MOD-7 header
+normalizer for those claim inputs, including generic binders and contract
+`define` expansion. A second header parser would duplicate the very
+interface/implementation equality the compiler already judges; raw header
+spelling would lose reuse across equivalent aliases. This adds an immutable
+consumer of that normalizer, not a new language equality or source judgment.
+Ordinary composition entailment and proof availability remain current.
+
+For discovery import, retain ordinary formation recipes alongside each local
+identity and replay only missing instances through the existing type and
+signature producers. A miss that needs formation stages a clone of the type
+metadata and a separate analysis scratch, validates all retained inputs, then
+publishes the types and recorded discovery effects together. It never clones
+the composed proof inventory. Existing-identity imports need no staging copy.
+This reuses formation judgments and preserves failure atomicity instead of
+adding a second set of inventory constructors or attempting rollback of
+partially mutated checker state. The remaining type-metadata copying and
+formation cost is an explicit qualification cost; if it dominates real
+consumers, replace the staging representation with an append-only transaction
+before claiming the build-cost target. The product child module owns these
+recipes; remove it when the retained representation no longer needs them.
+
+Record a body's formation and diagnostic-source requests, including requests
+that find an existing instance. Inventory growth alone loses those contributions
+when another entry has a different discovery order. Reapply the requests to
+the current inventories and retain the selectors of the requested functions.
+When formation against a current implementation exposes private metadata or
+analysis absent from the retained product, discard the staged import and run
+the ordinary walk. This keeps an interface-produced product from silently
+dropping work that its producer could not have seen.
+
+Lowering retains one source function's completed typed CFG together with its
+synthesized helpers and structured loop-actualization notes. The input records
+the checked runtime body, current physical type/reclamation graphs, selected
+callee symbols and result representations, target layout and the permission
+facts that lowering reads. Proof derivation arenas do not enter that key.
+Import rebinds global IR type, constant and call identities; function-local
+values and blocks keep their ordinals. Helpers reserve their new contiguous
+slots before decoding, and publication occurs only after the whole fragment
+decodes. Global work weights, scalar-offer pruning, target qualification and
+LLVM emission continue over the current assembled program. This boundary
+reuses the existing typed IR instead of treating printed LLVM as a source of
+lowering ownership, and structured notes preserve current source paths without
+rewriting finished diagnostic text. The `ir/products` schema and lowering
+product adapter serve this fragment store and leave with it if replaced.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

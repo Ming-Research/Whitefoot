@@ -521,6 +521,7 @@ struct DeclarationInventory<'unit> {
 
 /// Formed types, constants, templates and callable instances. Body checks can
 /// extend this context directly; checking phases select ordered views of it.
+#[derive(Clone)]
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
     view: InventoryView,
@@ -567,6 +568,7 @@ struct TypeContext<'unit> {
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
     behavior: behavior::BehaviorInventory,
+    product_discovery: std::cell::RefCell<Option<products::DiscoveryRequests>>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -3221,6 +3223,7 @@ impl<'unit> TypeContext<'unit> {
         substitution: &generics::GenericSubstitution,
         call: NodeId,
     ) {
+        self.record_product_request(template, substitution, call);
         let requests = &mut self.instance_requests;
         if !requests
             .iter()
@@ -3969,6 +3972,7 @@ impl<'unit> TypeContext<'unit> {
             checked_constants: Default::default(),
             derived_consts: Default::default(),
             behavior: Default::default(),
+            product_discovery: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

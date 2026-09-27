@@ -513,18 +513,9 @@ pub fn compile_with_cache(
             public: false,
             written: None,
         },
-        receipts_for(overlap, Some(cache)),
+        Some(cache),
     )
     .map(|reported| reported.module)
-}
-
-/// The proof receipts a compilation may use: none for an overlap lowering,
-/// whose permission table a receipt does not retain [MOD-8].
-fn receipts_for(
-    overlap: crate::OverlapLowering,
-    cache: Option<&BuildCache>,
-) -> Option<&BuildCache> {
-    cache.filter(|_| overlap == crate::OverlapLowering::Off)
 }
 
 /// [`compile_with_overlap`] plus the non-normative permission ledger for the
@@ -2200,6 +2191,14 @@ pub fn build_module_entry(
     overlap: crate::OverlapLowering,
     cache: Option<&BuildCache>,
 ) -> Result<(LlvmModule, bool), CompilationFailure> {
+    let transient;
+    let cache = match cache {
+        Some(cache) => Some(cache),
+        None => {
+            transient = BuildCache::ephemeral();
+            Some(&transient)
+        }
+    };
     let inputs = &with_library_records(graph, inputs);
     let selection = entry_selection(graph, entry)?;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
@@ -2226,7 +2225,7 @@ pub fn build_module_entry(
         limits,
         overlap,
         &selection,
-        receipts_for(overlap, cache),
+        cache,
     )?
     .module;
     if let Some(cache) = cache {
@@ -2318,18 +2317,25 @@ fn compile_selected(
     selection: &Selection<'_>,
     receipts: Option<&BuildCache>,
 ) -> Result<Reported, CompilationFailure> {
-    with_checked_program_using(inputs, modules, limits, receipts, |checked, resolved| {
-        if modules.is_some() {
-            admit_entry(&checked, resolved, selection)?;
-        }
-        lower_selected(
-            inputs,
-            (modules, limits, overlap, receipts),
-            selection,
-            resolved,
-            checked,
-        )
-    })
+    with_checked_program_products(
+        inputs,
+        modules,
+        limits,
+        receipts,
+        overlap == crate::OverlapLowering::Off,
+        |checked, resolved| {
+            if modules.is_some() {
+                admit_entry(&checked, resolved, selection)?;
+            }
+            lower_selected(
+                inputs,
+                (modules, limits, overlap, receipts),
+                selection,
+                resolved,
+                checked,
+            )
+        },
+    )
 }
 
 /// Locates and renders an entry's composition rejection [MOD-8, MOD-9,
@@ -2583,6 +2589,22 @@ fn with_checked_program_using<T, F>(
 where
     F: FnOnce(CheckedProgram, &ResolvedSyntaxUnit) -> Result<T, CompilationFailure>,
 {
+    with_checked_program_products(inputs, modules, limits, receipts, true, continuation)
+}
+
+/// Structural products remain reusable when the caller needs full current
+/// entailment detail for parallel permission; only proof-receipt reuse stops.
+fn with_checked_program_products<T, F>(
+    inputs: &[SourceInput<'_>],
+    modules: Option<&[crate::ModuleRecord]>,
+    limits: CompilerLimits,
+    receipts: Option<&BuildCache>,
+    reuse_proofs: bool,
+    continuation: F,
+) -> Result<T, CompilationFailure>
+where
+    F: FnOnce(CheckedProgram, &ResolvedSyntaxUnit) -> Result<T, CompilationFailure>,
+{
     let bundle = match modules {
         Some(modules) => {
             SourceBundle::with_prelude_and_modules(inputs, modules.to_vec(), limits.source)
@@ -2611,7 +2633,8 @@ where
             ));
         }
     };
-    let products = receipts.map(|cache| products::CheckProducts::new(cache, &resolved, limits));
+    let products =
+        receipts.map(|cache| products::CheckProducts::new(cache, &resolved, limits, reuse_proofs));
     let outcome = match products.as_ref() {
         Some(products) => crate::semantic::check_semantics_with_receipts(&resolved, products),
         None => check_semantics(&resolved),
@@ -2740,11 +2763,12 @@ fn lower_selected(
     // reaches; the other entries' code is checked but is not this
     // executable's. A source bundle keeps every definition.
     let roots = modules.and(entry).map(|function| [function.id]);
-    let ir = crate::lower_checked_from(
+    let ir = crate::lower_checked_from_using(
         checked,
         overlap,
         target,
         roots.as_ref().map(|roots| roots.as_slice()),
+        receipts.map(|cache| (resolved, cache as &dyn crate::LoweringProducts)),
     )
     .map_err(CompilationFailure::lowering)?;
     // What this lowering did with each permission it was given, appended after

@@ -340,14 +340,14 @@ macro_rules! record_struct {
 }
 
 macro_rules! record_enum {
-    ($name:ty { $( $tag:literal => $variant:ident $( ( $($tuple:ident),* ) )? $( { $($field:ident),* } )? ),* $(,)? }) => {
+    ($name:ty { $( $tag:literal => $variant:ident $( ( $($tuple:ident),* ) )? $( { $($field:ident $( : $kind:ident )?),* } )? ),* $(,)? }) => {
         impl $crate::semantic::products::Record for $name {
             fn write(&self, writer: &mut $crate::semantic::products::Writer) {
                 match self {
                     $(Self::$variant $( ( $($tuple),* ) )? $( { $($field),* } )? => {
                         ($tag as u32).write(writer);
                         $( $($tuple.write(writer);)* )?
-                        $( $($field.write(writer);)* )?
+                        $( $($crate::semantic::products::record_enum!(@write $field, writer $(, $kind)?);)* )?
                     }),*
                 }
             }
@@ -355,13 +355,21 @@ macro_rules! record_enum {
                 Some(match u32::read(reader)? {
                     $($tag => Self::$variant
                         $( ( $($crate::semantic::products::record_enum!(@read $tuple, reader)),* ) )?
-                        $( { $($field: $crate::semantic::products::Record::read(reader)?),* } )?),*,
+                        $( { $($field: $crate::semantic::products::record_enum!(@read_field reader $(, $kind)?)),* } )?),*,
                     _ => return None,
                 })
             }
         }
     };
     (@read $field:ident, $reader:ident) => { $crate::semantic::products::Record::read($reader)? };
+    (@write $field:ident, $writer:ident) => { $field.write($writer) };
+    (@write $field:ident, $writer:ident, $kind:ident) => {
+        $writer.identity($crate::semantic::products::IdentityKind::$kind, *$field)
+    };
+    (@read_field $reader:ident) => { $crate::semantic::products::Record::read($reader)? };
+    (@read_field $reader:ident, $kind:ident) => {
+        $reader.identity($crate::semantic::products::IdentityKind::$kind)?
+    };
 }
 
 macro_rules! record_tuple {

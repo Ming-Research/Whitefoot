@@ -7,6 +7,8 @@
 
 mod catalog;
 mod engine;
+
+pub(crate) use engine::correspondence::{CallableHeaders, HeaderToken};
 mod kernel;
 mod scopes;
 
@@ -1430,6 +1432,23 @@ impl ResolvedSyntaxUnit {
             &self.declarations,
             &self.lexical_uses,
             module,
+        )
+    }
+
+    /// Shares MOD-7's normalized callable boundaries with retained-query
+    /// consumers. This table grants no source acceptance or proof result.
+    pub(crate) fn callable_headers(
+        &self,
+    ) -> Result<CallableHeaders<'_>, ResolutionCompilerFailure> {
+        CallableHeaders::new(
+            &self.syntax.finalized.topology,
+            self.syntax.classified_bundle(),
+            &self.declarations,
+            self.lexical_uses.iter().chain(
+                self.postconditions
+                    .iter()
+                    .flat_map(|record| &record.provisional_uses),
+            ),
         )
     }
 

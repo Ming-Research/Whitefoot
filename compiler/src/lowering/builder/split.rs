@@ -167,13 +167,100 @@ pub(crate) struct Synthesis {
     /// How many functions each source function's splits have synthesized,
     /// which numbers the next one's symbol within that function alone.
     local: HashMap<String, u32>,
-    ledger: Vec<String>,
+    ledger: Vec<ActualizationNote>,
     /// Observe construction, including work a later refusal used to discard.
     #[cfg(test)]
     pub(super) candidate_constructions: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct ActualizationNote {
+    function: String,
+    path: NodePath,
+    detail: String,
+}
+
+impl ActualizationNote {
+    fn render(self) -> String {
+        let path = self
+            .path
+            .components()
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(".");
+        format!(
+            "PAR split       {}  loop at {path}  {}",
+            self.function, self.detail
+        )
+    }
+}
+
+pub(super) struct SynthesisCheckpoint {
+    functions: usize,
+    ledger: usize,
+    local: HashMap<String, u32>,
+}
+
+pub(super) struct SynthesisProduct {
+    pub(super) functions: Vec<IrFunction>,
+    ledger: Vec<ActualizationNote>,
+    local: Vec<(String, u32)>,
+}
+
+crate::semantic::products::record_struct!(ActualizationNote {
+    function,
+    path,
+    detail
+});
+crate::semantic::products::record_struct!(SynthesisProduct {
+    functions,
+    ledger,
+    local
+});
+
 impl Synthesis {
+    pub(super) fn checkpoint(&self) -> SynthesisCheckpoint {
+        SynthesisCheckpoint {
+            functions: self.functions.len(),
+            ledger: self.ledger.len(),
+            local: self.local.clone(),
+        }
+    }
+
+    pub(super) fn next_ordinal(&self) -> Option<u32> {
+        self.base
+            .checked_add(u32::try_from(self.functions.len()).ok()?)
+    }
+
+    pub(super) fn retain_since(
+        &self,
+        checkpoint: &SynthesisCheckpoint,
+    ) -> Option<SynthesisProduct> {
+        let mut local = self
+            .local
+            .iter()
+            .filter(|(key, value)| checkpoint.local.get(*key) != Some(*value))
+            .map(|(key, value)| (key.clone(), *value))
+            .collect::<Vec<_>>();
+        local.sort();
+        Some(SynthesisProduct {
+            functions: self.functions[checkpoint.functions..]
+                .iter()
+                .cloned()
+                .collect::<Option<Vec<_>>>()?,
+            ledger: self.ledger[checkpoint.ledger..].to_vec(),
+            local,
+        })
+    }
+
+    pub(super) fn import(&mut self, product: SynthesisProduct) {
+        self.functions
+            .extend(product.functions.into_iter().map(Some));
+        self.ledger.extend(product.ledger);
+        self.local.extend(product.local);
+    }
+
     pub(crate) fn new(base: u32) -> Self {
         Self {
             base,
@@ -221,7 +308,13 @@ impl Synthesis {
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        Ok((functions, self.ledger))
+        Ok((
+            functions,
+            self.ledger
+                .into_iter()
+                .map(ActualizationNote::render)
+                .collect(),
+        ))
     }
 }
 
@@ -537,16 +630,11 @@ impl IrBuilder<'_> {
 
     /// One actualization ledger line.
     fn note(&self, node_path: &NodePath, detail: &str) {
-        let path = node_path
-            .components()
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(".");
-        self.synthesis.borrow_mut().ledger.push(format!(
-            "PAR split       {}  loop at {path}  {detail}",
-            self.function_name
-        ));
+        self.synthesis.borrow_mut().ledger.push(ActualizationNote {
+            function: self.function_name.to_owned(),
+            path: node_path.clone(),
+            detail: detail.to_owned(),
+        });
     }
 
     /// The loop itself, outlined. A reduction chunk folds the half-open

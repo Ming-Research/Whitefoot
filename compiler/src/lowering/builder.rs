@@ -6,6 +6,7 @@ mod buffers;
 mod loops;
 mod prelude;
 mod probe;
+mod products;
 mod ranges;
 mod results;
 mod runs;
@@ -52,11 +53,22 @@ pub(crate) fn lower_checked_with_layout(
 /// the same target that will qualify and emit their transported signatures,
 /// emitting only the functions `roots` reach through their calls when roots
 /// are given: a module program entry's build [MOD-9].
+#[cfg(test)]
 pub(crate) fn lower_checked_from(
     checked: CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,
+) -> Result<IrProgram, LoweringFailure> {
+    lower_checked_from_using(checked, overlap, target, roots, None)
+}
+
+pub(crate) fn lower_checked_from_using(
+    checked: CheckedProgram,
+    overlap: OverlapLowering,
+    target: TargetLayout,
+    roots: Option<&[crate::semantic::FunctionId]>,
+    retained: Option<(&crate::ResolvedSyntaxUnit, &dyn LoweringProducts)>,
 ) -> Result<IrProgram, LoweringFailure> {
     let sequential_compute_refusal = matches!(
         overlap,
@@ -170,6 +182,29 @@ pub(crate) fn lower_checked_from(
                 .clone()
         })
         .collect::<Vec<_>>();
+    let view = retained
+        .and_then(|(resolved, _)| crate::syntax::views::SyntaxView::new(resolved.syntax()).ok());
+    let products = retained
+        .zip(view.as_ref())
+        .and_then(|((resolved, store), view)| {
+            products::Products::new(
+                store,
+                resolved,
+                view,
+                &checked.data,
+                LoweringContext {
+                    target,
+                    erasure: types,
+                    physical_calls: &[],
+                    nominals: &nominals,
+                    elements: &elements,
+                    constants: &constants,
+                    function_results: &function_results,
+                    synthesis: &synthesis,
+                },
+                &symbols,
+            )
+        });
     let mut functions = physical
         .variants
         .iter()
@@ -186,6 +221,16 @@ pub(crate) fn lower_checked_from(
                 function_results: &function_results,
                 synthesis: &synthesis,
             };
+            if let Some(products) = &products {
+                return products.lower(
+                    function,
+                    index,
+                    &symbols[index],
+                    context,
+                    permission.and_then(|table| table.of(function.id)),
+                    overlap,
+                );
+            }
             lower_function(
                 function,
                 index,

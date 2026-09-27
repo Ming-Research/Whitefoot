@@ -1319,6 +1319,17 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Refresh the module specimen walkthrough with build-unit qualification.**
+  `research/investigations/modular-compilation/demo/README.md` still describes
+  resolved-interface comparison as a future aid, although the driver ships
+  `--render-interface` and `--compare-interface`. This can send an experiment
+  reader back to manual text comparison. Update the commands and reconcile
+  its remaining-evidence statements with the actual module build unit results;
+  the larger GrowVector/function-kind witness must be checked against its
+  stated subject rather than inferred from a similarly named program. Reopen
+  while publishing the current module build unit qualification, so the
+  walkthrough reports observed capability and remaining limits together.
+
 - **Finish and qualify the modular incremental design.** The module
   decisions in the [language](../design/language.md) and
   [compiler](../design/compiler.md) design trees rest on the

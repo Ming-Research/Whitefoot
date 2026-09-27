@@ -154,6 +154,34 @@ controls qualify the driver's observation, not compiler performance; new
 module build unit cost results are still pending. They do not retroactively
 supply successful-build evidence for a historical timing line.
 
+## Structural import checkpoint
+
+The initial module-product implementation at `9ad5fe4b02ed00381c32fe792d10e7c7b43b70a3`
+was exercised on a scratch copy of the queue specimen, using one persistent
+cache across three fresh CLI invocations: `kernel`, then `inspect`, then
+`inspect` after renaming its local `stored` binding to `saved`. Every build
+used `--cache`, `--report` and ordinary native emission. Each resulting
+executable exited zero. The edited entry's emitted LLVM was byte-equal among
+the retained build, an independent uncached candidate build and the retained
+merged-baseline compiler. The candidate executable's SHA-256 was
+`c52d8ca1571736f62ee39a6bf3cc38151103e14e38121a98346eeb2509d7a9e6`.
+
+| Invocation | Body walks | Body imports | Body-less header checks | Executable exit |
+|---|---:|---:|---:|---:|
+| cold | 21 | 9 | 381 | 0 |
+| second-entry | 13 | 7 | 139 | 0 |
+| entry-edit | 11 | 9 | 139 | 0 |
+
+These count actual structural checking and import calls; symbolic and ordinary
+views count separately. Header checks do not contain implementation bodies.
+The edited entry still walked three bodies in `pkg::runtime` and four in
+`pkg::runtime::queue`, while `pkg::data` walked none and imported three. This
+checkpoint therefore **does not meet the module build unit criterion**: the
+first adapter falls back for discovery products and FN-4 queries it cannot yet
+import. It has no lowered-fragment retention yet. This single diagnostic trial
+selects no timing or memory conclusion; the paired real-consumer qualification
+still follows completion of those paths.
+
 ## Limits
 
 - Composition granularity: every build of an edited entry forms, resolves

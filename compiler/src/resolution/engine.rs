@@ -17,7 +17,7 @@ use super::{
 use super::{DeclarationKey, ItemHome, ItemKey};
 
 mod admission;
-mod correspondence;
+pub(super) mod correspondence;
 mod inventory;
 mod lookup;
 mod prelude;

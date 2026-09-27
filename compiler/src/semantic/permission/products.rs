@@ -23,3 +23,11 @@ record_struct!(PermissionSeparationProof {
     discharged,
     derivations
 });
+
+record_struct!(PermissionSite {
+    statement,
+    binding,
+    call,
+    callee_name
+});
+record_struct!(PermissionRun { sites });

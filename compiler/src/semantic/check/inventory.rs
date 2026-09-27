@@ -68,9 +68,15 @@ impl TypeContext<'_> {
                     signature.substitution == *substitution && signature.formal_parameter == formal
                 })
             })
+            .inspect(|id| {
+                if self.view.contains_function(*id) {
+                    self.record_product_function(*id);
+                }
+            })
     }
 
     pub(super) fn activate_function(&mut self, id: FunctionId) -> Result<(), CheckStop> {
+        self.record_product_function(id);
         if !self.view.add_function(id) {
             return Ok(());
         }
@@ -128,6 +134,7 @@ impl TypeContext<'_> {
     /// edge. A derived type follows its arguments. These are the construction
     /// orders, even when another checking view already interned the identity.
     pub(super) fn activate_nominal(&mut self, id: NominalId) -> Result<(), CheckStop> {
+        self.record_product_nominal(id);
         if self.view.contains_nominal(id) {
             return Ok(());
         }

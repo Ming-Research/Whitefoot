@@ -8,6 +8,8 @@
 //! Lowering, in its own module, builds and rewrites these records, so the
 //! fields it writes are crate-visible; readers use the accessors.
 
+mod products;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IrValueId(pub(crate) u32);
 

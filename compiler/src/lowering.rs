@@ -17,6 +17,13 @@ mod operands;
 mod physical_types;
 mod specialize;
 
+/// Target-dependent function fragments, consulted only after source acceptance.
+pub(crate) trait LoweringProducts {
+    fn load(&self, key: &[u8]) -> Option<Vec<u8>>;
+    fn store(&self, key: &[u8], product: &[u8]);
+    fn lowered(&self, module: &str, reused: bool);
+}
+
 /// A closed executable instance's type interpretation. Source region identity
 /// has already been checked; only its storage reclamation remains in the IR.
 #[derive(Clone, Copy)]
@@ -393,6 +400,6 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use builder::lower_checked;
-pub(crate) use builder::lower_checked_from;
+pub(crate) use builder::lower_checked_from_using;
 #[cfg(test)]
 pub(crate) use builder::lower_checked_with_layout;
