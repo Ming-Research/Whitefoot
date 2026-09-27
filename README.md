@@ -363,7 +363,8 @@ start from the examples above:
    split, a fixed record on resource exhaustion.
 7. [Beyond memory](docs/articles/beyond-memory.md) — no heap, linear
    resources, and the plan for a maximum-safety mode.
-8. What a reviewer reads — contracts and effect rows as the review surface.
+8. [What a reviewer reads](docs/articles/what-a-reviewer-reads.md) —
+   contracts and effect rows as the review surface.
 9. The trusted base — what is trusted, and the plan to shrink it.
 10. Where the speed comes from — every way the proofs are used.
 11. I/O without async — ordinary calls that the compiler overlaps.
