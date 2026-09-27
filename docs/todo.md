@@ -11,15 +11,19 @@ rarely insert at the same place.
 
 ## Numeric conversions and value evidence
 
-- **Select the modular conversion companion.** The
-  [conversion comparison](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  recommends integer-only `cvt.wrap` for direct low-bit extraction and modular
-  signedness conversion. It is deferred from the exact conversion family
-  because it selects an additional result policy. Validate all integer
-  width/sign classes, especially negative signed inputs widened to unsigned
-  destinations, and ensure changed values publish no exact input equality.
-  Reopen when the owner selects this companion for implementation; remove
-  after its selected rules and ordinary-path evidence land.
+- **Validate matching operation origins across named call arguments.** With
+  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
+  `reduced == 1_u8` keeps the direct comparison and the fully expanded
+  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
+  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
+  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
+  through a parameter or passing the matching literal avoids this boundary.
+  Assess whether consistent call-side origin normalization would recover
+  useful proofs without enumerating intermediate expansion combinations.
+  Require matching aliases, replaced inputs, joins and bounded proof cost;
+  any additional accepted route needs its own specification decision. Defer
+  from the modular conversion operation, which adds no proof family; reopen
+  when a real caller needs this named-value form.
 
 - **Select direct rounded/saturated float conversion policies.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)

@@ -420,6 +420,7 @@ pub(crate) enum CheckedConversionMode {
     Exact,
     Checked,
     Defined,
+    Wrap,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

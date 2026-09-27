@@ -1,0 +1,7 @@
+fn invalid<S: Int, D: Float>(value: S) -> result: D pure {
+  return cvt.wrap::<S, D>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

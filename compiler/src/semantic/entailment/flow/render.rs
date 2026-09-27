@@ -844,6 +844,7 @@ pub(super) fn render_goal_row(
                 CheckedConversionMode::Exact => "cvt",
                 CheckedConversionMode::Checked => "cvt.checked",
                 CheckedConversionMode::Defined => "cvt.defined",
+                CheckedConversionMode::Wrap => "cvt.wrap",
             },
             numeric_type_name(*source, declarations),
             numeric_type_name(*destination, declarations),

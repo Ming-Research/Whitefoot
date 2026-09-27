@@ -626,11 +626,26 @@ OP-2 already defines it. It admits all integer width/sign pairs: narrowing
 keeps low bits, same-width conversion reinterprets signedness, and widening a
 negative signed input preserves its mathematical residue modulo the destination
 width. For example, `cvt.wrap::<i8,u32>(-1_i8)` is 4294967295, not 255. This last
-case requires sign extension even with an unsigned destination; blindly
-reusing the current exact-cast helper's unsigned-destination zero extension
-would be wrong. The name describes modular value semantics and uses the
-existing mode vocabulary; no competing `itrunc` spelling is proposed. This
-mode publishes no exact input equality on an overflowing conversion.
+case requires sign extension even with an unsigned destination. The historical
+baseline helper used destination signedness and would be wrong for that case;
+the exact-conversion implementation now selects extension from source signedness,
+so its shared integer cast supplies the wrapping result directly. The name
+describes modular value semantics and uses the existing mode vocabulary; no
+competing `itrunc` spelling is proposed. This
+mode publishes no exact input equality. It retains ordinary destination-type
+bounds and a typed modular expression identity; admitting that identity does
+not add an arithmetic rewrite or a new automatic proof family. Constant operands
+have the same runtime value semantics; the existing proof rules do not gain
+general constant folding of operation trees. Integer-generic endpoints keep
+one destination result shape; float endpoints are rejected during formation.
+
+The compiler addition reuses the explicit conversion-mode path and integer
+cast, without a domain check or a Result. Qualification requires all 64 integer
+type pairs at formation, native modular-result checks using an independent
+integer remainder oracle, representative `trunc`/`sext`/`zext`/same-width emitted
+forms, integer-generic and contract composition, and rejection of false exact
+equalities after wrapping. Existing exact, checked and domain-query behavior
+must remain unchanged. These are correctness criteria, not a timing claim.
 
 Do not block the exact family on additional float result policies. A later
 rounded-to-float operation should explicitly fix nearest/ties-to-even,
@@ -657,8 +672,8 @@ not assert that its completion criterion has passed.
 | 5. Corpus migration | Conversion semantic/backend tests, entails/generic/contract tests, OP-6/TYPE-4 conformance cases, maintained programs and current guidance | Migrate old partial calls to `.checked` when preserving a genuinely fallible contract; use bare calls with actual proofs for invariant conversions; deliberately replace the old no-equality expectation with paired positive/stale-value controls |
 | 6. Verification and publication | Ordinary compiler/conformance/program test homes and existing gates; owner-ruling process | Independent completion review/DCR, full `make check` and required CI on the delivered revision; no root entries, benchmark gates or research dependencies added |
 
-The optional integer `.wrap` row fits steps 1/2/4/5 without extending the proof
-solver. Confirm its inclusion with the exact-family scope before implementation.
+The separate integer `.wrap` extension uses steps 1/2/4/5 without extending the
+proof solver. Its rule and mode remain distinct from exact conversion.
 Each coherent implementation revision stays on the existing Draft PR. Use the
 call-boundary syntax now on main; at implementation start rebase or merge
 current main, settle the successor spec version then, and recheck the actual

@@ -4,6 +4,8 @@ Decision: Same-type numeric conversion is admitted and copies the complete repre
 
 Decision: Exact integer conversions preserve their mathematical value image and checked integer-to-integer conversions attach that equality to the existing conditional Result context at evaluation, because later indexing and verified returns need the already-established input relation across naming and value delivery, instead of discarding it or reconstructing it against a subsequently changed input. Existing support kills, joins and loop rules remain the transport authority; float relations and opaque Result goals remain outside this evidence extension.
 
+Decision: Integer `cvt.wrap` is a total conversion returning the destination type for every integer width and sign pair, using the existing destination-width modular value rule and publishing no exact input equality, because low-bit extraction and modular signedness changes request a different result from exact conversion and should remain one uniform integer-generic operation, instead of a narrowing-only truncation spelling or a float policy under the same name. The [companion comparison](../../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals) records its value rule and negative-widening boundary.
+
 Rejected:
 - Add a proved-conversion alias beside mixed-result `cvt`: rejected because it retains two exact-conversion interfaces and makes generic result shape depend on the type pair.
 - Keep only the current interface and improve optimization: rejected because backend check removal does not remove a source error arm for a statically proved domain.
