@@ -624,6 +624,30 @@ remain near the controls; they do not cancel the operation-path gaps.
 The [maintained compiler TODO](../../../../docs/todo.md) owns follow-up
 validation of these unresolved costs.
 
+### Preregistered source discriminator: four-ary sift (scratch only)
+
+The wide gap is dominated by full-owner exchanges, while the selected design
+already records a binary heap as the reusable baseline. Before any source
+change, a scratch copy will change only the private parent/child arithmetic:
+each node has up to four children, and `priority_queue_child` compares them in
+order before the existing `swap` and position-reporting calls. The queue's
+public signatures, boxed prefix, ownership/refusal protocol, comparator
+interface, indexed reports and cleanup remain unchanged. The candidate is not
+production code and must not revise the binary-heap decision without owner
+selection.
+
+The code screen is an independent sorted oracle, all wide-owner/refusal and
+nested-owner checks, exact allocation/release accounting, and unchanged
+retained helper calls. The candidate must have no new transfer operation,
+unchecked arithmetic, or extra result boundary. The timing screen is the full
+existing PriorityQueue matrix (scalar and 256-byte values, both cohorts and
+the same native swap/hole/Rust/C++ controls); it must reduce wide pop/push and
+replacement movement without a useful scalar, growth, heapify or cleanup
+regression. A failed proof, an overflow-sensitive bound, an extra comparison
+cost that loses the target cells, or a residual gap to the slower standard
+peer rejects the candidate. Any successful candidate remains a measured
+algorithm alternative until the owner revisits the binary-heap decision.
+
 **Design suitability.** The boxed prefix supports arbitrary consumption,
 growth and bottom-up construction without another storage mechanism.
 Whole-slot sifting has a measured wide movement cost against hole C.
