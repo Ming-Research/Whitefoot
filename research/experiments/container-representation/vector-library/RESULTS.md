@@ -644,7 +644,20 @@ scalar length and digest already follow register/SSA recurrences; the matched
 take/swap C loop also retains a length store per pop. This rejects the
 stronger hypothesis that missing header/payload separation uniquely keeps
 WF length in memory. Whether alias facts could sink those stores remains
-unproved and is not grounds for a new metadata family. The existing
+unproved and is not grounds for a new metadata family. A direct-backing
+private helper was considered as an alias discriminator, but does not explain
+these present costs: the outer owner and direct digest environment already
+carry `noalias`, and the kernel take/place rows already receive direct backing
+references with scoped alias metadata after inlining. Optimized truncate loads
+the backing once and holds length and digest in registers within each loop;
+only wide truncate reloads length between its two phases. The frozen G bodies
+are strictly equal to F for this observation. Passing the run directly would
+neither separate its header from its payload nor remove the selected movement.
+Moreover, ordinary `fn take_run(run: &Slots<u64>)` is refused by TYPE-9,
+as recorded in the existing
+[conformance case](../../../../tests/conformance/cases/type9-neg-runtime-capacity-outside-box.wf).
+No new alias assertion, language amendment or timing probe follows from this
+falsified per-iteration-reload hypothesis. The existing
 [ordinary-representation refusals](#v061-copy-and-consumption-trial) and
 [selected consumption contract](../../../../design/language/data-model/vector-consumption.md)
 still rule out silently replacing the generic API with optional slots,
@@ -1087,6 +1100,41 @@ O(removed), constant-storage take/exchange algorithm therefore remains the
 baseline while the bounded terminal-pair improvement is tested; this
 inspection selects no new primitive, representation or language rule.
 
+### Length-store dependence: read-only LLVM diagnosis
+
+The remaining scalar length stores have a concrete intra-allocation
+conservatism distinct from the outer-owner/environment hypothesis above.
+LLVM 22.1.8 `aa-eval` and `print<memoryssa>` on the saved optimized scalar
+truncate helper from WF source variant C report `MayAlias` between its
+length address `%t1` and both back-take payload addresses `%t3.i` and `%t3.i7`;
+each payload load uses the
+immediately preceding length store's MemoryDef. The ordinary indexed left
+address `%t8` is `NoAlias` with the header. The wide helper's base payload
+address is already `NoAlias`, but the projection at record offset 240 still
+has a `MayAlias` result against length. These helpers have the same observed
+native truncate bodies as F; this is not a newly optimized full F module.
+
+The take lowering does not bypass the selected physical-index fact emitter.
+Frozen F's raw take rows already call `llvm.assume` on their actual address
+index being signed nonnegative. `emit_run_taken` calls the shared
+`element_pointer`, whose zero-stride normalization precedes that assertion.
+PRE-1's positive take length, WIN-1's capacity bound and qualified complete
+positive-stride extent justify it; a huge logical zero-stride index instead
+addresses physical index zero. The printed take assertions disappear in the
+saved optimized helpers, while the ordinary indexed-left assertion remains.
+
+A four-site, analysis-only discriminator reasserted precisely those original
+nonnegative take-index facts in the two extracted optimized helpers. The
+criterion was `MayAlias` to `NoAlias` and removal of the corresponding
+MemorySSA dependence before considering a native comparison. Neither changed:
+both scalar take addresses and the wide offset-240 projections retained
+`MayAlias`, and the scalar payload loads still depend on their length stores.
+All four analyses returned zero; control AA/MemorySSA took 0.050/0.017 seconds
+and reassertion AA/MemorySSA 0.051/0.017 seconds. No native build or timing was
+run for this failed discriminator. It identifies conservative dependence but
+does not establish the exact optimizer limitation or select extra assertions,
+per-access alias metadata, a pass-order change or a production lowering fix.
+
 ### Source discriminator G: direct known-capacity construction
 
 G adds the ordinary `grow_vector_with_capacity` API and uses it only where
@@ -1340,6 +1388,217 @@ correct additive API. The already built compiler and `.build/capacity-g`
 artifacts still embed G and remain identified as that rejected trial. A new
 source trial must rebuild the embedded library before using its compiler;
 no replay-until-win or unchanged-hypothesis retiming is selected.
+
+### Source discriminator J: consume the adjacent terminal pair directly
+
+J starts from restored F, with library SHA-256
+`72ff83f18181651461e11f6dd95394556dce372710cb3a58376a6d4e099e7339`.
+Keep F's append/insert, allocation policy, public signatures and contracts,
+compiler lowering, callers, native implementations and flags fixed. G's
+constructor and caller migration, E's controller change and the rejected
+Slots lowering are absent. The
+[terminal-pair amendment](../../../../design/amendments/vector-terminal-pair.md)
+initially proposed the one change to the recorded consumption algorithm; no live-tree
+edit has been made. No specification change is proposed; the live-tree
+decision is unchanged pending a ruling.
+
+After the existing first-half pair proof, compute `gap = len - left`. When
+it is two, take the rear owner into `second`, take its predecessor into
+`first`, consume `first` then `second`, and break the first-half loop. The
+unchanged remainder consumes the already reversed tail. For first-half
+offset `i`, the existing invariant gives `gap = removed - 2*i`; every
+positive even suffix reaches the adjacent pair once, and an odd suffix
+never does. This avoids one rear-to-left source relocation per even suffix,
+using two owned locals instead of one, still constant auxiliary storage.
+There is no population/type dispatch, manufactured element, scratch backing,
+copy/drop bound or changed callback order. EFF-5 excludes callback access
+to the backing, so the earlier second length decrement is unobservable.
+The existing pair bound admits both takes; an erased `remaining_prefix`
+invariant establishes the remainder loop's entry fact before the break.
+Formation must succeed under current rules without a fallback or weakened
+contract. These are static grounds for a trial, not compiler acceptance or
+a measured benefit.
+
+Before timing, inspect actual scalar/wide truncate paths and their callers.
+Require less executed scalar terminal-pair work than F and removal of the
+wide 256-byte rear-to-left relocation without an equivalent or new payload
+snapshot, spill/reload or other transfer. Keeping `second` live across the
+first callback may defeat this prediction. Require no added suffix-one
+work, and inspect the gap test's cost on odd and larger even suffixes.
+Reject at the code criterion if the relocation merely moves to the stack;
+source operation counts or a smaller retained symbol are insufficient.
+
+The complete ecosystem correctness matrix must still pass 1,260
+configurations / 8,820 executions per image, with all 294 accounting rows
+byte-identical to F and existing checksum/cleanup falsifiers retained.
+The formal program keeps its original 25-allocation chain and adds six
+must-consume Tickets, retaining the first two while consuming 3/4/5/6,
+then draining 1/2. Its independent base-257 sequence values are 51,189,266
+and 3,380,999,830,293; check counts, retained owners, capacity and complete
+cleanup in both lowering modes. Two backing allocations and six payloads
+add eight exact-once releases, giving 33. Each new observation must reject
+its altered expectation, and reversing the two terminal callbacks must
+fail the independent order oracle. Preserve the compiler/API and existing
+fixture requirements in those negative controls.
+
+Only passing formation, correctness and native code permits timing in a
+separately assigned coordinator slot for the entire existing matrix: scalar/wide, populations
+16/256/4096, reserved/growth/reuse/suffix-zero through suffix-three, both
+cohorts, seven samples and all seven variants. Keep suffix-zero unranked,
+apply the existing duration/spread rules, compare every useful cell against
+F and the slower standard, and accept no repeatable useful-cell regression.
+An extra gap-test loss on an odd or larger suffix is not excused by a favorable
+terminal-pair cell. Rebuild the embedded-library compiler with the gate
+profile and two jobs, use fresh `BUILD=.build/terminal-pair-j`, and separate
+construction, execution and queue costs. This criterion precedes J
+compilation; no J native or timing benefit is claimed.
+
+### J initial formation and explicit continuation proof
+
+The first J compiler construction took 7.773 s. The unchanged workload then
+failed CLI preflight in 0.692 s at `vector_library_work`'s existing empty
+postcondition, FN-9. A guarded direct module check took 0.11 s and exposed
+the callee obligation: the remainder loop's `len >= retained` base invariant
+was unproved under INV-1. The terminal branch's written `remaining_prefix`
+statement itself was accepted; no ecosystem image or corpus run followed.
+The first guarded construction/preflight command took 8.60 s with no queue.
+
+Adding `kept: len >= retained` to the counted header did not repair that
+join: a direct module check took 0.068 s and rejected the same remainder
+base, before any compiler rebuild. Moving the break's `remaining_prefix`
+statement after both callbacks also proved that statement but rejected the
+continuation (0.066 s). The callbacks therefore do not explain the loss.
+The natural exit and twice-taken break carry different immutable length
+images. ENT-5 compares canonical inequalities over those images; the current
+join also drops a measure image when its incoming images differ. Matching
+source spellings alone are insufficient. No caller requirement, invariant
+or compiler rule was weakened, and these observations do not establish a
+compiler defect.
+
+### J revision: handle the terminal pair after a break-free loop
+
+Before compiling the revised source, replace the rejected control shape as
+follows. An empty suffix returns immediately. For a positive suffix, execute
+`floor((removed - 1) / 2)` ordinary take/swap steps without a counted break.
+An odd suffix then has no adjacent pair left to exchange; an even suffix has
+exactly one, identified by a single post-loop `len - left == 2` test. Take
+and consume that pair earlier-owner first. The old backward remainder loop
+becomes one private helper with the same prefix and capacity contract, called
+on both terminal branches before their returns. Its boundary publishes the
+ordinary postcondition without joining different intermediate length images.
+
+This changes the control-shape hypothesis, while retaining J's owner order
+and single avoided relocation per positive even suffix. It removes the
+per-iteration gap test but may add an unhelpful call boundary or change
+inlining. The native criterion therefore additionally rejects a surviving
+new hot remainder-helper call, and still requires less executed scalar
+terminal-pair work, no added suffix-one work, and no displaced wide payload
+snapshot or spill/reload. The early empty branch may change suffix-zero
+overhead; retain and report every such unranked control. All original
+correctness, accounting, negative
+observation and complete-matrix regression criteria remain. These grounds
+precede the revised module check; no code or timing result is assumed.
+
+### J revised construction and falsifiable correctness
+
+The revised live module passed in 0.041 s after removing a redundant `use`
+block: PRF-1 required that removal because AUTO already proved the unchanged
+terminal bound. The redundant-proof rejection took 0.063 s. No specification
+or compiler rule changed. Rebuilding the embedded library took 8.186 s and
+caller LLVM preflight 0.714 s. Ecosystem construction/check/account took
+4.258/1.715/0.146 s; both images passed 1,260 configurations and 8,820
+executions, including the existing checksum and cleanup rejections. All
+294 accounting rows equal F byte-for-byte, as do the C driver, Rust archive,
+C++ object and twelve runtime objects. Formal-test construction took 0.739 s
+and its execution command 3.467 s; the original chain plus new linear-pair
+trace passed with 33 exact-once allocations/releases in both lowering modes.
+
+The unmodified formal source exited 0. Changing each of the seven new
+sequence/count/prefix/capacity expectations separately compiled and linked,
+then exited 26. Those eight programs' emit/link/execution phases totaled
+2.045/1.344/2.033 s. A proposed fault construction that copied the private
+implementation into caller source first hit FORM-2 from an extra newline,
+then TYPE-2 because the public backing field is readonly outside its module.
+Neither is a failure of the production source or evidence of a language gap.
+
+The replacement order falsifier uses the accepted formal LLVM. It resolves
+the new `linear_terminal_pair` trace's Ticket-with-ceiling-six truncate
+instance, exchanges only the two adjacent terminal callback arguments, and
+checks that reversing those two edits restores every byte. The recompiled
+unchanged module exited 0; the reversed-order module exited 26, with all
+other source and LLVM unchanged. The two links took 0.373 s and their
+executions 0.630 s. The main guarded sequence took 24.91 s and the successful
+final order control 1.18 s, with no queue wait; the intervening readonly
+scratch rejection took 0.11 s. No benchmark measurement ran.
+
+The frozen revised library SHA-256 is
+`530efe0282ad2aa7f0bf446ca92feee194720381422ff50e1637b4ea2ec2cf92`;
+its compiler is
+`f6d0c59e150e589bf03b1318ec7130ef4efeacde7f476437d09b4bfe04f4ead2`,
+raw timed LLVM
+`54bfcc26c6ada4cbf95219422706819665469c1df231474cd364f682f677d0a5`,
+and linked image
+`37b53780e4db5f4338f617e26d87a3eea563ff428f279e478adbf2c2de5cd0ad`.
+The source/artifact manifest was frozen after the controls, before any later
+embedded compiler rebuild. Correctness alone did not select J; the separate
+native criterion below rejected it before timing.
+
+### J native gate: rejected before timing
+
+J fails the prerecorded unchanged-suffix-one and no-new-hot-call criteria.
+No timing ran. Inspection of the frozen final image confirms a local success:
+the wide terminal pair reads both records directly from backing and removes
+the 256-byte rear-to-left relocation without a replacement payload snapshot,
+spill or reload. Only the later owner's final two fields remain in registers
+across the first digest. This does not rescue the complete source form.
+
+The wide truncate body now saves the frame/link registers in 16 bytes and
+calls `grow_vector_consume_back` on every positive suffix, including one.
+F's truncate is frameless and contains the remainder itself. The new call
+at image address `0x10000d8ac` is reached both from the non-pair branch and
+after the direct terminal-pair digest; the successful pair construction is
+`0x10000d704` through `0x10000d8a8`. The helper boundary survived ordinary
+O3 despite the unchanged callback interface and adds work precisely where
+the preregistration prohibited it.
+
+Scalar consumption remains inlined, but actual executed instruction counts
+also fail the suffix-one criterion. Counting from digest-seed initialization
+through the branch back to outer-round bookkeeping, excluding append, gives:
+
+| Removed suffix | F | J | Change |
+| ---: | ---: | ---: | ---: |
+| 1 | 16 | 24 | +8 |
+| 2 | 34 | 24 | -10 |
+| 3 | 41 | 52 | +11 |
+
+These counts follow the actual trace's selected loop/dispatch paths, rather
+than comparing whole helper sizes. J begins this region at `0x10000bd2c`
+and returns to `0x10000bc24`; F begins at `0x10000bd34` and returns to
+`0x10000bc20`. The terminal-pair path improves locally, while the empty check,
+terminal dispatch and remainder organization add other work. No elapsed
+contribution or hypothetical timing benefit is assigned to those differences.
+
+The complete rejected library, public documentation, owning fixture and
+ledger change is preserved in [terminal-pair.patch](terminal-pair.patch),
+SHA-256
+`c2ba683da960683d4b750d4aa403140fae0e23035d84de01c230b6e420c109c4`.
+It applies to base `9fed1c60c388610b8f7b091103bc6712d277844f`; apply it in an
+isolated checkout and use the gate/two-job construction and fresh
+`.build/terminal-pair-j` commands above. `git apply --check` passes after
+restoring all four implementation/test files byte-for-byte to F; the restored
+library again has SHA-256
+`72ff83f18181651461e11f6dd95394556dce372710cb3a58376a6d4e099e7339`.
+The identified J compiler, image, LLVM and passing evidence remain frozen.
+Restoring source does not replace an already built embedded compiler.
+
+The [pending amendment](../../../../design/amendments/vector-terminal-pair.md)
+now recommends declining this tested form; that recommendation is not an
+owner ruling. Reopen the terminal-pair idea only with a concrete ordinary
+proof/control shape that avoids the retained helper boundary and added
+suffix-one/odd-suffix work while preserving the demonstrated absence of
+payload relocation. The initial proof join and the revised native failure
+must both be addressed; neither a source-only operation count nor a rerun of
+this image supplies new grounds.
 
 ## Historical source-composition evidence
 

@@ -742,6 +742,19 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
+  The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
+  finds conservative header/payload dependencies in optimized take loops,
+  despite length already being held in SSA. The qualified physical-index fact
+  is already emitted; repeating it after optimization does not remove those
+  dependencies. Extra alias metadata is therefore unselected, not a missing
+  correctness fix. Reopen with a different complete mapping or source shape
+  that removes the actual repeated stores. Validate unchanged-source native
+  work and full timings, nested windows whose inner headers are outer payload,
+  whole-owner writes and zero-stride elements before adopting a mapping.
+  Defer this separate optimizer investigation while the allocation and
+  consumption discriminators establish their costs; do not infer its elapsed
+  benefit from alias-analysis output alone.
+
 - **A target-layout failure names no allocation site or admitted bound.** A
   program whose OP-9 proof retains a count bound the selected target cannot
   hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,

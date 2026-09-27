@@ -1,0 +1,180 @@
+diff --git a/compiler/tests/programs/containers.rs b/compiler/tests/programs/containers.rs
+index 234abec1e..a9dc45b01 100644
+--- a/compiler/tests/programs/containers.rs
++++ b/compiler/tests/programs/containers.rs
+@@ -207,7 +207,9 @@ fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
+         "containers/grow-vector-program.wf",
+         include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
+     )];
+-    execute_container_program("grow-vector", &sources, 25, true);
++    // The original chain keeps its 25 allocations. The terminal-pair trace
++    // adds an empty backing, one reserved backing and six linear payloads.
++    execute_container_program("grow-vector", &sources, 33, true);
+ }
+
+ #[test]
+diff --git a/lib/std/collections/vector/grow-vector.wf b/lib/std/collections/vector/grow-vector.wf
+index b05cf0f34..e31d5b56e 100644
+--- a/lib/std/collections/vector/grow-vector.wf
++++ b/lib/std/collections/vector/grow-vector.wf
+@@ -107,40 +107,67 @@ fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling
+   return move removed;
+ }
+
++fn grow_vector_consume_back<interface VectorDrain<T, E>, const ceiling: u64>(values: &GrowVector<T, ceiling>, retained: u64, env: &E) -> result: unit writes(values.storage), writes(env) contract {
++  requires retained <= deref(values).storage.inner.len;
++  ensures deref(values).storage.inner.len == retained;
++  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
++} {
++  loop @consume (
++    invariant prefix: deref(values).storage.inner.len >= retained
++  ) {
++    if deref(values).storage.inner.len <= retained {
++      invariant exhausted: deref(values).storage.inner.len == retained;
++      break @consume;
++    }
++    let value = take_back(window: &deref(values).storage.inner);
++    VectorDrain::accept(env: env, value: move value);
++  }
++  return unit;
++}
++
+ fn grow_vector_truncate<interface VectorDrain<T, E>, const ceiling: u64>(values: &GrowVector<T, ceiling>, retained: u64, env: &E) -> result: unit writes(values.storage), writes(env) contract {
+   requires retained <= deref(values).storage.inner.len;
+   ensures deref(values).storage.inner.len == retained;
+   ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+ } {
+-  doc "Preserves the prefix and capacity, consuming the removed suffix in original order through the caller's monomorphized behavior. The member cannot access this backing: EFF-5 requires its environment effect to be disjoint from the vector's write. For each first-half suffix position, take the last element into a local, exchange it with that position, and consume the local. The reversed remainder is then taken directly. This touches only removed elements, uses constant local storage, and allocates no scratch backing.";
++  doc "Preserves the prefix and capacity, consuming the removed suffix in original order through the caller's monomorphized behavior. The member cannot access this backing: EFF-5 requires its environment effect to be disjoint from the vector's write. Nonadjacent first-half positions consume the next suffix owner by exchanging a rear owner into its slot. At the final adjacent pair, take both owners into locals and consume the earlier owner before the later one, avoiding that exchange. The reversed remainder is then taken directly. This touches only removed elements, uses constant local storage, and allocates no scratch backing.";
+   let count = deref(values).storage.inner.len;
+   let removed = count - retained;
+-  let half = removed / 2_u64;
++  if removed > 0_u64 {
++  } else {
++    return unit;
++  }
++  let before_last = removed - 1_u64;
++  let half = before_last / 2_u64;
+   for @first_half (
+     offset in 0_u64..half,
+     invariant length_lo: deref(values).storage.inner.len >= count - offset,
+-    invariant length_hi: deref(values).storage.inner.len <= count - offset
++    invariant length_hi: deref(values).storage.inner.len <= count - offset,
++    invariant kept: deref(values).storage.inner.len >= retained
+   ) {
+     let left = retained + offset;
+     invariant pair: deref(values).storage.inner.len >= retained + offset + 2_u64 {
+       use length_lo;
+-      use (2_u64 * half <= removed);
++      use (2_u64 * half <= before_last);
+       use 2 times (offset < half);
+     }
+     let value = take_back(window: &deref(values).storage.inner);
+     swap(first: &deref(values).storage.inner[left], second: &value);
+     VectorDrain::accept(env: env, value: move value);
+   }
+-  loop @truncate (
+-    invariant prefix: deref(values).storage.inner.len >= retained
+-  ) {
+-    if deref(values).storage.inner.len <= retained {
+-      invariant exhausted: deref(values).storage.inner.len == retained;
+-      break @truncate;
+-    }
+-    let value = take_back(window: &deref(values).storage.inner);
+-    VectorDrain::accept(env: env, value: move value);
++  invariant terminal: deref(values).storage.inner.len >= retained + half + 1_u64;
++  let left = retained + half;
++  let gap = deref(values).storage.inner.len - left;
++  if gap == 2_u64 {
++    let second = take_back(window: &deref(values).storage.inner);
++    let first = take_back(window: &deref(values).storage.inner);
++    invariant remaining_prefix: deref(values).storage.inner.len >= retained;
++    VectorDrain::accept(env: env, value: move first);
++    VectorDrain::accept(env: env, value: move second);
++    grow_vector_consume_back::<VectorDrain<T, E>, ceiling>(values: values, retained: retained, env: env);
++    return unit;
+   }
++  grow_vector_consume_back::<VectorDrain<T, E>, ceiling>(values: values, retained: retained, env: env);
+   return unit;
+ }
+
+diff --git a/lib/std/collections/vector/module.wfm b/lib/std/collections/vector/module.wfm
+index afed83e97..01e0fe519 100644
+--- a/lib/std/collections/vector/module.wfm
++++ b/lib/std/collections/vector/module.wfm
+@@ -47,7 +47,7 @@ public fn grow_vector_truncate<interface VectorDrain<T, E>, const ceiling: u64>(
+   requires retained <= deref(values).storage.inner.len;
+   ensures deref(values).storage.inner.len == retained;
+   ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+-} doc "Preserves the prefix and capacity, consuming the removed suffix in original order through the caller's monomorphized behavior. The member cannot access this backing: EFF-5 requires its environment effect to be disjoint from the vector's write. For each first-half suffix position, take the last element into a local, exchange it with that position, and consume the local. The reversed remainder is then taken directly. This touches only removed elements, uses constant local storage, and allocates no scratch backing.";
++} doc "Preserves the prefix and capacity, consuming the removed suffix in original order through the caller's monomorphized behavior. The member cannot access this backing: EFF-5 requires its environment effect to be disjoint from the vector's write. Nonadjacent first-half positions consume the next suffix owner by exchanging a rear owner into its slot. At the final adjacent pair, take both owners into locals and consume the earlier owner before the later one, avoiding that exchange. The reversed remainder is then taken directly. This touches only removed elements, uses constant local storage, and allocates no scratch backing.";
+
+ public fn grow_vector_drain<interface VectorDrain<T, E>, const ceiling: u64>(values: &GrowVector<T, ceiling>, env: &E) -> result: unit writes(values.storage), writes(env) contract {
+   ensures deref(values).storage.inner.len == 0_u64;
+diff --git a/tests/programs/containers/grow-vector-program.wf b/tests/programs/containers/grow-vector-program.wf
+index 5cb41cb71..08839ad81 100644
+--- a/tests/programs/containers/grow-vector-program.wf
++++ b/tests/programs/containers/grow-vector-program.wf
+@@ -199,6 +199,52 @@ fn linear_consumption() -> code: u64 pure {
+   return failures;
+ }
+
++fn linear_terminal_pair() -> code: u64 pure {
++  let values = grow_vector_new::<Ticket, 6>();
++  let seen = Sum(total: 0_u64, sequence: 0_u64, count: 0_u64);
++  let failures = 0_u64;
++  let initial = values.storage.inner.len;
++  if initial == 0_u64 {
++    let reserved = grow_vector_reserve::<Ticket, 6>(values: &values, total: 6_u64);
++    for @fill (
++      index in 0_u64..6_u64,
++      invariant length_lo: values.storage.inner.len >= index,
++      invariant length_hi: values.storage.inner.len <= index
++    ) {
++      let id = index + 1_u64;
++      let ticket = ticket_new(id: id);
++      let length = grow_vector_append::<Ticket, 6>(values: &values, value: move ticket);
++    }
++    grow_vector_truncate::<TicketDrain, 6>(values: &values, retained: 2_u64, env: &seen);
++    if seen.sequence != 51189266_u64 {
++      set failures = failures +wrap 1_u64;
++    }
++    if seen.count != 4_u64 {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner[0_u64].payload.inner.id != 1_u64 {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner[1_u64].payload.inner.id != 2_u64 {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner.cap != 6_u64 {
++      set failures = failures +wrap 1_u64;
++    }
++  } else {
++    set failures = failures +wrap 1_u64;
++  }
++  grow_vector_drain::<TicketDrain, 6>(values: &values, env: &seen);
++  grow_vector_free_empty::<Ticket, 6>(values: move values);
++  if seen.sequence != 3380999830293_u64 {
++    set failures = failures +wrap 1_u64;
++  }
++  if seen.count != 6_u64 {
++    set failures = failures +wrap 1_u64;
++  }
++  return failures;
++}
++
+ fn main() -> status: ExitStatus pure {
+   doc "Scalar, droppable owning and must-consume owning chains exercise construction, growth, ceiling saturation, ordered insert/remove, swap-remove, original-order truncation/drain, empty and singleton boundaries, reuse and final cleanup. The observer checks every allocation identity. Allocation is total [STOR-8], so no operation carries a refusal arm.";
+   let zero = grow_vector_new::<u64, 0>();
+@@ -350,5 +396,9 @@ fn main() -> status: ExitStatus pure {
+   if linear_code != 0_u64 {
+     return exit_status(code: 22_u8);
+   }
++  let pair_code = linear_terminal_pair();
++  if pair_code != 0_u64 {
++    return exit_status(code: 26_u8);
++  }
+   return exit_status(code: 0_u8);
+ }
