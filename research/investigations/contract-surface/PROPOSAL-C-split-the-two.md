@@ -21,9 +21,10 @@ proposal, and it states plainly where the original stance died and why.
 preference. Exactly one exception is tolerated, temporarily: the executed
 `requires` final at a program entry.
 
-**Ruling 2 (supersedes the FFI plan in ruling 1 for now).** 目前不考虑入口 — the
-program entry is out of scope, and the owner is willing to require that any
-declaration carrying a `requires` is an internal function.
+**Ruling 2 (supersedes the FFI plan in ruling 1 for now).** "The entry is not
+under consideration for now" (translated from Chinese) — the program entry is
+out of scope, and the owner is willing to require that any declaration carrying
+a `requires` is an internal function.
 
 Ruling 2 removes the entire subject of my assigned stance. There is no entry
 check left to house in an explicit construct, because no entry may state a
