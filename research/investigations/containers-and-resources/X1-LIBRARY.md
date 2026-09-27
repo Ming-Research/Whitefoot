@@ -2606,6 +2606,34 @@ evidence for the allocation contract rather than an exact time split. A
 lazy-empty storage candidate is therefore the next production experiment;
 its enum representation and contract changes remain pending design work.
 
+The following source-equivalent trial was rejected. The gate compiler was
+rebuilt once for the zero-capacity baseline and once for the positive-ceiling
+one-slot candidate; stale-binary timings were discarded. Both arms passed
+1,260 configurations / 8,820 executions and the candidate's complete
+allocation, checksum and cleanup checks. The candidate removed the scalar
+growth-at-16 deficit (`1.101858/1.097282` to `0.952456/0.959992` times the
+slower standard peer), but scalar suffix-2 at 4096 moved from inconclusive
+(`1.034401/1.062385`) to a strict deficit (`1.065974/1.065284`). The target
+summary was therefore baseline 18/5/13 versus candidate 18/4/14
+(pass/deficit/inconclusive; six unranked in each), so the preregistered
+no-regression criterion fails. The allocator ledger gives the expected local
+effect: growth-at-16 scalar requests fall 21 to 18 and requested bytes 1,848
+to 1,800 per three-round trace at the same 416-byte peak, while reserved-16
+keeps two requests but grows 504 to 528 bytes and 168 to 176 peak bytes.
+The complete evidence and frozen patch are in the Vector results' initial-cap
+artifacts. The candidate is not adopted.
+
+The lazy-empty alternative also stops at the current source-contract boundary.
+The exact rejected forms are `requires
+deref(values).storage.Full.storage.inner.len < 16_u64;` (`TYPE-5`),
+`requires lazy_len(values: values) < 16_u64;` (`FN-8`),
+`ensures deref(values).capacity > deref(values).length;` (`FN-9`) and
+`invariant values.length >= index` (`INV-1`). A small enum micro-witness
+executes, but its 32-byte descriptor and runtime checks are not the existing
+Vector API. No production Vector representation was selected; the next
+discriminator must be a compiler/lowering change or a separately recorded
+representation-and-contract decision.
+
 Two target choices address the demonstrated extra temporary copies. A complete
 take captures the old physical slot, updates the window descriptor, then
 transfers the element. Its header and element bytes are disjoint, and no call,

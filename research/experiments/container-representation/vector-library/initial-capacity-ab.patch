@@ -1,0 +1,61 @@
+--- a/lib/std/collections/vector/grow-vector.wf
++++ b/lib/std/collections/vector/grow-vector.wf
+@@ -1,6 +1,10 @@
+ fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure {
+-  doc "One empty vector over a zero-capacity backing window. The caller-selected ceiling is the static capacity domain later reserve, append, and insert calls must prove; zero therefore constructs a useful empty value whose growth operations are unavailable. A runtime-capacity window exists only as the content of a cell [TYPE-9], and allocation is total in the source [STOR-8], so the construction has no refusal arm and hands back no Result.";
+-  let storage = box_slots_new::<T>(capacity: 0_u64);
++  doc "One empty vector over a small initial backing window when the caller-selected ceiling is positive, and over a zero-capacity backing when the ceiling is zero. The ceiling remains the static capacity domain later reserve, append, and insert calls must prove; constructing one slot removes a separate first-growth transition while preserving the zero-ceiling boundary. A runtime-capacity window exists only as the content of a cell [TYPE-9], and allocation is total in the source [STOR-8], so the construction has no refusal arm and hands back no Result.";
++  let initial = 0_u64;
++  if ceiling > 0_u64 {
++    set initial = 1_u64;
++  }
++  let storage = box_slots_new::<T>(capacity: initial);
+   return GrowVector<T, ceiling>(storage: move storage);
+ }
+ 
+--- a/lib/std/collections/vector/module.wfm
++++ b/lib/std/collections/vector/module.wfm
+@@ -6,7 +6,7 @@
+   fn accept(env: &E, value: T) -> result: unit writes(env);
+ }
+ 
+-public fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure doc "One empty vector over a zero-capacity backing window. The caller-selected ceiling is the static capacity domain later reserve, append, and insert calls must prove; zero therefore constructs a useful empty value whose growth operations are unavailable. A runtime-capacity window exists only as the content of a cell [TYPE-9], and allocation is total in the source [STOR-8], so the construction has no refusal arm and hands back no Result.";
++public fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure doc "One empty vector over a small initial backing window when the caller-selected ceiling is positive, and over a zero-capacity backing when the ceiling is zero. The ceiling remains the static capacity domain later reserve, append, and insert calls must prove; constructing one slot removes a separate first-growth transition while preserving the zero-ceiling boundary. A runtime-capacity window exists only as the content of a cell [TYPE-9], and allocation is total in the source [STOR-8], so the construction has no refusal arm and hands back no Result.";
+ 
+ public fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, total: u64) -> capacity: u64 writes(values.storage) contract {
+   requires total <= ceiling;
+--- a/research/experiments/container-representation/vector-library/vector-costs.c
++++ b/research/experiments/container-representation/vector-library/vector-costs.c
+@@ -489,10 +489,29 @@
+     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+     size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
+     size_t per_peak = per_bytes;
++#if defined(INITIAL_CAPACITY_ONE)
++    if (variant == WHITEFOOT) {
++        per_bytes = 32 + (count + 2) * stride;
++        per_peak = per_bytes;
++    }
++#endif
+     if (path == 1) {
+-        per_requests = 1; per_bytes = 16; per_peak = 16;
+-        size_t old_bytes = 16;
+-        for (uint64_t capacity = 1;;) {
++        per_requests = 1;
++#if defined(INITIAL_CAPACITY_ONE)
++        if (variant == WHITEFOOT) {
++            per_bytes = 16 + stride; per_peak = per_bytes;
++        } else
++#endif
++        {
++            per_bytes = 16; per_peak = 16;
++        }
++        size_t old_bytes = per_bytes;
++#if defined(INITIAL_CAPACITY_ONE)
++        uint64_t capacity = variant == WHITEFOOT ? 2 : 1;
++#else
++        uint64_t capacity = 1;
++#endif
++        for (;;) {
+             size_t bytes = 16 + capacity * stride;
+             ++per_requests; per_bytes += bytes; per_peak = old_bytes + bytes;
+             if (capacity >= count + 1) break;

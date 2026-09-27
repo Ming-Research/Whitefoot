@@ -2804,6 +2804,46 @@ the changed initial-capacity policy is a production candidate; otherwise it is
 rejected and the remaining choice is a lazy-empty representation or a
 compiler/lowering optimization.
 
+The matched A/B was run with separately rebuilt gate compilers, because the
+standard library is embedded in `whitefootc`; the earlier stale-binary timing
+was discarded. Both arms passed the complete 1,260-configuration /
+8,820-execution check, the candidate's 294 accounting rows, checksum and
+cleanup fault injections. The candidate changed scalar growth at 16 from
+`1.101858/1.097282` times the slower standard peer (cohorts 0/1) to
+`0.952456/0.959992`, removing that strict deficit. Its fresh target reduction
+was nevertheless 18 passes / 4 deficits / 14 inconclusive cells (six
+unranked), versus the baseline's 18 / 5 / 13 (six unranked): scalar suffix-2
+at 4096 moved from inconclusive (`1.034401/1.062385`) to a strict deficit
+(`1.065974/1.065284`). The candidate therefore fails the preregistered
+no-regression criterion and is rejected as a production policy. Its ledger
+does confirm the intended causal change: scalar growth at 16 falls from 21 to
+18 requests and from 1,848 to 1,800 requested bytes per three-round trace,
+with the same 416-byte peak; non-growth traces retain two requests but carry
+one extra element slot in the initial header (scalar reserved-16: 504 to 528
+bytes, peak 168 to 176). The frozen patch and complete raw evidence are
+[`patch`](initial-capacity-ab.patch), [`baseline samples`](ecosystem-initial-cap-baseline-samples.csv),
+[`candidate samples`](ecosystem-initial-cap-candidate-samples.csv),
+[`baseline targets`](ecosystem-initial-cap-baseline-targets.csv),
+[`candidate targets`](ecosystem-initial-cap-candidate-targets.csv),
+[`baseline account`](ecosystem-initial-cap-baseline-account.csv) and
+[`candidate account`](ecosystem-initial-cap-candidate-account.csv).
+
+The source-equivalent initial-capacity trial does not make a lazy-empty
+representation expressible under the current public shape. A minimal enum
+`Pending<T> { Empty; Full(storage: Box<Slots<T>>); }` can run a 16-append
+micro-witness, but the existing vector contracts reject the required facts:
+`requires deref(values).storage.Full.storage.inner.len < 16_u64;` is
+`TYPE-5`; a helper `requires lazy_len(values: values) < 16_u64;` is rejected
+by `FN-8` (`InvalidRequires`); an inline scalar postcondition such as
+`ensures deref(values).capacity > deref(values).length;` is rejected by
+`FN-9` (`InvalidPostconditionRelation`); and the corresponding loop fact
+`invariant values.length >= index` is rejected by `INV-1`
+(`InvalidInvariant`). The micro-witness uses a 32-byte enum value versus the
+old 8-byte vector descriptor and still needs runtime checks, so it is not a
+library candidate. No Vector production source changed; the remaining choice
+is an explicit compiler/lowering optimization or a separately recorded
+representation-and-contract design decision.
+
 ### Fresh main integration: identical executable inputs, no retiming
 
 At `f945eceecb3aacac20e76864c73edf8b7c87902b`, a fresh gate compiler
