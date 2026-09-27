@@ -225,6 +225,13 @@ time.
   still have: one epoll instance and one `SO_REUSEPORT` listener per thread,
   edge triggered, reading until `EAGAIN` and carrying a per-connection buffer
   for what a short write leaves behind.
+- **`waiting_echo`**: the runtime shape a `waits` program would compile to,
+  written by hand in C: one waiting context per connection running
+  straight-line receive-then-send code on its own small stack, pinned to a
+  driver thread that owns one ring and one `SO_REUSEPORT` listener.
+  `research/investigations/io-model/WAITS.md` states the question it answers,
+  its criterion and its result. It is removed when compiled `waits` programs
+  replace it in this protocol.
 - **`wf_echo`**: `programs/tcp_echo_server.wf` built with `--par`, the
   Whitefoot line. It runs with `WF_STACKS=1100` and otherwise the shipped
   defaults, because a parked callee holds a pool stack for as long as its

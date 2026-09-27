@@ -13,6 +13,8 @@
 #   sh linux-net-bench.sh          build everything and run the protocol
 #   sh linux-net-bench.sh verify   only the correctness pass, over binaries
 #                                  another build already put in $OUT
+#   sh linux-net-bench.sh measure  the correctness pass and the protocol over
+#                                  binaries another build already put in $OUT
 #
 # The bar this measures against is the one
 # research/investigations/io-model/NETWORK.md section 6 sets: the reference is
@@ -45,7 +47,7 @@ k64 64 2000 64
 k1024 1024 200 64
 k64.64k 64 200 65536"
 
-# The server lines to run, out of "uring epoll wf", space separated. The
+# The server lines to run, out of "uring epoll wf waiting", space separated. The
 # default is every line whose binary is in $OUT, which is every line the build
 # above produced. Naming a subset is for the case where one server cannot
 # complete a run yet and the others still owe a table; the table says which
@@ -211,6 +213,7 @@ if [ "$MODE" = bench ]; then
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread uring_echo.c -o "$OUT/uring_echo"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread epoll_echo.c -o "$OUT/epoll_echo"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread netload.c -o "$OUT/netload"
+    "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread waiting_echo.c -o "$OUT/waiting_echo"
 
     if [ -f "$BUNDLE/programs/tcp_echo_server.wf" ]; then
         cd "$BUNDLE/programs"
@@ -224,11 +227,12 @@ if [ ! -x "$OUT/netload" ]; then
 fi
 
 LINES=""
-for name in ${NET_LINES:-uring epoll wf}; do
+for name in ${NET_LINES:-uring epoll wf waiting}; do
     case $name in
         uring) binary=$OUT/uring_echo ;;
         epoll) binary=$OUT/epoll_echo ;;
         wf) binary=$OUT/wf_echo ;;
+        waiting) binary=$OUT/waiting_echo ;;
         *) echo "linux-net-bench: there is no $name line" >&2; exit 2 ;;
     esac
     if [ -x "$binary" ]; then
