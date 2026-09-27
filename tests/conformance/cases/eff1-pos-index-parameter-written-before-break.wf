@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn write_slot(window: &Slots<u64, 4>, index: u64) -> result: unit writes(window[index]) contract {
+  requires index < deref(window).len;
+} {
+  doc "Writes element index of the window in a loop that writes index only before it leaves.";
+  loop {
+    set deref(window)[index] = 9_u64;
+    set index = 0_u64;
+    break;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-1: the loop writes index only on the path that leaves it through break, so no iteration reaches the access after that write, and deref(window)[index] is the row's window[index] in every iteration.";
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  let p = &r[0_u64];
+  write_slot(window: &r, index: 1_u64);
+  let seen = deref(p);
+  if seen == 1_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

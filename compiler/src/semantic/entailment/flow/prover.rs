@@ -1694,12 +1694,16 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
-            CapturedTerm::Binding(_) if matches!(value.capture, CaptureId::Source(_)) => {
+            // A superseded binding's capture still names the value its
+            // formation read, which is the immutable term the capture minted.
+            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
+                if matches!(value.capture, CaptureId::Source(_)) =>
+            {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
                 })
             }
-            CapturedTerm::Binding(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Opaque => None,
         }
     }
 

@@ -450,6 +450,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     return self
                         .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
                 };
+                let captured = self.note_capture(captured, bindings);
                 let (path, selected_type, carried) = self.resolve_storage_path(
                     &base[subscript + 1..],
                     range.element_type,
@@ -1067,9 +1068,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         {
             return Ok(false);
         }
-        place.push_subscript(
+        place.push_subscript(self.note_capture(
             Self::captured_of(offset_node, &offset.expression).unwrap_or(CapturedValue::unknown()),
-        );
+            bindings,
+        ));
         Ok(self.take_commit_element_read_out(&place))
     }
 
@@ -1203,8 +1205,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // psuffix identity that the [ENT-6] obligation judgment and [OP-4]
         // rejection cite.
         let obligation = self.tree.path(suffix)?.clone();
-        let captured =
-            Self::captured_of(offset_node, &offset.expression).unwrap_or(CapturedValue::unknown());
+        let captured = self.note_capture(
+            Self::captured_of(offset_node, &offset.expression).unwrap_or(CapturedValue::unknown()),
+            bindings,
+        );
         let mut effects = offset.effects.union(carried.effects);
         let mut accesses = offset
             .accesses
@@ -1441,8 +1445,10 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // [SET-1]/[SET-2] partition the selected element class exactly as
         // they partition every other final selected type.
         self.check_mutation_target_class(node, selected_type)?;
-        let offset_place =
-            Self::captured_of(offset_node, &offset.expression).unwrap_or(CapturedValue::unknown());
+        let offset_place = self.note_capture(
+            Self::captured_of(offset_node, &offset.expression).unwrap_or(CapturedValue::unknown()),
+            bindings,
+        );
         let mut effects = offset.effects.union(carried.effects);
         let (declaration, place, target) = match indexed {
             CheckedIndexedPlace::Array(_) => {
@@ -1646,7 +1652,8 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             if require_named_offsets && captured.is_none() {
                 return self.unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
             }
-            let captured = captured.unwrap_or(CapturedValue::unknown());
+            let captured =
+                self.note_capture(captured.unwrap_or(CapturedValue::unknown()), bindings);
             carried.effects = carried.effects.union(offset.effects);
             carried.accesses.extend(offset.accesses);
             path.push(CheckedPlaceStep::Subscript(Box::new(

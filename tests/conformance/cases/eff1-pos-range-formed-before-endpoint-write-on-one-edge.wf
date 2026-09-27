@@ -1,0 +1,46 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clear(part: &[u64]) -> result: unit writes(part) {
+  doc "Writes 9 to every element of the range part names.";
+  let i = 0_u64;
+  loop {
+    if deref(part).len <= i {
+      break;
+    }
+    set deref(part)[i] = 9_u64;
+    set i = i +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn write_run(window: &Slots<u64, 4>, lo: u64, hi: u64) -> result: unit writes(window[lo..hi]) contract {
+  requires lo <= hi;
+  requires hi <= deref(window).len;
+} {
+  doc "Clears the run from lo to hi through a range both branches form from the call values, one of them before writing lo.";
+  let part = &deref(window)[0_u64..0_u64];
+  let flag = 1_u64 <= lo;
+  if flag {
+    set part = &deref(window)[lo..hi];
+    set lo = 0_u64;
+  } else {
+    set part = &deref(window)[lo..hi];
+  }
+  clear(part: part);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-1, REF-4: the range form of eff1-pos-reference-index-read-before-write-on-one-edge. Both branches form part from the call values of lo and hi, so after the join a call writing through part is the row's window[lo..hi].";
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  let p = &r[0_u64];
+  write_run(window: &r, lo: 1_u64, hi: 2_u64);
+  let seen = deref(p);
+  if seen == 1_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
