@@ -1,5 +1,5 @@
---- /private/tmp/whitefoot-scalar-reserved-append-corrected/raw/control/whitefoot-timed.ll	2026-09-27 06:20:59
-+++ /private/tmp/whitefoot-scalar-reserved-append-corrected/raw/candidate/whitefoot-timed.ll	2026-09-27 06:21:45
+--- /private/tmp/whitefoot-scalar-reserved-append/raw/control/whitefoot-timed.ll	2026-09-27 06:06:23
++++ /private/tmp/whitefoot-scalar-reserved-append/raw/candidate/whitefoot-timed.ll	2026-09-27 06:06:23
 @@ -1271,7 +1271,14 @@
    %v20 = add i64 %v9, %v7
    %v21 = add i64 %v20, %v13

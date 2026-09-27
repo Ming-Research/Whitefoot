@@ -2575,6 +2575,20 @@ interface, permitted callback effects, retained contents and capacity are
 unchanged. This still relocates rear elements and is not a minimum-transfer
 algorithm.
 
+The later Vector diagnostics separate the remaining scalar cost. With the
+counted consumer and wide tail/truncate calls exposed, a reserved scalar tail
+whose append call was replaced by a direct slot store and length increment
+reduced the 8-byte suffix-two ratio from `0.523–0.559` to `0.523–0.527` times
+the slower standard peer, while preserving the complete checksum and release
+ledger. The corrected pair moved the target matrix from 20 passes, 3 deficits
+and 13 inconclusive cells to 25 passes, 1 deficit and 10 inconclusive cells;
+the remaining strict deficit is scalar growth at 8-byte length 16. The
+replacement is a frozen LLVM witness that removes a public capacity check; it
+is therefore causal evidence about the helper boundary and the carried
+spare-capacity fact, not a selected API or unchecked lowering. An earlier
+tail-only run lacked the wide truncate attribute and is retained only as
+historical evidence, not as a current composite comparison.
+
 Two target choices address the demonstrated extra temporary copies. A complete
 take captures the old physical slot, updates the window descriptor, then
 transfers the element. Its header and element bytes are disjoint, and no call,

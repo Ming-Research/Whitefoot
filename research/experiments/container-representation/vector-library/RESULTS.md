@@ -2596,7 +2596,7 @@ reserved-append and suffix-two costs remain open.
 
 The remaining strict deficits are scalar growth at population 16 and scalar
 suffix-two at 16, 256 and 4096. The next diagnostic is preregistered before
-construction from the completed tail-plus-truncate image. In the scalar
+construction from the completed counted-consumer plus wide-tail-only image. In the scalar
 `wf_vector_library_tail_work$instance$8f6b633c945d12a3` body only, replace the
 inlined `grow_vector_append` call with its direct slot store and length
 increment, removing that call's capacity/grow-full branch. The only caller is
@@ -2614,7 +2614,7 @@ regression rejects the diagnostic. This measures the cost of carrying a
 proven spare-capacity fact across the helper boundary; it does not authorize
 an unchecked public operation or a production policy by itself.
 
-### Scalar reserved append: completed, causal but not a production policy
+### Scalar reserved append: corrected tail+truncate pair
 
 The candidate passed the pre-registered code criterion: only the scalar tail's
 reserved append changed. Its capacity/grow-full call and branch became a direct
@@ -2628,20 +2628,64 @@ and [`candidate`](ecosystem-scalar-reserved-append-candidate-samples.csv).
 Both images passed 1,260 configurations and 8,820 executions, and the
 accounting CSV remained byte-identical to the retained ledger (SHA-256
 `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`). The
-guarded timed children took `79.89 s` and `80.06 s`; the complete sample files
-have SHA-256 `e250ac9170aa3edcf8e6b6dc1c48e6cc99b1c94cd6bc41fc1b21f1219fb1a68`
-and `619943279f6026b421133d875b1e6457185445dc0a4be3a8ec782376fa2d9c80`.
+corrected guarded timed children took `79.90 s` and `79.79 s`; the complete
+sample files have SHA-256
+`187a7bd8809e75860df7fd4670d6075f1dfdba2cfb9683ff85f7493c91216878` and
+`c6a7e2be1e85d2915b4a80f87f3a1701a6eca47cd918b67b329e3ae922cece2d`.
 
-The target summary changed from 17 passes, 6 deficits and 13 inconclusive
-cells to 19 passes, 4 deficits and 13 inconclusive cells. Scalar suffix-two
-cells at 8-byte payloads moved from `1.065–1.107` times the slower standard
-peer to `0.523–0.529`; scalar suffix-one cells also became sub-parity. The
-remaining strict deficits are the three wide 256-byte suffix-one cells and
-the 8-byte growth-at-16 cell. This is evidence that a known spare-capacity
-fact and the helper boundary account for a substantial scalar cost. It is a
-diagnostic upper bound: the candidate removes a public append check by hand,
-so it is rejected as a production change until the language/compiler can carry
-that fact with an ordinary, checked interface.
+The corrected tail+truncate pair moved the target summary from 20 passes, 3
+deficits and 13 inconclusive cells to 25 passes, 1 deficit and 10
+inconclusive cells. Scalar suffix-two cells at 8-byte payloads moved from
+`0.523–0.559` to `0.523–0.527` times the slower standard peer; other scalar
+suffix cells also improved or stayed within overlap. The only strict deficit
+left in this pair is the 8-byte growth-at-16 cell; the wide suffix-one cells
+are no longer strict deficits under the current composite, although some
+qualified ranges still overlap. The direct candidate remains a diagnostic
+upper bound and is rejected as a production change because it removes a
+public append check by hand.
+
+The earlier tail-only pair is retained as historical evidence under
+[`tail-only control`](ecosystem-scalar-reserved-append-tail-only-control-samples.csv),
+[`tail-only candidate`](ecosystem-scalar-reserved-append-tail-only-candidate-samples.csv),
+and [`tail-only patch`](scalar-reserved-append-tail-only.patch). Its original
+79.89/80.06-second timing and 17-to-19 pass-count change must not be compared
+with the corrected composite totals.
+
+### Withdrawn pointer/count trial: base identity was not current
+
+Before the identity audit, a scalar pointer/end loop was built on the same
+tail-only base and timed. It changed the three scalar suffix-two cells from
+`0.523–0.529` to `0.623–0.628` and left the wide cells outside the intended
+composite comparison. The trial is withdrawn rather than published as loop
+evidence: its base was not the tail+truncate composite named by the preceding
+plan. Its temporary samples remain only under `/private/tmp`; no loop
+conclusion is drawn from them.
+
+### Next discriminator: scalar truncate pointer/count loop (after the corrected append pair)
+
+The corrected append witness leaves the growth-at-16 scalar deficit and does
+not by itself isolate the consumer loop. Before construction, the next
+diagnostic is therefore fixed to the scalar
+`grow_vector_truncate$instance$0bdfc07e3035b4cc`
+body in the corrected reserved-append composite. Keep its entry check exactly:
+when the requested length is not below the current length, return without a
+length store. In the admitted branch, replace only the indexed `index -> GEP
+-> load -> index+1 -> compare` loop with a pointer/count loop equivalent to the
+frozen K+hint body: compute the first element address once, decrement a finite
+remaining count, advance the element pointer by one word, call the same
+consumer, and store the requested length on the same exit. Do not change the
+callback, source order, empty behavior, result code, or any wide body.
+
+The code criterion is at most four loop-control/data instructions per scalar
+element (pointer advance, load, callback argument and count/branch), no new
+call, spill, snapshot or frame growth, and byte-identical wide/native bodies
+apart from the intended scalar function. A mismatch stops without timing. If
+it passes, run the full correctness/accounting images and one complete 4,116-
+row pair. Accounting must remain byte-identical and every checksum/cleanup
+fault must retain its verdict. Any useful-cell regression rejects the
+diagnostic. The experiment measures the remaining scalar consumer-loop
+component; it does not select a production loop form or imply that the
+unmodified public truncate contract can omit its proof checks.
 
 ### Empty allocation: two-edge exposure does not remove the allocation
 
