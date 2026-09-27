@@ -1,0 +1,7 @@
+fn invalid(value: f64) -> result: i32 pure {
+  return cvt.wrap::<f64, i32>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

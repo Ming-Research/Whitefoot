@@ -200,6 +200,7 @@ impl From<CheckedConversionMode> for IrConversionMode {
             CheckedConversionMode::Exact => Self::Exact,
             CheckedConversionMode::Checked => Self::Checked,
             CheckedConversionMode::Defined => Self::Defined,
+            CheckedConversionMode::Wrap => Self::Wrap,
         }
     }
 }

@@ -15,7 +15,8 @@ report goes.
 ## Steps
 
 1. **Validate.** Run the checks the change needs (checklist V1): `make static`
-   for any change, the README's focused commands for code, and `make check` or
+   for any change, the focused commands in the
+   [workflow map](../../workflow.md#checks) for code, and `make check` or
    the hosted gate on the revision to be merged. Keep the commands, results
    and tested revision for the report.
 2. **Scope.** `make review-scope` prints the base and head, the changed areas,

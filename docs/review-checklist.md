@@ -250,7 +250,7 @@ Use existing checks when applicable: `git diff --check` for patch whitespace;
 `make static` for repository invariants, specification archives (immutability
 and amendment shape), live spec references, cited review items, entry-document
 paths, skill links and design-tree form; `make -C compiler format lint` and the
-[focused compiler commands](../README.md#verification) for code. `make static`
+[focused compiler commands](workflow.md#checks) for code. `make static`
 does not check document purpose, anchors or the truth of a claim, and compiler
 `docs` builds Rust API documentation, not this prose checklist. The root
 [Makefile](../Makefile) owns the full gate inventory; the design-tree checks

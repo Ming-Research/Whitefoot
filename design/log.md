@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-26 Add total integer wrapping conversion
+
+Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering
+
+Owner-approved: The owner approved both PR #109 decision cards ("all approved", written in Chinese), 2026-09-26.
+
+Summary: Apply the two reviewed amendments unchanged: integer `cvt.wrap` uses the destination-width modular value rule for every integer width and sign pair, and an explicit conversion mode reuses the shared integer cast with source-signed extension while retaining modular goal identity without exact input equality. This provides uniform low-bit extraction and modular signedness changes without a second conversion pipeline or a domain check. Existing decisions remain unchanged. Remove both accepted amendments and their directory. This ruling does not authorize a merge.
+
 ## 2026-09-26 Name a captured offset by its binding only until a write of the binding reaches the reference
 
 Nodes: compiler/checker-facts, language/ownership, language/ownership/range-reference

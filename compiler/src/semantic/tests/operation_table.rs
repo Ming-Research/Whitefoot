@@ -269,12 +269,13 @@ const BOOLEAN_SPELLINGS: [(&str, usize); 4] = [("band", 2), ("bor", 2), ("bxor",
 /// construction functions [OP-13], which are ordinary records and not
 /// operation-table rows, and allocation is total so no source predicate
 /// decides it [STOR-8].
-const UNMODELLED_ROW_SPELLINGS: [&str; 6] = [
+const UNMODELLED_ROW_SPELLINGS: [&str; 7] = [
     "eeq",
     "ene",
     "cvt",
     "cvt.checked",
     "cvt.defined",
+    "cvt.wrap",
     "reinterpret",
 ];
 

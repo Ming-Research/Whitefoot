@@ -6682,6 +6682,36 @@ fn main() -> status: std::process::ExitStatus pure {
 // ---------------------------------------------------------------------
 
 #[test]
+fn wrapping_conversion_keeps_destination_bounds_without_input_equality() {
+    for (length, accepted) in [(256, true), (16, false)] {
+        let source = format!(
+            "fn read(index: u16) -> result: u8 pure contract {{\n  requires index >= 256_u16;\n}} {{\n  let values = array_filled::<u8, {length}>(value: 7_u8);\n  let byte = cvt.wrap::<u16, u8>(index);\n  let offset = cvt::<u8, u64>(byte);\n  return values[offset];\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        if accepted {
+            let summary = accepted_entailment(source.as_bytes(), "read");
+            validate_derivations(&summary);
+            assert_eq!(
+                summary
+                    .obligations
+                    .iter()
+                    .filter(|obligation| obligation.family == ObligationFamily::ConversionDomain)
+                    .count(),
+                1,
+                "only the later exact widening has a conversion-domain obligation"
+            );
+        } else {
+            // Equating byte with index would contradict byte's u8 bounds
+            // and prove the invalid access from an invented contradiction.
+            // Both ordinary equality and affine images must keep them distinct.
+            super::assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+                    if residual == "offset < values.len")
+            });
+        }
+    }
+}
+
+#[test]
 fn a_literal_a_copy_and_a_total_conversion_carry_the_value_forward() {
     let source = br#"const count: u64 = 4_u64;
 
