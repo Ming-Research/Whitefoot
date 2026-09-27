@@ -2011,3 +2011,18 @@ condition under which it is taken up.
   after the rebinding is what works. Select the route from what the `?`
   stands for, and pin each pair with a repaired source that is accepted.
   Found while fixing the completion review of PR #145.
+
+## Verification tooling
+
+- **Archive verification can mistake integrated main history for a branch
+  amendment.** The root `spec-archives` target hard-codes local `main` as
+  its comparison ref. After a work branch integrates current `origin/main`,
+  an older local `main` can make `make static` report multiple new archives
+  even when the branch changes no specification bytes relative to the PR
+  base. Allow selecting the actual review base consistently with the other
+  review checks, and report the selected commit. Validate an older local
+  main, an integrated branch and a real branch amendment, retaining rejection
+  of modified archives and malformed version transitions. Reopen when
+  updating verification-base selection; this research refresh used the
+  unchanged archive checker with `origin/main` and recorded the default
+  entry's failure instead of changing its result or the local main worktree.

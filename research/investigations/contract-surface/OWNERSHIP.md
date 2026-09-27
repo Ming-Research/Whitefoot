@@ -303,6 +303,8 @@ using the unmodified compiler from `ad51e05df`, built on research revision
 `b519746b2` with `make -C compiler build` (gate profile, locked and offline).
 Native controls use the default ordinary compiler path, without compute mode.
 All source observations in the tables above and below retained their verdicts.
+The current [HashMap program](../../../tests/programs/containers/hash-map-program.wf)
+also compiled and returned native exit 0 through its standard-library imports.
 
 The module migration changes reproduction: the compiler supplies the Deque
 module from its embedded standard library, selected by the caller's aliases;
@@ -321,6 +323,8 @@ perl .github/run-check.pl deque-control compiler/target/gate/whitefootc tests/pr
 "$probe_dir/deque"
 perl .github/run-check.pl cursor-control compiler/target/gate/whitefootc tests/programs/owned_link_cursors.wf -o "$probe_dir/cursor"
 "$probe_dir/cursor"
+perl .github/run-check.pl map-control compiler/target/gate/whitefootc tests/programs/containers/hash-map-program.wf -o "$probe_dir/map"
+"$probe_dir/map"
 ```
 
 For source-only probes, use `whitefootc --emit-llvm SOURCE... -o output.ll`
@@ -362,7 +366,8 @@ For the grammar experiment, a scratch Rust driver imports the unchanged
 `compiler/src/syntax/grammar/generator.rs`. Run its public
 `generate(path, specification)` on the baseline text, then on a copy replacing
 exactly `pbase` and `psuffix` with the candidate productions above. Both
-complete without a prediction conflict. Compile the driver with
+complete without a prediction conflict on v0.69 and again on v0.74, including
+the latter's module and qualified-call productions. Compile the driver with
 `rustc --edition=2024` under the ordinary command guard. This uses the native
 generator, not another parser or a revised language implementation.
 
