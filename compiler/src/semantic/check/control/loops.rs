@@ -50,11 +50,13 @@ struct LoopReferenceEquation {
 }
 
 /// The header [`Checker::enter_loop_reference_header`] forms: its reference
-/// equations, and each index capture a header reference still spells with
-/// its binding, which [`Checker::record_backedge_supersedes`] reads.
+/// equations, each index capture a header reference still spells with its
+/// binding, and each parameter still holding its call value there, which
+/// [`Checker::record_backedge_supersedes`] reads.
 struct LoopReferenceHeader {
     equations: Vec<LoopReferenceEquation>,
     spelled: HashSet<(CaptureId, BindingId)>,
+    call_values: HashSet<BindingId>,
 }
 
 #[derive(Clone)]
@@ -132,7 +134,9 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         // [REF-1] a write the backedge carries reaches this header again, so
         // every iteration's header holds the indices captured from a binding
         // the backedge wrote as superseded, not only the iterations after the
-        // write. [`Self::record_backedge_supersedes`] finds those bindings.
+        // write, and [EFF-1] a parameter the backedge wrote holds no call
+        // value there. [`Self::record_backedge_supersedes`] finds those
+        // bindings.
         let superseded = self
             .loop_superseded_bindings
             .borrow()
@@ -151,20 +155,36 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 spelled.extend(path.spelled_indices());
             }
         }
-        Ok(LoopReferenceHeader { equations, spelled })
+        for local in bindings.values_mut() {
+            if superseded.contains(&local.binding) {
+                local.call_value = false;
+            }
+        }
+        let call_values = bindings
+            .values()
+            .filter(|local| local.call_value)
+            .map(|local| local.binding)
+            .collect();
+        Ok(LoopReferenceHeader {
+            equations,
+            spelled,
+            call_values,
+        })
     }
 
     /// [REF-1] records the binding of each index capture a header reference
     /// spelled at the header and holds superseded on the backedge, and
-    /// restarts the walk when one is new, as a grown path summary does: the
-    /// next iteration reaches the header after that write. A write on a path
-    /// that leaves the loop reaches no header, and an index superseded
-    /// before the loop is no capture the header spelled. There are finitely
-    /// many pairs of loop and binding, so the restarts end.
+    /// [EFF-1] each parameter holding its call value at the header and not on
+    /// the backedge. It restarts the walk when one is new, as a grown path
+    /// summary does: the next iteration reaches the header after that write.
+    /// A write on a path that leaves the loop reaches no header, and an index
+    /// superseded before the loop is no capture the header spelled. There are
+    /// finitely many pairs of loop and binding, so the restarts end.
     fn record_backedge_supersedes(
         &self,
         id: CheckedLoopId,
         spelled: &HashSet<(CaptureId, BindingId)>,
+        call_values: &HashSet<BindingId>,
         header_keys: &[DeclarationId],
         backedge: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
@@ -172,8 +192,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let recorded = recorded.entry(id).or_default();
         let mut grown = false;
         for key in header_keys {
-            let Some(reference) = backedge.get(key).and_then(|local| local.reference.as_ref())
-            else {
+            let Some(local) = backedge.get(key) else {
+                continue;
+            };
+            if !local.call_value && call_values.contains(&local.binding) {
+                grown |= recorded.insert(local.binding);
+            }
+            let Some(reference) = local.reference.as_ref() else {
                 continue;
             };
             for path in &reference.paths {
@@ -647,6 +672,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let LoopReferenceHeader {
             equations: reference_equations,
             spelled: header_spelled,
+            call_values: header_call_values,
         } = self.enter_loop_reference_header(id, &rebound.holders, &mut header_bindings)?;
         if header_bindings
             .insert(
@@ -661,6 +687,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                     compiler_updated: true,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    call_value: false,
                 },
             )
             .is_some()
@@ -698,7 +725,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             },
         )?;
         if checked.can_continue {
-            self.record_backedge_supersedes(id, &header_spelled, &header_keys, &body_bindings)?;
+            self.record_backedge_supersedes(
+                id,
+                &header_spelled,
+                &header_call_values,
+                &header_keys,
+                &body_bindings,
+            )?;
         }
         // [OWN-11, REF-2] the body is an ordinary block whose own bindings
         // begin and end with one iteration, so a reference whose path starts
@@ -1099,6 +1132,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let LoopReferenceHeader {
             equations: reference_equations,
             spelled: header_spelled,
+            call_values: header_call_values,
         } = self.enter_loop_reference_header(id, &rebound.holders, &mut header_bindings)?;
         let mut body_bindings = header_bindings.clone();
         let allowed_invariant_values = base_keys.iter().copied().collect::<HashSet<_>>();
@@ -1121,7 +1155,13 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             },
         )?;
         if checked.can_continue {
-            self.record_backedge_supersedes(id, &header_spelled, &base_keys, &body_bindings)?;
+            self.record_backedge_supersedes(
+                id,
+                &header_spelled,
+                &header_call_values,
+                &base_keys,
+                &body_bindings,
+            )?;
         }
         // [OWN-11, REF-2] the body is an ordinary block whose own bindings
         // begin and end with one iteration, so a reference whose path starts

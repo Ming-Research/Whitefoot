@@ -1973,24 +1973,16 @@ condition under which it is taken up.
   required source work from removable lowering cost. Defer a broad repeat of all
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
-- **A body access keeps a row's index after the body writes that index
-  parameter.** EFF-1 evaluates the index of a row entry such as
-  `writes(window[index])` once at the call, but EFF-2 attributes a body
-  access `deref(window)[index]` to that entry by the parameter's spelling,
-  even after `set index = 0_u64`. A callee declared that way that sets
-  `index` to 0 and writes `deref(window)[index]`, called with
-  `index: 1_u64`, writes `r[0_u64]` while the caller's `p = &r[0_u64]`
-  stays valid and reads the new value. One that replaces `deref(rows)[index]`
-  after the same write leaves the caller's fact `3 <= rows[0_u64].len`
-  standing over a replaced row, and the caller reads an uninitialized
-  element. The v0.73 and v0.74 checkers accept both, directly and through a
-  reference formed after the write. The access must map to the entry only
-  while the parameter still holds its call value, and otherwise to its
-  nearest enclosing path [EFF-2]. That is flow-sensitive: a loop that writes
-  the parameter must reach its header the way a loop's write of a
-  reference's index binding does. Validate with those two programs refused
-  and a parameter written only after its last access accepted. Found by the
-  completion review of PR #145.
+- **A write refused for a written index parameter does not name that
+  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  under `writes(window[index])` is refused with SET-1's "a reference whose
+  declared row does not write this path", and a call passing `index` with
+  EFF-2's repair `writes(window)`. Neither names the earlier write of
+  `index` that moved the access off the row's position, which a writer who
+  declared `writes(window[index])` needs to see. Name the write, and offer
+  the repair that keeps the row: read `index` into a new binding before
+  writing it. Validate with a pinned pair for each of the two rejections.
+  Found while fixing the EFF-2 attribution after a parameter write.
 - **A goal over an index no spelling names offers routes that cannot
   establish it.** After `let wr = &rows[k];` and `set k = 1_u64;`, a call's
   requirement through `wr` reads `rows[?].len`, and FN-8's repair offers an

@@ -282,6 +282,12 @@ struct LocalBinding {
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [EFF-1] whether this binding is a parameter holding the value its call
+    /// passed on every path to here. An index names a row's index parameter
+    /// only while it does, since a row evaluates that parameter once at the
+    /// call. A write of the binding ends it, and a join or loop header holds
+    /// it only when every incoming edge does.
+    call_value: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -310,6 +316,7 @@ impl LocalBinding {
         if let (Some(left), Some(right)) = (&mut self.reference, &other.reference) {
             left.join(right);
         }
+        self.call_value &= other.call_value;
         for witness in &mut self.refinement_witnesses {
             witness.valid &= other
                 .refinement_witnesses
@@ -599,13 +606,20 @@ struct Checker<'unit, 'classified, 'lexed, 'source> {
     /// the function driver clears this scratch state on every retry.
     deferred_loop_reference_uses: RefCell<Vec<references::DeferredLoopReferenceUse>>,
     loop_reference_summaries: RefCell<HashMap<references::LoopReferenceToken, Vec<ResolvedPlace>>>,
-    /// [REF-1] for each loop, the bindings a write reaches its backedge with
-    /// after a reference live at its header captured an index from them. The
-    /// next iteration reaches the header after that write, so the header
-    /// supersedes those indices. The sets only grow across the function's
+    /// [REF-1, EFF-1] for each loop, the bindings a write reaches its
+    /// backedge with where its header depends on them: a reference live at
+    /// the header captured an index from the binding, or the binding is a
+    /// parameter holding its call value there. The next iteration reaches the
+    /// header after that write, so the header supersedes those indices and
+    /// ends those call values. The sets only grow across the function's
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
     loop_superseded_bindings: RefCell<HashMap<super::model::CheckedLoopId, HashSet<BindingId>>>,
+    /// [EFF-1] the index and range-endpoint captures that read a parameter
+    /// while it held its call value on every path to their formation, which
+    /// name the row's index parameter whatever later writes and joins do.
+    /// Every retry starts empty.
+    call_value_captures: RefCell<HashSet<super::places::CaptureId>>,
     /// Resolved origins established by this structural function attempt.
     /// Every retry starts fresh; only its complete final walk is published.
     reference_origins: RefCell<Vec<Vec<ResolvedPlace>>>,
@@ -1563,6 +1577,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
             deferred_loop_reference_uses: RefCell::new(Vec::new()),
             loop_reference_summaries: RefCell::new(HashMap::new()),
             loop_superseded_bindings: RefCell::new(HashMap::new()),
+            call_value_captures: RefCell::new(HashSet::new()),
             reference_origins: RefCell::new(Vec::new()),
             contract_queries: RefCell::new(Vec::new()),
             prelude_nominals: HashMap::new(),
@@ -2277,6 +2292,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
         let tail_rejections = self.musttail_rejections.borrow().len();
         let outcome = loop {
             self.call_separations.borrow_mut().clear();
+            self.call_value_captures.borrow_mut().clear();
             self.contract_queries.borrow_mut().truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
@@ -2648,6 +2664,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                 )
             }),
             refinement_witnesses: Vec::new(),
+            call_value: true,
         })
     }
 

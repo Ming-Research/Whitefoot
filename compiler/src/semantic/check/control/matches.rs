@@ -793,6 +793,7 @@ impl<'unit, 'classified, 'lexed, 'source> Checker<'unit, 'classified, 'lexed, 's
                         compiler_updated: false,
                         reference,
                         refinement_witnesses,
+                        call_value: false,
                     },
                 )
                 .is_some()
