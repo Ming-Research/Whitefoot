@@ -1718,6 +1718,20 @@ each is resolved by a discussion and a tree change.
   count per activation. Reopen when the owner rules on it, or when a
   program needs to gather several I/O results.
 
+- **A started context can neither log nor report back.** Minimal witness:
+  `tcp_contexts.wf` with `serve` writing one line to standard output when
+  its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
+  `stdout`, so moving it into the first started `serve` leaves nothing to
+  move on the next iteration; a reference parameter is refused because a
+  started call outlives its statement [PAR-4]; and the started call's
+  result is dropped, so the starter cannot log on its behalf. Two
+  candidates: an `output_share` that, like `factory_share`, hands each
+  context its own stream on one host descriptor (lines from different
+  contexts then interleave as [HOST-1] allows); or a channel whose receive
+  is a waiting call, so one context owns the stream and the others send it
+  lines or results. Reopen when the owner rules on it, or when a
+  context-serving program needs to log or report.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
