@@ -1,0 +1,22 @@
+--- /private/tmp/whitefoot-vector-tail-alwaysinline/raw/control/whitefoot-timed.ll	2026-09-27 05:47:36
++++ /private/tmp/whitefoot-vector-tail-alwaysinline/raw/candidate/whitefoot-timed.ll	2026-09-27 05:47:36
+@@ -1551,7 +1551,7 @@
+   ret i64 %v8
+ }
+ 
+-define i8 @wf_vector_library_tail_work$instance$c3abe4db44181f7a(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, i64 %v2, i64 %v3, ptr noalias nonnull captures(none) dereferenceable(8) %v4) #0 {
++define i8 @wf_vector_library_tail_work$instance$c3abe4db44181f7a(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, i64 %v2, i64 %v3, ptr noalias nonnull captures(none) dereferenceable(8) %v4) #0 alwaysinline {
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   %v5 = select i1 true, i64 0, i64 0
+--- /private/tmp/whitefoot-vector-tail-alwaysinline/raw/control/whitefoot-account.ll	2026-09-27 05:47:36
++++ /private/tmp/whitefoot-vector-tail-alwaysinline/raw/candidate/whitefoot-account.ll	2026-09-27 05:47:36
+@@ -1551,7 +1551,7 @@
+   ret i64 %v8
+ }
+ 
+-define i8 @wf_vector_library_tail_work$instance$c3abe4db44181f7a(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, i64 %v2, i64 %v3, ptr noalias nonnull captures(none) dereferenceable(8) %v4) #0 {
++define i8 @wf_vector_library_tail_work$instance$c3abe4db44181f7a(ptr noalias nonnull captures(none) dereferenceable(8) %v0, i64 %v1, i64 %v2, i64 %v3, ptr noalias nonnull captures(none) dereferenceable(8) %v4) #0 alwaysinline {
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   %v5 = select i1 true, i64 0, i64 0

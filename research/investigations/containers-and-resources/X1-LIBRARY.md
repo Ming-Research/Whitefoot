@@ -136,6 +136,11 @@ wide image. It left the optimized object and executable assembly byte-for-byte
 unchanged and retained the trace-to-tail call, so the preregistered boundary
 criterion failed before timing; the patch and hashes are recorded with the
 [rejected diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#wide-tail-boundary-inlinehint-completed-and-rejected).
+The preregistered counted-consumer plus wide tail-only `alwaysinline` then
+removed that call without adding a frame or transfer. It brought wide
+suffix-one to near parity but left all three cells range-overlapping, so it is
+also a diagnostic rejection; the paired samples and accounting identity are
+recorded in the [completed result](../../experiments/container-representation/vector-library/RESULTS.md#counted-consumer-with-wide-tail-only-alwaysinline-completed-near-parity-but-rejected).
 
 The first recognizer is deliberately closed. After ignoring erased proof
 statements, the whole own-unit body must contain an entry window length `n`,

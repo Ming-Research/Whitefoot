@@ -2520,23 +2520,41 @@ exposure of the boundary to measure. The candidate is rejected without a
 4,116-row timing pair; the call/placement package remains unresolved and this
 LLVM hint does not authorize a production policy.
 
-### Next discriminator: counted consumer with wide tail-only `alwaysinline`
+### Counted consumer with wide tail-only `alwaysinline`: completed, near-parity but rejected
 
-The next diagnostic is preregistered before construction. Starting from the
-frozen actual-forward-hint image and the already measured counted-consumer
-body, add `alwaysinline` only to the wide
-`wf_vector_library_tail_work$instance$c3abe4db44181f7a` definition. Keep the
-wide `grow_vector_truncate` as an independent call, its single final length
-store, all scalar definitions, source, ABI, callbacks, allocation policy and
-native inputs unchanged. The code criterion is: the wide trace-to-tail call
-must disappear; the truncate call and final length store must remain; no 256B
-owner snapshot, new hot-path append/helper call, spill/reload or material
-frame growth may appear; standard objects must retain normalized identity. A
-failure stops without timing. If it passes, run the full correctness and
-accounting images and one complete 4,116-row pair against the counted control.
-This isolates the tail boundary after the loop-controller diagnostic; any
-timing result is a combined call/setup/placement observation, not a pure call
-instruction attribution, and does not select a production inline policy.
+The preregistered candidate started from the measured counted-consumer body and
+added `alwaysinline` only to the wide
+`wf_vector_library_tail_work$instance$c3abe4db44181f7a` definition. The exact
+timed/accounting LLVM patch is [`tail-alwaysinline.patch`](tail-alwaysinline.patch);
+the two complete raw arms are
+[`control samples`](ecosystem-tail-alwaysinline-control-samples.csv) and
+[`candidate samples`](ecosystem-tail-alwaysinline-candidate-samples.csv).
+The wide trace-to-tail call disappeared, while the independent
+`grow_vector_truncate` call and its final length store remained. The work frame
+stayed at `0x250`; no new 256B owner snapshot, append/helper call or spill was
+introduced. The scalar and native inputs were frozen.
+
+Both arms passed the full correctness matrix (1,260 configurations and 8,820
+executions). Their accounting output has 295 rows and is byte-identical,
+SHA-256 `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+The child runs took `80.08 s` for control and `80.00 s` for candidate. The
+control/candidate timed samples have SHA-256
+`fd868bfe9e489dd013c9d4151e933c2065d1dffeaa919646a1b456fe08217ce1` /
+`7e8d233832d9101c5147e8470ac6e0670b9dae2fc615fd2d881260dafab758b1`.
+The timed object/image hashes are respectively
+`9a4188f0ef1e96d08e8c8a3cd9b697c46f786bd94e130ed08bdead998d43f926` /
+`78886ba0fb6c6e8411a8e671cdebca8c6922fe676b7cf6a1aab892675a8670b9` and
+`903f7015d47a9d657639202ec17155b0c24ef4acb0d2a150fec3091169a57e06` /
+`0e717967b36160d0fb2ce61c4af06a03c4f06f1e6f1d0076777564bda466f939`.
+
+The wide suffix-one cells moved from robust deficits at `1.143–1.151` times
+the slower standard peer to near parity at `0.992–1.006`; all three are still
+inconclusive because the observed ranges overlap. The complete target summary
+moved from 18 passes, 7 deficits and 11 inconclusive cells to 17 passes, 6
+deficits and 13 inconclusive cells. Thus the tail boundary is a confirmed
+large contributor, but this candidate neither wins the required cells nor
+preserves the full target matrix as a production policy. It is rejected for
+selection; the remaining call/setup/placement and close-cell work stays open.
 
 ### Empty allocation: two-edge exposure does not remove the allocation
 
