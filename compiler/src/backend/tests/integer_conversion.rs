@@ -97,7 +97,7 @@ const CONVERSION_CLASSES: [(IntegerType, IntegerType); 17] = [
 ];
 
 #[test]
-fn executes_exact_success_and_failure_edges_for_every_conversion_class() {
+fn executes_exact_domain_edges_and_every_integer_wrapping_pair() {
     // Extend this existing native construction with wrapping's previously
     // unobservable out-of-domain integer values, including negative widening.
     // Its expected values use mathematical modulo, not host numeric casts.

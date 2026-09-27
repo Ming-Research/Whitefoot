@@ -78,7 +78,7 @@ fn wrap_contract_forward<interface Wrapped>(value: i8) -> result: u32 pure contr
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Symbolic Int and Float endpoints keep exact interface result types. Nested generic requirements specialize normally, and repeated symbolic endpoints are universally total even inside a contract definition.";
+  doc "Symbolic Int and Float endpoints keep each conversion interface's result type. Exact domain requirements specialize normally. Wrapping is total for all integer pairs and retains typed goal identity through a function-kind contract.";
   let byte = forwarded::<u32, u8>(value: 7_u32);
   let same_byte = forwarded::<u8, u8>(value: byte);
   if same_byte != 7_u8 {
