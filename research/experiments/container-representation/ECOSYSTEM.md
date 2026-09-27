@@ -608,6 +608,56 @@ These single short observations have 0.01 s reporting resolution; construction
 cost remains unqualified, including U's nominal 2.2-times-stock map result.
 The size failure already ends U under this pilot's selection rule.
 
+Read-only linkage attribution separates retained helpers from reachable
+caller growth without changing that verdict. The roots are Vector's
+`wf_vector_library_word_trace` and `wf_vector_library_record_trace`; the map's
+`wf_map_trace` and `main`; and records' `wf_bench_records` and
+`wf_bench_records_release`. Follow all named references in optimized IR,
+including function addresses and globals, from those roots. Every native
+defined-function relocation edge agrees with that reference graph. Measure
+the records closure with its address-taken
+`wf__par_thunk__par_split_summarize_records.0.0` callback and the
+`wf__par_split_summarize_records.0` body it invokes included. Measure
+each native symbol from its start to the next function, or the end of
+`__text`; these extents include alignment and are not packed linked bytes.
+
+| Input | S reachable text, bytes | U reachable text | S external text outside roots | U external text outside roots |
+| --- | ---: | ---: | ---: | ---: |
+| Vector | 7,408 | 9,168 | 4,584 | 5,796 |
+| Fixed-eight map | 2,884 | 4,616 | 524 | 1,484 |
+| Records | 1,960 | 1,972 | 2,492 | 2,532 |
+
+Of U's 5,716 added object bytes, 2,212 are in the outside-root pool and 3,504
+remain reachable growth. U's wide truncate and drain retain 700 and 608 bytes
+with no module references; map insert/find/remove retain 960 bytes, while
+reachable `map_trace` grows from 1,168 to 4,532 bytes. Even excluding every
+outside-root body, map growth is 60.055% and combined growth 28.599%. This
+attribution neither measures linker deletion savings nor rescues the original
+object-text screen. Both records execution worlds retain the ASCII loop in
+reachable bodies too: U's parallel split has the load/backedge at `0x918`/
+`0x92c`, and the sequential body at `0xcb4`/`0xcc8`.
+
+The [emitter](../../../compiler/src/backend/emitter.rs) gives ordinary
+functions external linkage while retaining internal result bodies. The frozen
+native Vector objects instead keep Rust work/growth helpers local and C++
+anonymous-namespace helpers local, with surviving standard-library template
+bodies weak/coalescible. A separate linked-footprint investigation could test
+ordinary linker dead stripping before changing emitted visibility. This is
+an opportunity, not a selected policy: raw LLVM foreign callers and callback
+roots must remain available, and the [fragment splitter](../../../compiler/src/backend/fragments.rs)
+keeps cross-fragment ownership, shared hidden helpers and stock ThinLTO
+integration under the [incremental design](../../../design/compiler/incremental-compilation.md).
+Actual linked size, layout/runtime effects, production O2 and cross-target
+behavior remain unmeasured.
+
+Reproduce this attribution from the pinned inputs and native construction
+below using `nm -n` for function boundaries, `otool -tvV` for instructions,
+`otool -rv` for reference edges and `size -m` for the final text extent. The
+original local artifacts are `code/{vector,hash8,records}.stock.o` with
+`code/{vector,hash8,records}.first.ll`, and `.postponed.o` with
+`.postponed.opt.ll`, under the recorded private run directory. Diagnostic
+LLVM is inspected only; it does not enter native construction.
+
 Whether U's actual runtime gains would justify a different size/iteration
 tradeoff remains unresolved. A later diagnostic runtime ceiling could be
 preregistered to answer that question without authorizing adoption. That would
@@ -663,6 +713,7 @@ for unit in vector hash8 records; do
   stage "$unit-U" -c "$file.delayed.ll" -o "$file.U.o"
   for arm in S R L U; do
     size -m "$file.$arm.o" > "$file.$arm.size"
+    nm -n "$file.$arm.o" > "$file.$arm.symbols"
     otool -tvV "$file.$arm.o" > "$file.$arm.native"
     otool -rv "$file.$arm.o" > "$file.$arm.relocations"
   done

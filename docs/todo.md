@@ -644,6 +644,18 @@ rarely insert at the same place.
   optimized loops, callback boundaries and surviving aggregate transfers
   before choosing a change. Keep the zero-removal overhead control unranked.
 
+  Separately, `grow_vector_new` does not publish its returned backing's empty
+  length and zero capacity, although CALL-4 admits both owned descendant
+  result measures. Adding those guarantees would let callers establish empty
+  cleanup without a dynamic length branch; the current
+  [module witness](../tests/conformance/cases/mod6-pos-grow-vector-boundary/vec/vector.wf)
+  already publishes the nested length through a named returned owner. This is
+  a library API opportunity, with no established runtime benefit or missing
+  compiler capability. Keep it separate from the direct-capacity constructor
+  comparison so unreserved growth's source stays fixed. Reopen afterward with
+  a caller that frees the empty result directly, checking the zero length and
+  capacity and retaining wrong-contract and stale-write rejection controls.
+
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
   payload clear and its local pending-window clear while preserving active
@@ -1505,6 +1517,20 @@ rarely insert at the same place.
   substring checks as the net. Reopen when an operation that opens blocks is
   added.
 
+- **External helper visibility retains text after inlining.** The
+  [native-pipeline attribution](../research/experiments/container-representation/ECOSYSTEM.md#generic-native-pipeline-pilot-completed-negative-result)
+  finds externally visible WF helpers outside the complete benchmark-root
+  reference graph; 2,212 of the deferred-unroll arm's 5,716 added object bytes
+  are in that pool, while reachable callers also grow. Symbol extents are not
+  measured linked savings, and the original object-size screen still fails.
+  First compare final-link dead stripping with unchanged objects before
+  considering root-sensitive emitted visibility. Preserve foreign entry
+  points, address-taken callbacks, result-body optimization order and
+  cross-fragment ownership; validate native/ThinLTO/full-LTO builds, cache
+  invalidation, linked text and same-source runtime on admitted targets.
+  No policy is selected. Defer beyond the code-only pilot; reopen when
+  evaluating a concrete inlining/footprint tradeoff or native export boundary.
+
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
   `compiler/src/semantic/check/type_regions.rs`, the `region_parameters` of
@@ -1567,14 +1593,7 @@ each is resolved by a discussion and a tree change.
   library example needs one of these boundaries. Validate matched direct/local/
   projected programs, alias and descriptor writes, joins, loop iterations and
   stronger-contract negatives before choosing an extension; do not infer a
-  general refinement system from the local-result implementation. A separate
-  FN-9 result-selector limit remains: a nominal Slab result cannot publish
-  `ensures result.cells.inner.len == 0_u64;`, whereas the direct boxed Ring
-  carrier can publish its measure. The
-  [exact rejected forms](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
-  distinguish this wrapper boundary from indexed postcondition targets and
-  from storing an already-related Result. Reopen it when a library wrapper
-  needs the relation, with direct-carrier, nested-field and stale-write controls.
+  general refinement system from the local-result implementation.
   Conditional fact representation cost is the separate compiler defect above.
   The conversion tests also retain an affine precision boundary: if `index`
   has only an affine image `first + second`, its checked integer conversion's

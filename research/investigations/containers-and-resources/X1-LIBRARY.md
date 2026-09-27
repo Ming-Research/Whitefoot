@@ -2541,12 +2541,13 @@ probe was rerun.
 
 ### Exact unavailable source forms
 
-These are the rejected additions or functions in the linked library's type
-context. They state current rules, not proposed amendments.
+These record rejected additions or functions in the linked library's type
+context. The result-projection row is historical; its superseding rule is
+identified below.
 
 | Rejected source | Rule and cause | Implemented alternative |
 | --- | --- | --- |
-| In `slab_new`: `ensures result.cells.inner.len == 0_u64;` | FN-9's result-selector domain does not include an arbitrary aggregate result field. A nominal Deque wrapper's `made.storage.inner.len` has the same limit. | Slab retains its necessary free-list state; the caller establishes length through an ordinary read/branch. Deque needs no extra wrapper state and uses direct `Box<Ring<T>>`, whose `made.inner.len` is admitted. |
+| In `slab_new`: `ensures result.cells.inner.len == 0_u64;` | Historical result-selector rejection, superseded by CALL-4's admission of owned descendant result measures in [the module-program change](https://github.com/mbbill/Whitefoot/commit/dcbbc613323267825f98accdfc8122c692dc130c). The current [GrowVector module witness](../../../tests/conformance/cases/mod6-pos-grow-vector-boundary/vec/vector.wf) publishes the exact `made.storage.inner.len` projection through a named returned owner. | Slab's read/branch caller and Deque's direct `Box<Ring<T>>` carrier remain implemented source choices; their existence no longer establishes a wrapper-result language limit. |
 | In `slab_find_index`: `ensures when Ok(value: index): deref(slab).cells.inner[index].storage.len > 0_u64;` | FN-9/CALL-4 do not admit this indexed postcondition target. | Export the outer index bound; use `slab_visit` to keep validation and callback in one helper, or re-read occupancy before direct access. |
 | The signature `fn borrow_out<T>(value: &T) -> result: &T reads(value) {` | Current GRAM-3 admits a value type at the result; REF-3/FN-1 prohibit reference escape. | Return owned callback data or a validated index. |
 | After `let values = box_ring_new::<u64>(capacity: 4_u64);`: `let count = observe::<u64>(first: &values.inner[0_u64..0_u64], second: &values.inner[0_u64..0_u64]);`, with `observe` taking two `&[T]` arguments | REF-4 refuses even empty Ring ranges. | Per-slot visitation; this remains an explicit missing zero-copy two-span interface. |

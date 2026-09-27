@@ -897,7 +897,9 @@ before compilation and makes no performance claim.
 
 ### F construction and correctness
 
-F is built on the restored original C compiler lowering; the rejected Slots
+F is pinned at
+[`3347fcb4b705990b5b3a9d66887a30ca9e632374`](https://github.com/mbbill/Whitefoot/tree/3347fcb4b705990b5b3a9d66887a30ca9e632374)
+on the restored original C compiler lowering; the rejected Slots
 implementation is absent. The library SHA-256 is
 `72ff83f18181651461e11f6dd95394556dce372710cb3a58376a6d4e099e7339`.
 The gate compiler, timed image and timed LLVM hashes are respectively
@@ -918,9 +920,120 @@ retries; it is not construction or test time. Both ecosystem images pass
 falsifiers. The formal vector program passes both lowering modes with its
 unchanged 25-allocation release expectation. The C driver, C++ object, Rust
 archive and all 294 accounting rows are byte-identical to C. The one-shot
-runner was removed after freezing the artifacts. These observations establish
-correctness; native-code inspection still decides whether the prerecorded
-criterion permits timing. No F timing is included here.
+runner was removed after freezing the artifacts. These are construction and
+correctness observations, separate from performance measurement.
+
+### F final-code discriminator
+
+The recorded code criterion passes. Actual scalar and wide mixed-trace work
+inline insertion; neither path calls `grow_vector_insert` or `insert_at`.
+The spare-capacity branches skip `grow_full`. Wide marker construction no
+longer stages a 256-byte caller block or enters a callee with a 256-byte
+snapshot. Its fields feed the digest directly without reloading the marker
+from the backing. Both insert/remove shift loops remain, so cancellation of
+those transfers is neither observed nor credited to this source change.
+
+Residual marker traffic remains measurable in the code. The common path
+spills nine fields: 72 bytes of stores and 144 bytes of reloads, because
+each is read once for placement and once for the digest. The cold full-capacity
+branch saves and restores another fourteen fields, 112 bytes each way, around
+growth. The common-path snapshots are not merely displaced into that caller.
+Wide work's local stack area shrinks from 752 to 592 bytes, plus the unchanged
+96 bytes for saved registers; the scalar frame remains 64 bytes. Caller
+instruction counts grow from 173/410 to 209/441 after absorbing scalar/wide
+insert, which is not an elapsed-cost comparison. All six trace/tail/truncate
+bodies remain equal after normalizing branch targets and constant references.
+Scalar trace placement is unchanged; wide tail moves +144 bytes and wide
+truncate -168 bytes. These code and input checks preceded timing authorization
+and do not establish a runtime gain.
+
+### F paired timing: useful improvements without a separated regression
+
+F passes this trial's prerecorded full-matrix no-useful-regression criterion.
+Three of the 36 useful cells improve with nonoverlapping observed ranges in
+both cohorts: scalar growth at 16, scalar reuse at 16, and wide reuse at 16.
+No useful cell has a strictly separated regression in both cohorts; the
+remaining 33 overlap in at least one. Across all useful cells, F medians are
+lower in both cohorts for 24, higher for one, and mixed for eleven. These are
+finite-sample observations, not confidence intervals or a universal native
+performance result. F is the next working source base; the per-cell standard
+target remains unfinished.
+
+The pair runs the frozen source-C and F images identified above, sequentially
+under one guard with `measure 1048576 7`, all seven implementations and both
+order cohorts. C took 80.479 s and F 80.805 s, each exit 0; the outer guard
+took 161.55 s. The preceding 575.142 s queue and 285 busy retries are separate
+from program execution. Source, compiler, LLVM, image, native inputs and
+accounting identities were checked before and after the pair. Construction
+and correctness costs remain in the preceding ledger; no rebuild or check
+is included in these timing durations.
+
+The fresh [C control samples](ecosystem-insert-control-samples.csv) and
+[F samples](ecosystem-insert-f-samples.csv) each contain 4,116 rows, with
+SHA-256 values
+`5c3131148a9b00f9fca6b5bdc7b811f2a84adb0af0520ec2b0cebeacbf0bbf76` and
+`7578ef4f1f866412b0ddcbf854ec42d3e08dcc2287f31787bbdf4f63d43f9a17`.
+All keys, work, rounds, traces, checksums and sample IDs 0–6 agree across
+arms. Both pass `summarize-ecosystem.pl --complete` and `--complete --targets`.
+Earlier C series remain separate evidence and are not pooled into this pair.
+
+This table covers all 36 useful cells. Ranges span the two cohort medians;
+ratios compare complete traces. The final column uses each cohort's slower
+Rust/C++ standard median and does not itself establish sample separation.
+
+| Bytes | Path | F / C at 16 | at 256 | at 4096 | F ms at 4096 | F / slower standard at 4096 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 0.903–0.920 | 0.977–0.997 | 0.982–0.998 | 1.679–1.681 | 0.797–0.819 |
+| 8 | growth | 0.939–0.958 | 0.952–0.986 | 0.965–0.996 | 2.069–2.104 | 0.854–0.855 |
+| 8 | reuse | 0.932–0.937 | 0.979–0.994 | 0.970–1.025 | 1.658–1.697 | 0.798–0.817 |
+| 8 | suffix-1 | 0.983–1.006 | 0.976–1.001 | 0.974–0.986 | 2.953–2.956 | 0.997–0.997 |
+| 8 | suffix-2 | 0.987–1.002 | 0.988–1.032 | 0.988–1.003 | 2.385–2.405 | 1.452–1.466 |
+| 8 | suffix-3 | 0.970–0.981 | 0.982–0.992 | 0.962–1.015 | 1.929–1.957 | 1.105–1.116 |
+| 256 | reserved | 0.979–0.991 | 0.994–0.997 | 0.995–1.000 | 40.717–40.835 | 0.936–0.938 |
+| 256 | growth | 1.003–1.007 | 0.990–0.991 | 0.984–0.991 | 52.810–52.821 | 1.013–1.024 |
+| 256 | reuse | 0.980–0.980 | 0.993–0.995 | 0.998–0.999 | 40.711–40.752 | 0.931–0.936 |
+| 256 | suffix-1 | 1.000–1.002 | 0.998–0.999 | 0.999–1.000 | 22.700–22.750 | 1.357–1.366 |
+| 256 | suffix-2 | 0.983–0.984 | 0.992–1.024 | 0.991–1.003 | 22.812–23.424 | 1.046–1.074 |
+| 256 | suffix-3 | 0.997–1.000 | 0.998–0.999 | 0.990–0.998 | 26.480–26.484 | 1.010–1.012 |
+
+The strict gains' median ratios and conservative observed upper ratios
+(`maximum F / minimum C`) are:
+
+| Cell | F / C, cohorts 0 / 1 | Observed upper, cohorts 0 / 1 |
+| --- | ---: | ---: |
+| Scalar growth, 16 | 0.939268 / 0.958433 | 0.962037 / 0.992509 |
+| Scalar reuse, 16 | 0.936527 / 0.931666 | 0.993891 / 0.959071 |
+| Wide reuse, 16 | 0.980359 / 0.980335 | 0.989761 / 0.984408 |
+
+The sole useful cell with higher medians in both cohorts is wide growth at
+16: 1.002538/1.006987, with observed lower ratios 0.989250/0.984125 and upper
+ratios 1.018182/1.038620. Its ranges overlap in both cohorts. Scalar reserved
+at 16 has lower medians, 0.903–0.920, but does not separate in both cohorts.
+Across useful comparisons, Rust median drift is 0.945–1.031 and C++ drift
+0.962–1.015. In the three strictly improved cells, Rust drift is
+0.993/0.994, 0.986/1.007 and 0.999/0.999 respectively; C++ drift is
+0.987/1.000, 1.015/0.999 and 1.003/0.998. The native controls therefore do
+not explain those three WF gains as a uniform environmental speedup.
+
+The independent slower-standard target judgment gives fresh C
+11 passes / 11 deficits / 14 inconclusive, and F 13 / 12 / 11, plus six
+unranked suffix-zero controls for each. A target classification change can
+reflect native variation or sample overlap; the extra deficit is not a
+strict WF-versus-C regression. All useful native target comparisons meet
+the duration and cohort-spread qualifications, with a minimum useful WF
+sample of 1.507 ms. Every sub-millisecond observation is suffix-zero.
+Fresh C's wide suffix-zero take/swap C comparisons at 16 and 256 are unstable
+(35.923% and 29.147%), as is scalar suffix-2 direct C at 4096 (17.368%);
+F's unstable comparison is wide suffix-zero take/swap C at 16 (26.889%).
+Those observations support no ranking or attribution.
+
+The source experiment measures the combined removal of insertion boundaries
+and snapshots together with its register allocation and code-placement
+changes. It does not assign an elapsed share to any one mechanism. The
+unchanged suffix bodies remain useful controls, and their timing variation
+is not an insertion benefit. F retains the same allocation policy and the
+same 294 accounting rows; the separate known-capacity-construction proposal
+is not part of this comparison.
 
 ## Historical source-composition evidence
 
