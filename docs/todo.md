@@ -1319,6 +1319,15 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **The modular build-cost runner hides failed invocations.** Its `measure`
+  and `recheck` helpers absorb nonzero compiler exits, so an incomplete build
+  can be reported as a timing sample. Preserve and check each invocation's
+  exit status before consuming its report; exercise this with an intentionally
+  failing compiler command and a successful control. Repair before using the
+  runner for module build unit qualification, then remove this item. Earlier
+  measurements require their original successful-build evidence; the script's
+  timing line alone is insufficient.
+
 - **Finish and qualify the modular incremental design.** The module
   decisions in the [language](../design/language.md) and
   [compiler](../design/compiler.md) design trees rest on the

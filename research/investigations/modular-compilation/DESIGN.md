@@ -1353,6 +1353,66 @@ P3.2 and P3.3 made the syntax and the checked program owned and gave every
 declaration a stable key. Each step is measured against the stage it
 replaces.
 
+### Module build unit implementation and qualification
+
+The next implementation retains the products of a module check for entry
+compositions. The existing driver keeps only its verdict, declaration read
+set and function proof receipts; `ModuleCheck::run` discards the checked
+program, and `build_module_entry` checks the complete selected closure again.
+Owned syntax and declaration keys now exist, and checked identities survive
+the symbolic and ordinary views inside one check. They do not yet identify a
+retained body in another check's inventory.
+
+The selected delivery is module build units containing checked bodies,
+nominal/layout information, heap and call facts, and reusable lowered
+fragments. The existing module-verdict dependency boundary remains the
+source-check boundary. A composition must still judge concrete instances,
+cross-module recursive components and its entry requirements against current
+implementations. Reusing an unchanged module identity alone grants none of
+those judgments. Instance-only checking and fact-based entry admission remain
+separate, unselected steps.
+
+Before choosing a retained representation, trace every identity and judgment
+that crosses this boundary. Compare importing owned checked products into the
+composition with retaining module-local inventories behind a composition
+view. The comparison must account for generic discovery, interface/definition
+identity, source locations, opaque representations, current callee claims and
+proof availability, and the existing single semantic path. Record material
+representation or reuse choices as amendments before treating them as live
+decisions.
+
+Qualification criteria, recorded before candidate measurements:
+
+- A second entry and an entry-body edit reuse unchanged library module
+  products in a fresh invocation. Count actual source body formation and
+  lowering, independently of cache-hit labels; a repeated whole-closure walk
+  or a cache containing only verdicts does not meet this criterion.
+- Cached and fresh builds agree on acceptance, diagnostics and executable
+  behavior. Cover body edits with unchanged headers, changes in published and
+  private fields, hidden layout and heap use, changed summary availability,
+  callback recursion, generic instances, graph/alias changes and failed
+  builds. Missing or incompatible products recompute through the ordinary
+  path. Exercise each reuse/invalidating check with a deliberate defect that
+  makes it fail.
+- Use the existing queue specimen, GrowVector, wfgrep, SHA-256, a generic-heavy
+  consumer and controlled dependency scaling. Compare the same sources and
+  edits with the merged compiler and candidate, separating compiler build
+  time from invocation time and source validation, formation/checking,
+  lowering, native construction and linking. Report peak memory separately.
+  Record clean, warm, changed-entry and second-entry runs; use seven paired,
+  alternating runs for a claimed timing difference. Select additional cache
+  granularity only when saved work exceeds loading/rebinding work on a real
+  consumer, with unchanged runtime quality. A null comparison must establish
+  that the host can distinguish the claimed difference.
+- Keep the formal regression coverage in compiler/program/conformance test
+  ownership and run the canonical gate. Research drivers are measurement
+  callers, never gate dependencies. The existing build-cost driver's swallowed
+  failures must be removed before its output can support new conclusions.
+
+This section is maintained with this implementation and its findings. The
+existing build-cost experiment owns reproducible workloads and measurements;
+no parallel implementation plan or result ledger is introduced.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct
