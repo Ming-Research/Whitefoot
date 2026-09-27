@@ -20,10 +20,9 @@ handles ([Prove it or write a branch](prove-it-or-write-a-branch.md)). A
 `+wrap` wraps and a proved `+` adds, whatever the build.
 
 The compiler always asks clang for the same optimization level, `-O2`, and
-it has no option that changes what a program computes. One option changes
-how it runs: `--par` runs calls in parallel where the compiler has proved
-them independent, and the result is the one the sequential program
-computes.
+it has no option that changes what a program computes. `--par`, for
+example, runs calls in parallel where the compiler has proved them
+independent, and the result is the one the sequential program computes.
 
 ## 2. The one early stop: resources
 
