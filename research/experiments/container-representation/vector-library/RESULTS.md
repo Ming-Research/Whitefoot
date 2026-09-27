@@ -395,6 +395,118 @@ useful-cell regression prevents final selection. The extra initial header
 allocation remains visible in the accounting above; this source trial makes
 no allocation-policy change or claim about its causal time share.
 
+### Spare-capacity candidate result: scalar recovery with wide regressions
+
+The second source candidate also remains an intermediate result. It recovers
+the scalar population-16 reserved regression: 4.197–4.276 ms, or
+0.775–0.794 times the fresh original baseline and 0.725–0.741 times the
+first helper candidate. However, at populations 256 and 4096, wide suffix-1
+regresses to 1.485–1.493 times the helper candidate, suffix-2 to 1.420–1.430,
+and suffix-3 to 1.232–1.248. Both cohorts show these regressions while native
+controls remain stable. This fails the recorded wide-gain preservation
+criterion and prevents final selection.
+
+The measured source is
+[`0b3a58dc55df950bf155236bf148b2c0ed86bc32`](https://github.com/mbbill/Whitefoot/tree/0b3a58dc55df950bf155236bf148b2c0ed86bc32).
+The preserved [spare-capacity samples](ecosystem-append-fastpath-samples.csv)
+contain the complete 4,116-row matrix; work, rounds, checksums and sample IDs
+match both earlier runs. Their SHA-256 is
+`b4a2821549beab92f7032ed8f51f05fcd68457f70f1ab30aa8c30c008fdcf8b3`.
+The frozen compiler SHA-256 is
+`b54e1664d077b08675f5fac1d5768ef261be3400e70bf05099a5e8b8e0448154`,
+the timed native image is
+`5c18615e2b6c7598cd93a0ce54e79f99df1ffc02a3d72b32ce3190a72f3faabc`,
+and its rewritten WF IR is
+`e9b46bc10bd342c5e94447a01527ee9569a2613fe558a51fb4500c2c639e74ea`.
+Construction uses the existing family targets with
+`BUILD=.build/append-fastpath`; timing keeps `ECO_WORK=1048576` and
+`ECO_REPEATS=7`.
+
+Guarded compiler construction took 8.25 s; ecosystem construction 5.00 s,
+correctness 1.79 s and accounting 0.21 s. Corpus construction took 0.53 s
+and the focused vector program 3.55 s; the complete validation command took
+19.79 s. Timing ran separately for 81.53 s. All completed with exit zero.
+Both ecosystem images again pass 1,260 configurations and 8,820 executions,
+including their expected negative controls, and the formal owner program
+passes both lowering modes. Accounting is byte-identical to the 294-row
+baseline. The C driver, C++ object and Rust archive remain byte-identical.
+
+Final code and optimization remarks explain the intended improvement without
+a global inline directive. In the original source, reserve is expanded into
+three append branches; append's reported scalar/wide inline costs are
+485/495 against threshold 250. In this candidate, append costs 60/70 and
+inlines into the fill/tail loops, while `make_room` costs 350 and stays behind
+the full-capacity branch. The spare path constructs directly in the backing
+with no helper call or record snapshot. These are this optimizer's cost
+estimates, not instruction counts or a portable compiler policy.
+
+The wide suffix regression has a separate concrete code difference. The
+wide truncate body is identical in the two candidates, but record stores
+change: the helper candidate starts with a scalar pair and 16-byte-aligned
+vector pairs, while the spare-capacity candidate writes the first word and
+then vector chunks at offsets 8, 24 and subsequent 16-byte steps. Immediate
+paired-word consumption overlaps those stores differently. Store forwarding
+is a hypothesis for the slowdown; neither these instructions nor elapsed
+times alone identify a hardware stall or its causal share. The wide tail
+frame shrinks from 320 to 288 bytes, which by itself does not predict elapsed
+time.
+
+Population-4096 cohort ranges follow. Baseline is the fresh original repeat;
+helper is the first measured candidate. All ratios cover complete traces.
+
+| Payload bytes | Path | Candidate WF ms | / baseline | / helper | WF / Rust | WF / C++ |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | reserved | 1.683–1.692 | 0.499–0.507 | 0.501–0.507 | 1.102–1.107 | 0.803–0.825 |
+| 8 | growth | 2.084–2.095 | 0.521–0.564 | 0.543–0.551 | 1.075–1.079 | 0.838–0.862 |
+| 8 | reuse | 1.652–1.680 | 0.495–0.502 | 0.496–0.507 | 1.098–1.108 | 0.796–0.814 |
+| 8 | suffix-1 | 2.939–2.971 | 0.638–0.644 | 1.004–1.019 | 1.890–1.912 | 0.996–1.009 |
+| 8 | suffix-2 | 2.417–2.497 | 0.668–0.683 | 0.921–1.000 | 1.839–1.857 | 1.463–1.477 |
+| 8 | suffix-3 | 1.852–1.860 | 0.649–0.671 | 0.768–0.820 | 1.416–1.421 | 1.063–1.067 |
+| 256 | reserved | 42.141–42.188 | 0.822–0.825 | 0.987–0.988 | 1.032–1.032 | 0.966–0.967 |
+| 256 | growth | 53.631–53.789 | 0.839–0.840 | 0.982–0.992 | 1.296–1.299 | 1.027–1.036 |
+| 256 | reuse | 42.049–42.076 | 0.812–0.829 | 0.985–0.987 | 1.031–1.033 | 0.965–0.966 |
+| 256 | suffix-1 | 35.242–35.262 | 0.763–0.770 | 1.485–1.488 | 2.214–2.224 | 2.114–2.115 |
+| 256 | suffix-2 | 34.379–34.399 | 0.778–0.789 | 1.423–1.428 | 1.577–1.582 | 1.578–1.579 |
+| 256 | suffix-3 | 34.528–34.583 | 0.780–0.784 | 1.232–1.235 | 1.372–1.374 | 1.319–1.319 |
+
+All 36 mutating cells improve over the original baseline in both cohorts.
+Compared with the helper candidate, 25 have lower medians, eight higher and
+three mixed. Wide suffixes at population 16 improve; the six medium/large
+wide suffix cells above account for the material reversals. Against the
+slower standard comparator, eleven cells pass the observed-sample-separation
+criterion, fourteen remain deficits and eleven are inconclusive from sample
+overlap. The six suffix-zero controls stay unranked.
+
+Operational Rust medians are 0.940–1.020 times the fresh baseline and
+0.961–1.032 times the helper run; C++ ranges are 0.929–1.060 and 0.947–1.047.
+Every operational native comparison meets the 1 ms duration and 10% cohort
+spread qualifications. Scalar suffix-2 direct-C comparisons at populations
+256 and 4096 are unstable (59.809% and 23.857%); the wide suffix-zero
+take/swap C control is also unstable (26.958%). They support no attribution.
+All sub-millisecond observations occur in the unranked suffix-zero control.
+
+### Next source discriminator: one placement with a small capacity guard
+
+Keep append's single placement from the first helper candidate, and separate
+capacity preparation into a small `make_room` guard and a private `grow_full`
+helper containing the existing growth cases. The latter requires full
+capacity and retains the original length/capacity guarantees; the guard
+publishes those guarantees on every return. No public API, allocation policy,
+callback sequence, type-specific branch or benchmark input changes.
+
+Before measuring, freeze one compiler implementation and the same fixtures,
+native sources, flags and inputs for the paired source comparison. The code
+discriminator requires both a call-free spare-capacity path and direct
+construction at one placement site. Record the resulting record-store
+offsets and widths to determine whether the first candidate's aligned layout
+returns while the second candidate's inline guard remains. The timing
+criterion is preservation of the first candidate's wide gains and the second
+candidate's scalar recovery, with the complete earlier behavior, accounting
+and two-cohort timing matrices. A repeatable useful-cell regression prevents
+selection. A changed layout and restored timing would support a source
+control-flow/code-shape explanation, but scheduling and register allocation
+also change; it would not establish a specific hardware-stall percentage.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)
