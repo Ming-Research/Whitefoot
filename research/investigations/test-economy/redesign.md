@@ -2,15 +2,15 @@
 
 This investigation records the selected changes and remaining questions for
 replacing redundant verification machinery. The [inventory](test-inventory.md)
-and its [Chinese translation](test-inventory.zh-CN.md) describe the system
-before this redesign; this document records the selected redesign and its implementation.
+describes the system before this redesign; this document records the selected
+redesign and its implementation.
 Keep it current during that work and retire it when the replacement system's
 guidance and design decisions cover these choices and no questions remain.
 
 ## Delivered test map
 
-This is the replacement's ownership and execution map. The older bilingual
-inventory remains a dated measurement baseline. Counts below describe the
+This is the replacement's ownership and execution map. The older inventory
+remains a dated measurement baseline. Counts below describe the
 macOS collection after the admission moves; Windows selects its native host
 cases in the same corpus executable. The current PR reports the final tested
 revision and result. Times explicitly labeled `39bebbc4` are the first local
