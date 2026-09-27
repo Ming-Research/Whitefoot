@@ -1929,6 +1929,126 @@ substitute for that missing performance observation. H1 remains untimed;
 H2's recorded full-matrix failure is sufficient to reject this tested policy
 without running another arm or silently introducing a capacity cutoff.
 
+### Hbyte: allocation-byte attribution through one common caller
+
+This separate diagnostic selects no growth policy or cutoff and leaves H2 rejected.
+A is F's malloc/initialized-prefix-copy/free; R is H1's straight realloc;
+P is H2's full/nonempty realloc with A otherwise. The extracted Darwin LLVM
+preserves the F/H1/H2 inputs and grow patches identified above: only the exported
+names of `wf_grow$instance$e194368921a477a7` change, with the existing resource
+floor, nullable allocation, attributes and target layout retained. Source F is
+`3347fcb4b705990b5b3a9d66887a30ca9e632374`; no current compiler build is needed.
+
+Apple Clang 21.0.0, `-O3` and no LTO produce A/R/P helpers of 27/19/37 instructions
+and 64/48/64-byte frames. One separately compiled C caller selects a runtime
+function pointer. The original literal one-native-site criterion was not met:
+Clang versions its loop into three sites for lengths 0, 1..7 and >=8. The explicit
+pre-timing clarification requires identical caller instructions/site for all arms
+within each fixed cell, which native inspection confirms; no arm specialization
+or dispatch bridge appears. Two clocks enclose setup, initialization, grow,
+content checks, checksum accumulation and free. These are complete grow traces,
+not isolated allocator latency, physical-copy measurements or owning-value tests.
+
+The preregistered grid is cap 0 and powers of two 1..131072, with distinct lengths
+{0,1,cap}: 54 cells, old requested bytes `16+8*cap`, new cap 1 or twice old cap.
+Calibration records one rounds 1/seed 101 warmup per arm/cell, then powers of two
+through 65,536 in orders A,R,P and P,R,A, selecting the first count whose six
+intervals all reach 2 ms; each child has a 30 s limit. The retained calibration has
+162 warmups and 4,926 pilots. Selected counts are 32..65,536, with cell minima
+2.146–3.908 ms. Ranked order is cohort, sample 0..6/seed 101..107, ascending cap/length,
+then arm, reusing each cell's count: all 2,268 rows remain, without refitting.
+
+The original runner stopped on its first valid zero-duration warmup (native exit 0,
+checksum 102; runner exit 1, 0.291 s/guard 0.44 s). The routine v2 repair retains zero
+intervals: they cannot qualify 2 ms, and ranked zeros remain unresolved, never gains.
+Synthetic checks exercise both distinctions. V2 retains 63 zeros: 18 warmups and 45
+pilots. No native input, schedule or bound changed; the failed v1 record is retained.
+Construction/check/native inspection took 0.278/0.454/0.048 s; checks covered 324 traces
+and six deliberately failing result oracles. A comment-only rebuild took 0.129 s and
+kept object/image bytes. Corrected calibration took 19.855 s (guard 19.99), ranked
+execution 26.602 s (guard 26.80), all exit 0. One live-guard rejection ran no data;
+its inspection wait was unmeasured. All 36 frozen paths matched before/after ranking,
+without sample retry. Intervals are 2.146–470.842 ms: no ranked cell is unresolved.
+
+G/L require separated sample envelopes in both cohorts; O is overlap, U unstable.
+The only U is R/A at cap 512/len 0 (old 4,112→new 8,208 B): median ratios 2.478036/2.728739,
+cohort spread 10.117%, above the preregistered 10% limit. It stays in the raw file.
+
+| Ratio, all 54 cells | G | L | O | U |
+| --- | ---: | ---: | ---: | ---: |
+| R/A | 15 | 31 | 7 | 1 |
+| P/A | 5 | 11 | 38 | 0 |
+| P/R | 25 | 10 | 19 | 0 |
+
+Full cells give R/A 5G/7L/6O and P/A 5G/11L/2O; P/R overlaps all 18. Small-full
+losses survive the common caller (old 32 B R/A 1.393/1.380), so H2 caller outlining
+alone cannot explain them. Five full gains occur at sampled old extents 32,784,
+65,552, 131,088, 262,160, 524,304 B (R/A 0.740–0.818); the largest 1,048,592 B overlaps again.
+P/A overlaps all 36 empty/one-live cells (medians 0.9913–1.0218). At the largest
+extent, straight R/A instead costs 140.786–144.106× empty and 135.434–143.142× with
+one live element. The sampled behavior is nonmonotonic; it selects no threshold.
+Helper placement, indirect-call cost and allocator/process variation remain part
+of this Darwin observation. H2's separate owning, zero-stride and failure evidence
+is not inferred from this copyable probe; no source/specification rule changes.
+
+These four exact measured inputs/results remain here while this evidence is cited:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| [Caller](allocator-byte-driver.c) | `c94c914338f752a3f37e80a5c769d7a410cccb24cba2a7853406dd2fa3392d93` |
+| [Extracted helpers](allocator-byte-grow.ll) | `b6ef4afef63e8d7a9685b35e267e2e2fc86f01605d12e8dced867b37613925e3` |
+| [Ranked samples](allocator-byte-samples.csv) | `421c18282439acbcbceb3d35a152ae1c07d18655bf1676fba7006aad309a03b9` |
+| [Calibration](allocator-byte-calibration.csv) | `4b4da63ec7779159fcb75f255340256cfcacde88eb4e3e555d1cc2afe38f51f6` |
+
+Measured image SHA-256: `f370f0cd838272ab0b41fdd7594e7a07b4190b673e717519b81836be4b982880`.
+The recipe's build/check/six faults passed in 0.238/0.439/0.090 s, without retiming.
+Both objects reproduce exactly; only 16 UUID and 32 signature bytes differ in the image.
+Opt-in replay from the repository root, on the recorded arm64 Darwin ABI; verify
+the four hashes first. No Make target or correctness gate consumes these files.
+
+```sh
+d=research/experiments/container-representation/vector-library
+b="$d/.build/allocator-byte"; mkdir -p "$b"
+perl .github/run-check.pl allocator-byte-build sh -eu -c '
+/usr/bin/clang -O3 -Wno-override-module -x ir -c "$1/allocator-byte-grow.ll" -o "$2/grow.o"
+/usr/bin/clang -std=c11 -O3 -Wall -Wextra -Werror -fno-lto -c "$1/allocator-byte-driver.c" -o "$2/driver.o"
+/usr/bin/clang -O3 -fno-lto "$2/grow.o" "$2/driver.o" -o "$2/hbyte"
+' sh "$d" "$b"
+perl .github/run-check.pl allocator-byte-check "$b/hbyte" check
+perl .github/run-check.pl allocator-byte-replay python3 - "$b/hbyte" "$d/allocator-byte-samples.csv" "$b/replay.csv" <<'PY'
+import csv, hashlib, pathlib, subprocess, sys, time
+exe, source, output = sys.argv[1:]
+assert hashlib.sha256(pathlib.Path(source).read_bytes()).hexdigest() == "421c18282439acbcbceb3d35a152ae1c07d18655bf1676fba7006aad309a03b9"
+faults = {"content": "initialized payload", "publication": "published capacity",
+          "length": "published length", "status": "grow status",
+          "null": "published nonnull owner", "checksum": "independent checksum"}
+for mode, message in faults.items():
+    p = subprocess.run([exe, "fault", mode], capture_output=True, text=True, timeout=30)
+    assert (p.returncode, p.stdout, p.stderr) == (1, "", "Hbyte: " + message + "\n")
+with open(source, newline="") as stream: rows = list(csv.DictReader(stream))
+assert len(rows) == 2268
+fields = "arm capacity length new_capacity old_bytes new_bytes rounds seed elapsed_ns checksum".split()
+with open(output, "x", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=list(rows[0])); writer.writeheader()
+    for row in rows:
+        args = [exe, "run", *[row[k] for k in "arm capacity length rounds seed".split()]]
+        start = time.monotonic()
+        p = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        wall = time.monotonic() - start
+        assert (p.returncode, p.stderr) == (0, ""), (p.returncode, p.stdout, p.stderr)
+        values = list(csv.reader(p.stdout.splitlines()))
+        assert len(values) == 1 and len(values[0]) == len(fields)
+        actual = dict(zip(fields, values[0]))
+        assert all(actual[k] == row[k] for k in fields if k != "elapsed_ns"), actual
+        writer.writerow({**row, **actual, "wall_seconds": wall}); stream.flush()
+PY
+```
+
+This replays the complete fixed schedule, not calibration or a subset. Retain
+every fresh row; intervals below 1 ms, including zero, remain unresolved. Compare
+cohort medians and sample envelopes with the same 10% spread qualification; never
+subtract shared work or interpret a requested extent as physical bytes copied.
+
 ## Same-source forward-consumption diagnostic K — failed gates, mixed timing
 
 K is not selected. It first **failed its preregistered native admission
@@ -2194,6 +2314,171 @@ Local evidence is `/private/tmp/whitefoot-vector-artifact-exports/construction-1
 The adjacent final `native-audit.md` has SHA-256
 `34bc17ccc5b9f2c2d850ae71c1b2003062730676fc5f9f9e7855782820b4d6ea`.
 The input recipe above is portable; scratch tooling is not a checkout dependency.
+
+### Entry-snapshot diagnostic: unchanged inline decisions
+
+The next bounded F/K diagnostic rejected entry payload copies as the proposed
+cause of K's retained callback boundaries. It selected no ABI change and ran no
+performance timing. Reproduce from the same pinned **broad-linkage** F/K inputs
+above, applying only these forms to `wf_vector_record_accept` in timed/account IR:
+control unchanged; one-copy removes `%wf.slot.0` and its first memmove, then copies
+`%wf.arg.v1` directly to private `%v2`; view removes both payload slots/memmoves and
+uses `%wf.arg.v1` instead of `%v2` in the entry arm of `%v6`'s pointer phi.
+Keep the environment slot, loop/digest, headers, attributes and every other byte.
+The qualified body reads its 256-byte `[32 x i64]` payload, returns unit, and writes
+only its disjoint environment; input storage lives through the synchronous call.
+This does not generalize to copy-argument mutation, aliased result storage,
+deferred uses or linear cleanup; their source/copy counterexamples still matter.
+Use the guarded compile/link recipe above with the same native objects and no
+linkage edits, LTO, hints or second O3 pass. Add `-Rpass=inline -Rpass-missed=inline`
+only for diagnostic recompilation; its objects equal the ordinary objects.
+
+| Timed raw variant | SHA-256 |
+| --- | --- |
+| F one-copy | `9d3bde29190bff26f1f4c20b88b72d7b8bbe97789eba61188839ef769376d845` |
+| F view | `d0d090fc0efa5ac1067902fef5f6efe854378e83881c8123998f7a88f7bbd078` |
+| K one-copy | `ae70b2a2e73c1942c43bb9539b4fa86c1c5826412e71f5e0ca8289dff6854bd5` |
+| K view | `e245941537da0b458ab0fa3de029093d0045ec369e605ac1ad715cf09c08d83c` |
+
+All eight candidate checks pass 1,260 configurations/8,820 executions each; four
+accounting files equal F's 294 rows, with checksum/cleanup faults rejected.
+All 74 phase statuses match expectations. Compile/link cost 1.750/0.681 s,
+checks 6.124 s; guard total 15.564 s with no queue. One-copy images are byte-identical
+to controls. Each view image changes only 14 `__text` bytes in the standalone
+callback's first 20 bytes; caller instructions, calls, frames and section layout
+remain identical. All three remark logs per source are byte-identical: staged
+F/K sites stay 290/375; K backing sites stay 450/375 and final cleanup 440/375.
+Both variants fail the complete native criterion, falsifying this specific
+entry-copy explanation, not every copy optimization. Local records remain in
+`/private/tmp/whitefoot-vector-parameter-staging`; its `native-audit.md` SHA-256 is
+`cab9b893aa3c91f396f6f7d1a3152225b9c0ad7713ee91963980edec8a830aa5`.
+
+### Ordinary behavior hints: combined K gains without useful-cell regression
+
+This bounded diagnostic keeps broad linkage and the original two-copy parameter
+bodies, adding ordinary `inlinehint` only to the four definitions supplied by
+`WordElement`/`RecordElement`: `wf_vector_word_make`, `wf_vector_word_accept`,
+`wf_vector_record_make` and `wf_vector_record_accept`. It includes both make and
+accept actuals, not just observed missed sites. Source, ABI, specification,
+allocator policy and native inputs are unchanged; no mandatory inlining, global
+threshold, internalization, snapshot rewrite, LTO or second O3 pass is combined.
+The C++ callback has no matching hint, so this is a backend preference diagnostic.
+
+Before construction, the native criterion explicitly allowed replacing N owner
+callback calls with one batch call, reporting suffix lengths 1/2/3 separately.
+It required all K per-owner callback mechanisms to disappear without owner-sized
+replacement staging, and preserved the full useful-cell no-regression criterion.
+K+hint passes that native test: suffix, mixed-work and final cleanup call the
+batch truncate; it reads directly from backing storage in a call-free, frameless
+loop, with 16 paired loads and 32 digest multiply-adds per owner. Digest and length
+publication occur once per nonempty batch. Suffix lengths 1/2/3 use one call each;
+length one loses no dynamic boundary. The existing mixed-work swap-remove temporary
+remains. Wide caller frames stay 352/288/688 bytes; wide mixed work gains an
+environment-pointer spill/reload and changes scalar register allocation. The wide
+callback cost 450 now fits the
+observed threshold 487 instead of 375; the later 440-cost context disappears.
+These are whole-image changes, not an isolated callback-time share.
+
+F+hint timed/account objects and images are byte-identical to F, so the measured
+pair is **F versus combined K+hint**, with no duplicate F+hint arm. Plain K's
+failed native criterion and earlier 10-gain/13-loss result remain unchanged.
+Four hint checks pass 1,260 configurations/8,820 executions each; both accounting
+outputs equal F's 294 rows. Checksum/cleanup faults retain exit 1 and their exact
+diagnostics. All 48 construction statuses are expected. Compilation/linking took
+1.239/0.484 s, checks 3.534 s, accounting 0.075 s and faults 0.041 s; total guard
+10.121 s includes remarks/inspection/identity checks, with no queue wait.
+
+Exactly one full pair ran `measure 1048576 7`: F 81.834 s, K+hint 80.042 s,
+both exit 0; the guard took 163.051 s without queueing. Each image retained
+4,116 rows: seven implementations, two payloads, three populations, seven paths,
+two cohorts and seven samples. All non-time fields/checksums agree, and all 208
+frozen hashes match before/after. No sample was removed or selectively replayed.
+The [F samples](ecosystem-behavior-hint-control-samples.csv) and
+[K+hint samples](ecosystem-behavior-hint-k-samples.csv) have SHA-256 values
+`3fd3b1a24af472cf0eb3e74834233fdea128bb1e0ce1177cfaffaef536396cba` and
+`813ea85489cce03801a5572a83d09e841c94607fa2e286358d1369c5cdecf9eb`.
+
+All 36 useful paired cells qualify: minimum WF sample 1.173 ms, largest
+between-cohort ratio spread 4.165%. There are **13 strict gains, zero strict
+losses and 23 overlaps**. Standard targets change from F's 13 pass/10 deficit/
+13 inconclusive to K+hint's **22/4/10**. The four deficits are scalar growth at
+16 and wide suffix-one at all three populations. Ten targets still overlap.
+The table retains every cell: ratios span cohort medians; G/L/O are strict
+gain/loss/overlap versus F using both full sample ranges; P/D/I are standard
+target pass/deficit/inconclusive from F→K+hint, and U denotes unranked controls.
+
+| Bytes | Path | K+hint/F at 16; target | at 256; target | at 4096; target |
+| ---: | --- | ---: | ---: | ---: |
+| 8 | reserved | 0.902–0.909 O; I→I | 0.979–0.983 O; P→P | 0.981–0.994 O; P→P |
+| 8 | growth | 0.976–0.981 O; D→D | 0.956–0.964 G; P→P | 0.969–0.979 O; P→P |
+| 8 | reuse | 0.776–0.792 G; P→P | 0.974–0.974 O; P→P | 0.982–0.992 O; P→P |
+| 8 | suffix-0 | 0.954–1.014 O; U | 0.991–1.039 O; U | 1.009–1.039 O; U |
+| 8 | suffix-1 | 0.927–0.966 O; I→P | 0.931–0.964 O; I→P | 0.906–0.941 G; I→P |
+| 8 | suffix-2 | 0.592–0.609 G; D→P | 0.601–0.619 G; D→P | 0.577–0.597 G; D→P |
+| 8 | suffix-3 | 0.678–0.678 G; D→P | 0.681–0.681 G; D→P | 0.658–0.680 G; D→P |
+| 256 | reserved | 0.984–0.999 O; I→P | 0.995–0.997 O; P→P | 1.006–1.010 O; P→P |
+| 256 | growth | 0.975–0.979 O; I→I | 0.990–0.991 O; P→I | 0.990–0.997 O; I→I |
+| 256 | reuse | 0.982–0.986 O; P→P | 0.997–1.004 O; P→I | 0.996–1.006 O; P→P |
+| 256 | suffix-0 | 1.143–1.162 L; U | 1.125–1.157 L; U | 1.146–1.155 L; U |
+| 256 | suffix-1 | 0.831–0.842 O; D→D | 0.830–0.843 G; D→D | 0.831–0.838 G; D→D |
+| 256 | suffix-2 | 0.935–0.944 O; I→I | 0.925–0.948 O; I→I | 0.935–0.941 O; I→I |
+| 256 | suffix-3 | 0.959–0.966 O; I→I | 0.966–0.967 G; I→I | 0.940–0.957 G; I→P |
+
+All three wide suffix-zero controls strictly slow down (1.125–1.162×); they
+remain adverse overhead observations outside the useful target set.
+Native inspection finds an unchanged-length store on K+hint's empty truncate
+edge where F returns without it; both already call the batch helper. This
+identifies extra work, not its isolated time share. Scalar
+suffix-zero controls overlap and are below 1 ms. Wide suffix-one at 16 retains
+cohort-0 sample 6 at 26.639 ms; despite lower medians, it has no strict paired
+gain. Standard target comparisons have no duration/stability failures. Native
+Rust/C++ median drift spans 0.955–1.055× / 0.958–1.040× across useful cells, so
+unseparated changes are not credited as isolated compiler gains. Four useful
+C-only comparisons are unstable: F scalar suffix-2@256/direct (30.589%) and
+suffix-3@256/swap-take (16.855%); K+hint suffix-2@256/direct (12.221%) and
+suffix-2@4096/direct (20.120%). These cannot support C-based attribution.
+
+Reproduce from F source `3347fcb4b705990b5b3a9d66887a30ca9e632374` and the
+[exact K patch](#exact-body-reproduction), preserving the original broad modules.
+For each timed/account copy, add `inlinehint` immediately before `{` in exactly
+the four definition headers listed above; removing those four tokens must
+recover the original module byte-for-byte. Compile once with `/usr/bin/clang
+-O3 -Wno-override-module -x ir -c`, link the frozen native objects in the existing
+Makefile order, then use the same guarded check/account/fault and full-measure
+commands. Do not substitute export-limited or entry-copy variants. K+hint timed/
+account LLVM SHA-256 values are
+`cc09151d5060e2a239b77fa20e45b8eef56b3ee65b9b93ffd69f6738e65b8c25` /
+`9fa79e7237b4f8f835a8089c6987d38842b3c92db92c525d2b622dcba84717a5`;
+its timed image is `37f2bbae21db9afe911491d57c143878a9f8c874e4c3b0759dc053834a43a2b6`,
+versus F `44660c2de9532af3392c3c5fefea363b1915abd03bc9b79f4ba39812425c05f2`.
+Local phase/native records are in `/private/tmp/whitefoot-vector-behavior-inlinehint`;
+`native-audit.md` SHA-256 is
+`0c00eca0ed00549328b82c5e1cf4dc11c3368aadd65c451823f272cc5793815f`.
+The positive bounded result supports further implementation work, not a selected
+generic hint policy, forward-consumption rule, or completion of the family goal.
+
+### Empty allocation: two-edge exposure does not remove the allocation
+
+A separate F diagnostic changes only the scalar `work` instance
+`8f6b633c945d12a3` and `grow_full` instance `8c4c85d67cb438a6`, adding either
+ordinary `inlinehint` or diagnostic `alwaysinline` to their broad-linkage
+definition headers. Its pre-construction criterion requires the executed
+initial `calloc(1,16)` and corresponding free to disappear, not merely their
+surrounding calls or the zero-length transfer. Native inputs and source are
+unchanged. All three existing checks pass 1,260 configurations/8,820 executions
+each; the fresh control object equals frozen F. Compile/link takes
+0.253/0.226/0.243 s and checks 1.010/0.771/0.801 s; the guard takes 6.86 s.
+WF text is 11,428/11,532/12,876 bytes for control/hint/mandatory.
+
+The initial allocation/free survives both variants. Ordinary hints retain the
+original boundaries. Mandatory exposure inlines work into round and grow_full
+into make_room, but the enlarged make_room becomes an outlined call on every
+append; the whole allocation lifetime is still not exposed. Its first growth
+allocates 24 bytes and frees the original header; only the zero-byte transfer
+disappears. This fails the allocation criterion and stops without timing. It
+does not establish that a fully exposed lifetime cannot fold or select any
+production inline policy. Exact paths and phase times remain under
+`/private/tmp/whitefoot-vector-two-edge-f-e2125011`.
 
 ### Fresh main integration: identical executable inputs, no retiming
 
