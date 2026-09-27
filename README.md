@@ -186,7 +186,8 @@ acceptable. A program compiled in that mode would have:
 None of this mode is implemented yet. The [fixed-resource
 investigation](research/investigations/fixed-resource-execution/README.md)
 records the design so far for the heap, the stack and termination, and what
-each still needs; the peripheral and timing parts are not designed yet.
+each still needs; the peripheral, parallelism and timing parts are not
+designed yet.
 
 ## A small language
 
@@ -382,6 +383,9 @@ Other options:
 - `--diagnostic-format json` prints each rejection as one JSON object per
   line;
 - `whitefootc --help` lists the rest.
+
+To work on the language or the compiler, start from [AGENTS.md](AGENTS.md)
+and the [workflow map](docs/workflow.md).
 
 ## Related work
 
