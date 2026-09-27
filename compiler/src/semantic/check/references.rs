@@ -40,13 +40,15 @@ use super::super::model::{
     BindingId, CheckedCallSeparation, CheckedContainerRoot, CheckedEffectStep, CheckedExpression,
     CheckedLoopId, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedPlaceStep,
     CheckedRangeRoot, CheckedRangeSource, CheckedStatePath, CheckedTargetDomainObligation,
-    CheckedType, IntegerType, WindowShape,
+    CheckedType, WindowShape,
 };
 use super::super::places::{
     CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceRoot, PlaceStep,
     ResolvedPlace, UnprovedSeparations,
 };
-use super::{CheckStop, Checker, EffectPath, LocalBinding, PlaceAccess, TypedExpression};
+use super::{
+    CheckStop, Checker, EffectPath, EffectSet, LocalBinding, PlaceAccess, TypedExpression,
+};
 
 // [DIAG-1] same-node judgment order at a reference use: OWN-1's liveness and
 // spelling judgments are asked before REF-2's validity judgment, and REF-1
@@ -421,6 +423,97 @@ pub(super) enum RequiredReferent {
 }
 
 impl<'unit> Checker<'_, 'unit> {
+    /// The row an [EFF-2] rejection suggests: the exhibited row without the
+    /// entries another of its entries covers.
+    ///
+    /// The exhibited set records each access as the body made it, so it can
+    /// hold a read and a write of one path, or a write of a whole parameter
+    /// beside a write below it. A `writes` entry states every access at or
+    /// below its path, so [EFF-1] refuses any entry it covers, and a `reads`
+    /// entry covered by another `reads` entry adds nothing to the row. What
+    /// remains is exact: every entry is an exhibited path, EFF-2 admits it in
+    /// both directions, and EFF-1 admits it as written. Two entries left on one
+    /// parameter either overlap at every position, which [EFF-5] does not
+    /// compare, or overlap only for some position values, which the call's
+    /// own proof decides.
+    pub(super) fn suggested_effect_row(exhibited: &EffectSet) -> EffectSet {
+        let mut suggested = EffectSet::NONE;
+        for path in &exhibited.writes {
+            let covered = exhibited
+                .writes
+                .iter()
+                .any(|entry| entry != path && Checker::effect_path_covers(entry, path));
+            if !covered {
+                suggested.add_write(path.clone());
+            }
+        }
+        for path in &exhibited.reads {
+            let covered_by_write = exhibited
+                .writes
+                .iter()
+                .any(|entry| Checker::effect_path_covers(entry, path));
+            let covered_by_read = exhibited
+                .reads
+                .iter()
+                .any(|entry| entry != path && Checker::effect_path_covers(entry, path));
+            if !covered_by_write && !covered_by_read {
+                suggested.add_read(path.clone());
+            }
+        }
+        suggested
+    }
+
+    /// Whether `entry` is `access` or a proper prefix of it [EFF-1].
+    ///
+    /// [EFF-2] states the relation as "the body accesses storage at or below
+    /// its path", and an effect path is a root formal plus a complete step
+    /// list, so "below" is exactly the prefix order on those steps.
+    pub(super) fn effect_path_covers(entry: &CheckedStatePath, access: &CheckedStatePath) -> bool {
+        entry.root == access.root && access.steps.starts_with(&entry.steps)
+    }
+
+    /// [EFF-2]'s two-way judgment over a complete row.
+    ///
+    /// "Rows are checked both ways against this complete exhibited set --
+    /// every declared entry is exhibited in that sense, and every exhibited
+    /// access lies under some declared entry." That is a covering relation
+    /// and not equality of path sets: a row declaring a whole reference
+    /// parameter covers the measure read `deref(p).len` below it [OP-15],
+    /// while a row declaring only a field is not covered by an access to the
+    /// whole.
+    ///
+    /// The two categories are not independent. [EFF-1] states that a
+    /// `writes` entry "states every access at that path and below it", so a
+    /// declared write covers an exhibited read at or below its path and an
+    /// exhibited write answers for a declared read. A declared write is
+    /// answered only by an exhibited write: nothing subsumes a write the body
+    /// never makes.
+    pub(super) fn effect_row_matches(declared: &EffectSet, exhibited: &EffectSet) -> bool {
+        exhibited.reads.iter().all(|access| {
+            declared
+                .reads
+                .iter()
+                .chain(&declared.writes)
+                .any(|entry| Checker::effect_path_covers(entry, access))
+        }) && exhibited.writes.iter().all(|access| {
+            declared
+                .writes
+                .iter()
+                .any(|entry| Checker::effect_path_covers(entry, access))
+        }) && declared.reads.iter().all(|entry| {
+            exhibited
+                .reads
+                .iter()
+                .chain(&exhibited.writes)
+                .any(|access| Checker::effect_path_covers(entry, access))
+        }) && declared.writes.iter().all(|entry| {
+            exhibited
+                .writes
+                .iter()
+                .any(|access| Checker::effect_path_covers(entry, access))
+        })
+    }
+
     /// [REF-1] one root is added once; a differing shape becomes a cone
     /// whose finite anchor can only shorten. Repeated visits cannot unroll
     /// its unknown tail or mint additional captured identities.
@@ -833,19 +926,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let mut probe = bindings.clone();
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
-            if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-                || offset.mode != CheckedMode::Own
-            {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    offset_node,
-                    SemanticIssueKind::type_mismatch(
-                        "own u64",
-                        self.types
-                            .checked_value_name(offset.mode, offset.expression.ty())?,
-                    ),
-                );
-            }
+            self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
                 Checker::captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),

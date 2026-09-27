@@ -11,15 +11,19 @@ rarely insert at the same place.
 
 ## Numeric conversions and value evidence
 
-- **Select the modular conversion companion.** The
-  [conversion comparison](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  recommends integer-only `cvt.wrap` for direct low-bit extraction and modular
-  signedness conversion. It is deferred from the exact conversion family
-  because it selects an additional result policy. Validate all integer
-  width/sign classes, especially negative signed inputs widened to unsigned
-  destinations, and ensure changed values publish no exact input equality.
-  Reopen when the owner selects this companion for implementation; remove
-  after its selected rules and ordinary-path evidence land.
+- **Validate matching operation origins across named call arguments.** With
+  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
+  `reduced == 1_u8` keeps the direct comparison and the fully expanded
+  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
+  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
+  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
+  through a parameter or passing the matching literal avoids this boundary.
+  Assess whether consistent call-side origin normalization would recover
+  useful proofs without enumerating intermediate expansion combinations.
+  Require matching aliases, replaced inputs, joins and bounded proof cost;
+  any additional accepted route needs its own specification decision. Defer
+  from the modular conversion operation, which adds no proof family; reopen
+  when a real caller needs this named-value form.
 
 - **Select direct rounded/saturated float conversion policies.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
@@ -1445,19 +1449,12 @@ rarely insert at the same place.
   CLI and every harness. Reopen when a runtime unit or entry point is
   added.
 
-- **The checker still has separate place paths and generic rollback.**
-  The component stage of P2.2 now interns types and callables directly, uses
-  explicit lexical contexts and gives each function attempt its own scratch;
-  `CheckStop::DeferredNominal` and the unread `elided_store_brand` cell are
-  removed. Ordinary, dereferenced and indexed places still have separate
-  elaboration paths for read, measure, borrow, set and consume, which makes
-  changes to a shared place rule span several walkers. Finish P2.2 by
-  sharing elaboration while retaining those distinct judgments, their
-  diagnostic ordering and captured operands. The composition entry point
-  `compiler/src/semantic/check.rs` also exceeds 4,000 lines after its component
-  split; move component-owned formation and judgment methods to their existing
-  modules as the next step touches them, so the entry point holds composition
-  rather than a second implementation home.
+- **The checker still has generic rollback.**
+  P2.2 now interns types and callables directly, uses explicit lexical
+  contexts and gives each function attempt its own scratch. Place judgments
+  share member formation and offset checking; owned reads and writes consume
+  the same elaborated place. The composition entry point's effect-row
+  judgments moved beside effect attribution in `references.rs`.
   Generic validation still replays bodies in a scratch nominal suffix
   (`nominal_checkpoint` in `compiler/src/semantic/check/generics.rs`), carrying
   what must survive rollback in a `Stable*` mirror. P2.3's grow-only inventory
@@ -1465,9 +1462,8 @@ rarely insert at the same place.
   `generic-validation-scope` decision; implementation remains pending. See the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p2-component-boundaries).
   Validate each step with identical verdicts, diagnostics and LLVM on the
-  corpus and module graphs plus `make check`. Reopen for the next P2.2 step
-  or the P2.3 implementation; close when both are done or declined and the
-  composition entry point is under 4,000 lines.
+  corpus and module graphs plus `make check`. Reopen for the P2.3
+  implementation; close when its inventory and views are implemented.
 
 - **The checker reads raw syntax.** The checker components still inspect
   `TreeView` children and match `Production` to learn which alternative was

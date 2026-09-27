@@ -5,7 +5,7 @@ use crate::syntax::NodeId;
 use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
 use super::super::super::super::model::{
-    CheckedConversionMode, CheckedExpression, CheckedMode, CheckedType,
+    CheckedConversionMode, CheckedExpression, CheckedMode, CheckedNumericType, CheckedType,
 };
 use super::super::super::{
     CheckStop, Checker, EffectSet, LocalBinding, PreludeType, TypedExpression,
@@ -38,8 +38,22 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let [source, destination] = self.numeric_type_arguments(context, node, true)?;
+        if mode == CheckedConversionMode::Wrap
+            && [source, destination].iter().any(|endpoint| {
+                !matches!(
+                    endpoint,
+                    CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
+                )
+            })
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Op1,
+                node,
+                SemanticIssueKind::InvalidOperation,
+            );
+        }
         let result = match mode {
-            CheckedConversionMode::Exact => destination.ty(),
+            CheckedConversionMode::Exact | CheckedConversionMode::Wrap => destination.ty(),
             CheckedConversionMode::Defined => CheckedType::Bool,
             CheckedConversionMode::Checked => {
                 let error =

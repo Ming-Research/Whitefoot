@@ -418,12 +418,23 @@ and applied (`design/log.md`, 2026-09-25).
    gets its own type inventory, generic validation still rolls back, and the
    `Stable*` bridge remains. They do not implement P2.3 or P3.4.
 
-   Shared place elaboration is the remaining P2.2 step. The current ordinary,
-   dereferenced and indexed paths still select their read, measure, borrow,
-   set and consume judgments separately. Their diagnostic ordering, captured
-   operands and dead-whole-binding assignment behavior must survive the
-   consolidation. The existing corpus and module-graph differential comparison
-   remains the criterion; no language-rule change is selected here.
+   Place formation now shares type-directed member selection for ordinary
+   fields, Box contents, addressed storage and borrowed paths. `ElaboratedPlace`
+   carries the selected type, expression and resolved origins into the read,
+   measure, set and consume judgments; ordinary owned reads and writes no
+   longer probe a field chain and resolve it again to reach Box content.
+   Indexed and borrowed paths use that same member formation and the common
+   offset judgment. Formation remains staged where diagnostic order requires
+   it: an affine indexed read judges its class before its main offset, a write
+   judges readonly members before ordinary member validity, and a complete
+   binding assignment may reinitialize a dead root. These use judgments do not
+   reimplement member lookup. Existing checked expression variants retain the
+   backend's output contract. The field-error probe remains only on the invalid
+   bare-reference assignment path to preserve its diagnostic priority.
+
+   The effect-row coverage and suggested-row judgments now live with effect
+   attribution in `references.rs`, leaving the composition entry point below
+   its previous oversized-source threshold. No language rule changes.
 3. **Generic validation without rollback.** Grow-only interning keyed by
    structure, the executable set chosen by reachability, and validation and
    preflight as views over one inventory. This removes the table rollback,
@@ -582,8 +593,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
    `docs/todo.md`.
 2. With amendments ruled: P6, P1.3 and P2.1, then P2.2. P6 is done in
    [PR #128](https://github.com/mbbill/Whitefoot/pull/128), P1.3 and P2.1 in
-   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2 has its
-   component stage implemented on this branch; shared place elaboration remains.
+   [PR #140](https://github.com/mbbill/Whitefoot/pull/140). P2.2's components and shared
+   place formation are implemented on this branch.
 3. Identity and ownership, P3.2 and P3.3, before the prelude and
    standard-library work, which needs formed interfaces that outlive one
    check. Done in [PR #146](https://github.com/mbbill/Whitefoot/pull/146);
@@ -596,7 +607,7 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 
 P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
 described in [Approved architectural decisions](#approved-architectural-decisions).
-Their implementation remains pending; P2.2's shared place elaboration comes next.
+Their implementation follows P2.2's shared place formation on this branch.
 P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
@@ -627,7 +638,7 @@ review finding that P4.2's model must retain named type definitions, their
 transitive dependencies and attribute-group uses. Their decisions now live
 under `design/compiler/`; their implementation and validation remain pending.
 They change compiler structure, not language rules. P2.2's shared place
-elaboration is the next implementation step.
+formation precedes these implementations.
 
 ### P2.3: one inventory without rollback
 

@@ -502,6 +502,7 @@ pub enum IrConversionMode {
     Exact,
     Checked,
     Defined,
+    Wrap,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

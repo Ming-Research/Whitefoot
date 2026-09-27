@@ -315,19 +315,24 @@ impl<'unit> Checker<'_, 'unit> {
         // is an ordinary target.
         self.types
             .reject_reserved_write_members(check_context, node, &suffixes, local.ty)?;
-        // [TYPE-9] a target below a `Box`'s member `inner` writes the box
-        // content, which is a dereference step the field walk cannot take;
-        // the explicit-place target resolver takes it for a bare IDENT base
-        // exactly as it does for a written `deref` chain.
-        if self
-            .types
-            .place_path_reaches_box_content(check_context, &suffixes, local.ty)?
-        {
-            return self.check_dereferenced_set_target(context, node, bindings);
-        }
-        let (fields, ty) = self
-            .types
-            .resolve_struct_path(check_context, &suffixes, local.ty)?;
+        let (fields, ty) = if local.mode == CheckedMode::Own {
+            let place = self.elaborate_local_place(check_context, node, &suffixes, &local)?;
+            let Some(fields) = place.plain_fields() else {
+                return self.check_elaborated_set_target(context, node, bindings, place);
+            };
+            (fields, place.ty)
+        } else {
+            // This is an invalid value assignment through a bare reference.
+            // Preserve its field-error priority before SET-1's mode judgment.
+            if self
+                .types
+                .place_path_reaches_box_content(check_context, &suffixes, local.ty)?
+            {
+                return self.check_dereferenced_set_target(context, node, bindings);
+            }
+            self.types
+                .resolve_struct_path(check_context, &suffixes, local.ty)?
+        };
         if local.mode != CheckedMode::Own {
             return self.types.declarations.issue_node(
                 SemanticRule::Set1,
@@ -973,29 +978,20 @@ impl<'unit> Checker<'_, 'unit> {
                         accesses: Vec::new(),
                     });
                 }
-                // [TYPE-9] a `Box`'s content is its member `inner`, reached
-                // by the ordinary member step and never by `deref`. The step
-                // below that member is a dereference, which the field walk
-                // has no step for, so the explicit-place walker resolves the
-                // whole place; it takes a bare IDENT base exactly as it takes
-                // a `deref` chain, which keeps one implementation of the box
-                // content step for both spellings.
-                if self
-                    .types
-                    .place_path_reaches_box_content(check_context, &suffixes, local.ty)?
-                {
-                    return self.check_dereferenced_place_use(
+                let place =
+                    self.elaborate_local_place(check_context, use_node, &suffixes, &local)?;
+                let Some(fields) = place.plain_fields() else {
+                    return self.check_elaborated_place_use(
                         check_context,
                         use_node,
                         node,
                         pbase,
                         bindings,
                         options,
+                        place,
                     );
-                }
-                let (fields, ty) =
-                    self.types
-                        .resolve_struct_path(check_context, &suffixes, local.ty)?;
+                };
+                let ty = place.ty;
                 let copy = self.types.is_copy_type(check_context, ty)?;
                 if options.explicit_move && copy && Checker::judges_class_spelling(check_context) {
                     return self.types.declarations.issue_node(
@@ -1251,11 +1247,21 @@ impl<'unit> Checker<'_, 'unit> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<MutationTarget, CheckStop> {
+        let place = self.elaborate_value_place(context.check_context, node, node, bindings)?;
+        self.check_elaborated_set_target(context, node, bindings, place)
+    }
+
+    fn check_elaborated_set_target(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        place: places::ElaboratedPlace,
+    ) -> Result<MutationTarget, CheckStop> {
         let FunctionContext {
             check_context,
             function,
         } = context;
-        let place = self.resolve_explicit_place(check_context, node, node, bindings)?;
         if place
             .resolved
             .members
@@ -2291,65 +2297,17 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(Vec<u32>, CheckedType), CheckStop> {
         let mut fields = Vec::new();
         for &suffix in suffixes {
-            if self.declarations.subscript_offset(suffix)?.is_some() {
-                return self
-                    .declarations
-                    .unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
-            }
-            let name = self
-                .declarations
-                .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
-                .spelling()
-                .to_owned();
-            // [TYPE-10] a window part is effect-row vocabulary and never a
-            // place, so a part spelling following a measured place is that
-            // rule's refusal rather than a struct missing a declared field.
-            // x1 decides it by the type of the place the suffix follows: on
-            // any other type the same spelling is an ordinary field.
-            self.declarations
-                .reject_window_part(suffix, &name, ty, false)?;
-            let name = name.as_str();
-            let CheckedType::Nominal(nominal_id) = ty else {
-                return self.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.checked_type_name(ty)?,
-                    ),
-                );
-            };
-            let CheckedNominalKind::Struct {
-                fields: declared_fields,
-            } = &self.nominal(nominal_id)?.kind
+            let member = self.elaborate_place_member(check_context, suffix, ty)?;
+            let places::PlaceMember::Field {
+                index,
+                ty: selected,
+                ..
+            } = member
             else {
-                return self.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.checked_type_name(ty)?,
-                    ),
-                );
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
             };
-            let Some((index, field)) = declared_fields
-                .iter()
-                .enumerate()
-                .find(|(_, field)| field.name == name)
-            else {
-                return self.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        format!("a declared field of {}", self.checked_type_name(ty)?),
-                        format!("the field name `{name}`, which that struct does not declare"),
-                    ),
-                );
-            };
-            self.reject_inaccessible_field(check_context, nominal_id, None, index, name, suffix)?;
-            fields
-                .push(u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?);
-            ty = field.ty;
+            fields.push(index);
+            ty = selected;
         }
         Ok((fields, ty))
     }

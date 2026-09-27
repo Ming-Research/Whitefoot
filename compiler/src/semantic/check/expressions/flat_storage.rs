@@ -232,6 +232,30 @@ impl CheckedIndexedPlace {
 }
 
 impl<'unit> Checker<'_, 'unit> {
+    /// [OP-4] every index-bearing place has one owned u64 offset. Keep this
+    /// judgment at the use's established point: affine reads are rejected
+    /// before their offset, while borrow formation judges the offset first.
+    pub(in crate::semantic::check) fn check_place_offset(
+        &self,
+        node: NodeId,
+        offset: &TypedExpression,
+    ) -> Result<(), CheckStop> {
+        if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
+            || offset.mode != CheckedMode::Own
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    "own u64",
+                    self.types
+                        .checked_value_name(offset.mode, offset.expression.ty())?,
+                ),
+            );
+        }
+        Ok(())
+    }
+
     /// Chooses the subscript that establishes the indexable base of a place.
     ///
     /// Ordinary nested storage is addressed inside-out, so its final
@@ -271,7 +295,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(pbase, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let inner = self.resolve_explicit_place(check_context, place, inner, bindings)?;
+        let inner = self.elaborate_value_place(check_context, place, inner, bindings)?;
         let dereferenced = self.resolve_explicit_dereference(place, pbase, inner, bindings)?;
         if !dereferenced.range_referent {
             return Ok(Some(last));
@@ -448,19 +472,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut probe = bindings.clone();
                 let offset =
                     self.check_atom(context, offset_node, &mut probe, options.loop_depth)?;
-                if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-                    || offset.mode != CheckedMode::Own
-                {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Type5,
-                        offset_node,
-                        SemanticIssueKind::type_mismatch(
-                            "own u64",
-                            self.types
-                                .checked_value_name(offset.mode, offset.expression.ty())?,
-                        ),
-                    );
-                }
+                self.check_place_offset(offset_node, &offset)?;
                 let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
                     return self
                         .types
@@ -839,9 +851,7 @@ impl<'unit> Checker<'_, 'unit> {
         let Ok(offset) = self.check_atom(context, offset_node, &mut probe, loop_depth) else {
             return Ok(false);
         };
-        if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-            || offset.mode != CheckedMode::Own
-        {
+        if self.check_place_offset(offset_node, &offset).is_err() {
             return Ok(false);
         }
         place.push_subscript(
@@ -983,19 +993,7 @@ impl<'unit> Checker<'_, 'unit> {
             .subscript_offset(suffix)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let offset = self.check_atom(context, offset_node, bindings, options.loop_depth)?;
-        if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-            || offset.mode != CheckedMode::Own
-        {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                offset_node,
-                SemanticIssueKind::type_mismatch(
-                    "own u64",
-                    self.types
-                        .checked_value_name(offset.mode, offset.expression.ty())?,
-                ),
-            );
-        }
+        self.check_place_offset(offset_node, &offset)?;
         // A subscript is not an [EFF-2] trap source: an accepted subscript
         // is discharged [OP-4] and executes no runtime check. Retain only the
         // psuffix identity that the [ENT-6] obligation judgment and [OP-4]
@@ -1232,19 +1230,7 @@ impl<'unit> Checker<'_, 'unit> {
             .subscript_offset(suffix)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let offset = self.check_atom(context, offset_node, bindings, loop_depth)?;
-        if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-            || offset.mode != CheckedMode::Own
-        {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                offset_node,
-                SemanticIssueKind::type_mismatch(
-                    "own u64",
-                    self.types
-                        .checked_value_name(offset.mode, offset.expression.ty())?,
-                ),
-            );
-        }
+        self.check_place_offset(offset_node, &offset)?;
         // As in the read path, retain only the psuffix identity for [ENT-6];
         // an accepted target contributes no runtime check or trap carrier.
         let obligation = self.types.declarations.tree.path(suffix)?.clone();
@@ -1397,43 +1383,13 @@ impl<'unit> Checker<'_, 'unit> {
         let FunctionContext { check_context, .. } = context;
         let mut path = Vec::new();
         let mut carried = CarriedOperands::default();
-        for (position, &suffix) in suffixes.iter().enumerate() {
+        for &suffix in suffixes {
             let Some(offset_node) = self.types.declarations.subscript_offset(suffix)? else {
-                // [TYPE-9] a `Box`'s content is its one member `inner`, and
-                // the storage below that member is the box's referent, so
-                // this step is the dereference the resolved path already
-                // records rather than a field selection.
-                if let CheckedType::Nominal(nominal) = ty
-                    && let CheckedNominalKind::Box { referent, .. } =
-                        self.types.nominal(nominal)?.kind
-                {
-                    let name = self
-                        .types
-                        .declarations
-                        .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
-                        .spelling()
-                        .to_owned();
-                    if name != "inner" {
-                        return self.types.declarations.issue_node(
-                            SemanticRule::Type9,
-                            suffix,
-                            SemanticIssueKind::type_mismatch(
-                                "the Box content field `inner`",
-                                format!("the field name `{name}`, which a Box does not declare"),
-                            ),
-                        );
-                    }
-                    path.push(CheckedPlaceStep::BoxReferent(nominal));
-                    ty = referent;
-                    continue;
-                }
-                let (fields, selected) = self.types.resolve_struct_path(
-                    check_context,
-                    &suffixes[position..=position],
-                    ty,
-                )?;
-                path.extend(fields.into_iter().map(CheckedPlaceStep::Field));
-                ty = selected;
+                let member = self
+                    .types
+                    .elaborate_place_member(check_context, suffix, ty)?;
+                path.push(member.storage_step());
+                ty = member.ty();
                 continue;
             };
             // [OP-4] each suffix selects the complete element type of its
@@ -1456,19 +1412,7 @@ impl<'unit> Checker<'_, 'unit> {
             };
             let mut probe = bindings.clone();
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
-            if offset.expression.ty() != CheckedType::Integer(IntegerType::U64)
-                || offset.mode != CheckedMode::Own
-            {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    offset_node,
-                    SemanticIssueKind::type_mismatch(
-                        "own u64",
-                        self.types
-                            .checked_value_name(offset.mode, offset.expression.ty())?,
-                    ),
-                );
-            }
+            self.check_place_offset(offset_node, &offset)?;
             let captured = Checker::captured_of(offset_node, &offset.expression);
             if require_named_offsets && captured.is_none() {
                 return self
@@ -1626,7 +1570,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(pbase, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let inner = self.resolve_explicit_place(check_context, node, inner, bindings)?;
+        let inner = self.elaborate_value_place(check_context, node, inner, bindings)?;
         let mut place = self.resolve_explicit_dereference(node, pbase, inner, bindings)?;
         // [REF-4, OP-4] the run a range reference names is an indexable base
         // reached through `deref` [TYPE-7]. [TYPE-8] makes `&[T]` a reference

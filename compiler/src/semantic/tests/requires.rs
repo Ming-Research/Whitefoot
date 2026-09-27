@@ -9,6 +9,41 @@ use super::super::model::{
 };
 use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
 
+#[test]
+fn wrapping_conversion_goal_identity_retains_its_operand_support() {
+    for (replacement, actual, accepted) in [
+        ("", "value", true),
+        ("    set value = other;\n", "value", false),
+        ("", "other", false),
+    ] {
+        let source = format!(
+            "fn selected(value: u32) -> result: unit pure contract {{\n  define byte = cvt.wrap::<u32, u8>(value);\n  requires byte == 1_u8;\n}} {{\n  return unit;\n}}\n\nfn forward(value: u32, other: u32) -> result: unit pure {{\n  let byte = cvt.wrap::<u32, u8>(value);\n  if byte == 1_u8 {{\n{replacement}    selected(value: {actual});\n  }}\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        if accepted {
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("the identical supported modular goal must transfer: {outcome:?}");
+                };
+                let function = checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "forward")
+                    .expect("forward function");
+                let [call] = function.entailment.call_goals.as_slice() else {
+                    panic!("one modular requirement must be checked");
+                };
+                assert_eq!(call.disposition, CallGoalDisposition::Discharged);
+            });
+        } else {
+            super::assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedCallRequirement(detail)
+                    if detail.instantiated_goal.contains("cvt.wrap::<u32, u8>"))
+            });
+        }
+    }
+}
+
 /// A reference is a local name for a path and its validity is a fact [REF-1,
 /// REF-2]; the value fact a requirement needs is killed exactly when a write
 /// reaches that path [EFF-5, ENT-5]. Without the intervening write the entry

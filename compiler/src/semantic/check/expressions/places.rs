@@ -36,13 +36,45 @@ const TYPE9_NO_CONTENT_MOVE: &str =
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
-/// One place resolved through an explicit `deref` chain.
+/// Type-directed member formation, before a use judges access or ownership.
+/// A source field and a Box content carry the same selected type but retain
+/// their different storage steps. The measure judgment handles descriptor
+/// observations before asking for a storage member.
+#[derive(Clone, Copy)]
+pub(super) enum PlaceMember {
+    Field {
+        nominal: super::super::super::model::NominalId,
+        index: u32,
+        ty: CheckedType,
+    },
+    BoxContent {
+        nominal: super::super::super::model::NominalId,
+        ty: CheckedType,
+    },
+}
+
+impl PlaceMember {
+    pub(super) fn ty(self) -> CheckedType {
+        match self {
+            Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
+        }
+    }
+
+    pub(super) fn storage_step(self) -> CheckedPlaceStep {
+        match self {
+            Self::Field { index, .. } => CheckedPlaceStep::Field(index),
+            Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
+        }
+    }
+}
+
+/// A typed place, before its read, measure, set or consume judgment.
 ///
 /// The v0.59 `borrow` and `holder_pending` fields are gone with the loans: a
 /// reference is not storage of its own, so a resolved place never carries one
 /// — the `deref` step has already been replaced by the path the reference
 /// names [REF-1].
-pub(super) struct ExplicitPlace {
+pub(super) struct ElaboratedPlace {
     /// The source declaration the *written* base names. For a `deref` chain
     /// that is the reference binding, whose [REF-2] validity the caller
     /// rechecks; `resolved` below is rooted at what that reference names.
@@ -63,6 +95,25 @@ pub(super) struct ExplicitPlace {
     pub(super) range_referent: bool,
 }
 
+impl ElaboratedPlace {
+    /// The compact field representation used by ordinary binding reads and
+    /// writes. Addressed and measured places keep their richer formed path.
+    pub(super) fn plain_fields(&self) -> Option<Vec<u32>> {
+        if self.measure.is_some() {
+            return None;
+        }
+        self.resolved
+            .identity
+            .path
+            .iter()
+            .map(|step| match step {
+                PlaceStep::Field(index) => Some(*index),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 impl<'unit> Checker<'_, 'unit> {
     /// A read of a place written through an explicit `deref` [TYPE-7].
     pub(super) fn check_dereferenced_place_use(
@@ -74,7 +125,29 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
-        let place = self.resolve_explicit_place(check_context, use_node, node, bindings)?;
+        let place = self.elaborate_value_place(check_context, use_node, node, bindings)?;
+        self.check_elaborated_place_use(
+            check_context,
+            use_node,
+            node,
+            pbase,
+            bindings,
+            options,
+            place,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn check_elaborated_place_use(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        use_node: NodeId,
+        node: NodeId,
+        pbase: NodeId,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        options: PlaceUseOptions,
+        place: ElaboratedPlace,
+    ) -> Result<TypedExpression, CheckStop> {
         for member in &place.resolved.members {
             self.check_commit_place_live(member, use_node, false)?;
         }
@@ -287,20 +360,20 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [GRAM-5, REF-1] the complete written `place`, with every `deref` step
     /// already replaced by the path the reference it names names.
-    pub(super) fn resolve_explicit_place(
+    pub(super) fn elaborate_value_place(
         &mut self,
         check_context: &CheckContext<'_>,
         carrier: NodeId,
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<ExplicitPlace, CheckStop> {
+    ) -> Result<ElaboratedPlace, CheckStop> {
         let pbase = self
             .types
             .declarations
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let mut place = if self
+        let place = if self
             .types
             .declarations
             .has_fixed(pbase, FixedTerminal::Deref)?
@@ -311,7 +384,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(pbase, Production::Place)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let inner = self.resolve_explicit_place(check_context, carrier, inner, bindings)?;
+            let inner = self.elaborate_value_place(check_context, carrier, inner, bindings)?;
             self.resolve_explicit_dereference(carrier, pbase, inner, bindings)?
         } else {
             if !self.types.declarations.tree.children(pbase)?.is_empty() {
@@ -344,28 +417,56 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-            ExplicitPlace {
-                declaration,
-                ty: local.ty,
-                mode: local.mode,
-                expression: CheckedExpression::Binding {
-                    carrier: self.types.declarations.tree.path(carrier)?.clone(),
-                    binding: local.binding,
-                    ty: local.ty,
-                    consume_root: false,
-                },
-                resolved: ResolvedPlaceSet::one(ResolvedPlace::binding(local.binding)),
-                measure: None,
-                range_referent: false,
-            }
+            self.local_place(carrier, &local)?
         };
-
-        for suffix in self
+        let suffixes = self
             .types
             .declarations
             .tree
-            .children_with(node, Production::Psuffix)?
-        {
+            .children_with(node, Production::Psuffix)?;
+        self.elaborate_place_members(check_context, carrier, &suffixes, place)
+    }
+
+    fn local_place(
+        &self,
+        carrier: NodeId,
+        local: &LocalBinding,
+    ) -> Result<ElaboratedPlace, CheckStop> {
+        Ok(ElaboratedPlace {
+            declaration: local.declaration,
+            ty: local.ty,
+            mode: local.mode,
+            expression: CheckedExpression::Binding {
+                carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                binding: local.binding,
+                ty: local.ty,
+                consume_root: false,
+            },
+            resolved: ResolvedPlaceSet::one(ResolvedPlace::binding(local.binding)),
+            measure: None,
+            range_referent: false,
+        })
+    }
+
+    pub(super) fn elaborate_local_place(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        carrier: NodeId,
+        suffixes: &[NodeId],
+        local: &LocalBinding,
+    ) -> Result<ElaboratedPlace, CheckStop> {
+        let place = self.local_place(carrier, local)?;
+        self.elaborate_place_members(check_context, carrier, suffixes, place)
+    }
+
+    fn elaborate_place_members(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        carrier: NodeId,
+        suffixes: &[NodeId],
+        mut place: ElaboratedPlace,
+    ) -> Result<ElaboratedPlace, CheckStop> {
+        for &suffix in suffixes {
             // [OP-15] a measure is read as a member of the measured place,
             // and [MSR-1] gives it no storage below itself, so it ends the
             // written path. [TYPE-10] refuses a write of one and a read of a
@@ -412,12 +513,8 @@ impl<'unit> Checker<'_, 'unit> {
                 .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
                 .spelling()
                 .to_owned();
-            // [TYPE-10] the eight measure and window-part spellings are
-            // reserved from every field name [FORM-3], so one of them here is
-            // a read of a pseudo-field rather than a struct field. A measure
-            // read is [OP-15]'s place form and is resolved by the measure
-            // path before this walker sees it, so a spelling arriving here is
-            // one of the positions TYPE-10 refuses.
+            // [TYPE-10] the selected type determines whether a spelling is
+            // a measure, a window part, or an ordinary source field.
             if let Some(measure) = super::super::types::measure_named(&name) {
                 // [OP-14, PRE-1] at a boxed argument a compiler-owned row's
                 // measure place instantiates as `window.inner`: the shape
@@ -477,88 +574,31 @@ impl<'unit> Checker<'_, 'unit> {
                 place.ty,
                 place.range_referent,
             )?;
-            // [TYPE-9] a `Box`'s content is its field `inner`, reached by the
-            // ordinary field step and never by `deref`.
-            if let CheckedType::Nominal(nominal) = place.ty
-                && let CheckedNominalKind::Box { referent, .. } = self.types.nominal(nominal)?.kind
-            {
-                if name != "inner" {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Type9,
-                        suffix,
-                        SemanticIssueKind::type_mismatch(
-                            "the Box content field `inner`",
-                            format!("the field name `{name}`, which a Box does not declare"),
-                        ),
-                    );
+            let member = self
+                .types
+                .elaborate_place_member(check_context, suffix, place.ty)?;
+            place.expression = match member {
+                PlaceMember::BoxContent { nominal, ty } => {
+                    place.resolved.append_step(PlaceStep::Deref);
+                    CheckedExpression::BoxDeref {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        nominal,
+                        referent: ty,
+                        value: Box::new(place.expression),
+                    }
                 }
-                place.expression = CheckedExpression::BoxDeref {
-                    carrier: self.types.declarations.tree.path(carrier)?.clone(),
-                    nominal,
-                    referent,
-                    value: Box::new(place.expression),
-                };
-                place.ty = referent;
-                place.resolved.append_step(PlaceStep::Deref);
-                continue;
-            }
-            let CheckedType::Nominal(nominal) = place.ty else {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.types.checked_type_name(place.ty)?,
-                    ),
-                );
+                PlaceMember::Field { nominal, index, ty } => {
+                    place.resolved.extend_fields(&[index]);
+                    CheckedExpression::ProjectValue {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        value: Box::new(place.expression),
+                        nominal,
+                        field: index,
+                        ty,
+                    }
+                }
             };
-            let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind else {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        "a source struct, whose declared field this suffix selects",
-                        self.types.checked_type_name(place.ty)?,
-                    ),
-                );
-            };
-            let Some((index, field)) = fields
-                .iter()
-                .enumerate()
-                .find(|(_, field)| field.name == name)
-            else {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    suffix,
-                    SemanticIssueKind::type_mismatch(
-                        format!(
-                            "a declared field of {}",
-                            self.types.checked_type_name(place.ty)?
-                        ),
-                        format!("the field name `{name}`, which that struct does not declare"),
-                    ),
-                );
-            };
-            let field_type = field.ty;
-            self.types.reject_inaccessible_field(
-                check_context,
-                nominal,
-                None,
-                index,
-                &name,
-                suffix,
-            )?;
-            let field_index =
-                u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            place.expression = CheckedExpression::ProjectValue {
-                carrier: self.types.declarations.tree.path(carrier)?.clone(),
-                value: Box::new(place.expression),
-                nominal,
-                field: field_index,
-                ty: field_type,
-            };
-            place.ty = field_type;
-            place.resolved.extend_fields(&[field_index]);
+            place.ty = member.ty();
         }
         Ok(place)
     }
@@ -573,9 +613,9 @@ impl<'unit> Checker<'_, 'unit> {
         &mut self,
         carrier: NodeId,
         pbase: NodeId,
-        mut inner: ExplicitPlace,
+        mut inner: ElaboratedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<ExplicitPlace, CheckStop> {
+    ) -> Result<ElaboratedPlace, CheckStop> {
         if !inner.mode.is_reference() {
             return self.types.declarations.issue_node(
                 SemanticRule::Type7,
@@ -629,6 +669,102 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// Resolve the type transition without choosing a diagnostic. A write
+    /// judges readonly members before ordinary member validity; other uses
+    /// judge validity first. Both consume this same type-directed selection.
+    fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return Ok(None);
+        };
+        Ok(match &self.nominal(nominal)?.kind {
+            CheckedNominalKind::Box { referent, .. } => Some(PlaceMember::BoxContent {
+                nominal,
+                ty: *referent,
+            }),
+            CheckedNominalKind::Struct { fields } => fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == name)
+                .map(|(index, field)| {
+                    Ok::<_, CheckStop>(PlaceMember::Field {
+                        nominal,
+                        index: u32::try_from(index)
+                            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                        ty: field.ty,
+                    })
+                })
+                .transpose()?,
+            _ => None,
+        })
+    }
+
+    /// Form one storage member. Access, move and write judgments consume this
+    /// result; none of them resolves a field or a Box member independently.
+    pub(super) fn elaborate_place_member(
+        &self,
+        check_context: &CheckContext<'_>,
+        suffix: NodeId,
+        ty: CheckedType,
+    ) -> Result<PlaceMember, CheckStop> {
+        if self.declarations.subscript_offset(suffix)?.is_some() {
+            return self
+                .declarations
+                .unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        let name = self
+            .declarations
+            .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
+            .spelling();
+        self.declarations
+            .reject_window_part(suffix, name, ty, false)?;
+        let member = self.place_member(ty, name)?;
+        match member {
+            Some(PlaceMember::BoxContent { .. }) => {
+                if name != "inner" {
+                    return self.declarations.issue_node(
+                        SemanticRule::Type9,
+                        suffix,
+                        SemanticIssueKind::type_mismatch(
+                            "the Box content field `inner`",
+                            format!("the field name `{name}`, which a Box does not declare"),
+                        ),
+                    );
+                }
+            }
+            Some(PlaceMember::Field { nominal, index, .. }) => {
+                self.reject_inaccessible_field(
+                    check_context,
+                    nominal,
+                    None,
+                    index as usize,
+                    name,
+                    suffix,
+                )?;
+            }
+            None => {
+                let is_struct = matches!(ty, CheckedType::Nominal(nominal)
+                    if matches!(self.nominal(nominal)?.kind, CheckedNominalKind::Struct { .. }));
+                let (expected, actual) = if is_struct {
+                    (
+                        format!("a declared field of {}", self.checked_type_name(ty)?),
+                        format!("the field name `{name}`, which that struct does not declare"),
+                    )
+                } else {
+                    (
+                        "a source struct, whose declared field this suffix selects".to_owned(),
+                        self.checked_type_name(ty)?,
+                    )
+                };
+                return self.declarations.issue_node(
+                    SemanticRule::Type5,
+                    suffix,
+                    SemanticIssueKind::type_mismatch(expected, actual),
+                );
+            }
+        }
+        member.ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
+    }
+
     fn checked_owned_take_path(
         &self,
         mut ty: CheckedType,
@@ -1339,33 +1475,25 @@ impl<'unit> TypeContext<'unit> {
                     },
                 );
             }
-            let CheckedType::Nominal(nominal) = ty else {
+            let Some(member) = self.place_member(ty, &name)? else {
                 return Ok(());
             };
-            let kind = &self.nominal(nominal)?.kind;
-            if let CheckedNominalKind::Box { referent, .. } = kind {
-                // [TYPE-9] `b.inner` is the cell's content, a dereference
-                // step rather than a field of the cell.
-                ty = *referent;
-                continue;
+            if let PlaceMember::Field { nominal, index, .. } = member {
+                let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                };
+                if self.field_withholds_writes(check_context, nominal, &fields[index as usize]) {
+                    return self.declarations.issue_node(
+                        SemanticRule::Type2,
+                        target,
+                        SemanticIssueKind::ReadonlyWriteTarget {
+                            spelling: name,
+                            mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
+                        },
+                    );
+                }
             }
-            let CheckedNominalKind::Struct { fields } = kind else {
-                return Ok(());
-            };
-            let Some(field) = fields.iter().find(|field| field.name == name) else {
-                return Ok(());
-            };
-            if self.field_withholds_writes(check_context, nominal, field) {
-                return self.declarations.issue_node(
-                    SemanticRule::Type2,
-                    target,
-                    SemanticIssueKind::ReadonlyWriteTarget {
-                        spelling: name,
-                        mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
-                    },
-                );
-            }
-            ty = field.ty;
+            ty = member.ty();
         }
         Ok(())
     }
@@ -1376,8 +1504,8 @@ impl<'unit> DeclarationInventory<'unit> {
     ///
     /// [MSR-1] gives a measure no storage below itself, so only the last
     /// suffix can name one and a subscript never does. The spelling decides
-    /// this without a type because [FORM-3] reserves the four names from
-    /// every field, parameter, binder and result binding.
+    /// this only as a routing hint. Elaboration decides from the selected
+    /// type whether it is a measure or an ordinary source field [TYPE-10].
     pub(in crate::semantic::check) fn trailing_measure_member(
         &self,
         suffixes: &[NodeId],
