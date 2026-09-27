@@ -52,11 +52,11 @@ impl Writer {
         let mut out = Writer::default();
         let mut at = 0;
         for &(position, identity) in &self.positions {
-            self.bytes.get(at..position)?.to_vec().write(&mut out);
+            u8::write_slice(self.bytes.get(at..position)?, &mut out);
             name(identity)?.write(&mut out);
             at = position.checked_add(4)?;
         }
-        self.bytes.get(at..)?.to_vec().write(&mut out);
+        u8::write_slice(self.bytes.get(at..)?, &mut out);
         Some(out.bytes)
     }
 }

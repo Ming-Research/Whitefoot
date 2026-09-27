@@ -1539,6 +1539,16 @@ formation judgments or input validation. Reopen the representation if the
 paired real-consumer measurements still show retention costing more than the
 work it replaces.
 
+The grouped candidate's single diagnostic pass preserves the same outputs and
+work counters and reduces the previous overhead, but remains slower than the
+baseline. The next local comparison memoizes normalized header tokens per
+source function node and the physical reverse-identity catalogue per lowering
+context; both are immutable for their consumer lifetime. It also writes
+canonical byte slices directly instead of allocating an intermediate vector.
+These changes keep the same encoded key bytes and current-input guards. Use
+the preceding grouped binary as their ablation; do not infer a final gain from
+the work counters or from the earlier single-pass costs.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

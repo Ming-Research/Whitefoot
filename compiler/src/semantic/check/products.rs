@@ -75,6 +75,8 @@ record_enum!(PreludeType {
 pub(super) struct ProductIdentities<'a> {
     sources: std::rc::Rc<SourceIdentities<'a>>,
     headers: std::rc::Rc<crate::resolution::CallableHeaders<'a>>,
+    header_tokens:
+        std::rc::Rc<std::cell::RefCell<BTreeMap<usize, Vec<crate::resolution::HeaderToken>>>>,
     names: std::cell::RefCell<BTreeMap<Identity, Vec<u8>>>,
     current: std::cell::RefCell<BTreeMap<Vec<u8>, Identity>>,
     counts: std::cell::RefCell<BTreeMap<IdentityKind, usize>>,
@@ -88,6 +90,7 @@ impl<'a> ProductIdentities<'a> {
                 &declarations.tree,
             )?),
             headers: std::rc::Rc::new(declarations.resolved.callable_headers().ok()?),
+            header_tokens: Default::default(),
             names: Default::default(),
             current: Default::default(),
             counts: Default::default(),
@@ -98,6 +101,7 @@ impl<'a> ProductIdentities<'a> {
         Self {
             sources: self.sources.clone(),
             headers: self.headers.clone(),
+            header_tokens: self.header_tokens.clone(),
             names: Default::default(),
             current: Default::default(),
             counts: Default::default(),
@@ -428,10 +432,22 @@ impl Checker<'_, '_> {
             IdentityKind::Function => {
                 let signature = self.types.signatures.get(index as usize)?;
                 writer = self.signature_inputs(signature);
-                let header = identities.headers.header(signature.node).ok()?;
+                if !identities
+                    .header_tokens
+                    .borrow()
+                    .contains_key(&signature.node.index())
+                {
+                    let header = identities.headers.header(signature.node).ok()?;
+                    identities
+                        .header_tokens
+                        .borrow_mut()
+                        .insert(signature.node.index(), header);
+                }
+                let headers = identities.header_tokens.borrow();
+                let header = headers.get(&signature.node.index())?;
                 header.len().write(&mut writer);
                 for token in header {
-                    write_header_token(&token, &mut writer);
+                    write_header_token(token, &mut writer);
                 }
             }
             IdentityKind::Nominal => {

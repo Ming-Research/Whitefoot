@@ -310,3 +310,55 @@ fn callback_actual_body_edits_keep_interface_proof_components_current() {
         original
     );
 }
+
+#[test]
+fn retained_callback_calls_use_the_actuals_current_heap_closure() {
+    let directory = CacheDirectory::new("product-callback-heap");
+    let graph = GRAPH.replace(
+        "entry app = pkg::main;",
+        "entry app = pkg::main {\n  no_heap;\n}",
+    );
+    let signature = "fn invoke<fn step() -> result: u8 pure>() -> result: u8 pure";
+    let interface = format!("public {signature} doc \"Calls the supplied function.\";\n");
+    let library = format!("{signature} {{\n  let result = step();\n  return result;\n}}\n");
+    let source = |heap| {
+        format!(
+            "fn action() -> result: u8 pure {{\n{}  return 0_u8;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let code = pkg::lib::invoke::<fn action>();\n  return std::process::exit_status(code: code);\n}}\n",
+            if heap {
+                "  let owned = box_new::<u64>(value: 0_u64);\n"
+            } else {
+                ""
+            },
+        )
+    };
+    build(
+        &graph,
+        &interface,
+        &library,
+        &source(false),
+        Some(&directory.open()),
+    )
+    .unwrap();
+    let cache = directory.open();
+    let cached = build(&graph, &interface, &library, &source(true), Some(&cache));
+    assert!(
+        cached
+            .as_ref()
+            .is_err_and(|failure| failure.contains("[STOR-8]")),
+        "{cached:?}"
+    );
+    assert_eq!(
+        cached,
+        build(&graph, &interface, &library, &source(true), None)
+    );
+    let (_, checked, reused) = cache
+        .body_module_counts()
+        .into_iter()
+        .find(|(module, _, _)| module == "pkg::lib")
+        .unwrap();
+    assert_eq!(checked, 0, "the unchanged callback body should import");
+    assert!(
+        reused > 0,
+        "the heap rejection must follow a retained callback call"
+    );
+}

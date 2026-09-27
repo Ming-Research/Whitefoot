@@ -1,6 +1,6 @@
 //! Typed function fragments under current checked, physical and target inputs.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::BTreeMap;
 
 use super::*;
@@ -14,6 +14,7 @@ pub(super) struct Products<'a> {
     context: LoweringContext<'a>,
     symbols: &'a [String],
     names: RefCell<BTreeMap<Identity, Vec<u8>>>,
+    current: OnceCell<Option<BTreeMap<Vec<u8>, Identity>>>,
 }
 
 impl<'a> Products<'a> {
@@ -32,6 +33,7 @@ impl<'a> Products<'a> {
             context,
             symbols,
             names: RefCell::default(),
+            current: OnceCell::new(),
         })
     }
 
@@ -304,27 +306,36 @@ impl<'a> Products<'a> {
         if !reader.finished() {
             return None;
         }
-        let mut current = BTreeMap::new();
-        for (kind, count) in [
-            (IdentityKind::Function, self.symbols.len()),
-            (IdentityKind::Nominal, context.nominals.len()),
-            (IdentityKind::Element, context.elements.len()),
-            (IdentityKind::Constant, context.constants.len()),
-        ] {
-            for index in 0..count {
-                let identity = (kind, u32::try_from(index).ok()?);
-                let name = self.physical_name(identity)?;
-                if current.insert(name, identity).is_some() {
-                    return None;
+        let current = self
+            .current
+            .get_or_init(|| {
+                let mut current = BTreeMap::new();
+                for (kind, count) in [
+                    (IdentityKind::Function, self.symbols.len()),
+                    (IdentityKind::Nominal, self.context.nominals.len()),
+                    (IdentityKind::Element, self.context.elements.len()),
+                    (IdentityKind::Constant, self.context.constants.len()),
+                ] {
+                    for index in 0..count {
+                        let identity = (kind, u32::try_from(index).ok()?);
+                        let name = self.physical_name(identity)?;
+                        if current.insert(name, identity).is_some() {
+                            return None;
+                        }
+                    }
                 }
-            }
-        }
+                Some(current)
+            })
+            .as_ref()?;
+        let mut helper_names = BTreeMap::new();
         let first = context.synthesis.borrow().next_ordinal()?;
         for (index, name) in helpers.iter().enumerate() {
             let id = first.checked_add(u32::try_from(index).ok()?)?;
-            if current
-                .insert(function_name(name), (IdentityKind::Function, id))
-                .is_some()
+            let name = function_name(name);
+            if current.contains_key(&name)
+                || helper_names
+                    .insert(name, (IdentityKind::Function, id))
+                    .is_some()
             {
                 return None;
             }
@@ -346,7 +357,7 @@ impl<'a> Products<'a> {
                     }
                     self.sources.resolve(&source)?
                 }
-                _ => *current.get(&name)?,
+                _ => *helper_names.get(&name).or_else(|| current.get(&name))?,
             };
             if current.0 != old.0 || mapping.insert(old, current.1).is_some() {
                 return None;
