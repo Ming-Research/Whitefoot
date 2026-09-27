@@ -356,6 +356,18 @@ rarely insert at the same place.
   opaque-struct repair; reopen with the next diagnostics change or when an
   agent follows an unpinned repair that fails.
 
+- **A no-heap bundle stops the compiler when `box_new` names a type holding
+  a `Box`.** Under `program no_heap;`, a struct or enum with a `Box` field
+  together with a call `box_new::<ThatType>(...)` stops with
+  `compiler failure in Semantics: InvalidResolution` instead of STOR-8's
+  HeapTypeUnderNoHeap at the field type; `tests/programs/tail_list.wf` with
+  the declaration prepended reproduces it. The same type with
+  `box_new::<u64>`, or with no such call, is rejected under STOR-8 as it
+  should be, and no program is accepted: the run stops without a verdict.
+  Report the rejection the stable traversal reaches first and pin it with a
+  regression test over these variants. Found while writing the
+  [beyond-memory article](articles/beyond-memory.md).
+
 - **A cell taken apart with no binder is repaired by removing the
   statement, even when its content is linear.** TYPE-2's repair for
   `let Box(..) = move cell;` is "remove this statement", and so is the
