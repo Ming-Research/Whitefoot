@@ -2457,6 +2457,44 @@ Local phase/native records are in `/private/tmp/whitefoot-vector-behavior-inline
 The positive bounded result supports further implementation work, not a selected
 generic hint policy, forward-consumption rule, or completion of the family goal.
 
+### Consumer-counter diagnostic: the wide suffix-one gap is real but incomplete
+
+This frozen-LLVM diagnostic starts from the actual forward-hint image at
+`9efd6c624d5d947f68e676a9181e58b3168d9a69`. It replaces only the complete
+wide `grow_vector_truncate` body with a counter-driven form taken from the
+retained K body. The callback, native inputs, source ABI, allocation policy,
+and every other body remain fixed. The control object and image are byte
+identical to the pinned actual image. The independent native audit found one
+and only one instruction-count change: the target function falls from 65 to
+63 AArch64 instructions; no other function changes instruction count. The
+candidate's text section is eight bytes shorter, with the remaining address
+differences explained by that shift.
+
+Both arms pass the maintained 1,260-configuration/8,820-execution check in
+each timed and accounting image. All 294 accounting rows and every checksum
+are identical. The complete timing pair used the existing `measure 1048576 7`
+harness, both cohorts, seven implementations, both payload widths, three
+populations and all seven paths: 4,116 rows per arm. The control and candidate
+child runs took 82.23 s and 82.29 s; the guard reported successful exits. Raw
+samples are preserved in
+[`ecosystem-consumer-counter-control-samples.csv`](ecosystem-consumer-counter-control-samples.csv)
+and [`ecosystem-consumer-counter-samples.csv`](ecosystem-consumer-counter-samples.csv),
+with SHA-256 `cd6229878ef46d5c6a576826fb6f4fc4e03e3d98adb3ad6d4f43beb3ffd1f934`
+and `c2a63b243b2e6029e3ac4fc9cf93ee4ccd31540c8a10e3d4f24311c5a5f3f`.
+
+The changed body is causal for the earlier wide suffix-one anomaly: its
+candidate/control median is `0.531–0.562` across cohorts and populations.
+Against the contemporaneous slower Rust/C++ median, however, the candidate
+still measures `1.143–1.202` in those cells. The other useful cells move only
+within ordinary measurement variation (candidate/control medians mostly
+`0.989–1.052`), and the candidate does not turn the remaining scalar
+suffix-two deficits into wins. It therefore remains a rejected diagnostic:
+the wide loop controller and digest work were a real part of the gap, but the
+remaining take/length-publication/call-boundary cost still prevents the Vector
+target. The exact source-only body patch is retained in
+[`consumer-counter.patch`](consumer-counter.patch); no production lowering or
+specification rule is selected.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance

@@ -124,6 +124,14 @@ useful-cell regression in its one paired matrix. That manual LLVM experiment
 does not establish a general recognizer, arbitrary callback equivalence, or
 production performance. The separate behavior-hint proposal remains distinct.
 
+The follow-up [consumer-counter diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#consumer-counter-diagnostic-the-wide-suffix-one-gap-is-real-but-incomplete)
+isolated the wide `grow_vector_truncate` loop on the same frozen image. It
+reduced the wide suffix-one candidate/control median to `0.531–0.562`, while
+the candidate still measured `1.143–1.202` against the slower standard
+container and gave no broad useful-cell improvement. The loop controller is
+therefore a confirmed contributor, but this source-only replacement is not a
+selected lowering or a Vector completion.
+
 The first recognizer is deliberately closed. After ignoring erased proof
 statements, the whole own-unit body must contain an entry window length `n`,
 exact `n-r` and division by two, the counted first-half take-back/exchange/
