@@ -189,11 +189,11 @@ records the design so far for the heap, the stack and termination, and what
 each still needs; the peripheral, parallelism and timing parts are not
 designed yet.
 
-## Small: close to C, no lifetimes
+## Small: C's simple structure, some of Rust's syntax
 
-Whitefoot has C's structure and borrows Rust's syntax. A program is made of
-functions, structs, enums and arrays. This function returns the next byte of
-a buffer and advances a cursor:
+Whitefoot keeps C's simple structure and borrows some of Rust's syntax. A
+program is made of functions, structs, enums and arrays. This function returns
+the next byte of a buffer and advances a cursor:
 
 ```
 struct Cursor {
