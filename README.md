@@ -301,12 +301,14 @@ Safe, fast and small are the core. These are the other things worth knowing.
 
 - **Concurrent I/O without async.** The language has no `async`, `await`,
   futures, callbacks or tasks: files and sockets are ordinary values, and an
-  I/O operation is an ordinary call. The compiled program submits I/O through
-  a completion runtime (io_uring on Linux, I/O completion ports on Windows),
-  and independent calls in plain sequential code are issued together, so
-  code is never split into synchronous and asynchronous kinds. The `reads`
-  and `writes` rows that let computation run in parallel decide which I/O
-  calls may overlap. Serving many connections at once is being designed.
+  I/O operation is an ordinary call, so code is never split into synchronous
+  and asynchronous kinds. The compiled program carries out I/O through a
+  completion runtime (io_uring on Linux, I/O completion ports on Windows).
+  The `reads` and `writes` rows that let computation run in parallel also
+  decide which I/O calls may overlap. Today the overlap comes from `--par`,
+  which can run two independent calls on two workers, I/O included; the
+  default build issues I/O one call at a time. Serving many connections at
+  once is being designed.
 
 ### Planned
 
