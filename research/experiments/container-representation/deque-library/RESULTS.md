@@ -1171,3 +1171,19 @@ Any acceptance failure, unchanged optimized shape, extra transfer, or useful
 cell regression rejects the diagnostic. This is an investigation of a possible
 effect-row correction; it does not select a specification amendment or change
 the production branch.
+
+The follow-up was rejected before IR generation. The prelude declaration is
+generic over `W`, so the requested field paths are not admitted by the prefix
+type:
+
+```text
+<prelude>/place_front.wf:1:67: compiler failure in Semantics: InvalidEffectRow
+  source: fn place_front<W, T>(window: &W, value: T) -> result: unit writes(window.head), writes(window.next), writes(window.len) contract {
+  marker:                                                                   ^^^^^^^^^^^
+  reason: each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type
+  mechanical_fix: select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents
+```
+
+This is a generic effect-row typing restriction, not a timing result. The
+scratch prelude, wrapper and module changes were restored; no candidate binary,
+matrix or production change was retained.
