@@ -142,14 +142,21 @@ of seven runs each
 results](sequential-code-parallel-results.md) follows the compiler from the
 rows to the parallel code.
 
-## 5. Independent I/O is issued together
+## 5. Independent I/O
 
-The same rows decide which I/O calls may overlap. A program's I/O calls are
-ordinary calls in sequential code, and the compiled program issues
-independent ones together through a completion runtime (io_uring on Linux,
-I/O completion ports on Windows). `--no-overlap` turns this off, to measure
-it. This part is still in progress; the
-[README](../../README.md#in-progress) describes where it stands.
+I/O calls are ordinary calls, and the same rows decide which of them are
+independent. Under `--par`, two independent calls of functions that do I/O
+can run on two workers, so their I/O overlaps. The default build issues I/O
+one call at a time.
+
+Two things limit this today. Two I/O calls written one after the other in
+the same function are not handed to workers, even where the judgment
+permits the pair. And every call that opens or closes a handle, and every
+read or write of a file or a standard stream, writes the one handle factory
+a program receives, so no two of those are independent; sending and
+receiving on two different connections are. Concurrent I/O is still in
+progress, and the [README](../../README.md#in-progress) describes where it
+stands.
 
 ## 6. What is not used yet
 
