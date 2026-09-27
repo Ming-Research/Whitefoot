@@ -2556,6 +2556,23 @@ large contributor, but this candidate neither wins the required cells nor
 preserves the full target matrix as a production policy. It is rejected for
 selection; the remaining call/setup/placement and close-cell work stays open.
 
+### Next discriminator: counted consumer with wide tail and truncate `alwaysinline`
+
+The next diagnostic is preregistered before construction. Start from the
+counted-consumer plus wide tail-only `alwaysinline` image just measured, and
+add `alwaysinline` only to the wide
+`wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd`
+definition. Keep the source, callbacks, allocation policy, scalar definitions,
+native inputs and counted loop fixed. The code criterion is that the tail's
+truncate call disappears while the same final length store remains, the wide
+work frame does not grow beyond `0x250`, and no 256B owner snapshot, spill or
+new append/helper boundary appears. A failure stops without timing. If it
+passes, rerun the full correctness/accounting pair and one complete 4,116-row
+pair. This is a narrower follow-up to the earlier late-inlining diagnostic:
+it uses the actual forward counted image and exposes only the remaining wide
+truncate boundary. Any timing result combines call/setup/placement effects and
+does not select a general always-inline rule.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
