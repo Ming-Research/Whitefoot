@@ -1550,6 +1550,16 @@ rarely insert at the same place.
   is next changed, requiring both adapter-only inclusion and ordinary-code
   exclusion to be observed.
 
+- **A newer clippy rejects two expressions the hosted gate accepts.**
+  `compiler/rust-toolchain.toml` follows `stable`, and clippy 1.94 reports
+  `nonminimal_bool` at `compiler/src/resolution/engine/lookup.rs:467` and
+  `compiler/src/semantic/check/nominal_instances.rs:1853` on `main` itself,
+  while the hosted `static` job passes. When the hosted stable reaches that
+  lint, `make -C compiler lint` fails on every branch at once. Rewrite the two
+  conditions in the form clippy suggests, or pin the toolchain to a named
+  release; reopen with the next edit of either file or the first hosted run
+  that reports the lint.
+
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
