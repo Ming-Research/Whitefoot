@@ -2509,8 +2509,12 @@ candidate timed objects are byte-identical
 (`7e9667d18069e0e196b98d2cce6f070f1e5b11a3d8ce6f69cfb3a3175e7b9278`); the
 accounting objects are also byte-identical
 (`89a078ac2aad2d324d540286b87c1501329f2dad914a7db1fb14a7fa4377831b`). The
-linked executable disassemblies differ only in their path header, and the
-wide call remains at the same site. Thus no new frame, payload snapshot,
+linked timed images are byte-identical
+(`7bc4c7fff9c9af06e281dcc65d8cb3842cd96bf0770619e5b3c4e6c5ab65f5d2`), as are
+the accounting images (`26f22ccd09b5eb047fb301e6e61de82700227f8665bead7ad1512bea00ae22ca`).
+The disassemblies differ only in their path header: the wide trace still calls
+the tail at `0x10000c0b8`, whose separate definition remains at `0x10000c7dc`.
+Thus no new frame, payload snapshot,
 spill/reload or per-owner transfer was introduced, but there is also no
 exposure of the boundary to measure. The candidate is rejected without a
 4,116-row timing pair; the call/placement package remains unresolved and this
