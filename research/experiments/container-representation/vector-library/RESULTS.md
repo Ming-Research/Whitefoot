@@ -2592,6 +2592,28 @@ growth at population 16 and scalar suffix-two at populations 16, 256 and
 the per-cell target and is rejected as a production policy; scalar
 reserved-append and suffix-two costs remain open.
 
+### Next discriminator: scalar reserved append without the capacity branch
+
+The remaining strict deficits are scalar growth at population 16 and scalar
+suffix-two at 16, 256 and 4096. The next diagnostic is preregistered before
+construction from the completed tail-plus-truncate image. In the scalar
+`wf_vector_library_tail_work$instance$8f6b633c945d12a3` body only, replace the
+inlined `grow_vector_append` call with its direct slot store and length
+increment, removing that call's capacity/grow-full branch. The only caller is
+`vector_library_trace`, which reserves `count + 1` before entering this tail;
+the direct replacement is therefore a frozen benchmark witness for the
+reserved-append cost, not a general unchecked API.
+
+The code criterion is: the scalar tail contains no append/grow-full call or
+capacity branch; scalar work/round and every wide body retain normalized code
+identity; no new transfer, snapshot, spill or frame growth appears. A failure
+stops without timing. If it passes, run both correctness/accounting images and
+one complete 4,116-row pair. Accounting must remain byte-identical and every
+checksum/cleanup fault must retain its verdict. Any scalar or wide useful-cell
+regression rejects the diagnostic. This measures the cost of carrying a
+proven spare-capacity fact across the helper boundary; it does not authorize
+an unchecked public operation or a production policy by itself.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
