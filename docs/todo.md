@@ -25,16 +25,6 @@ rarely insert at the same place.
   from the modular conversion operation, which adds no proof family; reopen
   when a real caller needs this named-value form.
 
-- **Select the modular conversion companion.** The
-  [conversion comparison](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  recommends integer-only `cvt.wrap` for direct low-bit extraction and modular
-  signedness conversion. It is deferred from the exact conversion family
-  because it selects an additional result policy. Validate all integer
-  width/sign classes, especially negative signed inputs widened to unsigned
-  destinations, and ensure changed values publish no exact input equality.
-  Reopen when the owner selects this companion for implementation; remove
-  after its selected rules and ordinary-path evidence land.
-
 - **Select direct rounded/saturated float conversion policies.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
   identifies missing direct rounded-to-float semantics and cumbersome total
