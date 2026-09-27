@@ -2,15 +2,16 @@
 # Repository artifacts are in English (AGENTS.md). This rejects Han
 # characters, the script of Chinese writing, in the names and the text of
 # tracked files outside archive/, which is frozen and keeps its historical
-# text. Text is what `git grep -I` reads, so a file git treats as binary is
+# text, and outside README.zh-CN.md, the owner's Chinese translation of the
+# README. Text is what `git grep -I` reads, so a file git treats as binary is
 # skipped. A line that is not valid UTF-8 is read as bytes and never matches.
 # The match is the Script property, `\p{Script=Han}`: the short `\p{Han}`
 # means Script_Extensions, which in older Unicode versions, such as macOS's
 # perl, also covers shared punctuation like the middle dot U+00B7.
 # `--self-test` builds a throwaway repository and requires the scan to reject
 # a Han file name, a Han line and a Han line after an invalid one, and to
-# accept English text with a middle dot, a binary file holding Han bytes and
-# Han under archive/.
+# accept English text with a middle dot, a binary file holding Han bytes, Han
+# under archive/ and the Chinese README.
 use strict;
 use warnings;
 use File::Temp qw(tempdir);
@@ -51,7 +52,7 @@ sub first_han_line {
 }
 
 sub scan {
-    my @outside_archive = ('--', '.', ':(exclude)archive');
+    my @outside_archive = ('--', '.', ':(exclude)archive', ':(exclude)README.zh-CN.md');
     my @findings;
     my @names = git_paths('ls-files', '-z', @outside_archive);
     die "check-english: git ls-files listed no files\n" unless @names;
@@ -78,6 +79,7 @@ sub self_test {
         "archive/$han.md"     => "$han\n",
         'notes.md'            => "first\n$han\n",
         'invalid.md'          => "\xff\n$han\n",
+        'README.zh-CN.md'     => "$han\n",
         "$han.md"             => "English under a Han name\n",
     );
     delete @ENV{qw(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE)};

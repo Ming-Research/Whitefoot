@@ -29,7 +29,7 @@ CITING = ["AGENTS.md", CHECKLIST, MAP, DESIGN_SKILL,
           ".github/pull_request_template.md"]
 # Entry documents whose backticked repository paths must exist. The design-tree
 # skill is excluded: it names its roles generically for reuse in any project.
-PATHS = ["AGENTS.md", "README.md", CHECKLIST, MAP,
+PATHS = ["AGENTS.md", "README.md", "README.zh-CN.md", CHECKLIST, MAP,
          ".github/pull_request_template.md"]
 # Paths that exist only in some states of the tree.
 TRANSIENT = {"design/amendments/"}

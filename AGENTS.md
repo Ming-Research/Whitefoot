@@ -256,7 +256,10 @@ not a reason to pause on every file.
   gates. Prefer a clear map, a good name and a stated purpose over relocation.
 - No active source, build, test, or tool may depend on `archive/`.
 - New and modified repository artifacts, identifiers, comments, diagnostics,
-  fixtures, test names, and file names use English.
+  fixtures, test names, and file names use English. The one exception is
+  `README.zh-CN.md`, the owner's Chinese translation of `README.md`: a change
+  to either file changes the other in the same change, and `make static`
+  refuses a branch that changes only one.
 
 ## Compiler rules
 
