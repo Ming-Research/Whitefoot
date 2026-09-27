@@ -15,7 +15,6 @@ use crate::semantic::check::{DeclarationInventory, TypeContext};
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
-use crate::syntax::terminal::FixedTerminal;
 use crate::{
     DeclarationClass, DeclarationId, DeferredUseRole, LexicalUseRole, Production, ResolvedTarget,
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
@@ -252,7 +251,9 @@ impl<'unit> Checker<'_, 'unit> {
                 if self
                     .types
                     .declarations
-                    .has_fixed(pbase, FixedTerminal::Deref)?
+                    .tree
+                    .place_base(pbase)?
+                    .is_dereference()
                 {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
@@ -376,13 +377,15 @@ impl<'unit> Checker<'_, 'unit> {
         let place = if self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
         {
             let inner = self
                 .types
                 .declarations
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             let inner = self.elaborate_value_place(check_context, carrier, inner, bindings)?;
             self.resolve_explicit_dereference(carrier, pbase, inner, bindings)?
@@ -489,7 +492,13 @@ impl<'unit> Checker<'_, 'unit> {
             // A subscript selects a composite element value, which this
             // version does not implement for explicit deref chains; the
             // indexed path in `flat_storage` owns [OP-4].
-            if self.types.declarations.subscript_offset(suffix)?.is_some() {
+            if self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(suffix)?
+                .is_some()
+            {
                 return self
                     .types
                     .declarations
@@ -706,7 +715,7 @@ impl<'unit> TypeContext<'unit> {
         suffix: NodeId,
         ty: CheckedType,
     ) -> Result<PlaceMember, CheckStop> {
-        if self.declarations.subscript_offset(suffix)?.is_some() {
+        if self.declarations.tree.subscript_offset(suffix)?.is_some() {
             return self
                 .declarations
                 .unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
@@ -1072,7 +1081,7 @@ impl<'unit> TypeContext<'unit> {
         mut ty: CheckedType,
     ) -> Result<bool, CheckStop> {
         for (position, &suffix) in suffixes.iter().enumerate() {
-            if self.declarations.subscript_offset(suffix)?.is_some() {
+            if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 return Ok(false);
             }
             if let CheckedType::Nominal(nominal) = ty
@@ -1441,7 +1450,7 @@ impl<'unit> TypeContext<'unit> {
         mut ty: CheckedType,
     ) -> Result<(), CheckStop> {
         for &suffix in suffixes {
-            if self.declarations.subscript_offset(suffix)?.is_some() {
+            if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [MSR-2] a write at an element position reaches that
                 // element's own storage; the offset carries no member name.
                 ty = match ty {
@@ -1513,14 +1522,13 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(&last) = suffixes.last() else {
             return Ok(None);
         };
-        if self.subscript_offset(last)?.is_some() {
+        let crate::syntax::views::PlaceSuffix::Member(member) = self.tree.place_suffix(last)?
+        else {
             return Ok(None);
-        }
-        let name = self
-            .deferred_use_at(last, DeferredUseRole::ProjectedField)?
-            .spelling()
-            .to_owned();
-        Ok(super::super::types::measure_named(&name))
+        };
+        let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
+            .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
+        Ok(super::super::types::measure_named(name))
     }
     /// The value one index step or range endpoint captured, as the source
     /// names it [REF-1]: an [OP-4] offset is a `u64`, so a literal carries

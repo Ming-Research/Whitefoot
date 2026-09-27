@@ -2979,7 +2979,11 @@ impl<'unit> TypeContext<'unit> {
                 parameters.extend(self.expand_formal_parameters(check_context, application)?);
                 continue;
             }
-            if self.declarations.has_fixed(node, FixedTerminal::Const)? {
+            if self
+                .declarations
+                .tree
+                .has_fixed(node, FixedTerminal::Const)?
+            {
                 let declaration = self
                     .declarations
                     .declaration_at(node, DeclarationRole::ConstGeneric)?

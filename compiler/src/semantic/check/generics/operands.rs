@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationClass, DeclarationId, FixedTerminal, LexicalUseRole, Production, ResolvedTarget,
+    DeclarationClass, DeclarationId, LexicalUseRole, Production, ResolvedTarget,
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
@@ -484,11 +484,11 @@ impl<'unit> TypeContext<'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         // [TYPE-7] `deref` names the referent of a reference, whose selected
         // type is the type the reference binding already carries [REF-1].
-        let mut ty = if self.declarations.has_fixed(pbase, FixedTerminal::Deref)? {
+        let mut ty = if self.declarations.tree.place_base(pbase)?.is_dereference() {
             let inner = self
                 .declarations
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             match self.place_selected_kind(check_context, inner, bindings)? {
                 Some(selected) => selected,
@@ -531,7 +531,7 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .children_with(place, Production::Psuffix)?
         {
-            if self.declarations.subscript_offset(suffix)?.is_some() {
+            if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [REF-4] a range step selects a `&[T]`, which is a reference
                 // kind and not a type [TYPE-8]; no row here admits one.
                 if self

@@ -66,11 +66,11 @@ impl LedgerSource for PermissionLedgerSource<'_, '_> {
     type Error = SemanticCompilerFailure;
 
     fn location(&self, path: &NodePath) -> Result<(String, u64), Self::Error> {
-        self.tree.source_line(path)
+        Ok(self.tree.source_line(path)?)
     }
 
     fn spelling(&self, path: &NodePath) -> Result<String, Self::Error> {
-        self.tree.path_spelling(path)
+        Ok(self.tree.path_spelling(path)?)
     }
 }
 
@@ -746,15 +746,13 @@ impl<'unit> DeclarationInventory<'unit> {
         // A source-only parse is useful to tools but is not a complete compiler input.
         if !resolved
             .syntax()
-            .finalized
-            .parsed
-            .classified
+            .classified_bundle()
             .source_bundle()
             .includes_prelude()
         {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        let tree = TreeView::new(resolved)?;
+        let tree = TreeView::new(resolved.syntax())?;
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
@@ -3664,7 +3662,9 @@ impl<'unit> TypeContext<'unit> {
         };
         let field_node = field_node.ok_or(SemanticCompilerFailure::InvalidResolution)?;
         self.declarations
+            .tree
             .has_fixed(field_node, crate::FixedTerminal::Public)
+            .map_err(Into::into)
     }
     /// [MOD-5] refuses a field selection, binding or construction written in
     /// a module other than the field's declaring module when that module

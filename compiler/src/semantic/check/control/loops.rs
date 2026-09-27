@@ -1267,7 +1267,7 @@ impl<'unit> DeclarationInventory<'unit> {
     }
     fn counted_endpoint_place_is_term(&self, place: NodeId) -> Result<bool, CheckStop> {
         for suffix in self.tree.children_with(place, Production::Psuffix)? {
-            if self.subscript_offset(suffix)?.is_some() {
+            if self.tree.subscript_offset(suffix)?.is_some() {
                 return Ok(false);
             }
         }
@@ -1275,7 +1275,7 @@ impl<'unit> DeclarationInventory<'unit> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(inner) = self.tree.first_child_with(pbase, Production::Place)? else {
+        let Some(inner) = self.tree.dereferenced_place(pbase)? else {
             return Ok(true);
         };
         self.counted_endpoint_place_is_term(inner)

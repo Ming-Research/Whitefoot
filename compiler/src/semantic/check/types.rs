@@ -171,6 +171,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::Unit)?
         {
             if targs.is_some() {
@@ -185,6 +186,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::F32)?
         {
             return Ok(CheckedType::Float(FloatType::F32));
@@ -192,6 +194,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::F64)?
         {
             return Ok(CheckedType::Float(FloatType::F64));
@@ -837,6 +840,7 @@ impl<'unit> Checker<'_, 'unit> {
         if !self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::LeftBracket)?
         {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -1187,7 +1191,7 @@ impl<'unit> DeclarationInventory<'unit> {
             (FixedTerminal::U64, IntegerType::U64),
         ];
         for (terminal, ty) in fixed {
-            if self.has_fixed(node, terminal)? {
+            if self.tree.has_fixed(node, terminal)? {
                 return Ok(Some(ty));
             }
         }
@@ -1511,7 +1515,11 @@ impl<'unit> TypeContext<'unit> {
         node: NodeId,
         parameters: &[ParameterSignature],
     ) -> Result<EffectSet, CheckStop> {
-        if self.declarations.has_fixed(node, FixedTerminal::Pure)? {
+        if self
+            .declarations
+            .tree
+            .has_fixed(node, FixedTerminal::Pure)?
+        {
             return Ok(EffectSet::NONE);
         }
         let effects = self
@@ -1525,9 +1533,17 @@ impl<'unit> TypeContext<'unit> {
         // for the subsumption judgment once the whole row is read.
         let mut entries = Vec::new();
         for effect in effects {
-            let ordinal = if self.declarations.has_fixed(effect, FixedTerminal::Reads)? {
+            let ordinal = if self
+                .declarations
+                .tree
+                .has_fixed(effect, FixedTerminal::Reads)?
+            {
                 0_usize
-            } else if self.declarations.has_fixed(effect, FixedTerminal::Writes)? {
+            } else if self
+                .declarations
+                .tree
+                .has_fixed(effect, FixedTerminal::Writes)?
+            {
                 1
             } else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -1671,6 +1687,7 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(CheckedEffectStep, SelectedPlaceType), CheckStop> {
         if self
             .declarations
+            .tree
             .has_fixed(suffix, FixedTerminal::LeftBracket)?
         {
             return self.effect_index_step(suffix, selected, parameters);

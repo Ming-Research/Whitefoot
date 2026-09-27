@@ -1416,17 +1416,9 @@ impl<'unit> TypeContext<'unit> {
                         .tree
                         .first_child_with(argument, Production::Const)?;
                     let declaration = match value {
-                        Some(value)
-                            if self
-                                .declarations
-                                .tree
-                                .topology()
-                                .node(value)
-                                .is_some_and(|record| record.terminal_count == 1) =>
-                        {
-                            self.declarations
-                                .optional_declaration_at(value, DeclarationRole::ConstGeneric)?
-                        }
+                        Some(value) if self.declarations.tree.is_single_token(value) => self
+                            .declarations
+                            .optional_declaration_at(value, DeclarationRole::ConstGeneric)?,
                         _ => None,
                     };
                     let Some(declaration) = declaration else {
@@ -1557,13 +1549,7 @@ impl<'unit> TypeContext<'unit> {
                     .tree
                     .first_child_with(argument, Production::Const)?
                 {
-                    if !self
-                        .declarations
-                        .tree
-                        .topology()
-                        .node(value)
-                        .is_some_and(|record| record.terminal_count == 1)
-                    {
+                    if !self.declarations.tree.is_single_token(value) {
                         return self.declarations.behavior_mismatch(
                             SemanticRule::Fn3,
                             node,

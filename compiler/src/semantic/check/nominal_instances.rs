@@ -1172,9 +1172,7 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(self
             .resolved
             .syntax()
-            .finalized
-            .parsed
-            .classified
+            .classified_bundle()
             .source_bundle()
             .file(source)
             .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
@@ -1192,16 +1190,8 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         nested = uses;
         nested.sort_by(|left, right| {
-            let left_depth = self
-                .tree
-                .topology()
-                .node(*left)
-                .map(|record| record.tree_depth);
-            let right_depth = self
-                .tree
-                .topology()
-                .node(*right)
-                .map(|record| record.tree_depth);
+            let left_depth = self.tree.depth(*left);
+            let right_depth = self.tree.depth(*right);
             right_depth
                 .cmp(&left_depth)
                 .then(left.index().cmp(&right.index()))

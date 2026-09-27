@@ -1242,7 +1242,7 @@ impl<'unit> DeclarationInventory<'unit> {
             .tree
             .descendants_with(function.node, Production::Pbase)?
         {
-            if !self.has_fixed(base, FixedTerminal::Entry)? {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
                 continue;
             }
             // A function-kind formal's own contract names that formal's

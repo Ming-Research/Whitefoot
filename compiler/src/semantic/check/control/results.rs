@@ -251,6 +251,7 @@ impl<'unit> Checker<'_, 'unit> {
         let rest = self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::DotDot)?;
         if !rest && binders.len() != fields.len() {
             return self
@@ -750,9 +751,9 @@ impl<'unit> DeclarationInventory<'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let mut element = false;
         for suffix in self.tree.children_with(place, Production::Psuffix)? {
-            element |= self.subscript_offset(suffix)?.is_some();
+            element |= self.tree.subscript_offset(suffix)?.is_some();
         }
-        if self.has_fixed(pbase, FixedTerminal::Deref)? {
+        if self.tree.place_base(pbase)?.is_dereference() {
             return Ok(ConsumedPlace {
                 owned: false,
                 spelling,
@@ -826,7 +827,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(false);
         };
-        self.has_fixed(pbase, crate::FixedTerminal::Deref)
+        Ok(self.tree.place_base(pbase)?.is_dereference())
     }
     fn invalid_propagation<ResultValue>(&self, node: NodeId) -> Result<ResultValue, CheckStop> {
         self.issue_node(

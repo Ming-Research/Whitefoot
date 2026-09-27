@@ -617,6 +617,7 @@ impl<'unit> Checker<'_, 'unit> {
         let rest = self
             .types
             .declarations
+            .tree
             .has_fixed(arm, FixedTerminal::DotDot)?;
         let mut binders = Vec::with_capacity(written.len());
         let mut covered = Vec::new();
@@ -845,7 +846,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(ScrutineeSpelling::Other);
         };
-        Ok(if self.has_fixed(pbase, crate::FixedTerminal::Deref)? {
+        Ok(if self.tree.place_base(pbase)?.is_dereference() {
             ScrutineeSpelling::Dereferenced
         } else {
             ScrutineeSpelling::Other

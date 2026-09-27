@@ -1395,93 +1395,92 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let (mut expression, holder_pending) = if self
-            .declarations
-            .has_fixed(pbase, crate::FixedTerminal::Deref)?
-        {
-            let nested = self
-                .declarations
-                .tree
-                .first_child_with(pbase, Production::Place)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let (nested, nested_holder_pending) =
-                self.call_goal_place_inner(check_context, nested, bindings)?;
-            if nested_holder_pending {
-                (nested, false)
+        let (mut expression, holder_pending) =
+            if self.declarations.tree.place_base(pbase)?.is_dereference() {
+                let nested = self
+                    .declarations
+                    .tree
+                    .dereferenced_place(pbase)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                let (nested, nested_holder_pending) =
+                    self.call_goal_place_inner(check_context, nested, bindings)?;
+                if nested_holder_pending {
+                    (nested, false)
+                } else {
+                    let CheckedType::Nominal(nominal) = nested.ty() else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
+                    else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    (
+                        nested
+                            .with_projection(GoalProjection::Deref, referent)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        false,
+                    )
+                }
             } else {
-                let CheckedType::Nominal(nominal) = nested.ty() else {
+                let usage =
+                    self.declarations
+                        .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+                let ResolvedTarget::Source { declaration, class } = usage.target() else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
-                let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                (
-                    nested
-                        .with_projection(GoalProjection::Deref, referent)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                    false,
-                )
-            }
-        } else {
-            let usage =
-                self.declarations
-                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
-            let ResolvedTarget::Source { declaration, class } = usage.target() else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            match class {
-                DeclarationClass::Value => {
-                    let local = bindings
-                        .get(&declaration)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if let Some(reference) = &local.reference {
-                        (
-                            match reference.paths.as_slice() {
-                                [path] if !path.has_descendant() => {
-                                    self.goal_referent_image(path, local.ty, place)?
-                                }
-                                // [REF-1] a joined reference still denotes
-                                // one selected referent, but no member of its
-                                // possible-target set is its unconditional
-                                // value. Keep the reference's identity so
-                                // proof kills can resolve every candidate.
-                                _ => GoalExpression::Datum(GoalDatum::Place {
+                match class {
+                    DeclarationClass::Value => {
+                        let local = bindings
+                            .get(&declaration)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        if let Some(reference) = &local.reference {
+                            (
+                                match reference.paths.as_slice() {
+                                    [path] if !path.has_descendant() => {
+                                        self.goal_referent_image(path, local.ty, place)?
+                                    }
+                                    // [REF-1] a joined reference still denotes
+                                    // one selected referent, but no member of its
+                                    // possible-target set is its unconditional
+                                    // value. Keep the reference's identity so
+                                    // proof kills can resolve every candidate.
+                                    _ => GoalExpression::Datum(GoalDatum::Place {
+                                        root: local.binding,
+                                        projections: Vec::new(),
+                                        ty: local.ty,
+                                    }),
+                                },
+                                true,
+                            )
+                        } else {
+                            (
+                                GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,
                                 }),
-                            },
-                            true,
-                        )
-                    } else {
+                                false,
+                            )
+                        }
+                    }
+                    DeclarationClass::NamedConst => {
+                        let constant = self
+                            .constants
+                            .get(&declaration)
+                            .copied()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                         (
-                            GoalExpression::Datum(GoalDatum::Place {
-                                root: local.binding,
+                            GoalExpression::Datum(GoalDatum::NamedConst {
+                                declaration,
                                 projections: Vec::new(),
-                                ty: local.ty,
+                                ty: self.constant(constant)?.ty,
                             }),
                             false,
                         )
                     }
+                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                 }
-                DeclarationClass::NamedConst => {
-                    let constant = self
-                        .constants
-                        .get(&declaration)
-                        .copied()
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    (
-                        GoalExpression::Datum(GoalDatum::NamedConst {
-                            declaration,
-                            projections: Vec::new(),
-                            ty: self.constant(constant)?.ty,
-                        }),
-                        false,
-                    )
-                }
-                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            }
-        };
+            };
 
         let suffixes = self
             .declarations
@@ -1618,14 +1617,14 @@ impl<'unit> DeclarationInventory<'unit> {
     /// never misidentified as a rereadable place.
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {
         let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        if self.last_subscript(&suffixes)?.is_some() {
+        if self.tree.last_subscript(&suffixes)?.is_some() {
             return Ok(true);
         }
         let pbase = self
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(nested) = self.tree.first_child_with(pbase, Production::Place)? else {
+        let Some(nested) = self.tree.dereferenced_place(pbase)? else {
             return Ok(false);
         };
         self.call_goal_place_contains_subscript(nested)

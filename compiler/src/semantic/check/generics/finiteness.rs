@@ -352,6 +352,7 @@ impl<'unit> TypeContext<'unit> {
                 );
             } else if self
                 .declarations
+                .tree
                 .has_fixed(node, crate::FixedTerminal::Const)?
             {
                 parameters.push((
@@ -471,12 +472,7 @@ impl<'unit> TypeContext<'unit> {
                     .tree
                     .first_child_with(argument, Production::Const)?
                 {
-                    if self
-                        .declarations
-                        .tree
-                        .topology()
-                        .node(value)
-                        .is_some_and(|node| node.terminal_count == 1)
+                    if self.declarations.tree.is_single_token(value)
                         && !self.declarations.tree.direct_identifiers(value)?.is_empty()
                         && let ResolvedTarget::Source {
                             declaration,

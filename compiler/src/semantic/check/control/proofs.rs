@@ -540,6 +540,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
+            .tree
             .has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)?
         {
             return self.types.declarations.invalid_affine_proof(
@@ -569,6 +570,7 @@ impl<'unit> Checker<'_, 'unit> {
         let dereferenced = self
             .types
             .declarations
+            .tree
             .has_fixed(pbase, crate::syntax::terminal::FixedTerminal::Deref)?;
         // [INV-1, OP-15] one `place` formed from an admitted measure place by
         // one measure-member `psuffix`. The relation evaluates nothing and

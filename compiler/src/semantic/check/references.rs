@@ -31,9 +31,8 @@ use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationClass, DeclarationId, DeclarationRole, FixedTerminal, LexicalUseRole, Production,
-    ResolvedTarget, SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
-    UnsupportedSemanticFeature,
+    DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production, ResolvedTarget,
+    SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
 use super::super::model::{
@@ -776,13 +775,15 @@ impl<'unit> Checker<'_, 'unit> {
         let written_deref = self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?;
+            .tree
+            .place_base(pbase)?
+            .is_dereference();
         let pbase = if written_deref {
             let inner = self
                 .types
                 .declarations
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             if !self
                 .types
@@ -889,7 +890,12 @@ impl<'unit> Checker<'_, 'unit> {
         // resolved here rather than by the ordinary storage walk, and it is
         // the last written `psuffix`: a range reference is not storage
         // [TYPE-8], so nothing below it is written.
-        if let Some(position) = self.types.declarations.range_suffix_position(&suffixes)? {
+        if let Some(position) = self
+            .types
+            .declarations
+            .tree
+            .range_suffix_position(&suffixes)?
+        {
             if position + 1 != suffixes.len() {
                 return self
                     .types
@@ -919,7 +925,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .as_ref()
                 .is_some_and(|local| local.mode == CheckedMode::Range)
             && let Some(first) = suffixes.first()
-            && let Some(offset_node) = self.types.declarations.subscript_offset(*first)?
+            && let Some(offset_node) = self.types.declarations.tree.subscript_offset(*first)?
         {
             let local = root_binding
                 .as_ref()
@@ -1060,23 +1066,13 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
-        let start_node = self
-            .types
-            .declarations
-            .subscript_offset(suffix)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let tail = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(suffix, Production::RangeTail)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let end_node = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(tail, Production::Atom)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let crate::syntax::views::PlaceSuffix::Range {
+            start: start_node,
+            end: end_node,
+        } = self.types.declarations.tree.place_suffix(suffix)?
+        else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
         // [REF-4] re-slicing: the base is the run another range names, whose
         // element type the `deref` already selected [TYPE-7].
         let range_base =
@@ -1465,10 +1461,13 @@ impl<'unit> DeclarationInventory<'unit> {
     /// [GRAM-3] the parameter kind follows its written prefix, independently
     /// of type substitution: `T`, `&T`, or `&[T]`.
     pub(super) fn parse_parameter_mode(&self, node: NodeId) -> Result<CheckedMode, CheckStop> {
-        if !self.has_fixed(node, crate::FixedTerminal::Ampersand)? {
+        if !self.tree.has_fixed(node, crate::FixedTerminal::Ampersand)? {
             return Ok(CheckedMode::Own);
         }
-        if self.has_fixed(node, crate::FixedTerminal::LeftBracket)? {
+        if self
+            .tree
+            .has_fixed(node, crate::FixedTerminal::LeftBracket)?
+        {
             return Ok(CheckedMode::Range);
         }
         Ok(CheckedMode::Reference)
@@ -1490,20 +1489,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 mechanical_fix: REF3_RETURN_AN_INDEX,
             },
         )
-    }
-    /// The position of the one `psuffix` written as a range step, if any
-    /// [GRAM-5, REF-4].
-    fn range_suffix_position(&self, suffixes: &[NodeId]) -> Result<Option<usize>, CheckStop> {
-        for (position, &suffix) in suffixes.iter().enumerate() {
-            if self
-                .tree
-                .first_child_with(suffix, Production::RangeTail)?
-                .is_some()
-            {
-                return Ok(Some(position));
-            }
-        }
-        Ok(None)
     }
 }
 

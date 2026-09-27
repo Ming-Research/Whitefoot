@@ -513,7 +513,16 @@ and applied (`design/log.md`, 2026-09-25).
 4. **A typed syntax access layer** used by resolution, the checker, the graph
    reader and the driver, with alternatives normalized once. Cost: large,
    migrated file by file. Tree: `design/compiler/typed-syntax-access.md`
-   (owner-approved; implementation pending).
+   (owner-approved). Implemented in `compiler/src/syntax/views.rs`: the
+   former semantic grammar helpers now borrow canonical syntax directly;
+   conditionals, member/payload selections, place bases and ranges, module
+   rows and entries, item names and documentation extents have shared views.
+   Resolution and checking share conditional and member alternatives; graph
+   reading and driver fingerprints no longer build their own direct-token
+   indexes. Semantic and graph errors are mapped at their stage boundaries.
+   Generic traversal still selects the judgments a stage owns; it does not
+   decode these alternatives again. The syntax view does not expose raw
+   topology to semantic, graph or driver consumers.
 
 ### P4. Lowering and backend
 
@@ -607,7 +616,8 @@ incremental, the five workflows that build it set `CARGO_INCREMENTAL=0`, and
 
 P2.3, P3.4 and P4.2 have owner-approved decisions under `design/compiler/`,
 described in [Approved architectural decisions](#approved-architectural-decisions).
-Their implementation follows P2.2's shared place formation on this branch.
+P3.4's shared views follow P2.2's shared place formation on this branch;
+P2.3 and P4.2 implementation remains pending.
 P4.1 still needs an amendment when its experiment is selected.
 `docs/todo.md` tracks every remaining proposal under its topic.
 
@@ -680,16 +690,19 @@ symbolic-only inventory growth does not reach executable output.
 ### P3.4: typed syntax access
 
 `design/compiler/typed-syntax-access.md` records the approved views. The
-current `semantic/tree.rs` already offers some grammar-aware helpers, but
-resolution and other consumers still decode the same alternatives locally;
-the if/else split in `resolution/scopes.rs` and `semantic/tree.rs` is one
-concrete example. Move that responsibility into shared typed syntax views,
-preserving the parser's node identities, source extents and owned storage.
-Resolution, semantic checking, module-graph reading and driver reads migrate
-one form at a time; raw topology remains an implementation detail of syntax.
-Views normalize grammar alternatives but do not resolve names, infer types
-or change diagnostic authority. Parser tables still derive from the active
-specification under `compiler/build-inputs`.
+implementation moves the existing grammar-aware helper layer from
+`semantic/tree.rs` to `syntax/views.rs`, borrowing `CanonicalSyntaxUnit` and
+retaining its nodes, terminal indexes, source extents and owned storage.
+`semantic/tree.rs` only maps the shared view failure into the semantic stage's
+existing compiler failure. Resolution and checking consume one conditional
+block decoder and one member/payload-name form; place suffixes preserve index
+and range alternatives, and place bases preserve explicit dereference. The
+graph reader consumes module-path, row and entry forms. Driver fingerprinting
+consumes item/name and documentation-range views, retaining its own choice of
+which source text contributes to a fingerprint. The old graph and driver
+terminal-owner indexes are removed. No semantic judgment moved into syntax.
+Parser tables still derive from the active specification under
+`compiler/build-inputs`.
 
 The benefit is one grammar interpretation for every migrated form. Cost is
 large across consumers; the risk is losing distinctions or source positions

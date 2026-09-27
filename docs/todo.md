@@ -1465,18 +1465,16 @@ rarely insert at the same place.
   corpus and module graphs plus `make check`. Reopen for the P2.3
   implementation; close when its inventory and views are implemented.
 
-- **The checker reads raw syntax.** The checker components still inspect
-  `TreeView` children and match `Production` to learn which alternative was
-  written, and the if/else split is
-  decoded from brace offsets in both `compiler/src/resolution/scopes.rs` and
-  `compiler/src/semantic/tree.rs`. The checker no longer scans resolution
-  records: resolution indexes them by owner node and the checker reads them
-  by node (the
-  [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p3-identity-and-ownership)'s P3.1).
-  A typed syntax access layer (P3.4, now owner-approved) confines each
-  grammar amendment to one place. Validate with identical verdicts,
-  diagnostics and LLVM on the corpus and the module graphs. Reopen with the
-  next grammar amendment.
+- **Syntax views eagerly build the node-path index.** The shared view now
+  serves the graph reader and interface fingerprinting as well as checking;
+  those first two consumers use tokens and extents but never node paths.
+  Constructing their unused path vectors and sorted lookup index adds work
+  whose practical cost is unmeasured. Consider constructing that index on its
+  first path query within the same borrowed view. This adds lazy cache state
+  and is deferred because no current measurement identifies view setup as a
+  blocker. Reopen with the next module-reading performance investigation;
+  require unchanged paths, extents and fingerprints, and measure whether the
+  saved setup work matters before changing the cache policy.
 
 ## Open language questions
 

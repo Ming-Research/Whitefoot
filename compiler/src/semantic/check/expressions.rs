@@ -187,7 +187,9 @@ impl<'unit> Checker<'_, 'unit> {
         if !self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
             && self.types.declarations.tree.children(pbase)?.is_empty()
         {
             let usage =
@@ -240,7 +242,9 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
         {
             return self.check_dereferenced_set_target(context, node, bindings);
         }
@@ -797,6 +801,7 @@ impl<'unit> Checker<'_, 'unit> {
                     explicit_move: self
                         .types
                         .declarations
+                        .tree
                         .has_fixed(node, FixedTerminal::Move)?,
                     context: place_context,
                     loop_depth,
@@ -842,7 +847,9 @@ impl<'unit> Checker<'_, 'unit> {
             && !self
                 .types
                 .declarations
-                .has_fixed(pbase, FixedTerminal::Deref)?
+                .tree
+                .place_base(pbase)?
+                .is_dereference()
             && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {
                 declaration,
@@ -895,7 +902,9 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
             || self
                 .types
                 .declarations
@@ -1895,7 +1904,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(None);
         };
-        if self.has_fixed(pbase, FixedTerminal::Deref)? || !self.tree.children(pbase)?.is_empty() {
+        if self.tree.place_base(pbase)?.is_dereference() || !self.tree.children(pbase)?.is_empty() {
             return Ok(None);
         }
         let usage = self.use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;

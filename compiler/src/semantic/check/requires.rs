@@ -634,7 +634,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(None);
         };
-        if self.has_fixed(pbase, FixedTerminal::Deref)? {
+        if self.tree.place_base(pbase)?.is_dereference() {
             return Ok(None);
         }
         let usage = self.use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
@@ -859,7 +859,7 @@ impl<'unit> DeclarationInventory<'unit> {
         entry: NodeId,
         atom: NodeId,
     ) -> Result<(), CheckStop> {
-        if self.has_fixed(atom, FixedTerminal::Move)?
+        if self.tree.has_fixed(atom, FixedTerminal::Move)?
             || self
                 .tree
                 .first_child_with(atom, Production::BorrowExpr)?
@@ -898,14 +898,14 @@ impl<'unit> DeclarationInventory<'unit> {
         // declaration once the place is typed [`validate_clause_checked_forms`].
         let suffixes = self.tree.children_with(place, Production::Psuffix)?;
         for (position, &suffix) in suffixes.iter().enumerate() {
-            if self.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
+            if self.tree.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
                 return self.invalid_clause(clause, entry);
             }
         }
-        if self.has_fixed(pbase, FixedTerminal::Deref)? {
+        if self.tree.place_base(pbase)?.is_dereference() {
             let nested = self
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             self.validate_clause_place(clause, entry, nested)?;
         }
@@ -1648,7 +1648,7 @@ impl<'unit> TypeContext<'unit> {
             // `table[i].len` and `nodes[i].count` terms. A clause reads that place exactly as the
             // body does, so a subscript written here is one projection and not
             // a composite value this version cannot represent.
-            if self.declarations.subscript_offset(*suffix)?.is_some() {
+            if self.declarations.tree.subscript_offset(*suffix)?.is_some() {
                 let (projection, element) = self.clause_subscript_projection(
                     check_context,
                     *suffix,
@@ -1733,6 +1733,7 @@ impl<'unit> TypeContext<'unit> {
         };
         let offset = self
             .declarations
+            .tree
             .subscript_offset(suffix)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let capture = crate::semantic::places::CapturedValue::unknown().capture;
@@ -1880,12 +1881,14 @@ impl<'unit> TypeContext<'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let (mut expression, holder_pending, mut range_referent) = if self
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
         {
             let nested = self
                 .declarations
                 .tree
-                .first_child_with(pbase, Production::Place)?
+                .dereferenced_place(pbase)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             let (nested, nested_holder_pending, nested_range) =
                 self.build_clause_place_inner(check_context, nested, bindings, expanded_bindings)?;
@@ -1942,7 +1945,11 @@ impl<'unit> TypeContext<'unit> {
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             }
         };
-        if self.declarations.has_fixed(pbase, FixedTerminal::Entry)? {
+        if self
+            .declarations
+            .tree
+            .has_fixed(pbase, FixedTerminal::Entry)?
+        {
             let ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 exit_state, ..
             }) = &mut expression

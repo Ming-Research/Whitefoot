@@ -1,9 +1,9 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::DeclarationInventory;
 use crate::syntax::NodeId;
-use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
+use crate::syntax::terminal::TerminalPredicate;
 use crate::{
-    DeclarationRole, DeferredUseRole, DependentDeclarationRole, LexicalUseRole, Production,
+    DeclarationRole, DeferredUseRole, DependentDeclarationRole, LexicalUseRole,
     SemanticCompilerFailure, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticRule,
     SemanticUnsupported, UnsupportedSemanticFeature,
 };
@@ -11,34 +11,6 @@ use crate::{
 use super::CheckStop;
 
 impl<'unit> DeclarationInventory<'unit> {
-    pub(super) fn has_fixed(
-        &self,
-        node: NodeId,
-        terminal: FixedTerminal,
-    ) -> Result<bool, CheckStop> {
-        Ok(self
-            .tree
-            .direct_token_with(node, TerminalPredicate::Fixed(terminal))?
-            .is_some())
-    }
-    /// The offset `atom` of a subscript `psuffix`, or `None` for a field
-    /// suffix: the two [GRAM-5] `psuffix` alternatives differ exactly in
-    /// carrying an offset atom child.
-    pub(super) fn subscript_offset(&self, suffix: NodeId) -> Result<Option<NodeId>, CheckStop> {
-        Ok(self.tree.first_child_with(suffix, Production::Atom)?)
-    }
-    /// Position of the last subscript `psuffix` in one place's suffix chain,
-    /// if any. The place reads or writes through that subscript; the chain
-    /// before it is the subscript's base place [OP-4].
-    pub(super) fn last_subscript(&self, suffixes: &[NodeId]) -> Result<Option<usize>, CheckStop> {
-        let mut last = None;
-        for (position, suffix) in suffixes.iter().enumerate() {
-            if self.subscript_offset(*suffix)?.is_some() {
-                last = Some(position);
-            }
-        }
-        Ok(last)
-    }
     pub(super) fn identifier(&self, node: NodeId) -> Result<String, CheckStop> {
         let terminal = self
             .tree

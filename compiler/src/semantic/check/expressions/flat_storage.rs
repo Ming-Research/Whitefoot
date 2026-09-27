@@ -273,7 +273,7 @@ impl<'unit> Checker<'_, 'unit> {
         suffixes: &[NodeId],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<usize>, CheckStop> {
-        let Some(last) = self.types.declarations.last_subscript(suffixes)? else {
+        let Some(last) = self.types.declarations.tree.last_subscript(suffixes)? else {
             return Ok(None);
         };
         let pbase = self
@@ -285,7 +285,9 @@ impl<'unit> Checker<'_, 'unit> {
         if !self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
         {
             return Ok(Some(last));
         }
@@ -293,7 +295,7 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .tree
-            .first_child_with(pbase, Production::Place)?
+            .dereferenced_place(pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let inner = self.elaborate_value_place(check_context, place, inner, bindings)?;
         let dereferenced = self.resolve_explicit_dereference(place, pbase, inner, bindings)?;
@@ -301,7 +303,13 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(Some(last));
         }
         for (position, suffix) in suffixes.iter().enumerate() {
-            if self.types.declarations.subscript_offset(*suffix)?.is_some() {
+            if self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(*suffix)?
+                .is_some()
+            {
                 return Ok(Some(position));
             }
         }
@@ -467,6 +475,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let offset_node = self
                     .types
                     .declarations
+                    .tree
                     .subscript_offset(anchor)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 let mut probe = bindings.clone();
@@ -844,7 +853,7 @@ impl<'unit> Checker<'_, 'unit> {
         let Some(mut place) = indexed.indexed_base_place() else {
             return Ok(false);
         };
-        let Some(offset_node) = self.types.declarations.subscript_offset(suffix)? else {
+        let Some(offset_node) = self.types.declarations.tree.subscript_offset(suffix)? else {
             return Ok(false);
         };
         let mut probe = bindings.clone();
@@ -990,6 +999,7 @@ impl<'unit> Checker<'_, 'unit> {
         let offset_node = self
             .types
             .declarations
+            .tree
             .subscript_offset(suffix)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let offset = self.check_atom(context, offset_node, bindings, options.loop_depth)?;
@@ -1227,6 +1237,7 @@ impl<'unit> Checker<'_, 'unit> {
         let offset_node = self
             .types
             .declarations
+            .tree
             .subscript_offset(suffix)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let offset = self.check_atom(context, offset_node, bindings, loop_depth)?;
@@ -1384,7 +1395,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut path = Vec::new();
         let mut carried = CarriedOperands::default();
         for &suffix in suffixes {
-            let Some(offset_node) = self.types.declarations.subscript_offset(suffix)? else {
+            let Some(offset_node) = self.types.declarations.tree.subscript_offset(suffix)? else {
                 let member = self
                     .types
                     .elaborate_place_member(check_context, suffix, ty)?;
@@ -1513,6 +1524,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
+            .tree
             .has_fixed(node, FixedTerminal::Move)?
         {
             return self.types.declarations.issue_node(
@@ -1568,7 +1580,7 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .tree
-            .first_child_with(pbase, Production::Place)?
+            .dereferenced_place(pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let inner = self.elaborate_value_place(check_context, node, inner, bindings)?;
         let mut place = self.resolve_explicit_dereference(node, pbase, inner, bindings)?;
@@ -1712,7 +1724,9 @@ impl<'unit> Checker<'_, 'unit> {
         if self
             .types
             .declarations
-            .has_fixed(pbase, FixedTerminal::Deref)?
+            .tree
+            .place_base(pbase)?
+            .is_dereference()
         {
             return self.check_dereferenced_indexed_place(
                 context,
