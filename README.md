@@ -359,8 +359,8 @@ start from the examples above:
 4. [What a rejection tells you](docs/articles/what-a-rejection-tells-you.md) —
    diagnostics written for the agent that fixes the code.
 5. [Integers](docs/articles/integers.md) — every operation states its meaning.
-6. One build — no panic, no debug/release split, a fixed record on resource
-   exhaustion.
+6. [One build](docs/articles/one-build.md) — no panic, no debug/release
+   split, a fixed record on resource exhaustion.
 7. Beyond memory — no heap, linear resources, and the plan for a
    maximum-safety mode.
 8. What a reviewer reads — contracts and effect rows as the review surface.
