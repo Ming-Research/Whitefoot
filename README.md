@@ -15,8 +15,9 @@ properties:
   lifetimes, no methods, no traits, no exceptions.
 
 The compiler finds most proofs itself, with a fixed procedure and no SMT
-solver. You write the rest as loop invariants and, now and then, a short
-proof step, and the compiler checks them.
+solver; it has no timeout and no work budget, so every machine gives the same
+verdict ([ENT-1](spec/kernel-spec.md)). You write the rest as loop invariants
+and, now and then, a short proof step, and the compiler checks them.
 
 ## Fast: the proofs pay for the speed
 
@@ -345,35 +346,6 @@ start from the examples above:
 
 The other articles are being written; each title becomes a link when its
 article is published.
-
-## What you write
-
-Contracts on functions (`requires`, `ensures`), `reads`/`writes` rows on
-signatures, loop invariants, and occasionally an explicit proof step. The test
-programs and container library contain about 200 contract blocks, 290
-invariants and 41 explicit proof steps across about 800 functions. The grep,
-about 1,700 lines, needs 2 invariants and no explicit proof step.
-
-The proof procedure is fixed ([ENT-1](spec/kernel-spec.md)): it has no timeout
-and no work budget, so every machine gives the same verdict. Proof steps for
-an invariant the compiler proves on its own are themselves an error, so proofs
-do not accumulate as noise.
-
-## Status
-
-Whitefoot started in July 2026 and is a research compiler, not a product. One
-person makes the design rulings; most of the code is written by AI agents and
-checked against the specification, the conformance suite and review. Do not
-use it for anything that matters.
-
-Not yet available:
-
-- calls to C from source; C enters only as trusted linked definitions;
-- high-concurrency I/O for servers, which is in progress
-  ([Highlights](#in-progress));
-- the maximum-safety mode ([Beyond memory](#beyond-memory-resources));
-- explicit threads, async or SIMD. Parallelism comes from `--par` as
-  described above.
 
 ## Try it
 
