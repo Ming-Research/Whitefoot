@@ -189,7 +189,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 8. [审查者读什么](docs/articles/what-a-reviewer-reads.md)——把契约和效应行作为审查的对象。
 9. 可信基——哪些东西被信任，以及缩小它的计划。
 10. [速度从哪里来](docs/articles/where-the-speed-comes-from.md)——证明被利用的每一种方式。
-11. 不用 async 的 I/O——由编译器让普通调用相互重叠。
+11. 不用 async 的 I/O——普通的调用，以及它们何时可以重叠。
 12. 一个布局引擎——第一个大型程序。
 13. 这个项目如何借助 agent 构建。
 
