@@ -13,6 +13,24 @@ fn build(
     entry: &str,
     cache: Option<&super::super::BuildCache>,
 ) -> Result<crate::LlvmModule, String> {
+    build_with_overlap(
+        graph,
+        interface,
+        library,
+        entry,
+        cache,
+        OverlapLowering::Off,
+    )
+}
+
+fn build_with_overlap(
+    graph: &str,
+    interface: &str,
+    library: &str,
+    entry: &str,
+    cache: Option<&super::super::BuildCache>,
+    overlap: OverlapLowering,
+) -> Result<crate::LlvmModule, String> {
     let graph = crate::form_module_graph(
         SourceInput::new("modules.wfg", graph.as_bytes()),
         CompilerLimits::default(),
@@ -31,11 +49,11 @@ fn build(
             &inputs,
             super::super::ModuleEntry::Named("app"),
             CompilerLimits::default(),
-            OverlapLowering::Off,
+            overlap,
             Some(cache),
         )
         .map(|built| built.0),
-        None => fresh_product_entry(&graph, &inputs, OverlapLowering::Off),
+        None => fresh_product_entry(&graph, &inputs, overlap),
     }
     .map_err(|failure| failure.to_string())
 }
@@ -360,5 +378,67 @@ fn retained_callback_calls_use_the_actuals_current_heap_closure() {
     assert!(
         reused > 0,
         "the heap rejection must follow a retained callback call"
+    );
+}
+
+#[test]
+fn private_capture_layout_changes_rejudge_retained_parallel_fragments() {
+    let directory = CacheDirectory::new("product-capture-layout");
+    let interface = |width| {
+        format!(
+            "public struct Cell {{\n  doc \"A value with private inline storage.\";\n  public value: u8;\n  hidden: Array<u64, {width}>;\n}}\n\npublic fn make() -> result: Cell pure doc \"Makes a cell.\";\n"
+        )
+    };
+    let library = |width| {
+        format!(
+            "fn make() -> result: Cell pure {{\n  let hidden = array_filled::<u64, {width}>(value: 0_u64);\n  return Cell(value: 1_u8, hidden: hidden);\n}}\n"
+        )
+    };
+    let entry = "fn read(value: pkg::lib::Cell) -> result: u8 pure {\n  return value.value;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let cell = pkg::lib::make();\n  let sum = 0_u8;\n  for @fold (index in 0_u64..8_u64) {\n    let value = read(value: cell);\n    set sum = sum +wrap value;\n  }\n  return std::process::exit_status(code: sum);\n}\n";
+    let small = build_with_overlap(
+        GRAPH,
+        &interface(1),
+        &library(1),
+        entry,
+        Some(&directory.open()),
+        OverlapLowering::On,
+    )
+    .unwrap();
+    assert!(
+        small
+            .model
+            .entities
+            .iter()
+            .any(|entity| entity.name.ends_with("main.0")),
+        "the small inline capture must exercise actual loop synthesis"
+    );
+    let large = build_with_overlap(
+        GRAPH,
+        &interface(64),
+        &library(64),
+        entry,
+        Some(&directory.open()),
+        OverlapLowering::On,
+    )
+    .unwrap();
+    assert!(
+        !large
+            .model
+            .entities
+            .iter()
+            .any(|entity| entity.name.ends_with("main.0")),
+        "the enlarged private capture must exceed the task frame and decline synthesis"
+    );
+    assert_eq!(
+        large,
+        build_with_overlap(
+            GRAPH,
+            &interface(64),
+            &library(64),
+            entry,
+            None,
+            OverlapLowering::On
+        )
+        .unwrap()
     );
 }

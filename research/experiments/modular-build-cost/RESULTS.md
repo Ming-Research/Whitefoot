@@ -275,6 +275,40 @@ retain the same equality and work-count observations and beat the prior
 candidate on the same sources before attributing an improvement to those
 changes. The null and seven-pair final comparison remain required.
 
+### Seven-pair qualification and memory result
+
+The final qualification used baseline executable
+`a4d8c2cbad74b179485bf3915f71066ad1a0acf9d55401b75dd3c816f2510680` and
+candidate executable
+`ea10a5d499af458e6b4fca53b323eddd4f8c9c04393d0ca41fc49a69a3de8ca6`.
+It ran seven alternating-order pairs for each workload, with a new source tree
+and cache per compiler and round. All 392 native samples and their compiler-only
+counterparts agreed in LLVM bytes and runtime results; every executable exited
+zero. The table reports the median entry-edit wall time, compiler-only peak RSS,
+and persistent cache size from the seven samples.
+
+| Workload | Baseline ms / RSS MiB / cache MiB | Candidate ms / RSS MiB / cache MiB |
+|---|---:|---:|
+| queue | 168.0 / 21.8 / 0.63 | 173.4 / 24.0 / 0.86 |
+| SHA-256 | 163.4 / 21.4 / 0.51 | 175.7 / 23.1 / 0.63 |
+| GrowVector | 237.1 / 30.6 / 2.40 | 262.1 / 35.9 / 4.69 |
+| wfgrep | 258.8 / 34.0 / 3.54 | 275.9 / 38.1 / 5.49 |
+| HashMap | 366.8 / 48.3 / 6.20 | 460.8 / 67.3 / 15.83 |
+| chain-8 | 196.3 / 25.2 / 0.90 | 208.7 / 29.4 / 1.52 |
+| chain-32 | 399.9 / 40.4 / 3.22 | 426.2 / 49.9 / 5.95 |
+
+The same-binary null run varied by at most 3.2% in wall time and 0.7% in
+compiler-only RSS across these medians, while the candidate was 3.2–25.6%
+slower and used 1.2–39.3% more compiler-only RSS. Grouping module records
+reduced the previous candidate's entry-edit time by 17–37% on the larger
+workloads and reduced cache bytes, but still remained above baseline. The
+header and physical-catalog candidate changed that grouped result by less than
+3% in every workload (within the null variation). These measurements therefore
+qualify correctness and saved work, but reject a claim of build-cost or memory
+improvement for this representation. The pending amendment should remain an
+owner decision with this cost condition; further optimization is a separate
+choice, not an implicit acceptance of the measured regression.
+
 ## Limits
 
 - Composition granularity: every build of an edited entry forms, resolves
