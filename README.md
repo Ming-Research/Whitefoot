@@ -3,10 +3,11 @@
 Whitefoot is a research systems programming language built around three
 properties:
 
-- **Safe.** A program the compiler accepts has no undefined behavior, given
-  a correct trusted base; it cannot panic, and no bounds, overflow or
-  conversion check runs in it. There is no `unsafe` to opt out with, and a
-  program can declare that it uses no heap at all.
+- **Safe.** A program the compiler accepts has no undefined behavior, as long
+  as the software it relies on is correct: the compiler, LLVM, the runtime
+  and the operating system, among others listed below. It cannot panic, and
+  no bounds, overflow or conversion check runs in it. There is no `unsafe` to
+  opt out with, and a program can declare that it uses no heap at all.
 - **Fast.** The safety comes from proofs checked at compile time, not from
   checks at run time, and the same proofs let the compiler drop bounds and
   overflow checks, tell LLVM which references do not alias, and run
@@ -14,22 +15,25 @@ properties:
 - **Small.** Functions, structs, enums and explicit generics, close to C. No
   lifetimes, no methods, no traits, no exceptions.
 
-The compiler finds most proofs itself, with a fixed procedure and no SMT
-solver; it has no timeout and no work budget, so every machine gives the same
-verdict ([ENT-1](spec/kernel-spec.md)). You write the rest as loop invariants
-and, now and then, a short proof step, and the compiler checks them.
+The compiler finds most proofs itself, with a fixed procedure rather than an
+SMT solver, the automatic theorem prover behind tools such as SPARK, Dafny and
+Verus. No timeout or work budget takes part in the decision, so two machines
+never disagree about whether a program is accepted
+([ENT-1](spec/kernel-spec.md#15-obligation-discharge-deterministic-facts-invariants-and-local-certificates-normative)).
+You write the rest as loop invariants and, now and then, a short proof step,
+and the compiler checks them.
 
 ## Fast: the proofs pay for the speed
 
 A proof that an operation is in range also makes its runtime check
 unnecessary, and a proof that two pieces of code touch different memory lets
-them run at the same time. The two examples below show one use each, and the
-list after them names others.
+them run at the same time.
 
 ### A bounds check proved away
 
 This loop keeps the non-space bytes of a buffer, in place. The line
-`invariant behind: kept <= i` states why the store `buf[kept]` is in range.
+`invariant behind: kept <= i` declares an invariant named `behind` that states
+why the store `buf[kept]` is in range.
 The compiler proves it before the first iteration and after every iteration,
 and with `i < buf.len` concludes `kept < buf.len`, so the store compiles to a
 plain store:
@@ -88,9 +92,9 @@ fn quicksort(v: &[u64]) -> result: unit writes(v) {
 Compiled with `--par`, the two recursive calls run in parallel down to a
 depth derived from the number of workers, because the compiler proves that
 `[0, p)` and `[p + 1, n)` do not overlap, and the result is the one the
-sequential program computes. A run that sorts 2 million numbers takes 0.18 s
-sequentially and 0.07 s on 4 workers
-([measurement](research/experiments/par-quicksort/README.md));
+sequential program computes. Sorting 2 million numbers took 0.18 s
+sequentially and 0.07 s on 4 workers, the best of seven runs on a shared
+machine ([measurement](research/experiments/par-quicksort/README.md));
 `--par-ledger` prints every decision with its reason. [Write sequential code,
 get parallel results](docs/articles/sequential-code-parallel-results.md)
 follows the compiler from the checked rows to the parallel code.
@@ -99,10 +103,10 @@ follows the compiler from the checked rows to the parallel code.
 
 - A proved `+` compiles to a plain add carrying LLVM's no-wrap flag (`nuw`
   unsigned, `nsw` signed), which the optimizer can use.
-- Each reference parameter reaches LLVM as `noalias`, C's `restrict`,
-  because every call has proved that what one argument writes, no other
-  argument reaches. The exception is `swap`, whose two arguments may be the
-  same place.
+- Each reference parameter reaches LLVM as `noalias`, C's `restrict`, because
+  the compiler accepts a call only when it has proved that what one argument
+  writes, no other argument reaches. The exception is `swap`, whose two
+  arguments may be the same place.
 - A loop whose iterations write their own elements, or combine one value with
   one of a fixed set of associative and commutative operations such as
   `+wrap`, can be split across workers.
@@ -136,15 +140,16 @@ It still can:
   written down, not what was meant;
 - be miscompiled. The trusted base is the Whitefoot compiler and its checker,
   LLVM and clang, the runtime and allocator, C functions linked in as trusted
-  definitions, libc and the operating system ([SCOPE-3](spec/kernel-spec.md)).
+  definitions, libc and the operating system
+  ([SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)).
 
 As far as we know, no other general-purpose systems language gives this
-guarantee for every program it accepts. SPARK proves the same absence of
-runtime errors, with SMT solvers, as an analysis separate from compilation:
-the Ada compiler builds a program whether or not it has been proved. Wuffs
-checks similar proofs without a solver, but it is a language for libraries
-that parse, decode and encode file formats, and its code cannot make system
-calls or allocate memory.
+guarantee for every program it accepts. SPARK, a subset of Ada for
+high-integrity software, proves the same absence of runtime errors, with SMT
+solvers, as an analysis separate from compilation: the Ada compiler builds a
+program whether or not it has been proved. Wuffs checks similar proofs without
+a solver, but it is a language for libraries that parse, decode and encode
+file formats, and its code cannot make system calls or allocate memory.
 
 ### Beyond memory: resources
 
@@ -157,9 +162,9 @@ it drives.
 Today:
 
 - **The heap is optional.** A program that begins with `program no_heap;`,
-  or an entry of a module program declared with `no_heap`, cannot allocate:
+  or an entry that a module program declares with `no_heap`, cannot allocate:
   the compiler rejects every heap type and every allocating call in the code
-  that program or entry runs ([STOR-8](spec/kernel-spec.md)).
+  that program or entry runs ([STOR-8](spec/kernel-spec.md#6-storage)).
 - **Resources that must be released are linear.** A linear value cannot be
   copied, and the compiler never discards it on its own: the program has to
   pass it on or hand it to a function that consumes it. The standard
@@ -214,31 +219,34 @@ fn next_byte(input: &[u8], cursor: &Cursor) -> result: Option<u8> reads(input), 
 A C programmer can read most of this at once. The differences are things
 Whitefoot asks you to write out:
 
-- `reads(input), writes(cursor)`: what the function may read and write,
-  stated in its signature;
+- `reads(input), writes(cursor)`: what the function may read and write, its
+  effects, stated in its signature. There is no `&mut`: a function writes
+  through a reference only when its effects say so;
 - `deref(cursor)` and `set`: every read through a reference, and every
   assignment;
 - `1_u64` and `value: byte`: the type of every number, and the name of each
   argument to a function or a constructor;
 - one operation per expression, with a `let` for each step of a longer
   computation, so there is no operator precedence
-  ([GRAM-6](spec/kernel-spec.md)).
+  ([GRAM-6](spec/kernel-spec.md#3-grammar)).
 
 Code comes out longer than the same C, and each construct has one spelling.
 
 There are no lifetimes. A reference can be bound to a local or passed to a
 call, but it is never stored in a struct or returned
-([REF-3](spec/kernel-spec.md)), so it cannot outlive what it points to. That
-is why `Cursor` holds a position rather than the buffer, and why a function
-that finds something returns an index, not a reference. Rust code written
-this way needs no lifetime annotations either. Rust also allows a cursor that
-holds its buffer, `struct Cursor<'a> { input: &'a [u8], position: usize }`,
-and then every struct that contains such a cursor needs a lifetime annotation
-too. Whitefoot has only the first way, so there are no lifetimes to learn.
+([REF-3](spec/kernel-spec.md#5-ownership-and-references)), so it cannot
+outlive what it points to. That is why `Cursor` holds a position rather than
+the buffer, and why a function that finds something returns an index, not a
+reference. Rust code written this way needs no lifetime annotations either.
+Rust also allows a cursor that holds its buffer,
+`struct Cursor<'a> { input: &'a [u8], position: usize }`, and then every
+struct that contains such a cursor needs a lifetime annotation too. Whitefoot
+has only the first way, so there are no lifetimes to learn.
 
 Generics are explicit: a generic function takes its type arguments at every
 call, as in `array_filled::<u8, 4>(value: 0_u8)`, and is compiled once for
-each set of arguments ([FN-2](spec/kernel-spec.md)).
+each set of arguments
+([FN-2](spec/kernel-spec.md#8-functions-generics-contracts)).
 
 The language leaves out:
 
@@ -249,13 +257,12 @@ The language leaves out:
   one meaning, and a conversion is written `cvt`;
 - exceptions, unwinding and null. An error is a `Result` value and absence is
   an `Option`;
-- closures and function values.
+- closures and function values. A choice made at run time is a `match` over
+  an enum.
 
 ## Highlights
 
-Safe, fast and small are the core. These are the other things worth knowing:
-first what works today, then what is in progress or planned, then research
-directions the proofs make possible.
+Safe, fast and small are the core. These are the other things worth knowing.
 
 ### Available now
 
@@ -272,10 +279,10 @@ directions the proofs make possible.
 - **Parallelism sized at run time.** A program never says how many tasks run
   at once. Under `--par` the compiler turns independent calls and loop ranges
   into work that idle workers may take, and the runtime decides how far a
-  recursion fans out from the number of workers (`WF_WORKERS`); a call no
-  worker takes runs on the caller. Whatever the runtime decides, the result
-  equals the sequential one, and `--par-ledger` explains each decision the
-  compiler made.
+  recursion fans out from the number of workers (`WF_WORKERS`); a call that no
+  worker picks up runs on the calling thread. Whatever the runtime decides,
+  the result equals the sequential one, and `--par-ledger` explains each
+  decision the compiler made.
 - **Incremental builds.** A program is checked and compiled module by module.
   With `--cache DIR`, a module's verdict and each function's proof are reused
   while their inputs are unchanged, and compiled code is cached as well, so
