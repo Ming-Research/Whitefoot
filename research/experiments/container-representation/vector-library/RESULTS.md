@@ -2520,6 +2520,24 @@ exposure of the boundary to measure. The candidate is rejected without a
 4,116-row timing pair; the call/placement package remains unresolved and this
 LLVM hint does not authorize a production policy.
 
+### Next discriminator: counted consumer with wide tail-only `alwaysinline`
+
+The next diagnostic is preregistered before construction. Starting from the
+frozen actual-forward-hint image and the already measured counted-consumer
+body, add `alwaysinline` only to the wide
+`wf_vector_library_tail_work$instance$c3abe4db44181f7a` definition. Keep the
+wide `grow_vector_truncate` as an independent call, its single final length
+store, all scalar definitions, source, ABI, callbacks, allocation policy and
+native inputs unchanged. The code criterion is: the wide trace-to-tail call
+must disappear; the truncate call and final length store must remain; no 256B
+owner snapshot, new hot-path append/helper call, spill/reload or material
+frame growth may appear; standard objects must retain normalized identity. A
+failure stops without timing. If it passes, run the full correctness and
+accounting images and one complete 4,116-row pair against the counted control.
+This isolates the tail boundary after the loop-controller diagnostic; any
+timing result is a combined call/setup/placement observation, not a pure call
+instruction attribution, and does not select a production inline policy.
+
 ### Empty allocation: two-edge exposure does not remove the allocation
 
 A separate F diagnostic changes only the scalar `work` instance
