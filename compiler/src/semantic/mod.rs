@@ -1011,8 +1011,7 @@ pub enum SemanticIssueKind {
     WaitingCallOutsideWaitingFunction {
         /// The waiting callee as written.
         callee: String,
-        /// Where the call stands: a function that does not wait, or a
-        /// contract block.
+        /// Where the call stands: the body of a function that does not wait.
         context: &'static str,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,

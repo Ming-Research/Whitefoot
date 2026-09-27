@@ -6,7 +6,7 @@ fn open_read(root: u64, path: u64) -> function_result: u64 pure {
   return root +wrap path;
 }
 
-fn main() -> status: ExitStatus pure waits {
+fn main() -> status: ExitStatus pure {
   let total = open_read(root: 2_u64, path: 3_u64);
   let narrowed = cvt.checked::<u64, u8>(total);
   match narrowed {

@@ -234,6 +234,30 @@ What this does not establish:
 - anything on the helper route or on another host;
 - anything about a context that computes between waits.
 
+### The readiness route on a host without a ring
+
+With no kernel completion ring, a socket operation goes to the helper pool,
+whose threads block in the host call; `WF_BRIDGE_MAX_HELPERS` caps that pool
+at eight. One check on 2026-09-27, at revision `a06d6cf1`, built
+`tcp_contexts.wf` twice: once as shipped, and once against a runtime whose
+`wf_bridge_waits_for_readiness` always answered no, so that every socket wait
+went to the helpers. Each build served N peers that speak in the reverse of
+their acceptance order, with `WF_IO_NO_NATIVE_RING=1` and five seconds for each
+answer. A server that cannot hold every silent peer at once never answers the
+last one.
+
+| Peers | Helpers only | Readiness waits |
+|---:|---|---|
+| 4 | all answered | all answered |
+| 8 | all answered | all answered |
+| 9 | peer 8 not answered | all answered |
+| 16 | peer 15 not answered | all answered |
+
+The helper-only runtime holds exactly as many silent peers as the pool has
+threads. The shipped route waits for readiness on the contexts' own thread and
+holds all of them. With four peers the two runtimes do not differ, so a check
+of this route needs more peers than helpers.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text

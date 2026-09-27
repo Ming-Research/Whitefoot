@@ -397,9 +397,13 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// never answer the last, and the read timeout would fail this case. Both
 /// routes are required: with no ring, a context's socket wait is a readiness
 /// wait rather than a blocking call on the one thread every context shares.
+/// There are more peers than the helper pool has threads, so a runtime that
+/// sent those waits to blocking helpers would hold only as many silent peers
+/// as it has helpers and fail here too (`WAITS.md`, the readiness route).
 #[cfg(unix)]
 #[test]
 fn every_connection_is_served_in_its_own_context_on_both_routes() {
+    const PEERS: u8 = 12;
     let llvm = compile_program("tcp_contexts.wf");
     assert!(
         llvm.contains("@wf__context_launch("),
@@ -409,11 +413,12 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
     for native_ring in [true, false] {
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"4"]);
-        let mut streams = (0..4_u8)
+        let count = PEERS.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), count.as_bytes()]);
+        let mut streams = (0..PEERS)
             .map(|_| connect_when_ready(port))
             .collect::<Vec<_>>();
-        for peer in (0..4_u8).rev() {
+        for peer in (0..PEERS).rev() {
             let stream = &mut streams[usize::from(peer)];
             stream
                 .set_read_timeout(Some(Duration::from_secs(20)))
