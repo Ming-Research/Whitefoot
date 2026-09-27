@@ -2719,6 +2719,29 @@ does not establish that a fully exposed lifetime cannot fold or select any
 production inline policy. Exact paths and phase times remain under
 `/private/tmp/whitefoot-vector-two-edge-f-e2125011`.
 
+### Next discriminator: native empty-header cost
+
+The remaining strict Vector cell is scalar growth at eight-byte length 16.
+Before changing the storage representation, a native control will keep the
+existing `std::vector` growth and consumption algorithm but allocate and zero
+a separate 16-byte empty header at construction, then release it after the
+trace. The header is not connected to the vector and carries no payload; this
+is a controlled source-equivalent cost injection, not a proposed library
+implementation. The ordinary C++ source, seeds, driver ABI, work budget,
+allocator-accounting image and operation order remain unchanged.
+
+The code criterion is that the only optimized C++ difference is one matched
+empty-header allocation and release per trace, with no changed vector
+capacity, element movement, checksum or cleanup path. The accounting image
+must show exactly one additional request and release per trace and the same
+payload allocation sequence. A checksum, release-ledger or useful-cell
+failure stops without timing. If the injected control closes most of the WF
+versus C++ growth-at-16 gap while the other cells remain qualified, that is
+evidence for the empty-state representation cost; if it does not, the
+representation hypothesis is rejected as the main explanation and the next
+comparison is the growth-helper ABI. This experiment cannot select a WF
+representation by itself.
+
 ### Fresh main integration: identical executable inputs, no retiming
 
 At `f945eceecb3aacac20e76864c73edf8b7c87902b`, a fresh gate compiler
