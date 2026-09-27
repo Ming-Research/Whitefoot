@@ -16,7 +16,7 @@ alias write_once = std::io::write_once;
 
 const empty_prefix: Array<u8, 1> =[0_u8];
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = deref(source).len;
   requires length <= source_length;
 } {
@@ -135,12 +135,12 @@ fn record_line(records: &Slots<u8, 8192>, index: u64, destination: &[u8], at: u6
   return cursor;
 }
 
-fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) {
+fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits {
   doc "One independent enumeration handle for one directory value.";
   return open_directory_source(factory: factory, directory: directory);
 }
 
-fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
+fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) waits contract {
   define ordered = start <= end;
   define capacity = deref(name).len;
   define within = end <= capacity;
@@ -151,7 +151,7 @@ fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, na
   return open_directory(factory: factory, root: root, name: name, start: start, end: end);
 }
 
-fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, depth: u64) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records) {
+fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, depth: u64) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records) waits {
   doc "Enumerates one directory, records every entry's relative path, and descends into every subdirectory it names. The record table stays in its caller and is reached through one reference parameter whose row declares the write; the two scratch runs are frame-resident arrays of this activation [STOR-1].";
   let total = used;
   let too_deep = depth >= 8_u64;
@@ -389,7 +389,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   return total;
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) waits {
   doc "Walks the invocation directory recursively and publishes every entry's kind and relative path in sorted order.";
   let status = 0_u8;
   let records = slots_new::<u8, 8192>();
@@ -505,7 +505,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   return exit_status(code: status);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

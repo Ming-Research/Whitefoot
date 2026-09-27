@@ -108,7 +108,7 @@ fn component() -> made: Slots<u8, 16> pure contract {
   return move built;
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
   doc "The per-iteration cell is declared inside the counted body, so it is owned by its iteration and takes its compiler-derived release on that iteration's own leaving edge. The failed-open loop and the exit-zero observation remain an ordinary executable program.";
   let name = component();
   let total = 0_u64;
@@ -145,7 +145,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   return exit_status(code: 0_u8);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once, the rest covered by the rest marker; the referenced operation chain returns before the initial directory is explicitly closed.";
   let Inputs(cwd: root, handles: files, ..) = move inputs;
   let outcome = exercise(cwd: &root, files: &files);

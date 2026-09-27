@@ -98,7 +98,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
   doc "The ordinary directory_next library operation returns Ok(unit), next equal to start, and zero entries for an empty range, leaving enumeration available for a later transfer.";
   let entries = slots_new::<u8, 1024>();
   for @scratch (
@@ -146,7 +146,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, files: &files);

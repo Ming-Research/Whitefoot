@@ -99,7 +99,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
   doc "An ordinary DirectorySource is non-copy and linear. The original duplicate use remains an OWN-1 rejection; selected linearity additionally requires explicit consumption on accepted paths.";
   let entries = slots_new::<u8, 1024>();
   for @scratch (
@@ -142,7 +142,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, files: &files);

@@ -2,7 +2,7 @@ alias DirectorySource = std::fs::DirectorySource;
 alias ListStop = std::fs::ListStop;
 alias directory_next = std::fs::directory_next;
 
-fn forward(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) contract {
+fn forward(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
   requires start <= end;
   requires end <= deref(destination).len;
   ensures start <= next;
@@ -20,7 +20,7 @@ fn forward(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -
   }
 }
 
-fn observe(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> result: unit writes(source), writes(destination) contract {
+fn observe(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> result: unit writes(source), writes(destination) waits contract {
   requires start <= end;
   requires end <= deref(destination).len;
 } {

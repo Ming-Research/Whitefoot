@@ -11,7 +11,7 @@ fn read_at_index(bytes: &Slots<u8, 4>, index: u64) -> result: u8 reads(bytes) co
   return deref(bytes)[index];
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Passing an ordinary call-produced index to a requires-protected callee without a caller fact leaves the instantiated requirement unproved. The callee requirement cannot bootstrap its own caller proof.";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   let closed = close_directory(factory: &entry_factory, directory: move unused_cwd);

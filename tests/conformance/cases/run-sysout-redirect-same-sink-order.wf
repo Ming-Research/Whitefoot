@@ -103,7 +103,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
   doc "Output calls and the later file read explicitly borrow the same HandleFactory state. Ordinary EFF-2/PAR-1 interference preserves the arranged shared sink order, including independently named aliased output streams; the readback observes the combined bytes.";
   let first = slots_new::<u8, 2>();
   place_back(window: &first, value: 65_u8);
@@ -214,7 +214,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

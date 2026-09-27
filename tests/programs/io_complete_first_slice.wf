@@ -18,7 +18,7 @@ alias read_at = std::fs::read_at;
 alias relative_path = std::fs::relative_path;
 alias write_once = std::io::write_once;
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
   doc "The argument bytes, their UTF-8 encoding, the file pages and both output channels all travel through caller-formed range references over two frame-resident arrays; writes subsumes the read of the same path, so no path is named twice [EFF-1].";
   let echo = array_filled::<u8, 64>(value: 0_u8);
   let name_length = 0_u64;
@@ -144,7 +144,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

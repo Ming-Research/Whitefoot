@@ -11,7 +11,7 @@ alias open_read = std::fs::open_read;
 alias read_at = std::fs::read_at;
 alias relative_path = std::fs::relative_path;
 
-fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) waits {
   doc "A short success is progress, not end of input, so the drain keeps requesting until the host reports the end; the destination range reference is formed again for each request [REF-2].";
   match arg_get(args: args, position: 1_u64) {
     Ok(value: text) => {
@@ -77,7 +77,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, files: &files);

@@ -88,7 +88,7 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
   return at +wrap 8_u64;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let t0 = oct(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64);

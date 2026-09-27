@@ -8,7 +8,7 @@ alias exit_status = std::process::exit_status;
 alias read_next = std::io::read_next;
 alias write_once = std::io::write_once;
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = deref(source).len;
   requires length <= source_length;
 } {
@@ -32,7 +32,7 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
   return Ok<unit, IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Reads the invocation's standard input to its end with read_next and publishes every byte it observed to standard output through ordinary prelude calls [PRE-1]. The chunk is one inline Slots window of this frame and both halves reach it through the same range reference, because a reference carries no permission marker and the call site decides interference from the declared rows alone [TYPE-9, REF-4, EFF-5].";
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: input) = move inputs;
   close_directory(factory: &entry_factory, directory: move unused_cwd);

@@ -19,7 +19,7 @@ fn sentinel_status(bytes: &[u8], failure: u8) -> result: u8 reads(bytes) {
   return 0_u8;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary UTF-8 copy library operation reports Utf8CopyInvalid before changing the destination; the arranged invalid input and retained sentinel observe that library behavior.";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &entry_factory, directory: move unused_cwd);

@@ -234,7 +234,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Connects twice to a loopback port nobody listens on through the same ordinary factory, so a refused connect is shown to leave its capacity available for the next attempt. The argument scratch is one inline Slots window of this frame, reached through one range reference for both the copy in and the read out [TYPE-9, REF-4].";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

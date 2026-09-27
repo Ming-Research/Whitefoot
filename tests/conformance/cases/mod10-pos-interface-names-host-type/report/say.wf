@@ -1,6 +1,6 @@
 alias io = std::io;
 
-fn say(factory: &io::HandleFactory, output: &io::OutputStream) -> result: u64 writes(factory), writes(output) {
+fn say(factory: &io::HandleFactory, output: &io::OutputStream) -> result: u64 writes(factory), writes(output) waits {
   let bytes = array_filled::<u8, 2>(value: 111_u8);
   set bytes[1_u64] = 10_u8;
   let window = &bytes[0_u64..2_u64];

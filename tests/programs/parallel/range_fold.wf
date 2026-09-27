@@ -59,7 +59,7 @@ fn folded(lo: u64, hi: u64) -> result: u64 pure {
   return total;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let value = folded(lo: 0_u64, hi: 400000_u64);

@@ -97,7 +97,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Ordinary tcp_listen mutates a factory and returns Result<TcpListener, IoError>. Refusal retains the factory for another attempt; success is explicitly consumed by close_listener. Permit-return and qualification assertions are retired.";
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

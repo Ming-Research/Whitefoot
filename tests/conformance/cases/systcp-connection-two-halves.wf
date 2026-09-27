@@ -102,7 +102,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writes(receive), writes(send), writes(scratch) contract {
+fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writes(receive), writes(send), writes(scratch) waits contract {
   define room = deref(scratch).len;
   requires 64_u64 <= room;
 } {
@@ -131,7 +131,7 @@ fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writ
   return outcome;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary TcpConnection receive and send fields are disjoint places. The call substitutes one write path per field and the pairwise check proves them distinct by their different field steps; no target classification authorizes overlap.";
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

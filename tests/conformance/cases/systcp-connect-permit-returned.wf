@@ -98,7 +98,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Ordinary tcp_connect borrows a factory and returns an ordinary success or failure enum. Refusal preserves that factory for another attempt; success requires explicit close of both linear halves.";
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

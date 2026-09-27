@@ -99,7 +99,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn drain(link: &TcpConnection, scratch: &[u8]) -> result: u8 writes(link.receive), writes(scratch) contract {
+fn drain(link: &TcpConnection, scratch: &[u8]) -> result: u8 writes(link.receive), writes(scratch) waits contract {
   define room = deref(scratch).len;
   requires 32_u64 <= room;
 } {
@@ -121,7 +121,7 @@ fn drain(link: &TcpConnection, scratch: &[u8]) -> result: u8 writes(link.receive
   return outcome;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "A helper receiving only through link.receive declares that exact ordinary field effect plus its scratch effects. The untouched send field adds nothing; field row precision does not shorten the whole-connection borrow.";
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);
