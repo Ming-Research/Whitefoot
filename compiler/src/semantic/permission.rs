@@ -1721,3 +1721,5 @@ pub(super) fn argument_places(
     let resolved = named_place(argument)?.resolve(places, false);
     (!resolved.is_empty()).then_some(resolved)
 }
+
+mod products;

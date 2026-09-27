@@ -37,6 +37,10 @@ pub struct BuildCache {
     /// Proof receipts this handle found and recorded, for the build report.
     receipts_reused: Cell<u64>,
     receipts_recorded: Cell<u64>,
+    bodies_checked: Cell<u64>,
+    headers_checked: Cell<u64>,
+    bodies_reused: Cell<u64>,
+    body_modules: RefCell<std::collections::BTreeMap<String, (u64, u64)>>,
     /// Whether each verdict this handle already settled for exact inputs
     /// was an acceptance, by the digest of its key material: one
     /// invocation's checks consult each module's interface verdict once for
@@ -58,6 +62,10 @@ impl BuildCache {
             compiler,
             receipts_reused: Cell::new(0),
             receipts_recorded: Cell::new(0),
+            bodies_checked: Cell::new(0),
+            headers_checked: Cell::new(0),
+            bodies_reused: Cell::new(0),
+            body_modules: RefCell::new(std::collections::BTreeMap::new()),
             settled: RefCell::new(HashMap::new()),
         })
     }
@@ -78,6 +86,45 @@ impl BuildCache {
     #[must_use]
     pub fn receipt_counts(&self) -> (u64, u64) {
         (self.receipts_reused.get(), self.receipts_recorded.get())
+    }
+
+    /// Structural function walks performed and imported by this invocation.
+    #[must_use]
+    pub fn body_counts(&self) -> (u64, u64) {
+        (self.bodies_checked.get(), self.bodies_reused.get())
+    }
+
+    /// Structural walks and imports grouped by declaring module; compiler
+    /// prelude rows have the separate `prelude` label.
+    #[must_use]
+    pub fn body_module_counts(&self) -> Vec<(String, u64, u64)> {
+        self.body_modules
+            .borrow()
+            .iter()
+            .map(|(module, (checked, reused))| (module.clone(), *checked, *reused))
+            .collect()
+    }
+
+    /// Body-less callable boundaries checked by this invocation.
+    #[must_use]
+    pub fn header_checks(&self) -> u64 {
+        self.headers_checked.get()
+    }
+
+    pub(super) fn header_checked(&self) {
+        self.headers_checked.set(self.headers_checked.get() + 1);
+    }
+
+    pub(super) fn body_work(&self, module: &str, reused: bool) {
+        let mut modules = self.body_modules.borrow_mut();
+        let counts = modules.entry(module.to_owned()).or_default();
+        if reused {
+            self.bodies_reused.set(self.bodies_reused.get() + 1);
+            counts.1 += 1;
+        } else {
+            self.bodies_checked.set(self.bodies_checked.get() + 1);
+            counts.0 += 1;
+        }
     }
 
     /// The payload of the complete record of `family` whose key material is

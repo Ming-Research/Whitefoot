@@ -1711,3 +1711,41 @@ impl<'unit> DeclarationInventory<'unit> {
         }
     }
 }
+
+impl crate::semantic::products::Record for FunctionReferenceId {
+    fn write(&self, writer: &mut crate::semantic::products::Writer) {
+        writer.identity(
+            crate::semantic::products::IdentityKind::FunctionReference,
+            self.0,
+        );
+    }
+    fn read(reader: &mut crate::semantic::products::Reader<'_>) -> Option<Self> {
+        Some(Self(reader.identity(
+            crate::semantic::products::IdentityKind::FunctionReference,
+        )?))
+    }
+}
+
+crate::semantic::products::record_enum!(FunctionArgument {
+    0 => Parameter(key),
+    1 => Source { reference, concrete },
+});
+crate::semantic::products::record_struct!(FunctionReference {
+    declaration,
+    substitution
+});
+
+impl FunctionReferenceId {
+    pub(super) fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+}
+
+impl BehaviorInventory {
+    pub(super) fn product_counts(&self) -> (usize, usize) {
+        (
+            self.references.borrow().len(),
+            self.binding_sites.borrow().len(),
+        )
+    }
+}

@@ -3349,3 +3349,69 @@ fn an_entry_build_reuses_every_analysis_its_module_verdicts_recorded() {
         "the entry build analyzes no function its module verdicts analyzed"
     );
 }
+
+/// Retained bodies cross a fresh driver invocation while the entry's source
+/// changes. The comparison compiles the edited input independently.
+#[test]
+fn a_changed_entry_imports_unchanged_module_bodies() {
+    let directory = CacheDirectory::new("retained-module-bodies");
+    let graph = crate::form_module_graph(
+        SourceInput::new("modules.wfg", PROGRAM_GRAPH),
+        CompilerLimits::default(),
+    )
+    .unwrap();
+    let records: Vec<(&str, &[u8])> = vec![
+        ("base/module.wfm", BASE_INTERFACE),
+        ("base/half.wf", BASE_BODY),
+        ("user/module.wfm", USER_INTERFACE),
+        ("user/use.wf", USER_BODY),
+        ("tool/module.wfm", TOOL_INTERFACE),
+        ("tool/spare.wf", TOOL_BODY),
+        ("module.wfm", ROOT_INTERFACE),
+        ("main.wf", ROOT_BODY),
+    ];
+    let build = |records: &[(&str, &[u8])], cache: Option<&super::BuildCache>| {
+        super::build_module_entry(
+            &graph,
+            &module_inputs(&graph, records),
+            super::ModuleEntry::Named("app"),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            cache,
+        )
+        .map(|built| built.0)
+        .map_err(|failure| failure.to_string())
+    };
+    let original = build(&records, Some(&directory.open())).expect("initial build");
+    let changed_body = std::str::from_utf8(ROOT_BODY)
+        .unwrap()
+        .replace("let code =", "let answer =")
+        .replace("code: code", "code: answer");
+    let mut changed = records.clone();
+    changed[7].1 = changed_body.as_bytes();
+    let cache = directory.open();
+    let edited = build(&changed, Some(&cache)).expect("edited build");
+    assert_eq!(edited, build(&changed, None).expect("independent build"));
+    assert_eq!(
+        original, edited,
+        "renaming a local preserves the emitted program"
+    );
+    let (checked, reused) = cache.body_counts();
+    assert!(
+        checked > 0,
+        "the changed entry must be structurally checked"
+    );
+    assert!(reused > 0, "unchanged module bodies must be imported");
+    for library in ["pkg::base", "pkg::user"] {
+        let (_, checked, reused) = cache
+            .body_module_counts()
+            .into_iter()
+            .find(|(module, _, _)| module == library)
+            .expect("library participates");
+        assert_eq!(
+            checked, 0,
+            "{library} must not walk a source body after the entry edit"
+        );
+        assert!(reused > 0, "{library} must import its bodies");
+    }
+}

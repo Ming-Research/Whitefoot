@@ -205,11 +205,16 @@ impl Checker<'_, '_> {
         context: &CheckContext<'_>,
         prior: Vec<CheckedFunctionInventory>,
     ) -> Result<Vec<CheckedFunctionInventory>, CheckStop> {
+        let identities = self
+            .receipts
+            .and_then(|receipts| receipts.products())
+            .and_then(|_| super::products::ProductIdentities::new(self.types.declarations));
         let mut functions = prior.into_iter().map(Some).collect::<Vec<_>>();
         let mut cursor = 0;
         while cursor < self.types.view.functions.len() {
             let id = self.types.view.functions[cursor];
-            let checked = self.check_function(context, id.0 as usize)?;
+            let checked =
+                self.check_retained_function(context, id.0 as usize, identities.as_ref())?;
             functions.resize_with(self.types.signatures.len(), || None);
             functions[id.0 as usize] = Some(checked);
             cursor += 1;

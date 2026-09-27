@@ -59,6 +59,7 @@ mod originating_acceptance;
 mod owned_places;
 mod permission;
 mod postconditions;
+mod products;
 mod range_references;
 mod references;
 mod reinterpret;

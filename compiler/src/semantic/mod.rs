@@ -17,6 +17,7 @@ mod permission_ledger;
 mod places;
 pub(crate) use places::PlaceRoot as CheckedPlaceRoot;
 mod postcondition;
+pub(crate) mod products;
 mod tree;
 
 #[cfg(test)]
@@ -29,7 +30,7 @@ pub use check::check_semantics;
 pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
-pub(crate) use check::{ProofReceipts, check_semantics_with_receipts};
+pub(crate) use check::{ModuleProducts, ProofReceipts, check_semantics_with_receipts};
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
 /// The permission table the overlap lowering reads. It is the same table the

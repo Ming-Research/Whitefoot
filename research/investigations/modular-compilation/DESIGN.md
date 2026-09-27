@@ -1450,7 +1450,13 @@ requires its encoding to be updated. It must preserve the checked tree and
 query-local proof inventories without parsing diagnostic `Debug` output.
 Missing, truncated or incompatible products take the ordinary computation path.
 This encoding serves retained compiler results only; no artifact ABI or
-independent proof replay is introduced.
+independent proof replay is introduced. The typed field/variant declarations
+live beside their owning semantic types in `products` child modules, so the
+large checked-model and entailment owners do not also absorb the encoding
+lists. These files serve module-product retention and leave with that
+representation if it is replaced; they are not a second model or generated
+syntax inventory. The driver owns source dependency keys and storage, while
+the checker owns product formation, identity import and current judgments.
 
 ## Recursive dependencies and generic instances
 

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod cache;
 mod diagnostic;
+mod products;
 mod reads;
 
 pub(crate) mod launcher;
@@ -2610,8 +2611,9 @@ where
             ));
         }
     };
-    let outcome = match receipts {
-        Some(receipts) => crate::semantic::check_semantics_with_receipts(&resolved, receipts),
+    let products = receipts.map(|cache| products::CheckProducts::new(cache, &resolved, limits));
+    let outcome = match products.as_ref() {
+        Some(products) => crate::semantic::check_semantics_with_receipts(&resolved, products),
         None => check_semantics(&resolved),
     };
     let checked = match outcome {

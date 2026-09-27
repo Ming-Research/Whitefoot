@@ -11,6 +11,7 @@ mod linearity;
 mod nominal_instances;
 mod nominals;
 mod obligations;
+mod products;
 pub(crate) mod publication;
 mod receipts;
 mod references;
@@ -21,7 +22,10 @@ mod tail_calls;
 mod type_regions;
 mod types;
 
+pub(crate) use products::ModuleProducts;
 pub(crate) use receipts::ProofReceipts;
+
+pub(super) use products::retained_reference_event;
 
 use std::collections::{HashMap, HashSet};
 

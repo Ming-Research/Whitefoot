@@ -35,6 +35,7 @@ use crate::semantic::model::{
     NominalId,
 };
 use crate::semantic::postcondition::CheckedPostcondition;
+use crate::semantic::products::identity::boundary_item as receipt_item;
 use crate::{DeclarationId, DeclarationRole, NodePath};
 
 /// The identifier kinds a checked value's rendering can carry, by the
@@ -364,6 +365,10 @@ pub(crate) trait ProofReceipts {
     fn load(&self, key: &[u8]) -> Option<Vec<u8>>;
     /// Records the receipt of `key`.
     fn store(&self, key: &[u8], receipt: &[u8]);
+    /// Structural module products have separately validated source inputs.
+    fn products(&self) -> Option<&dyn super::products::ModuleProducts> {
+        None
+    }
 }
 
 /// What one verified analysis concluded that anything after it reads.
@@ -417,29 +422,6 @@ impl ProofReceipt {
             uninhabited,
             allocation_bounds,
         })
-    }
-}
-
-/// An item's key as a receipt spells it: a function's interface
-/// declaration and its definition are two items of one function, and a
-/// receipt spells them alike, since one of them stands for the function in
-/// any one check and a receipt recorded by one check is read by another.
-fn receipt_item(key: &crate::ItemKey) -> crate::ItemKey {
-    match key {
-        crate::ItemKey::Declared {
-            home: crate::ItemHome::Module { package, path, .. },
-            role,
-            spelling,
-        } => crate::ItemKey::Declared {
-            home: crate::ItemHome::Module {
-                package: *package,
-                path: path.clone(),
-                record: crate::SourceRole::Implementation,
-            },
-            role: *role,
-            spelling: spelling.clone(),
-        },
-        other => other.clone(),
     }
 }
 

@@ -154,6 +154,12 @@ impl BuiltinPreludeId {
     pub(crate) const INT: Self = Self(22);
     pub(crate) const FLOAT: Self = Self(23);
 
+    pub(crate) fn from_ordinal(ordinal: u8) -> Option<Self> {
+        catalog::PRELUDE_DECLARATIONS
+            .get(usize::from(ordinal))
+            .map(|record| record.id)
+    }
+
     /// Returns the internal built-in record index.
     #[must_use]
     pub const fn ordinal(self) -> u8 {

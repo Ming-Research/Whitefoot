@@ -182,7 +182,19 @@ pub(super) fn read_declarations(
     };
     let item_of = |node: &crate::NodePath| resolved.item_key(*node.components().first()?);
     // The items each item's uses name.
-    let mut named = BTreeMap::<&crate::ItemKey, BTreeSet<&crate::ItemKey>>::new();
+    let boundary = |key: &crate::ItemKey| {
+        let mut key = key.clone();
+        if module_of(&key) != Some(target.index())
+            && let crate::ItemKey::Declared {
+                home: crate::ItemHome::Module { record, .. },
+                ..
+            } = &mut key
+        {
+            *record = crate::SourceRole::Interface;
+        }
+        key
+    };
+    let mut named = BTreeMap::<crate::ItemKey, BTreeSet<crate::ItemKey>>::new();
     let uses = resolved.lexical_uses().iter().chain(
         resolved
             .postconditions()
@@ -196,7 +208,24 @@ pub(super) fn read_declarations(
         let Some(from) = item_of(record.origin().node()) else {
             continue;
         };
-        let to = resolved.declaration(declaration)?.key().item();
+        // Composition resolution also sees dependency definitions. Their
+        // bodies are not inputs of this module's source judgment.
+        if module_of(from) != Some(target.index())
+            && matches!(
+                from,
+                crate::ItemKey::Declared {
+                    home: crate::ItemHome::Module {
+                        record: crate::SourceRole::Implementation,
+                        ..
+                    },
+                    ..
+                }
+            )
+        {
+            continue;
+        }
+        let from = boundary(from);
+        let to = boundary(resolved.declaration(declaration)?.key().item());
         if from != to {
             named.entry(from).or_default().insert(to);
         }
@@ -206,12 +235,13 @@ pub(super) fn read_declarations(
     let mut pending = (0..items)
         .filter_map(|ordinal| resolved.item_key(u32::try_from(ordinal).ok()?))
         .filter(|key| module_of(key) == Some(target.index()))
+        .cloned()
         .collect::<Vec<_>>();
-    let mut visited = pending.iter().copied().collect::<BTreeSet<_>>();
+    let mut visited = pending.iter().cloned().collect::<BTreeSet<_>>();
     let mut reached = BTreeSet::new();
     while let Some(item) = pending.pop() {
-        for next in named.get(item).into_iter().flatten().copied() {
-            if !visited.insert(next) {
+        for next in named.get(&item).into_iter().flatten() {
+            if !visited.insert(next.clone()) {
                 continue;
             }
             // A PRE-1 item is the compiler's own; its meaning is the
@@ -226,7 +256,7 @@ pub(super) fn read_declarations(
                 crate::ModuleId::from_index(module)?,
                 (declaration_role(*role)?.to_owned(), spelling.clone()),
             ));
-            pending.push(next);
+            pending.push(next.clone());
         }
     }
     Some(reached)

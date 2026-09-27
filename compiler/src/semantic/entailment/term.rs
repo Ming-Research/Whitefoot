@@ -325,3 +325,5 @@ pub(crate) const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
     }
     value
 }
+
+mod products;
