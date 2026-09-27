@@ -895,6 +895,33 @@ reuse are affected paths; suffixes are independent controls. Any repeatable
 useful-cell regression prevents selection. This candidate is preregistered
 before compilation and makes no performance claim.
 
+### F construction and correctness
+
+F is built on the restored original C compiler lowering; the rejected Slots
+implementation is absent. The library SHA-256 is
+`72ff83f18181651461e11f6dd95394556dce372710cb3a58376a6d4e099e7339`.
+The gate compiler, timed image and timed LLVM hashes are respectively
+`fe856a7b9ab2827bb30515547a82bc01132b65e4e3110dd0371cdf0cfc88b3eb`,
+`44660c2de9532af3392c3c5fefea363b1915abd03bc9b79f4ba39812425c05f2` and
+`63038feb712920a11bb212eb06f858929186445eac6b2703afea392a9d74aa24`.
+`BUILD=.build/single-insert-f` preserves the earlier images. Compilation uses
+the gate profile, `--locked --offline -j 2`; a separate CLI
+`--emit-llvm vector-library.wf` preflight accepts the unchanged index,
+length and capacity contracts without an added invariant or language change.
+
+Guarded validation took 20.09 s: compiler construction 9.278 s, source
+preflight 0.724 s, ecosystem construction 4.199 s, behavior 1.687 s,
+accounting 0.148 s, formal corpus construction 0.508 s and execution
+3.304 s. The preceding shared-guard queue took 165.478 s with 82 busy
+retries; it is not construction or test time. Both ecosystem images pass
+1,260 configurations and 8,820 executions, including checksum/cleanup
+falsifiers. The formal vector program passes both lowering modes with its
+unchanged 25-allocation release expectation. The C driver, C++ object, Rust
+archive and all 294 accounting rows are byte-identical to C. The one-shot
+runner was removed after freezing the artifacts. These observations establish
+correctness; native-code inspection still decides whether the prerecorded
+criterion permits timing. No F timing is included here.
+
 ## Historical source-composition evidence
 
 The later [same-source inactive-storage compiler comparison](../map-library/RESULTS.md#completed-comparison-gains-with-unresolved-regressions)

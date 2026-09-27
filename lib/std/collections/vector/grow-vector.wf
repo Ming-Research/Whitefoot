@@ -78,29 +78,7 @@ fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, in
   ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
 } {
   doc "Inserts before a proved index and preserves order. The manual exchange-and-shift loop v0.59 wrote for this retired with [OP-10]'s insert_at, which is the one operation that writes the append slot and the filled run together.";
-  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
-  if spare > 0_u64 {
-    insert_at(window: &deref(values).storage.inner, index: index, value: move value);
-    let reached = deref(values).storage.inner.len;
-    return reached;
-  }
-  let current = deref(values).storage.inner.cap;
-  if current == 0_u64 {
-    let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
-    insert_at(window: &deref(values).storage.inner, index: index, value: move value);
-    let reached = deref(values).storage.inner.len;
-    return reached;
-  }
-  if current <= 9223372036854775807_u64 {
-    let doubled = current + current;
-    if doubled <= ceiling {
-      let widened = grow_vector_reserve::<T, ceiling>(values: values, total: doubled);
-      insert_at(window: &deref(values).storage.inner, index: index, value: move value);
-      let reached = deref(values).storage.inner.len;
-      return reached;
-    }
-  }
-  let stretched = grow_vector_reserve::<T, ceiling>(values: values, total: ceiling);
+  grow_vector_make_room::<T, ceiling>(values: values);
   insert_at(window: &deref(values).storage.inner, index: index, value: move value);
   let reached = deref(values).storage.inner.len;
   return reached;
