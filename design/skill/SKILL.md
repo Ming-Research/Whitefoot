@@ -164,15 +164,14 @@ finding (form, wording, a broken reference, missing evidence or coverage),
 recheck the affected items and report it. DCR never authorizes a tree change.
 
 Before awaiting owner input, give a self-contained handoff in the owner's
-language. Lead with one compact row per amendment and per finding awaiting
-direction: the node, the current and proposed decision, and the recommended
-ruling with its decisive reason. The amendment keeps its problem, evidence,
-alternatives, tradeoffs and uncertainty; bring any of them forward when it
-decides the recommendation. Report the DCR revision and scope and the
-findings fixed; say when none were found within scope. Links and amendment
-counts support this account but do not replace it. A clean DCR does not
-approve the proposals or make the Draft PR ready. Recheck affected items
-after directed changes, reusing unaffected review. Tests and merge rules
+language. Lead with one decision card per amendment and per finding awaiting
+direction, laid out as the project's handoff procedure prescribes (in
+Whitefoot, the owner-handoff skill), naming the node, the current and proposed
+decision, and the recommended ruling with its reason. Report the DCR revision
+and scope and the findings fixed; say when none were found within scope. Links
+and amendment counts support this account but do not replace it. A clean DCR
+does not approve the proposals or make the Draft PR ready. Recheck affected
+items after directed changes, reusing unaffected review. Tests and merge rules
 belong to the project.
 
 ## Lint

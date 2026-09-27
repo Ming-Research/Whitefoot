@@ -297,7 +297,7 @@ impl Analyzer<'_, '_> {
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
         if let Some(result) = &mut result {
-            let live = self.reasoning().event_live_indices(state, &target_kills);
+            let live = self.reasoning().event_live_bounds(state, &target_kills);
             let separations = EventSeparations {
                 ledger: &state.separations,
                 live: &live,

@@ -1,0 +1,45 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn record_run(rows: &Array<Array<u64, 4>, 4>, i: u64, j: u64, lo: u64, hi: u64, a: u64, b: u64) -> result: unit reads(rows[i][lo..hi]), writes(rows[j][a..b]) contract {
+  requires i < 4_u64;
+  requires j < 4_u64;
+  requires lo <= hi;
+  requires hi <= 4_u64;
+  requires a <= b;
+  requires b <= 4_u64;
+} {
+  doc "Writes the length of the run rows[i][lo..hi] into the first element of the run rows[j][a..b]. EFF-5: one argument supplies both entries, so every call compares them.";
+  let run = &deref(rows)[i][lo..hi];
+  let n = deref(run).len;
+  let out = &deref(rows)[j][a..b];
+  if 0_u64 < deref(out).len {
+    set deref(out)[0_u64] = n;
+  }
+  return unit;
+}
+
+fn record_across(rows: &Array<Array<u64, 4>, 4>, i: u64, j: u64) -> result: unit writes(rows) contract {
+  requires i < 4_u64;
+  requires j < 4_u64;
+} {
+  doc "Passes the runs 0..2 and 2..4 for rows i and j that nothing proves equal or distinct.";
+  record_run(rows: rows, i: i, j: j, lo: 0_u64, hi: 2_u64, a: 2_u64, b: 4_u64);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OWN-7: the containing paths rows[i] and rows[j] of the two runs a row takes from other arguments differ only in an index step, so they select one row, where 0..2 ends where 2..4 starts, or two different rows, and the call separates the runs without relating i and j. The program runs the call on one row and on two rows.";
+  let row = array_filled::<u64, 4>(value: 1_u64);
+  let rows = array_filled::<Array<u64, 4>, 4>(value: row);
+  record_across(rows: &rows, i: 3_u64, j: 3_u64);
+  record_across(rows: &rows, i: 1_u64, j: 0_u64);
+  if rows[3_u64][2_u64] == 2_u64 {
+    if rows[0_u64][2_u64] == 2_u64 {
+      if rows[1_u64][2_u64] == 1_u64 {
+        return exit_status(code: 0_u8);
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}

@@ -1305,8 +1305,18 @@ impl SeparationOracle for PairSeparationOracle<'_> {
         index != CapturedValue::unknown()
     }
 
-    fn index_is_not_last(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+    /// No [PAR-1] query asks this family, so the pair overlaps, which
+    /// selects the sequential lowering and is always sound.
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
         false
+    }
+
+    /// A range either statement forms lies within the length of the state
+    /// before the first, as a subscript either forms is live there [WIN-2]:
+    /// its [REF-4] bound `hi <= r.len` was discharged against that length. An
+    /// endpoint an effect row supplies is an unknown value here [EFF-5].
+    fn range_within_length(&self, _window: &ResolvedPlace, range: CapturedRange) -> bool {
+        range.start != CapturedValue::unknown() && range.end != CapturedValue::unknown()
     }
 }
 

@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit reads(values[start..end]), writes(values[slot]) contract {
+  requires start <= end;
+  requires end <= 4_u64;
+  requires slot < 4_u64;
+} {
+  doc "Writes the length of the run values[start..end] into values[slot]. EFF-5: one argument supplies both entries, and whether an index step overlaps a range step depends on the values, so every call compares them.";
+  let run = &deref(values)[start..end];
+  let length = deref(run).len;
+  set deref(values)[slot] = length;
+  return unit;
+}
+
+fn record_anywhere(values: &Array<u64, 4>, lo: u64, hi: u64, at: u64) -> result: unit writes(values) contract {
+  requires lo <= hi;
+  requires hi <= 4_u64;
+  requires at < 4_u64;
+} {
+  doc "The contract bounds the slot and the run but orders neither against the other, so the call's entry state proves none of OWN-7's three orderings and the slot may lie inside the run.";
+  record_run(values: values, start: lo, end: hi, slot: at);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The values main passes would place the slot after the run; the rejected call is the one in record_anywhere, whose entry state does not prove it.";
+  let values = array_filled::<u64, 4>(value: 9_u64);
+  record_anywhere(values: &values, lo: 0_u64, hi: 2_u64, at: 3_u64);
+  return exit_status(code: 0_u8);
+}

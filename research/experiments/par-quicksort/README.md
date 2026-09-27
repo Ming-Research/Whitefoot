@@ -33,6 +33,13 @@ The runtime derives that budget from the worker count as
 The loops in `partition`, `fill` and `sorted` are denied in the same ledger,
 so they run on one worker.
 
+On 2026-09-26 `main`'s result type and its two `exit_status` calls were
+qualified with `std::process`, where the standard library now declares them,
+so the program compiles with the current compiler. Every other line and every
+line number is unchanged, and the compiler at `3cd7e8139` prints the same
+three ledger lines. The times below were measured before that edit, with the
+compiler named under Environment.
+
 ## Environment
 
 - Host: 4 processors (`getconf _NPROCESSORS_ONLN`), `Intel(R) Xeon(R)

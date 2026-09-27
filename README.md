@@ -89,7 +89,9 @@ depth derived from the number of workers, because the compiler proves that
 sequential program computes. A run that sorts 2 million numbers takes 0.18 s
 sequentially and 0.07 s on 4 workers
 ([measurement](research/experiments/par-quicksort/README.md));
-`--par-ledger` prints every decision with its reason.
+`--par-ledger` prints every decision with its reason. [Write sequential code,
+get parallel results](docs/articles/sequential-code-parallel-results.md)
+follows the compiler from the checked rows to the parallel code.
 
 ### Other uses of the same proofs
 
@@ -199,9 +201,10 @@ start from the examples above:
 
 1. Prove it or write a branch — bounds and overflow checks that disappear
    because they are proved.
-2. Write sequential code, get parallel results — how the compiler finds
-   independence in plain code, recursion included, and hands it to the
-   workers.
+2. [Write sequential code, get parallel
+   results](docs/articles/sequential-code-parallel-results.md) — how the
+   compiler finds independence in plain code, recursion included, and hands
+   it to the workers.
 3. [Proofs without a solver, by hand](docs/articles/proofs-by-hand.md) —
    difference bounds, closure and loop invariants, worked on paper.
 4. What a rejection tells you — diagnostics written for the agent that fixes

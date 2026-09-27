@@ -5,6 +5,38 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-26 Name a captured offset by its binding only until a write of the binding reaches the reference
+
+Nodes: compiler/checker-facts, language/ownership, language/ownership/range-reference
+
+Owner-approved: The owner agreed to decision card 3 on PR #145 ("all agreed", written in Chinese), 2026-09-26.
+
+Summary: The completion review of PR #141 found a requirement stated through a reference instantiated with its offset binding's current value: after `let wr = &rows[k];` and `set k = 1_u64;`, facts about `rows[1_u64]` discharged a call's requirement through `wr` while `wr` still named `rows[0_u64]`, and the review's program read an unfilled slot of a one-element row and segfaulted. compiler/checker-facts's decision on measure terms and goals gave terms over named offsets canonical current-place identity but did not say when an offset a reference captured from a binding stops being named by it. The decision now adds that such an offset is named by the binding only until a write of that binding reaches the reference, on any path including a loop's backedge; from then on it retains its occurrence identity and depends on no binding, and a call passing the reference still instantiates at its resolved referent, because the binding's spelling then names another value while the reference still selects the storage it captured (REF-1). Instantiating that call at the reference holder, the pull request's first fix, is a rejected alternative: FN-8 and ENT-2 instantiate a reference formal at its resolved referent, and a guard written through the holder would prove the call's requirement only after the index binding was written, while the same guard stays refused when it is not. No specification rule changes. `Nodes:` also names language/ownership and language/ownership/range-reference, which the entries below change for PR #141, on which this pull request is stacked, because the newest entry names every node changed against main. Remove the accepted amendment and the amendment directory. This ruling does not authorize a merge.
+
+## 2026-09-26 Word the last-slot rule as the separations it keeps
+
+Nodes: language/ownership, language/ownership/range-reference
+
+Owner-approved: The owner agreed to decision cards 1 and 2 on PR #141 ("all agreed", written in Chinese), 2026-09-26.
+
+Summary: The second completion review of PR #141 found language/ownership's window-part decision still opening with a separation "from the window's append slot, its free slots or its last filled slot only where" the index is proved below the length, before saying the index is never separated from the last filled slot. The decision now opens with the append slot and the free slots only and links the [one-argument rows investigation](../research/investigations/one-argument-rows/DESIGN.md#the-last-filled-slot)'s account of the last filled slot, and its rejected alternative drops the specification version and pull request it named, since a node holds no history; no decision changes. The same ruling rewords two rules of kernel-spec v0.74. OWN-7 compares two ranges, or an index and a range, under containing paths that are identical step for step or differ only in index steps, the relation the checker implements, since an index is an absolute coordinate. WIN-2 states overlap as fixed data rather than as derived from the part definitions, since the last filled slot's row follows from EFF-2's covering. `Nodes:` also names language/ownership/range-reference, which the entries below change for this pull request, because the newest entry names every node changed against main. This ruling does not authorize a merge.
+
+## 2026-09-26 Overlap every index and range with a window's last filled slot
+
+Nodes: language/ownership/range-reference, language/ownership
+
+Owner-approved: The owner agreed to card 1 of PR #141's completion review ("agreed", written in Chinese), 2026-09-26.
+
+Summary: The completion review of PR #141 found the separation of an index or a range from a window's last filled slot, proved at call entry, unsound: one `writes(r.last)` entry covers every `take_back` a body makes, so a row's `last` stands for every slot the callee's successive take-backs reach, and the review's probes miscompiled, a callee taking back twice through one argument reading the slot another argument named, and a caller's reference kept across a double take-back reading a released cell. language/ownership/range-reference's second decision, approved earlier the same day, now separates a range only from a window's append slot or free slots and overlaps the last filled slot, and its option-(a) rejection is narrowed to an index, the append slot or the free slots beside a range, pairs some values do separate. language/ownership's window-part decision adds that an indexed position is never separated from the last filled slot, and the specification's earlier separation where `i != r.len - 1` is proved becomes a rejected alternative. The settled wording is in kernel-spec v0.74 rules WIN-2 and EFF-5, which list an index or range position beside `.last` among the pairs that overlap at every position; the [one-argument rows investigation](../research/investigations/one-argument-rows/DESIGN.md#follow-up-an-index-or-a-window-part-beside-a-range) records the probes. This ruling does not authorize a merge.
+
+## 2026-09-26 Separate a range from an index, and from a window part it ends before
+
+Nodes: language/ownership/range-reference
+
+Owner-approved: The owner approved PR #141's range-reference amendment ("approved", written in Chinese), 2026-09-26, after choosing option (b) for the one-argument pairs every call refused ("I choose b", written in Chinese).
+
+Summary: language/ownership/range-reference's second decision names every separation a range has under the judgment all paths share: different roots, another range or an index proved apart from it, and a window's append slot, free slots or last filled slot it is proved empty or to end before in the state where the two places are compared, as an indexed position is; a proved separation of a range separates everything below it. The replaced clause, that different roots and indices or ranges proved distinct are a range's only separations, is rejected because it gave an index or a window part beside a range no family, so a row such as `reads(values[start..end]), writes(values[slot])` was refused at every call and a write through a range killed every fact beside it. Option (a), classing such pairs with those that overlap at every position so that no call compares them, is rejected because some values separate such a pair, so it would admit a call whose read range holds the written slot while every caller fact below the range still died at each write beside it. The [one-argument rows investigation](../research/investigations/one-argument-rows/DESIGN.md#follow-up-an-index-or-a-window-part-beside-a-range) supplies the soundness argument and the cases; the settled wording is in kernel-spec v0.74 rules OWN-7, WIN-2 and EFF-5. Remove the accepted amendment and the amendment directory. This ruling does not authorize a merge.
+
 ## 2026-09-26 Leave the opaque-struct refusals' words to the compiler and move the host handles' home
 
 Nodes: language/data-model/opaque-struct, language/system-interface/opaque-scalar-types, language, compiler/diagnostic-repairs, language/checks-and-proofs/automatic-facts, language/effects, language/effects/call-site-check, compiler/rejection-payloads, compiler/result-registers

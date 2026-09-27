@@ -89,8 +89,21 @@ impl SeparationOracle for EntryPairSeparations<'_> {
         })
     }
 
-    fn index_is_not_last(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
-        UnprovedSeparations.index_is_not_last(window, index)
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        UnprovedSeparations.index_outside_range(index, range)
+    }
+
+    /// A range of an actual's own path was formed at the call, discharging
+    /// its [REF-4] bound there, or is named by a reference valid only while
+    /// that bound holds [OP-10], so it lies within the length of the call's
+    /// entry state, as an index of that path is live; a range a row supplies
+    /// takes its endpoints from other arguments and is bounded by nothing
+    /// until the entailment fragment proves it [EFF-5, WIN-2].
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
+        let depth = window.path.len();
+        self.entries.iter().all(|entry| {
+            depth < entry.formed || entry.place.path.get(depth) != Some(&PlaceStep::Range(range))
+        })
     }
 
     fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {
@@ -343,8 +356,11 @@ impl<'unit> Checker<'unit> {
             argument_nodes.push(self.tree.path(atom)?.clone());
             actual_paths.push(paths);
             actual_captures.push(
-                Self::captured_of(atom, &argument.expression)
-                    .unwrap_or_else(CapturedValue::unknown),
+                self.note_capture(
+                    Self::captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown),
+                    bindings,
+                ),
             );
             actual_modes.push(parameter.mode);
             effects = effects.union(argument.effects);
@@ -390,7 +406,7 @@ impl<'unit> Checker<'unit> {
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
         self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
         self.invalidate_call_references(node, &substituted, atomic_target.as_ref(), bindings)?;
-        Self::invalidate_window_operation_references(signature, &substituted, bindings);
+        self.invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
         let result = signature.result;
         let result_mode = signature.result_mode;
@@ -829,10 +845,9 @@ impl<'unit> Checker<'unit> {
                         // the declared positions that tell its entries apart
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
-                        // separates the steps at which the two paths differ:
-                        // a range beside an index, an index beside `.last`,
-                        // or two places a joined argument may name. Only the
-                        // first is repaired at the call's positions.
+                        // separates the steps at which the two paths differ,
+                        // as for two places a joined argument may name. Only
+                        // the first is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
@@ -857,11 +872,12 @@ impl<'unit> Checker<'unit> {
     }
 
     /// The ordered position disagreements an admitted [OWN-7] family can
-    /// still separate. Index suffixes remain candidates; a range divergence
-    /// is the final candidate because its coordinate frames then differ, and
-    /// so is an index beside a window's `next` or `free`, which [WIN-2]
-    /// separates once the index is proved live, together with the window it
-    /// indexes.
+    /// still separate. Index suffixes remain candidates; a divergence with a
+    /// range step is the final candidate because its coordinate frames then
+    /// differ, whether against another range or against an index, and so is
+    /// a position beside a window's `next` or `free`, which [WIN-2] separates
+    /// by a bound on that window's length, together with the window it reads.
+    /// Beside `last` or `filled` a position overlaps whatever its value.
     pub(in crate::semantic::check) fn separable_by_position(
         left: &ResolvedPlace,
         right: &ResolvedPlace,
@@ -892,10 +908,27 @@ impl<'unit> Checker<'unit> {
                     candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
                     break;
                 }
-                (PlaceStep::Index(index), PlaceStep::Part(WindowPart::Next | WindowPart::Free))
-                | (PlaceStep::Part(WindowPart::Next | WindowPart::Free), PlaceStep::Index(index)) =>
+                (PlaceStep::Index(index), PlaceStep::Range(range))
+                | (PlaceStep::Range(range), PlaceStep::Index(index)) => {
+                    candidates.push(CheckedCallSeparationPositions::IndexOutsideRange(
+                        *index, *range,
+                    ));
+                    break;
+                }
+                (PlaceStep::Index(_) | PlaceStep::Range(_), PlaceStep::Part(part))
+                | (PlaceStep::Part(part), PlaceStep::Index(_) | PlaceStep::Range(_))
+                    if matches!(part, WindowPart::Next | WindowPart::Free) =>
                 {
-                    candidates.push(CheckedCallSeparationPositions::Live(*index));
+                    let position = match steps {
+                        (PlaceStep::Index(index), _) | (_, PlaceStep::Index(index)) => {
+                            CheckedCallSeparationPositions::Live(*index)
+                        }
+                        (PlaceStep::Range(range), _) | (_, PlaceStep::Range(range)) => {
+                            CheckedCallSeparationPositions::RangeWithinLength(*range)
+                        }
+                        _ => break,
+                    };
+                    candidates.push(position);
                     window = Some(ResolvedPlace {
                         root: left.root,
                         path: left.path[..depth].to_vec(),
@@ -910,19 +943,24 @@ impl<'unit> Checker<'unit> {
         (!candidates.is_empty()).then_some((candidates, window))
     }
 
-    /// [OP-10] the window operations that end the bound a reference into the
-    /// window was formed under.
+    /// [OP-10] the calls that end the bound a reference into a window was
+    /// formed under.
     ///
-    /// `place_back`'s `ensures` carries `i < r.len` across the call and
-    /// `insert_at` only changes a slot's occupant, so neither appears here.
-    /// The rest move a boundary down, move a run between two windows, shift
-    /// every logical index, or remake the block whole, and every reference
-    /// into the operand dies [REF-2, REF-4].
+    /// Of the window operations, `place_back`'s `ensures` carries
+    /// `i < r.len` across the call and `insert_at` only changes a slot's
+    /// occupant, so neither ends it; the rest move a boundary down, move a
+    /// run between two windows, shift every logical index, or remake the
+    /// block whole. Any other callee whose row writes a window's `last` or
+    /// `filled` may take elements back through it as `take_back` and
+    /// `remove_at` do, and no `ensures` is read here to show that it does
+    /// not, so its call ends the bound as well. Every reference into such a
+    /// window dies [REF-2, REF-4].
     fn invalidate_window_operation_references(
+        &self,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
-    ) {
+    ) -> Result<(), CheckStop> {
         const BOUND_ENDING_ROWS: [&str; 7] = [
             "take_back",
             "remove_at",
@@ -932,25 +970,34 @@ impl<'unit> Checker<'unit> {
             "take_front",
             "grow",
         ];
-        if !BOUND_ENDING_ROWS.contains(&signature.name.as_str()) {
-            return;
-        }
+        let prelude = self.tree.is_prelude_node(signature.node)?;
+        let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
-            // whose bound the operation ends is the place below that step.
+            // whose bound the call ends is the place below that step.
             let cut = entry
                 .place
                 .path
                 .iter()
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
+            let takes_back = !prelude
+                && entry.write
+                && matches!(
+                    entry.place.path.get(cut),
+                    Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
+                );
+            if !window_operation && !takes_back {
+                continue;
+            }
             let window = ResolvedPlace {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
             Self::invalidate_window_references(bindings, &window);
         }
+        Ok(())
     }
 
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot

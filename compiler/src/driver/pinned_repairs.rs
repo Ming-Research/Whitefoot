@@ -5,11 +5,14 @@
 //! a probe in `driver::pinned_sentences` does: besides the rejected source
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
-//! Adding or rewording a repair means adding or updating a pair here; the
-//! repairs still printed without one are listed in `docs/todo.md`.
+//! Adding or rewording a repair means adding or updating a pair here, or in
+//! `call_separations` for the [EFF-5] call-separation family; the repairs
+//! still printed without one are listed in `docs/todo.md`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
+
+mod call_separations;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -1708,6 +1711,52 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // The suggested row names the body's range read beside its written
+    // slot, and a call that passes the slot outside the range carries it
+    // out [OWN-7, EFF-5].
+    RepairPair {
+        name: "declared-row-omits-a-range-read-beside-a-written-slot.wf",
+        rejected: br#"fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit writes(values[slot]) contract {
+  requires start <= end;
+  requires end <= 4_u64;
+  requires slot < 4_u64;
+} {
+  let run = &deref(values)[start..end];
+  let length = deref(run).len;
+  set deref(values)[slot] = length;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-2",
+        sentences: &[
+            "\n  mechanical_fix: declare the row as `reads(values[start..end].len), writes(values[slot])`, which covers every access the body makes and no other\n",
+        ],
+        repaired: &[
+            br#"fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit reads(values[start..end].len), writes(values[slot]) contract {
+  requires start <= end;
+  requires end <= 4_u64;
+  requires slot < 4_u64;
+} {
+  let run = &deref(values)[start..end];
+  let length = deref(run).len;
+  set deref(values)[slot] = length;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     RepairPair {
         name: "row-writes-before-reads.wf",
         rejected: br#"struct Stats {
@@ -1748,500 +1797,6 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#],
-    },
-    RepairPair {
-        name: "call-passes-one-place-to-two-arguments.wf",
-        rejected: br#"struct Cell {
-  value: u64;
-}
-
-fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
-  let v = deref(source).value;
-  set deref(destination).value = v;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let a = Cell(value: 4_u64);
-  copy_across(source: &a, destination: &a);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
-        ],
-        repaired: &[br#"struct Cell {
-  value: u64;
-}
-
-fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
-  let v = deref(source).value;
-  set deref(destination).value = v;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let a = Cell(value: 4_u64);
-  let b = Cell(value: 0_u64);
-  copy_across(source: &a, destination: &b);
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        // [EFF-5] compares two entries one argument supplies when their
-        // declared positions can tell them apart, and this call gives those
-        // positions one value, so the repair is at the call's positions or at
-        // the callee's row.
-        name: "row-positions-one-call-makes-equal.wf",
-        rejected: br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  copy_within(values: &values, i: 1_u64, j: 1_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path\n",
-        ],
-        repaired: &[
-            br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  copy_within(values: &values, i: 1_u64, j: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit writes(values) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  copy_within(values: &values, i: 1_u64, j: 1_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        // No [OWN-7] family separates a range position from an index
-        // position, so no position this call passes separates this one
-        // argument's pair [EFF-5], and the repair is at the callee's row.
-        name: "row-entries-overlapping-through-one-argument.wf",
-        rejected: br#"fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit reads(values[start..end]), writes(values[slot]) contract {
-  requires start <= end;
-  requires end <= 4_u64;
-  requires slot < 4_u64;
-} {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u64, 4>(value: 0_u64);
-  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 3_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path\n",
-        ],
-        repaired: &[br#"fn record_run(values: &Array<u64, 4>, start: u64, end: u64, slot: u64) -> result: unit writes(values) contract {
-  requires start <= end;
-  requires end <= 4_u64;
-  requires slot < 4_u64;
-} {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u64, 4>(value: 0_u64);
-  record_run(values: &values, start: 0_u64, end: 2_u64, slot: 3_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        // [EFF-5] one argument supplies both entries and the two positions
-        // are left to the entailment fragment, which cannot prove `a` and `b`
-        // distinct here; passing one of the places removes neither entry.
-        name: "call-separation-one-argument.wf",
-        rejected: br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-} {
-  copy_within(values: values, i: a, j: b);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass positions this call proves distinct, or replace the callee's row entries at or below their common path with one `writes` entry of that path\n",
-        ],
-        repaired: &[
-            br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-  requires a < b;
-} {
-  copy_within(values: values, i: a, j: b);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit reads(values[i]), writes(values[j]) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-} {
-  copy_within(values: values, i: 0_u64, j: 1_u64);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn copy_within(values: &Array<u8, 4>, i: u64, j: u64) -> result: unit writes(values) contract {
-  requires i < 4_u64;
-  requires j < 4_u64;
-} {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-} {
-  copy_within(values: values, i: a, j: b);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        // [WIN-2] an index beside a window's `next` is separated from it by
-        // being below the window's length, which the call does not prove;
-        // one argument supplies both entries [EFF-5].
-        name: "call-separation-index-beside-next.wf",
-        rejected: br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
-  } else {
-    give 0_u64;
-  }
-  place_back(window: r, value: seen);
-  return seen;
-}
-
-fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let x = read_then_append(r: r, i: k);
-  return x;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let window = slots_new::<u64, 4>();
-  place_back(window: &window, value: 5_u64);
-  let x = caller(r: &window, k: 0_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: when the index can be below the window's length here, prove that before this call; otherwise pass an index this call proves below it, or replace the callee's row entries at or below their common path with one `writes` entry of that path\n",
-        ],
-        repaired: &[
-            br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
-  } else {
-    give 0_u64;
-  }
-  place_back(window: r, value: seen);
-  return seen;
-}
-
-fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-} {
-  if k < deref(r).len {
-    let x = read_then_append(r: r, i: k);
-    return x;
-  }
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let window = slots_new::<u64, 4>();
-  place_back(window: &window, value: 5_u64);
-  let x = caller(r: &window, k: 0_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
-  } else {
-    give 0_u64;
-  }
-  place_back(window: r, value: seen);
-  return seen;
-}
-
-fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-  requires 0_u64 < deref(r).len;
-} {
-  let x = read_then_append(r: r, i: 0_u64);
-  return x;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let window = slots_new::<u64, 4>();
-  place_back(window: &window, value: 5_u64);
-  let x = caller(r: &window, k: 0_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
-  } else {
-    give 0_u64;
-  }
-  place_back(window: r, value: seen);
-  return seen;
-}
-
-fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-} {
-  let x = read_then_append(r: r, i: k);
-  return x;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let window = slots_new::<u64, 4>();
-  place_back(window: &window, value: 5_u64);
-  let x = caller(r: &window, k: 0_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        // The same [WIN-2] question from two arguments: an interface member's
-        // row is declared without a body, so nothing before the call bounds
-        // `i` and neither argument writes the window's length.
-        name: "call-separation-index-beside-next-two-arguments.wf",
-        rejected: br#"interface Stage {
-  fn step(x: &Slots<u64, 4>, w: &Slots<u64, 4>, i: u64) -> result: u64 reads(x[i]), writes(w.next);
-}
-
-fn outer<interface Stage>(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) {
-  let y = Stage::step(x: r, w: r, i: k);
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: when the index can be below the window's length here, prove that before this call; otherwise pass an index this call proves below it\n",
-        ],
-        repaired: &[
-            br#"interface Stage {
-  fn step(x: &Slots<u64, 4>, w: &Slots<u64, 4>, i: u64) -> result: u64 reads(x[i]), writes(w.next);
-}
-
-fn outer<interface Stage>(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires k < deref(r).len;
-} {
-  let y = Stage::step(x: r, w: r, i: k);
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"interface Stage {
-  fn step(x: &Slots<u64, 4>, w: &Slots<u64, 4>, i: u64) -> result: u64 reads(x[i]), writes(w.next);
-}
-
-fn outer<interface Stage>(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires 0_u64 < deref(r).len;
-} {
-  let y = Stage::step(x: r, w: r, i: 0_u64);
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        // [EFF-5] two arguments name elements of one array at positions the
-        // entailment fragment cannot prove distinct.
-        name: "call-separation-two-arguments.wf",
-        rejected: br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-} {
-  copy_across(source: &deref(values)[a], destination: &deref(values)[b]);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
-        ],
-        repaired: &[
-            br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-  requires a < b;
-} {
-  copy_across(source: &deref(values)[a], destination: &deref(values)[b]);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
-  return unit;
-}
-
-fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) contract {
-  requires a < 4_u64;
-  requires b < 4_u64;
-} {
-  copy_across(source: &deref(values)[0_u64], destination: &deref(values)[1_u64]);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, a: 1_u64, b: 2_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
     },
     RepairPair {
         // [TYPE-2, PRE-2] a host handle is formed only by a host function; the program's entry receives this one.
@@ -2950,7 +2505,7 @@ fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, Str
 /// contradictory.
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in REPAIRS {
+    for pair in REPAIRS.iter().chain(call_separations::CALL_SEPARATIONS) {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),

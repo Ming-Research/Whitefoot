@@ -668,13 +668,38 @@ fn main() -> status: std::process::ExitStatus pure {
         SemanticRule::Eff5,
         |kind| matches!(kind, SemanticIssueKind::OverlappingCallEffects { .. }),
     );
-    // [WIN-2] a slot overlaps `r.last` unless the call proves it is not the
-    // last one, so that pair depends on the slot's value.
-    assert_rule_kind(
-        br#"fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {
+    // [WIN-2] a slot overlaps `r.last` whatever its value, because one
+    // `writes(r.last)` covers every `take_back` a body makes, so the pair one
+    // argument supplies overlaps at every position and no call compares it,
+    // while the same pair from two arguments is compared and refused.
+    let take_after_read = |slot: &str| {
+        format!(
+            "fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {{
   requires i < deref(window).len;
-} {
+}} {{
   let observed = deref(window)[i];
+  let taken = take_back(window: window);
+  return observed +wrap taken;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let window = slots_new::<u64, 4>();
+  place_back(window: &window, value: 5_u64);
+  place_back(window: &window, value: 6_u64);
+  let sum = take_after_read(window: &window, i: {slot});
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_accepts(take_after_read("1_u64").as_bytes());
+    assert_accepts(take_after_read("0_u64").as_bytes());
+    assert_rule_kind(
+        br#"fn take_after_read(source: &Slots<u64, 4>, window: &Slots<u64, 4>, i: u64) -> result: u64 reads(source[i]), writes(window.last), writes(window.len) contract {
+  requires i < deref(source).len;
+  requires 0_u64 < deref(window).len;
+} {
+  let observed = deref(source)[i];
   let taken = take_back(window: window);
   return observed +wrap taken;
 }
@@ -683,7 +708,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let window = slots_new::<u64, 4>();
   place_back(window: &window, value: 5_u64);
   place_back(window: &window, value: 6_u64);
-  let sum = take_after_read(window: &window, i: 0_u64);
+  let sum = take_after_read(source: &window, window: &window, i: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#,

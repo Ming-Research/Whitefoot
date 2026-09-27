@@ -405,12 +405,13 @@ fn a_write_through_an_inline_range_kills_the_element_measure_it_may_reach() {
     ));
 }
 
-/// [OWN-7] separates two index steps and two range steps and names no family
-/// for an index step against a range step. A written range that does not in
-/// fact contain the guarded element is therefore still overlapping, and the
-/// bound and inline spellings of that range reach the same verdict.
+/// [OWN-7] separates an index step from a range step once the index is
+/// proved outside the range, here by written literals: element 1 lies before
+/// the range `2..3`. A write through that range therefore keeps the guarded
+/// measure of `rows[1]`, and the bound and inline spellings of the range reach
+/// the same verdict; a range that contains the element still kills it.
 #[test]
-fn an_index_outside_a_written_range_is_not_separated_from_it() {
+fn an_index_outside_a_written_range_is_separated_from_it() {
     let body = |call: &str| {
         format!(
             "fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {{
@@ -444,12 +445,13 @@ fn main() -> status: std::process::ExitStatus pure {{
 "
         )
     };
-    assert_cells_read_unproved(
-        body("      refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes(),
-    );
-    assert_cells_read_unproved(
+    assert_accepts(body("      refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
+    assert_accepts(
         body("      let tail = &rows[2_u64..3_u64];\n      refill(part: tail, at: 0_u64);\n")
             .as_bytes(),
+    );
+    assert_cells_read_unproved(
+        body("      refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
     );
     // Control: with no write the guard discharges the read.
     assert_accepts(body("").as_bytes());
@@ -953,4 +955,50 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     assert_accepts(source);
+}
+
+/// [OWN-7, REF-2] a reference into an element outside a range a callee
+/// writes survives the call once the call's entry state proves the index at
+/// or after the range's end; a reference the entry state may put inside the
+/// range dies with the element the callee may replace.
+#[test]
+fn a_reference_outside_a_written_range_survives_the_write() {
+    let program = |bound: &str| {
+        format!(
+            "struct Pair {{
+  x: u64;
+  y: u64;
+}}
+
+fn zero(part: &[Pair], at: u64) -> result: unit writes(part) contract {{
+  requires at < deref(part).len;
+}} {{
+  let fresh = Pair(x: 0_u64, y: 0_u64);
+  set deref(part)[at] = fresh;
+  return unit;
+}}
+
+fn run(values: &Array<Pair, 8>, lo: u64, hi: u64, k: u64) -> result: u64 writes(values) contract {{
+  requires lo < hi;
+  requires {bound};
+  requires k < 8_u64;
+}} {{
+  let held = &deref(values)[k].x;
+  zero(part: &deref(values)[lo..hi], at: 0_u64);
+  let seen = deref(held);
+  return seen;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_accepts(program("hi <= k").as_bytes());
+    assert_rule_kind(
+        program("hi <= 8_u64").as_bytes(),
+        SemanticRule::Ref2,
+        |kind| matches!(kind, SemanticIssueKind::InvalidReferenceUse { .. }),
+    );
 }

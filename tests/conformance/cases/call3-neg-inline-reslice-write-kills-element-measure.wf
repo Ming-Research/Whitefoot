@@ -16,7 +16,7 @@ fn refill(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The guard bounds the length of deref(view)[1_u64], an element of a bound range. The call's argument re-slices that range at the call, &deref(view)[1_u64..3_u64], which names the path view names extended by the re-slice's own range step [REF-4, EFF-5]. Under the outer range step both paths agree, and the inner range step against the index step 1_u64 is a pair [OWN-7] does not separate, so the projected write kills the guarded element measure [CALL-3]. The loop's cells[c] then owes c < cells.len with no fact to discharge it, and OP-4 rejects.";
+  doc "The guard bounds the length of deref(view)[1_u64], an element of a bound range. The call's argument re-slices that range at the call, &deref(view)[1_u64..3_u64], which names the path view names extended by the re-slice's own range step [REF-4, EFF-5]. Under the outer range step both paths agree, and the index 1_u64 lies inside the inner range 1_u64..3_u64, so [OWN-7] does not separate the inner range step from the index step and the projected write kills the guarded element measure [CALL-3]. The loop's cells[c] then owes c < cells.len with no fact to discharge it, and OP-4 rejects.";
   let rows = slots_new::<Slots<u64, 8>, 4>();
   let first = slots_new::<u64, 8>();
   let second = slots_new::<u64, 8>();

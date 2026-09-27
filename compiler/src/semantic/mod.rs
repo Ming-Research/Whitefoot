@@ -908,8 +908,10 @@ pub enum SemanticIssueKind {
         disposition: StaticObligationDisposition,
         mechanical_fix: String,
     },
-    /// Two compared index or range steps have no source proof of disjointness
-    /// [OWN-7, EFF-5]. The residual names the exact position family.
+    /// Two compared positions have no source proof of the separation their
+    /// family needs [OWN-7, WIN-2, EFF-5]: two index or range steps, an index
+    /// beside a range, or either beside a window part. The residual names the
+    /// exact position family.
     UndischargedCallSeparation {
         residual: String,
         mechanical_fix: &'static str,

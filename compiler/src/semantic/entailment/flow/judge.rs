@@ -342,6 +342,15 @@ impl Judging<'_, '_, '_> {
                     .window
                     .as_ref()
                     .and_then(|window| self.reasoning().index_live_proof(window, index, state)),
+                CheckedCallSeparationPositions::IndexOutsideRange(index, range) => self
+                    .reasoning()
+                    .prove_index_outside_range(index, range, state),
+                CheckedCallSeparationPositions::RangeWithinLength(range) => {
+                    separation.window.as_ref().and_then(|window| {
+                        self.reasoning()
+                            .range_within_length_proof(window, range, state)
+                    })
+                }
             };
             proof.map(|proof| (positions, proof))
         });
@@ -355,9 +364,13 @@ impl Judging<'_, '_, '_> {
                 CheckedCallSeparationPositions::Ranges(left, right) => {
                     state.separations.record_ranges_disjoint(left, right);
                 }
-                // Liveness holds at this call's entry alone and is never
-                // carried along the edge [WIN-2].
-                CheckedCallSeparationPositions::Live(_) => {}
+                CheckedCallSeparationPositions::IndexOutsideRange(index, range) => {
+                    state.separations.record_index_outside_range(index, range);
+                }
+                // A bound by the window's length holds at this call's entry
+                // alone and is never carried along the edge [WIN-2].
+                CheckedCallSeparationPositions::Live(_)
+                | CheckedCallSeparationPositions::RangeWithinLength(_) => {}
             }
         }
         let derivation = proof.and_then(|proof| proof.derivation);
@@ -401,6 +414,14 @@ impl Judging<'_, '_, '_> {
                 ),
                 Some(CheckedCallSeparationPositions::Live(..)) => format!(
                     "{} and {} select different storage (the index is below the window's length)",
+                    separation.left_spelling, separation.right_spelling
+                ),
+                Some(CheckedCallSeparationPositions::IndexOutsideRange(..)) => format!(
+                    "{} and {} select different storage (the index is before the range's start or at or after its end, or the range is empty)",
+                    separation.left_spelling, separation.right_spelling
+                ),
+                Some(CheckedCallSeparationPositions::RangeWithinLength(..)) => format!(
+                    "{} and {} select different storage (the range ends at or below the window's length, or is empty)",
                     separation.left_spelling, separation.right_spelling
                 ),
                 None => unreachable!("checker hands off at least one position candidate"),
@@ -681,18 +702,26 @@ impl Analyzer<'_, '_> {
                         .iter()
                         .filter(|separation| separation.site == *call)
                         .flat_map(|separation| separation.positions.iter())
-                        .flat_map(|positions| match *positions {
-                            super::super::super::model::CheckedCallSeparationPositions::Indices(
-                                left,
-                                right,
-                            ) => [left.capture, right.capture],
-                            super::super::super::model::CheckedCallSeparationPositions::Ranges(
-                                left,
-                                right,
-                            ) => [left.start.capture, right.start.capture],
-                            super::super::super::model::CheckedCallSeparationPositions::Live(
-                                index,
-                            ) => [index.capture, index.capture],
+                        .flat_map(|positions| {
+                            use super::super::super::model::CheckedCallSeparationPositions as Positions;
+                            match *positions {
+                                Positions::Indices(left, right) => {
+                                    vec![left.capture, right.capture]
+                                }
+                                Positions::Ranges(left, right) => vec![
+                                    left.start.capture,
+                                    left.end.capture,
+                                    right.start.capture,
+                                    right.end.capture,
+                                ],
+                                Positions::Live(index) => vec![index.capture],
+                                Positions::IndexOutsideRange(index, range) => {
+                                    vec![index.capture, range.start.capture, range.end.capture]
+                                }
+                                Positions::RangeWithinLength(range) => {
+                                    vec![range.start.capture, range.end.capture]
+                                }
+                            }
                         })
                         .collect::<HashSet<_>>();
                     for (argument, captured) in arguments.iter().zip(actual_captures) {
@@ -820,7 +849,7 @@ impl Analyzer<'_, '_> {
                         parents,
                         transfer_events: Vec::new(),
                         kills: Vec::new(),
-                        live: LiveIndices::new(),
+                        live: LiveBounds::default(),
                     })
                 })();
                 // [ENT-3.S13, MSR-3] the call datums are minted here, at the

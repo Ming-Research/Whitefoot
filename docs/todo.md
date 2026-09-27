@@ -323,42 +323,20 @@ rarely insert at the same place.
   and a prelude-spelled source declaration that still reaches neither path.
   Reopen when a prelude collision rule changes.
 
-- **Some one-argument row pairs are refused at every call.** EFF-5 leaves a
-  pair of one argument's entries uncompared when their declared paths overlap
-  at every position, and lists the step pairs that decide that. The list
-  omits a range position beside an index position or a window part, which no
-  OWN-7 family separates either. So `reads(values[start..end]),
-  writes(values[slot])` is compared, never separated, and refused at every
-  call, including `start: 0_u64, end: 2_u64, slot: 3_u64`. The writer can
-  declare `reads(values), writes(values[slot])` instead, which is callable
-  but reads all of `values` in every PAR-1 footprint. The EFF-2 repair
-  suggests exactly the refused row: a body that reads the length of
-  `deref(values)[start..end]` and writes `deref(values)[slot]`, declared
-  `writes(values[slot])`, is told to declare `reads(values[start..end].len),
-  writes(values[slot])`, a row no call admits, against DIAG-1. The ground of
-  that suggestion in `design/compiler/rejection-payloads.md`, that every pair
-  such a row leaves on one parameter either overlaps whatever its positions
-  are or depends on positions each call proves, does not hold for these
-  pairs. Two repairs keep that ground: add these pairs to EFF-5's list and
-  make `overlaps_at_every_position` answer by the same OWN-7 judgment instead
-  of stopping at any range step, or give OWN-7 a family that separates an
-  index from a range. Either changes EFF-5 or OWN-7 and the owner decides.
-  Validate with that call accepted, a caller fact outside `slot` surviving,
-  the EFF-2 suggestion accepted at a call, and two index positions and two
-  range positions of one argument still compared. Found while stacking the
-  repair-wording and one-argument-row changes; reopen with the owner's
-  direction.
-
 - **Most repairs outside the goal families have no pinned pair.**
   `compiler/diagnostic-repairs` pins every repair with its rejected source
   and a program for each alternative, and keeps the words in one module;
-  `driver::pinned_repairs` holds 66 pairs, nearly all for goals, effect rows
+  `driver::pinned_repairs` holds 75 pairs, nearly all for goals, effect rows
   and TYPE-2's opaque-struct refusals, while most of the eighty-odd sites
   across the checker that print a fixed repair sentence have none. Among
   them are TYPE-2's "build it with a construction function [OP-13]" for a
   storage shape or a cell, OWN-1's "write `move p` for the affine place" and
-  "use the copy place without `move`", and TYPE-9's inline-shape and
-  content-move repairs. Some cannot be carried out as written: TYPE-9's
+  "use the copy place without `move`", TYPE-9's inline-shape and
+  content-move repairs, and EFF-5's "these two entries of the callee's row
+  may reach overlapping places through one argument", whose pair v0.74
+  accepts now that an index and a range can be proved apart: every pair of
+  one argument's declared paths a call compares now has a position to
+  prove, so only a joined argument naming two places still reaches it. Some cannot be carried out as written: TYPE-9's
   content-move repair writes `free_empty(move b)` without the argument name
   GRAM-11 requires and offers the cell's scope-exit release to a content
   whose elements are linear, and PROV-6's partial-consume repair writes the
@@ -422,19 +400,6 @@ rarely insert at the same place.
   read, write and move out on such a parameter. Found in the review of the
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
-
-- **An index beside a window's `last` is never separated at a call.** WIN-2
-  separates a live `r[i]` from `r.last` once `i != r.len - 1` is proved, and
-  `separation` answers that for two places, but the call-site candidates
-  `separable_by_position` hands to the entailment fragment include only an
-  index beside `next` or `free`. So a pair such as `reads(r[i])`,
-  `writes(r.last)`, from one argument or two, is refused at every call even
-  where the caller proves `i` live and not last. Add a candidate that proves
-  liveness and `i != r.len - 1` in the call's entry state, beside the `Live`
-  candidate; validate with an accepted call that proves both, a refused call
-  that proves only liveness, and the pair's PAR-1 judgment unchanged. Found
-  in the stack review; the pair is rare, so reopen when a window operation
-  needs it.
 
 ## Containers and storage lowering
 
@@ -1078,6 +1043,24 @@ rarely insert at the same place.
   permitted again and the rebinding still ordered against the uses after it.
   Found in the review of the holder-read fix; reopen when a program rebinds a
   reference parameter on a parallel path.
+
+- **PAR-1 reads nothing for a range formed through a Box.** A `let` whose
+  initializer forms a reference records no read of the place the reference
+  starts from, so PAR-1 permits
+  `let data = box_array_filled::<u64>(count: 2000000_u64, value: 0_u64);`
+  beside `let all = &data.inner[0_u64..2000000_u64];`
+  (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
+  range loads the Box's pointer, which the first statement writes. No
+  program observes it: the lowering hands out only calls, and a member that
+  is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
+  in place needs only its address, so only a path through a Box's `inner`
+  reads its owner. Record a read of the owner above each `inner` step a
+  formed path passes; validate with that pair denied, the rest of the
+  quicksort ledger unchanged, and `let larger = &deref(v)[after..n];` still
+  permitted beside `quicksort(v: smaller);`. Found while checking the
+  parallelism article's ledger; reopen before the lowering admits a member
+  that is not a call.
 
 - **Parallel actualization is decided during translation.** A counted-loop
   split is chosen while its body is being lowered
@@ -1861,25 +1844,100 @@ condition under which it is taken up.
   offset rule non-recursive. Reopen when an index-based program needs it,
   after the capture above; validate with kills of the inner element, the
   inner offset and the outer element.
-- **PAR-1 proves no window liveness.** WIN-2 separates `r[i]` from `r.next`
-  and `r.free` only where `i < r.len` is proved. PAR-1's footprints carry an
-  effect row's index as an unknown value, and an offset no captured value
-  names as the same value, so a statement pair meeting on a part and such an
-  index gets no overlap permission even when the subscript was formed in the
-  compared state. This loses permission only. Reopen when a program needs it:
-  carry the row's argument capture into the footprint and ask the
-  entailment fragment for the bound, as EFF-5 already does through
-  `CheckedCallSeparationPositions::Live`.
-- **Loop-header liveness rests on no proof of `i != r.len - 1`.** A loop
-  header's kills stand for every iteration's events, and the flow answers
-  WIN-2's liveness there from the preheader state: `r.len` falls only at an
-  event writing `r.last`, `r.filled` or the whole window, each of which kills
-  every fact below `r[i]` because the ledger never records `i != r.len - 1`.
-  Recording that proof would let a fact survive a `take_back` in a loop body,
-  where a proof made at the header need not hold at a later iteration's
-  event, and would break the header argument above. Whoever first records it
-  must make it event-local as liveness is and revisit the header answer; a
-  loop that calls `take_back` once per iteration is the validating case.
+- **PAR-1 proves no window liveness and no index outside a range.** WIN-2
+  separates `r[i]` from `r.next` and `r.free` only where `i < r.len` is
+  proved, and a range from them only where `hi <= r.len` is. PAR-1's
+  footprints carry an effect row's index and endpoints as unknown values,
+  and an offset no captured value names as the same value, so a statement
+  pair meeting on a part and such an index or range gets no overlap
+  permission even when the subscript or range was formed in the compared
+  state. PAR-1 also poses no query for OWN-7's index-and-range family, so
+  an index beside a range separates only by written literals. This loses
+  permission only. Reopen when a program needs it: carry the row's argument
+  captures into the footprint and ask the entailment fragment for the bound
+  or the ordering, as EFF-5 already does through
+  `CheckedCallSeparationPositions`.
+- **A kill event proves no two positions apart.** OWN-7 separates two
+  indices, two ranges, or an index and a range where the current
+  ProofContext proves them apart, but an ENT-5 kill asks only written
+  literals and the separations an EFF-5 call recorded in the flow's ledger.
+  So in a body that requires `i < j`, a fact over `deref(rows)[i].len` dies
+  at `set deref(rows)[j] = move fresh`, and a later read that needs it is
+  refused although the specification separates the two; a fact at an index
+  before a range a callee writes through dies the same way. Asking the
+  entailment fragment only for a fact whose place meets a written position
+  under the same base, as event liveness asks, keeps the added proofs
+  bounded. Validate with that body accepted and one requiring only
+  `i <= j` still refused. Found while adding OWN-7's index-and-range
+  family; the gap is older than the family.
+- **A call ends a window reference's bound without reading the callee's
+  `ensures`.** OP-10 keeps a reference into a window valid while the bound
+  it was formed under holds, and `place_back`'s `ensures` carries that bound
+  across the call. The checker instead ends it at every call of `take_back`,
+  `remove_at`, `append`, `split_off`, `place_front`, `take_front` or
+  `grow`, and at every other call whose row writes the window's `last` or
+  `filled`, whatever the callee ensures. So `&front[0_u64]` dies at
+  `append(destination: &front, source: &back)` although `append` ensures
+  `deref(destination).len >= deref(entry(destination)).len`, and a slot
+  reference dies at a user function declared `writes(window.last),
+  writes(window.next), writes(window.len)` that takes one element back,
+  places one back and ensures `deref(window).len ==
+  deref(entry(window)).len`. The v0.73 checker accepted the second, since it
+  ended no bound at a user call, which also let a reference outlive a user
+  function that took its slot back. This refuses programs only. Reopen when
+  a program needs such a reference: after the call, ask the entailment
+  fragment whether the bound still holds in the call's exit state, as an
+  event asks liveness in its entry state, and end the reference only where
+  it is unproved. Validate with both programs accepted, the same callee
+  without its `ensures` still ending the reference, and a reference below
+  the slot still dying by REF-2's prefix rule.
+- **Two range steps are identical only as one formation.** OWN-7 compares
+  two ranges, or an index and a range, under containing paths that are
+  identical step for step or differ only in index steps. The checker counts
+  two range steps as identical only when they come from one formation, so
+  after `let left = &deref(values)[a..b];` and
+  `let right = &deref(values)[a..b];`, with `a` and `b` unwritten between
+  them, a call passing `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` is refused with EFF-5 although both frames
+  captured the same endpoints. The v0.73 checker refuses it too. The
+  specification does not say whether two range steps whose captured
+  endpoints are equal are identical; whether the checker proves such steps
+  identical from their endpoints or OWN-7 defines a range step's identity by
+  its formation is the owner's choice. Validate with that call once the
+  ruling admits or refuses it. Found by the recheck of PR #141's
+  containing-path ruling.
+- **An EFF-5 refusal for runs below different range frames names the
+  runs.** For runs `&deref(left)[0_u64..2_u64]` and
+  `&deref(right)[2_u64..4_u64]` of frames `left = &deref(values)[a..b]` and
+  `right = &deref(values)[c..d]`, the residual quotes the complete paths and
+  the repair asks to prove that one ends at or before the other starts,
+  which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
+  The unproved pair is the frames: proving `b <= c` separates everything
+  below them. Name the first pair of differing range steps and ask for their
+  ordering. Validate with `eff5-neg-ranges-below-different-range-frames-overlap`
+  and the same-endpoint program in the item above, each pinned with a
+  repaired source that is accepted. Found by the recheck of PR #141's
+  containing-path ruling.
+- **OP-11 admits equal-depth slots under one identical array or window
+  only.** The checker also admits them under containing paths that differ
+  only in index steps: `swap(first: &deref(outer)[i][k], second:
+  &deref(outer)[j][l])` with nothing relating `i` and `j` is accepted by the
+  v0.73 and v0.74 checkers. Two slots of equal depth are one storage or two
+  disjoint ones, so the acceptance is sound, but the checker admits calls
+  the specification's wording refuses, the gap the owner closed for OWN-7's
+  range families on 2026-09-26. Decide whether OP-11 states the relation
+  the checker implements or the checker requires one identical array or
+  window. Validate with that swap. Found by the recheck of PR #141's
+  containing-path ruling.
+- **A range below a subscript of a range reference is not formed.**
+  `&deref(strip)[i][1_u64..3_u64]`, where `strip` is a range reference, is
+  refused as the unsupported capability `ReferenceFormation` by the v0.73
+  and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
+  any step between the `deref` and the range. REF-4 admits the form, and
+  binding the row first, `let row = &deref(strip)[i];` and then
+  `&deref(row)[1_u64..3_u64]`, is accepted. Validate with the direct form
+  accepted and its separations and REF-2 invalidations matching the bound
+  form. Found by the recheck of PR #141's containing-path ruling.
 - **Member names `len`, `cap` and `head` are classified by spelling in two
   paths.** Contract clauses and subscripted body places pick the measure
   route by the member's name before its type is known, so a writer's field
@@ -1915,3 +1973,24 @@ condition under which it is taken up.
   required source work from removable lowering cost. Defer a broad repeat of all
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
+- **A write refused for a written index parameter does not name that
+  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  under `writes(window[index])` is refused with SET-1's "a reference whose
+  declared row does not write this path", and a call passing `index` with
+  EFF-2's repair `writes(window)`. Neither names the earlier write of
+  `index` that moved the access off the row's position, which a writer who
+  declared `writes(window[index])` needs to see. Name the write, and offer
+  the repair that keeps the row: read `index` into a new binding before
+  writing it. Validate with a pinned pair for each of the two rejections.
+  Found while fixing the EFF-2 attribution after a parameter write.
+- **A goal over an index no spelling names offers routes that cannot
+  establish it.** After `let wr = &rows[k];` and `set k = 1_u64;`, a call's
+  requirement through `wr` reads `rows[?].len`, and FN-8's repair offers an
+  `invariant` whose `use` steps name the facts implying it, or a guard whose
+  condition establishes it. No fact or condition names that row, so
+  neither can succeed, while binding the index first, `let k0 = k;` and
+  `let wr = &rows[k0];`, does. An index a loop-rebound holder carries, also
+  rendered `?`, gets the same two routes, and there forming the reference
+  after the rebinding is what works. Select the route from what the `?`
+  stands for, and pin each pair with a repaired source that is accepted.
+  Found while fixing the completion review of PR #145.
