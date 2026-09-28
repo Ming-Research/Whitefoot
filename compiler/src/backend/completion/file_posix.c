@@ -542,10 +542,11 @@ int wf_file_readiness_supported(void) {
     return 1;
 }
 
-/* One `poll` over the descriptors the parked contexts name.  Only the thread
- * that runs every context calls it, so the host array is this unit's own. */
+/* One `poll` over the descriptors the parked contexts name.  Every driver
+ * thread may call it for its own contexts at once, so the host array is the
+ * caller's: 32 KiB of a driver's stack, which is the floor's reservation. */
 int wf_file_wait_readiness(wf_file_readiness *entries, size_t count, int timeout_ms) {
-    static struct pollfd polled[WF_FILE_READINESS_BATCH];
+    struct pollfd polled[WF_FILE_READINESS_BATCH];
     int answered;
     size_t index;
     if (entries == NULL || count == 0 || count > WF_FILE_READINESS_BATCH) {

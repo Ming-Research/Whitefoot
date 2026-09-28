@@ -499,21 +499,23 @@ impl CompiledProgram {
     /// default, `false` sets `WF_IO_NO_NATIVE_RING` so the same program runs
     /// through the shared file adapter instead of the kernel completion ring.
     pub fn spawn_on_route(&self, native_ring: bool, arguments: &[&[u8]]) -> ProgramChild {
-        self.spawn_on_route_with_workers(native_ring, None, arguments)
+        self.spawn_on_route_with(native_ring, &[], arguments)
     }
 
-    /// Starts the program on one runtime route with the worker count named.
+    /// Starts the program on one runtime route with the thread counts named.
     ///
     /// A case whose property is about several peers being served at once has
-    /// to state the pool it is served by, because the shipped default sizes it
-    /// to the machine: a host with many cores serves four peers on four
+    /// to state the threads it is served by, because the shipped defaults size
+    /// them to the machine: a host with many cores serves four peers on four
     /// workers whatever the runtime does with a wait, so the property would be
-    /// proved by the runner rather than by the program. `workers` is `None`
-    /// for that default and `Some(count)` for a case that pins it.
-    pub fn spawn_on_route_with_workers(
+    /// proved by the runner rather than by the program, and a host with one
+    /// core runs every context on one driver. `settings` names `WF_WORKERS`
+    /// or `WF_DRIVERS` with the count a case pins; each one it does not name
+    /// takes the shipped default, whatever the runner's environment holds.
+    pub fn spawn_on_route_with(
         &self,
         native_ring: bool,
-        workers: Option<&str>,
+        settings: &[(&str, &str)],
         arguments: &[&[u8]],
     ) -> ProgramChild {
         let mut command = Command::new(&self.executable);
@@ -524,10 +526,10 @@ impl CompiledProgram {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         select_route(&mut command, native_ring);
-        match workers {
-            Some(count) => command.env("WF_WORKERS", count),
-            None => command.env_remove("WF_WORKERS"),
-        };
+        command.env_remove("WF_WORKERS").env_remove("WF_DRIVERS");
+        for (name, count) in settings {
+            command.env(name, count);
+        }
         ProgramChild::spawn(&mut command).expect("spawn compiled program")
     }
 
