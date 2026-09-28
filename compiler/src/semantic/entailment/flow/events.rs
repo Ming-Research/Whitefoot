@@ -1281,7 +1281,9 @@ impl Analyzer<'_, '_> {
     }
 
     /// Applies capture-scope kills for every loop frame crossed by a
-    /// non-local edge. Ordinary loop frames carry no private captures.
+    /// non-local edge, and ends the lexical scope of each crossed loop's
+    /// header invariant names [INV-1]. Ordinary loop frames carry no private
+    /// captures.
     pub(super) fn exit_counted_loops_from(
         &mut self,
         states: &mut ProofFlowState,
@@ -1294,17 +1296,16 @@ impl Analyzer<'_, '_> {
             .skip(loop_depth)
             .map(|frame| {
                 (
-                    frame.id,
                     frame.capture_path.clone(),
                     frame.invariant_declarations.clone(),
                 )
             })
             .collect::<Vec<_>>();
-        for (loop_id, path, declarations) in loops {
+        for (path, declarations) in loops {
             if let Some(path) = path {
                 self.vocabulary.exit_counted_capture_scope(states, &path);
             }
-            remove_active_loop_invariants(&mut states.affine, loop_id, &declarations);
+            expire_loop_invariant_names(&mut states.affine, &declarations);
         }
     }
 }

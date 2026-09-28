@@ -1850,9 +1850,16 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 else {
                     panic!("a reachable give relation has one exact source relation");
                 };
-                assert!(relation_has_bare_binding(summary, source, *carrier));
+                // The receiver replaced exactly the carrier term: the given
+                // atom, or the evaluated value whose equality to the carrier
+                // closed into the edge state [ENT-5].
+                assert!(matches!(
+                    retained_term(summary, *carrier),
+                    TermKind::Place(..) | TermKind::CommitValue { .. }
+                ));
+                assert!(source.terms().contains(carrier));
                 assert!(!relation_has_bare_binding(summary, source, *receiver));
-                assert!(!relation_has_bare_binding(summary, relation, *carrier));
+                assert!(!relation.terms().contains(carrier));
                 assert!(relation_has_bare_binding(summary, relation, *receiver));
                 let retained = retained_event(summary, *event);
                 used_events[event.0 as usize] = true;
@@ -4576,26 +4583,13 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     {
-        let function = "missing";
-        let summary = entailment(source, function);
+        // Since v0.79 both edges deliver their carrier equality
+        // `picked = value` [ENT-5], so the join retains it; the `value < 8`
+        // bound held by only one edge is still not delivered. Before v0.79
+        // this function delivered nothing and the test asserted that.
+        let summary = entailment(source, "missing");
         validate_derivations(&summary);
-        assert!(
-            summary.derivations.nodes.iter().all(|node| !matches!(
-                node,
-                DerivationNode::PostconditionGive { .. }
-                    | DerivationNode::PostconditionDeliveryJoin { .. }
-            )),
-            "{function} retained a delivery node"
-        );
-        assert!(summary.derivations.roots.iter().all(|root| !matches!(
-            root.kind,
-            DerivationRootKind::PostconditionGive { .. }
-                | DerivationRootKind::PostconditionDeliveryJoin { .. }
-        )));
-        assert!(summary.derivations.events.iter().all(|event| !matches!(
-            event.kind,
-            FlowEventKind::PostconditionGive | FlowEventKind::PostconditionDeliveryJoin
-        )));
+        assert_only_the_carrier_equality_is_joined(&summary);
     }
     let summary = entailment(source, "matched");
     validate_derivations(&summary);
@@ -4608,8 +4602,14 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A computed give forms no delivery image. A bare outer atom given under
+/// branch-local support delivers only its carrier equality: since v0.79 each
+/// `give value;` edge delivers `picked = value` [ENT-5], which both edges
+/// hold, while `picked != limit` names a `limit` whose scope the edge leaves.
+/// Before v0.79 the carrier equality did not exist and `scoped` delivered
+/// nothing, which this test asserted together with `computed`.
 #[test]
-fn nonbare_carriers_and_branch_local_support_create_no_delivery_roots() {
+fn nonbare_carriers_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
     let source = br#"fn computed(value: i32, narrow: Bool) -> result: i32 pure {
   let picked = if narrow {
     if value < 8_i32 {
@@ -4648,26 +4648,70 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    for function in ["computed", "scoped"] {
-        let summary = entailment(source, function);
-        validate_derivations(&summary);
-        assert!(
-            summary.derivations.nodes.iter().all(|node| !matches!(
-                node,
-                DerivationNode::PostconditionGive { .. }
-                    | DerivationNode::PostconditionDeliveryJoin { .. }
-            )),
-            "{function} retained a delivery node"
-        );
-        assert!(summary.derivations.roots.iter().all(|root| !matches!(
-            root.kind,
-            DerivationRootKind::PostconditionGive { .. }
-                | DerivationRootKind::PostconditionDeliveryJoin { .. }
-        )));
-        assert!(summary.derivations.events.iter().all(|event| !matches!(
-            event.kind,
-            FlowEventKind::PostconditionGive | FlowEventKind::PostconditionDeliveryJoin
-        )));
+    let summary = entailment(source, "computed");
+    validate_derivations(&summary);
+    assert!(
+        summary.derivations.nodes.iter().all(|node| !matches!(
+            node,
+            DerivationNode::PostconditionGive { .. }
+                | DerivationNode::PostconditionDeliveryJoin { .. }
+        )),
+        "computed retained a delivery node"
+    );
+    assert!(summary.derivations.roots.iter().all(|root| !matches!(
+        root.kind,
+        DerivationRootKind::PostconditionGive { .. }
+            | DerivationRootKind::PostconditionDeliveryJoin { .. }
+    )));
+    assert!(summary.derivations.events.iter().all(|event| !matches!(
+        event.kind,
+        FlowEventKind::PostconditionGive | FlowEventKind::PostconditionDeliveryJoin
+    )));
+
+    let summary = entailment(source, "scoped");
+    validate_derivations(&summary);
+    assert_only_the_carrier_equality_is_joined(&summary);
+}
+
+/// Every joined delivery relation is one zero bound between the receiver
+/// and another bare `i32` binding, and both bounds of that equality are
+/// joined: the carrier equality `x = d` alone [ENT-5].
+fn assert_only_the_carrier_equality_is_joined(summary: &FunctionEntailment) {
+    let bare_binding = |term: TermId| match retained_term(summary, term) {
+        TermKind::Place(place, IntegerType::I32) if place.path.is_empty() => match place.root {
+            PlaceRoot::Binding(binding) => Some(binding),
+            _ => None,
+        },
+        _ => None,
+    };
+    let joined = summary
+        .derivations
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            DerivationNode::PostconditionDeliveryJoin { detail } => Some(detail),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        joined.len(),
+        2,
+        "both bounds of the carrier equality are joined"
+    );
+    for detail in joined {
+        let Relation::Bound {
+            left,
+            right,
+            bound: 0,
+        } = detail.relation
+        else {
+            panic!("the joined carrier equality is a zero bound: {detail:?}");
+        };
+        let (Some(left), Some(right)) = (bare_binding(left), bare_binding(right)) else {
+            panic!("the carrier equality relates two bare bindings: {detail:?}");
+        };
+        assert!(left == detail.receiver || right == detail.receiver);
+        assert_ne!(left, right);
     }
 }
 
@@ -9283,13 +9327,26 @@ fn assert_real_wfgrep_routes(program: &CheckedProgramData) {
     // 2,600/5,124 and is still most of the total. The ceilings are tightened
     // to 4,500 and 7,400, about the ten-percent margin the earlier ceilings
     // kept above their measurement.
+    // Main measured 4,180 and 6,919 when v0.79 made a `give` deliver its
+    // carrier equality and a literal or named const a carrier [ENT-5]. A
+    // literal's given value relates to every term of the function, and
+    // materializing each such relation first raised the program to 13,844
+    // nodes. A delivery image now leaves out a bound its carrier's Z bound
+    // implies through the other term's implicit bound, and the join roots no
+    // bound the continuation derives from the joined Z bounds [DIAG-2], which
+    // leaves 4,535 and 7,460: the path-dependent relations of the literal
+    // value initializers, such as `matched_bit <= matched`, in `walk`
+    // +201/+329, `exercise` +170/+216 and `search_file` +140/+226, less
+    // `name_before` -135/-202, whose atom join the same rule prunes, and
+    // `assemble_failure` -21/-28. The ceilings rise to 5,000 and 8,200, the
+    // same ten-percent margin.
     assert!(
-        proof_nodes <= 4_500,
-        "wfgrep retained {proof_nodes} proof nodes; expected at most 4,500"
+        proof_nodes <= 5_000,
+        "wfgrep retained {proof_nodes} proof nodes; expected at most 5,000"
     );
     assert!(
-        proof_edges <= 7_400,
-        "wfgrep retained {proof_edges} proof edges; expected at most 7,400"
+        proof_edges <= 8_200,
+        "wfgrep retained {proof_edges} proof edges; expected at most 8,200"
     );
     let shift = program
         .functions
