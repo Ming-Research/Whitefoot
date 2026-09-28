@@ -447,6 +447,55 @@ owns and waits on directly, as the reference's does, which is also what
 several driver threads need, one ring each; the multi-driver work takes it
 up and measures it.
 
+## Experiment 5: several driver threads
+
+### Design
+
+Directed by the owner on 2026-09-28 ("run contexts on several driver threads,
+so a server can use more than one core"). The waiting runtime shape of
+Experiment 1 that met the bar ran one driver per core, each with a ring, and
+the compiled server at one driver reached 0.51, 0.30 and 0.41 of the best
+reference at its default of one thread per CPU (Experiment 2).
+
+The runtime keeps the first version's model and adds drivers:
+
+- A program starts `WF_DRIVERS` drivers, one per online CPU when it is not
+  set, the first time a context starts; the entry's thread is driver 0 and
+  runs the root context. A program that starts no context runs no second
+  driver.
+- A context is placed on a driver when it starts, round robin, and never
+  moves. Each driver has its own ready queue, parked contexts, readiness
+  polls and, where the host has one, its own ring and wake runtime, so the
+  operations of a context are submitted to and reaped from its driver's
+  ring and wake it by its record's address on that thread, exactly as
+  today.
+- What crosses drivers is a start, placed on another driver, and a finish
+  that wakes a waiter on another driver. Both go through the target
+  driver's inbox under a lock, and wake the target's ring if it waits.
+- A group's count and its waiter are updated atomically; the handle budget
+  that `factory_share` relates is an atomic counter; the memory regions
+  frames come from are taken under a lock, which is rare because a
+  context's frames come from its own arena.
+- With no ring (the readiness route, and every host without one), the
+  program runs one driver, as today.
+
+The single-issuer ring mode Experiment 4 attributes part of the one-driver
+gap to is a separate later step, measured on its own.
+
+### What would distinguish the hypotheses, stated before measuring
+
+Same protocol as Experiment 3, `tcp_contexts.wf`, 64 and 1024 connections
+with 64-byte messages and 64 connections with 64 KiB messages, the
+references at their default of one thread per CPU:
+
+- The drivers scale if at four drivers the server's rate is at least 1.5
+  times its own rate at one driver at 64 and at 1024 connections.
+- The shape carries over if at four drivers it reaches at least 0.70 of the
+  best reference at 64 and at 1024 connections.
+- Adding drivers costs a program that uses one nothing measurable if the
+  one-driver build of the new runtime is within 0.05 of the current one at
+  64 connections, interleaved.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
