@@ -857,6 +857,20 @@ fn wide_payload() -> result: Payload pure {
   return Payload::Wide(first: 511_u64, last: 127_u8);
 }
 
+enum Compact {
+  Blank();
+  Short(number: i32);
+  Long(word: u64);
+}
+
+fn short_compact() -> result: Compact pure {
+  return Compact::Short(number: 17_i32);
+}
+
+fn long_compact() -> result: Compact pure {
+  return Compact::Long(word: 1023_u64);
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   let flag = Flag::On();
   match flag {
@@ -906,57 +920,138 @@ fn main() -> status: std::process::ExitStatus pure {
       }
     }
   }
+  match short_compact() {
+    Blank() => {
+      return std::process::exit_status(code: 11_u8);
+    }
+    Short(number: value) => {
+      if value != 17_i32 {
+        return std::process::exit_status(code: 12_u8);
+      }
+    }
+    Long(word: value) => {
+      return std::process::exit_status(code: 13_u8);
+    }
+  }
+  match long_compact() {
+    Blank() => {
+      return std::process::exit_status(code: 14_u8);
+    }
+    Short(number: value) => {
+      return std::process::exit_status(code: 15_u8);
+    }
+    Long(word: value) => {
+      if value != 1023_u64 {
+        return std::process::exit_status(code: 16_u8);
+      }
+    }
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = emit(source);
     assert!(llvm.contains("switch i1"));
     assert!(llvm.contains("switch i32"));
-    let constructors: [(&str, u32, &[usize]); 3] = [
-        ("empty_payload", 0, &[]),
-        ("number_payload", 1, &[1]),
-        ("wide_payload", 2, &[2, 3]),
-    ];
-    for (name, tag, selected) in constructors {
-        let body = emitted_function(&llvm, name);
+    // compiler/payload-enum-layout: `Payload`'s product, the tag and four
+    // payload leaves, does not return in registers, so it is a union of
+    // variant views; `Compact`'s tag and two leaves do, so it keeps the
+    // product of the tag and every variant's fields.
+    let payload = nominal_type("Payload");
+    let compact = nominal_type("Compact");
+    assert!(
+        llvm.lines().any(|line| {
+            line.starts_with(&format!("{payload} = type {{ i32, ["))
+                && line.contains(" x i8], [0 x ")
+        }),
+        "{llvm}"
+    );
+    assert!(
+        llvm.contains(&format!("{compact} = type {{ i32, i32, i64 }}")),
+        "{llvm}"
+    );
+    // The address one `getelementptr inbounds` into `ty` at `field` defines.
+    let field_address = |body: &'_ str, ty: &str, field: usize| -> Option<String> {
+        body.lines().find_map(|line| {
+            let (address, operation) = line.trim().split_once(" = ")?;
+            (operation.starts_with(&format!("getelementptr inbounds {ty}, ptr "))
+                && operation.ends_with(&format!(", i32 0, i32 {field}")))
+            .then(|| address.to_owned())
+        })
+    };
+    // Every constructor initializes the complete result, then stores its
+    // `i32` tag at field 0 and each selected payload field with its own type.
+    let initialized = |body: &str, ty: &str, tag: u32, fields: &[(String, &str)]| {
         assert!(
-            body.contains(&format!(
-                "store {} zeroinitializer, ptr %wf.result",
-                nominal_type("Payload")
-            )),
+            body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
             "the baseline constructor initializes the complete result: {body}"
         );
         assert!(!body.contains("poison"), "{body}");
         assert!(!body.contains("undef"), "{body}");
-        for (field, field_type) in ["i32", "i32", "i64", "i8"].iter().enumerate() {
-            let address = body.lines().find_map(|line| {
-                let (address, operation) = line.trim().split_once(" = ")?;
-                (operation.starts_with(&format!(
-                    "getelementptr inbounds {}, ptr ",
-                    nominal_type("Payload")
-                )) && operation.ends_with(&format!(", i32 0, i32 {field}")))
-                .then_some(address)
-            });
-            if field != 0 && !selected.contains(&field) {
-                assert!(
-                    address.is_none(),
-                    "only selected fields receive writes after aggregate initialization: {body}"
-                );
-                continue;
-            }
-            let address =
-                address.expect("the tag and each selected payload field have a destination");
-            let stored = body
-                .lines()
-                .find(|line| {
+        let tag_address = field_address(body, ty, 0).expect("the tag has a destination at field 0");
+        assert!(
+            body.lines()
+                .any(|line| line.trim() == format!("store i32 {tag}, ptr {tag_address}")),
+            "the tag is initialized with its width: {body}"
+        );
+        for (address, field_type) in fields {
+            assert!(
+                body.lines().any(|line| {
                     line.trim().starts_with(&format!("store {field_type} "))
                         && line.ends_with(&format!(", ptr {address}"))
-                })
-                .expect("the tag and each selected payload field are initialized");
-            if field == 0 {
-                assert_eq!(stored.trim(), format!("store i32 {tag}, ptr {address}"));
-            }
+                }),
+                "each selected payload field is initialized: {body}"
+            );
         }
+    };
+    let union_constructors: [(&str, u32, &[&str]); 3] = [
+        ("empty_payload", 0, &[]),
+        ("number_payload", 1, &["i32"]),
+        ("wide_payload", 2, &["i64", "i8"]),
+    ];
+    for (name, tag, field_types) in union_constructors {
+        let body = emitted_function(&llvm, name);
+        // The value type is addressed only at its tag; the selected
+        // variant's fields are addressed through that variant's view, and no
+        // other variant's view is touched.
+        assert!(
+            body.lines()
+                .filter(|line| line.contains(&format!("getelementptr inbounds {payload}, ptr ")))
+                .all(|line| line.ends_with(", i32 0, i32 0")),
+            "{body}"
+        );
+        for other in (0..3).filter(|other| *other != tag) {
+            assert!(!body.contains(&format!("{payload}.v{other},")), "{body}");
+        }
+        let view = format!("{payload}.v{tag}");
+        let fields: Vec<(String, &str)> = field_types
+            .iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let address = field_address(body, &view, index + 1)
+                    .expect("each selected payload field has a destination in its view");
+                (address, *field_type)
+            })
+            .collect();
+        initialized(body, &payload, tag, &fields);
+    }
+    // A register-returned product is constructed by its destination-form
+    // body, each selected field at its flattened position after the tag and
+    // every earlier variant's fields.
+    let product_constructors: [(&str, u32, usize, &str); 2] = [
+        ("short_compact", 1, 1, "i32"),
+        ("long_compact", 2, 2, "i64"),
+    ];
+    for (name, tag, selected, field_type) in product_constructors {
+        let body = emitted_body(&llvm, name);
+        for field in (1..3).filter(|field| *field != selected) {
+            assert!(
+                field_address(body, &compact, field).is_none(),
+                "only selected fields receive writes after aggregate initialization: {body}"
+            );
+        }
+        let address = field_address(body, &compact, selected)
+            .expect("each selected payload field has a destination");
+        initialized(body, &compact, tag, &[(address, field_type)]);
     }
     assert!(llvm.contains("call void @abort()"));
     assert!(!llvm.contains(&format!("{} = type", nominal_type("Flag"))));
