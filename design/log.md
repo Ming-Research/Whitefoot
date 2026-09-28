@@ -13,6 +13,14 @@ Owner-approved: 2026-09-28, the owner approved the payload-enum-layout amendment
 
 Summary: Apply the reviewed amendment unchanged as the new node compiler/payload-enum-layout. An enum with at least two payload-carrying variants whose product representation does not fit the return registers of compiler/result-registers is laid out as a union of per-variant views, each the `i32` tag followed by that variant's fields, sized and aligned for the largest and most aligned view, because the specification fixes only the OP-9 ceiling and OWN-7 already treats different variants' payloads as one storage, while the product layout multiplies storage by the number of payload variants. The two representation choices the investigation left to the owner were decided as recommended: such an enum is a memory-only value in the backend (moved by memmove, passed by address, returned through a destination), and its release helper works from an address. Tag-only, single-payload and register-returned enums keep their representation; OP-9 and every checker rule are unchanged. The [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md) holds the grounds, measurements and validation criterion. Remove the accepted amendment and the amendment directory. This ruling authorizes no merge.
 
+## 2026-09-28 Bind marked waiting results and run contexts on several drivers
+
+Nodes: language/parallelism, compiler/waiting-contexts
+
+Owner-approved: The owner approved both decision cards for PR #165 ("approve all", written in Chinese) on 2026-09-28.
+
+Summary: Apply the two reviewed amendments unchanged. Add to language/parallelism that a waiting call in a `let` right-hand side whose callee takes only value parameters may execute alongside the statements after it, completing before its binding is next used and before the activation leaves, with `mustpar` asserting that permission (kernel-spec v0.78 WAIT-2, PAR-4). In compiler/waiting-contexts, add the bound start's result slot and its join before the first later statement whose footprint reaches the binding, and replace the decision that every context runs on the entry's thread with several driver threads, each with its own ring and run queue, starts made ready on the starter's driver and idle drivers taking ready contexts; the one-driver alternative and round-robin placement join the rejected list. The [waiting investigation](../research/investigations/io-model/WAITS.md) holds the grounds, Experiments 5 and 6 the measurements. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts

@@ -4,9 +4,10 @@
 //! These private choices preserve bytes and outcomes. C2 removed PAR-3, so
 //! the previous reverse-peer scheduling assertion and staged-lane shape
 //! assertion are retired; the source fanout loop now serves peers in order.
-//! Windows selects the existing hosted echo/refusal scope. The remaining
-//! POSIX scenarios keep their existing collection; porting a harness does not
-//! silently add another host matrix for every historical case.
+//! Windows selects the existing hosted echo/refusal scope and the context
+//! cases. The remaining POSIX scenarios keep their existing collection;
+//! porting a harness does not silently add another host matrix for every
+//! historical case.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -70,7 +71,6 @@ fn bounded_stream(stream: TcpStream) -> TcpStream {
     stream
 }
 
-#[cfg(unix)]
 fn accept_when_ready(listener: &TcpListener) -> TcpStream {
     listener
         .set_nonblocking(true)
@@ -376,7 +376,8 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
     for native_ring in [true, false] {
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route_with_workers(native_ring, Some("3"), &[text.as_bytes()]);
+        let child =
+            program.spawn_on_route_with(native_ring, &[("WF_WORKERS", "3")], &[text.as_bytes()]);
         let mut streams = (0..4_u8)
             .map(|_| connect_when_ready(port))
             .collect::<Vec<_>>();
@@ -412,7 +413,10 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// There are more peers than the helper pool has threads, so a runtime that
 /// sent those waits to blocking helpers would hold only as many silent peers
 /// as it has helpers and fail here too (`WAITS.md`, the readiness route).
-#[cfg(unix)]
+/// Windows has no readiness wait, so there a context's socket wait without
+/// the completion port is exactly such a helper wait, and only the port's
+/// route runs (`docs/todo.md`, "Only Linux with a ring runs several
+/// drivers").
 #[test]
 fn every_connection_is_served_in_its_own_context_on_both_routes() {
     const PEERS: u8 = 12;
@@ -422,7 +426,12 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
         "the accept loop starts contexts"
     );
     let program = build_program(&llvm);
-    for native_ring in [true, false] {
+    let routes: &[bool] = if cfg!(windows) {
+        &[true]
+    } else {
+        &[true, false]
+    };
+    for &native_ring in routes {
         let port = free_port();
         let text = port.to_string();
         let count = PEERS.to_string();
@@ -452,6 +461,123 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
         drop(streams);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "native ring: {native_ring}");
+    }
+}
+
+/// Contexts run on several driver threads where the host has a ring, each
+/// driver with a ring of its own: with four drivers pinned, 64 peers that all
+/// speak at once are each answered, and the server exits zero once every one
+/// has closed, which it does only when every context, on whichever driver it
+/// ran, has finished before the entry leaves. The last context's finish and
+/// the entry's exit happen on different threads, so the case runs several
+/// rounds. A host whose kernel refuses the ring runs one driver, and the case
+/// then checks only the answers and the exit.
+#[cfg(target_os = "linux")]
+#[test]
+fn contexts_on_four_drivers_serve_every_peer_and_finish_before_the_entry() {
+    const PEERS: usize = 64;
+    let program = build_program(&compile_program("tcp_contexts.wf"));
+    for round in 0..6 {
+        let port = free_port();
+        let text = port.to_string();
+        let count = PEERS.to_string();
+        let child = program.spawn_on_route_with(
+            true,
+            &[("WF_DRIVERS", "4")],
+            &[text.as_bytes(), count.as_bytes()],
+        );
+        let mut streams = (0..PEERS)
+            .map(|_| connect_when_ready(port))
+            .collect::<Vec<_>>();
+        for (peer, stream) in streams.iter_mut().enumerate() {
+            let sent = [round as u8, peer as u8, 7];
+            stream.write_all(&sent).expect("send this peer's bytes");
+        }
+        for (peer, stream) in streams.iter_mut().enumerate() {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(20)))
+                .expect("bound the wait for this peer's answer");
+            let mut returned = [0_u8; 3];
+            stream
+                .read_exact(&mut returned)
+                .unwrap_or_else(|error| panic!("peer {peer} of round {round}: {error}"));
+            assert_eq!(
+                returned,
+                [round as u8, peer as u8, 7],
+                "peer {peer} of round {round}"
+            );
+        }
+        let rings = std::fs::read_dir(format!("/proc/{}/fd", child.id()))
+            .expect("list the server's descriptors")
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.to_string_lossy().contains("io_uring"))
+            .count();
+        assert!(
+            rings == 0 || rings == 4,
+            "a server that has a ring runs four drivers with one ring each, \
+             and this one holds {rings} rings (round {round})"
+        );
+        drop(streams);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "round {round}");
+    }
+}
+
+/// Two bound `mustpar` fetches proceed together [WAIT-2]: the first server
+/// answers only once the second has received its request, which a program
+/// that waited for the first fetch's byte before sending the second request
+/// never sends. Each result is joined where it is first used, the sum.
+#[test]
+fn two_bound_fetches_proceed_together_on_both_routes() {
+    let llvm = compile_program("tcp_gather.wf");
+    assert!(
+        llvm.contains("@wf__context_launch("),
+        "each marked fetch starts a context"
+    );
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let first = TcpListener::bind("127.0.0.1:0").expect("the first server's port");
+        let second = TcpListener::bind("127.0.0.1:0").expect("the second server's port");
+        let first_port = first
+            .local_addr()
+            .expect("first address")
+            .port()
+            .to_string();
+        let second_port = second
+            .local_addr()
+            .expect("second address")
+            .port()
+            .to_string();
+        let (arrived, second_request) = std::sync::mpsc::channel();
+        let second_server = std::thread::spawn(move || {
+            let mut stream = accept_when_ready(&second);
+            let mut request = [0_u8; 1];
+            stream.read_exact(&mut request).expect("the second request");
+            arrived.send(request[0]).expect("tell the first server");
+            stream.write_all(&[20]).expect("the second answer");
+        });
+        let first_server = std::thread::spawn(move || {
+            let mut stream = accept_when_ready(&first);
+            let mut request = [0_u8; 1];
+            stream.read_exact(&mut request).expect("the first request");
+            let other = second_request
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the second request arrived while the first fetch waited");
+            stream.write_all(&[10]).expect("the first answer");
+            (request[0], other)
+        });
+        let child = program.spawn_on_route(
+            native_ring,
+            &[first_port.as_bytes(), second_port.as_bytes()],
+        );
+        let (status, _) = finished(child);
+        assert_eq!(
+            first_server.join().expect("the first server"),
+            (1, 2),
+            "native ring: {native_ring}"
+        );
+        second_server.join().expect("the second server");
+        assert_eq!(status, 30, "native ring: {native_ring}");
     }
 }
 

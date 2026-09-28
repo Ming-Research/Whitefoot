@@ -310,13 +310,19 @@ Safe, fast and small are the core. These are the other things worth knowing.
   context of its own, and while one context waits the thread runs the
   others, so a server serves every connection at once
   (`tests/programs/tcp_contexts.wf`). The function that marked the call
-  returns only after it finishes. A waiting function keeps its state in a
+  returns only after it finishes. A marked call can also bind its result,
+  `let a = mustpar fetch(…);`, and the function waits for it only where it
+  first uses `a`, so several requests proceed together
+  (`tests/programs/tcp_gather.wf`). A waiting function keeps its state in a
   frame the size of what it holds across a wait, not in a stack of its own,
   so a context costs about what its own variables do and adds no kernel
   mapping. The compiled program carries out I/O through a completion runtime
   (io_uring on Linux, I/O completion ports on Windows). Computation that
-  `--par` overlaps never waits for I/O. Still open: getting a result back
-  from a marked call, and running contexts on more than one thread.
+  `--par` overlaps never waits for I/O. On Linux the contexts run on one
+  driver thread per CPU, each with its own ring; a context starts on its
+  starter's thread, and an idle driver takes ready contexts from a busy one.
+  Still open: more than one driver where the host has no ring, and on
+  Windows.
 
 ### Planned
 
@@ -417,7 +423,8 @@ Other options:
 
 - `--par` builds the parallel version, and `--par-ledger` prints every
   parallelism decision with its reason. At run time, `WF_WORKERS` sets how
-  many workers it uses;
+  many workers it uses, and `WF_DRIVERS` how many driver threads run the
+  contexts that marked waiting calls start, one per CPU by default;
 - `--stack-ledger` reports each function's frame and how many levels each
   recursive cycle fits;
 - `--emit-llvm` prints the LLVM IR;

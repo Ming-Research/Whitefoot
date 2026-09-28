@@ -335,6 +335,9 @@ pub(crate) struct FunctionPermissions {
     /// statement after it, or `None` where no statement follows in its block.
     /// Acceptance reads it; the ledger does not print it.
     pub(crate) marked: Vec<(NodePath, Option<PermissionVerdict>)>,
+    /// [WAIT-2] where each marked waiting `let` is joined, in source order.
+    /// The checker installs it on the function for lowering.
+    pub(crate) context_awaits: Vec<super::model::CheckedContextAwait>,
 }
 
 /// The whole-program permission table, dense by [`FunctionId`].
@@ -519,6 +522,7 @@ impl<'check> Program<'check> {
             runs: Vec::new(),
             loops: Vec::new(),
             marked: Vec::new(),
+            context_awaits: Vec::new(),
         };
         let marked = function
             .waiting
@@ -544,10 +548,21 @@ impl<'check> Program<'check> {
                 &function.entailment.permission_separations,
                 &mut permissions,
             );
+            self.plan_context_awaits(
+                &places,
+                &function.waiting.context_starts,
+                block,
+                &mut permissions.context_awaits,
+            );
             for statement in block {
                 push_nested_blocks(statement, &mut blocks);
             }
         }
+        permissions.context_awaits.sort_by(|left, right| {
+            left.statement
+                .components()
+                .cmp(right.statement.components())
+        });
         permissions.pairs.sort_by(|left, right| {
             left.first
                 .statement
@@ -645,6 +660,56 @@ impl<'check> Program<'check> {
                 )
             });
             permissions.marked.push((node.clone(), verdict));
+        }
+    }
+
+    /// [WAIT-2] where each marked waiting `let` of one block is joined: before
+    /// the first later statement of the block whose footprint reaches the
+    /// binding, or that this analysis refuses because it may leave the block
+    /// or has a form it does not compute, and otherwise at the block's end.
+    /// A statement that waits is judged by its footprint, not refused: the
+    /// permission lets the call proceed alongside later statements, waiting
+    /// ones included, and only a use of its binding or a way out of its block
+    /// needs its result. The footprints are [PAR-1]'s, fail-closed, so the
+    /// join precedes every read, write and release of the binding.
+    fn plan_context_awaits(
+        &self,
+        places: &PlaceMap,
+        starts: &[NodePath],
+        block: &'check [CheckedStatement],
+        awaits: &mut Vec<super::model::CheckedContextAwait>,
+    ) {
+        for (index, statement) in block.iter().enumerate() {
+            let CheckedStatement::Let {
+                node_path, binding, ..
+            } = statement
+            else {
+                continue;
+            };
+            if !starts.contains(node_path) {
+                continue;
+            }
+            let uses =
+                |later: &'check CheckedStatement| match self.classify(places, later).footprint {
+                    Err(_) => true,
+                    Ok(footprint) => {
+                        footprint.unresolved.is_some()
+                            || footprint
+                                .writes
+                                .iter()
+                                .chain(&footprint.reads)
+                                .chain(&footprint.operand_reads)
+                                .any(|access| access.place.root == PlaceRoot::Binding(*binding))
+                    }
+                };
+            let before = block[index + 1..]
+                .iter()
+                .position(uses)
+                .and_then(|offset| u32::try_from(offset + 1).ok());
+            awaits.push(super::model::CheckedContextAwait {
+                statement: node_path.clone(),
+                before,
+            });
         }
     }
 
