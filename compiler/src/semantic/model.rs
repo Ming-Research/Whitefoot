@@ -1520,6 +1520,12 @@ pub(crate) struct CheckedAllocationFit {
     pub(crate) layout_ceiling: CheckedLayoutCeiling,
     /// The declared-order ordinal of the count argument.
     pub(crate) count: usize,
+    /// Where the call is written and where its count argument is, so that a
+    /// selected target that cannot hold the retained bound names the
+    /// allocation and the count to bound [STOR-6]. The checker holds the
+    /// tree that resolves the call's node; target qualification does not.
+    pub(crate) site: crate::SyntaxCoordinate,
+    pub(crate) count_site: crate::SyntaxCoordinate,
     /// Tightest numeric upper bound retained by this call's accepted OP-9
     /// derivation. Entailment installs it after proving the obligation;
     /// lowering must not proceed while it is absent.

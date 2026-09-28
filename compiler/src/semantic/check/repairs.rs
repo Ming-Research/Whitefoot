@@ -24,6 +24,11 @@
 //! whether the consumed place owns its value and, for a cell, on its content,
 //! since those decide which source change can be carried out.
 //!
+//! So do the words of the fix a [STOR-6] target-layout stop carries when the
+//! selected target cannot hold an allocation's proved count bound. That stop
+//! is no rejection [DIAG-1], but it sends the writer to the same count as
+//! [OP-9]'s repair, whose words stand next to it.
+//!
 //! The sentences live here, in one place, so that wording can follow evidence
 //! from agents without touching the judgments that select them.
 
@@ -830,6 +835,20 @@ pub(super) fn allocation_fit(case: &GoalCase<'_>) -> String {
             )
         }
     }
+}
+
+/// [STOR-6] the fix a target-layout stop carries when an allocating call's
+/// retained count bound exceeds the largest count the selected target
+/// admits. The stop is no rejection and cites no rule [DIAG-1], but its words
+/// live beside [OP-9]'s because both send the writer to the same count: the
+/// target qualifies the bound the checked program proves, so the fix is a
+/// tighter proof where the count is computed. Target qualification does not
+/// know what the count reads, so the sentence offers each form that bounds
+/// it; `limit` is the largest count the target admits.
+pub(crate) fn target_allocation_count(count: &str, limit: u64) -> String {
+    format!(
+        "with N the largest count the program needs, at most {limit}, bound `{count}` by N before this call: add `requires {count} <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if {count} <= N` where refusing a larger count is the intended behavior"
+    )
 }
 
 /// [REF-4] one range-formation conjunct.

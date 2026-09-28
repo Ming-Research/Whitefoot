@@ -665,34 +665,33 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
-- **A target-layout failure names no allocation site or admitted bound.** A
-  program whose OP-9 proof retains a count bound the selected target cannot
-  hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,
-  passes checking and stops at [STOR-6] target qualification with
-  `target layout failure in TargetLayout: TargetLayout(Unrepresentable(RuntimeSizedAllocation))`,
-  which names no source site, no proved bound and no bound the target
-  admits. The numbers exist where the check fails, in the runtime-sized
-  allocation branch of the source-call validation in
-  `compiler/src/target.rs`: the retained bound, the element's target
-  stride, the descriptor header and `runtime_allocation_max()`, which give the
-  largest admitted count `(max - header) / stride`. Design: `IrSourceCall`
-  carries the call's node path, copied from the checked call during lowering;
-  a `TargetLayoutFailure` variant carries the site, the proved bound and the
-  admitted bound (the enum is `Copy` and crosses many `?` returns, so an index
-  into a side table keeps it `Copy`); the driver renders the site as a source
-  location beside the two numbers, still as a target-layout stop and never as
-  a source rejection [STOR-6]; and
-  `u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure`
-  in `compiler/src/driver/tests.rs`, which pins today's stop by
-  `RuntimeSizedAllocation` in its detail, changes with it. No specification
-  change. Validate with a program that proves the OP-9 ceiling and calls the
-  allocating function from its entry: the failure names the allocation's call
-  site, the proved bound and the selected target's largest admitted count,
-  while the same program bounded below that count builds. Deferred because the
-  OP-9 repair no longer offers the ceiling as the bound to write, which closes
-  the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
-  found into this stop; reopen when a writer report or a program meets the
-  unlocated failure.
+- **Checking accepts a program whose build stops at target layout.** A
+  program whose [OP-9] proof retains a count bound the selected target cannot
+  hold passes `whitefootc --check` and `--check-module` and stops only when
+  built, at [STOR-6] target qualification; the stop now names the call, the
+  proved bound and the target's largest admitted count
+  (`AllocationCountExceedsTarget`), but a writer who checks before building
+  still learns of it one round late, which is what cost the Snowghost PNG
+  decoder's writer most. The specification permits a check command to
+  qualify the host target: [STOR-6] places target layout after semantic
+  publication and makes its failure no source rejection [DIAG-1], which a
+  check that also qualified the host and reported a `TargetLayout` stop
+  (never a source verdict) would respect. But `driver::check` is
+  defined as the source-verdict projection that stops before lowering, and
+  `design/compiler` records no decision on what a check command covers. Two
+  further obstacles: `--check-module` selects no entry, while target
+  qualification qualifies the lowered program an entry reaches, so a
+  module-level check has no materialization set to qualify; and qualifying
+  requires lowering, whose cost on a check has not been measured. The
+  options are qualifying the host in `--check` when an entry is selected,
+  a separate target-check option, or relying on the OP-9 repair's warning
+  that a bound near the language's limit stops at target layout. This is a
+  compiler decision for the owner; validate a chosen form with the
+  reproduction in `an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds`
+  (`compiler/src/driver/pinned_repairs.rs`) stopping at check time as a
+  `TargetLayout` stop with no rule, and the check time of the corpus
+  programs before and after. Reopen when the owner rules or another writer
+  meets a build-only target stop.
 
 ## Parallel lowering and runtime
 
@@ -1501,7 +1500,12 @@ rarely insert at the same place.
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
-  `driver::check_module` has no caller. Finalize checks every parsed node
+  `driver::check_module` has no caller. `IrRuntimeTargetObligations`'s
+  `call_site_bound` is `false` in its one constructor, so the byte checks
+  `validate_target_obligation` in `compiler/src/target.rs` keeps for a direct
+  `BufferFill`, `WindowBlockNew` or `WindowGrow` node with its own bound never
+  run; every source bound is qualified per call in
+  `validate_source_call_allocations`. Finalize checks every parsed node
   against its production again, the re-verification `design/compiler.md`
   refuses. By reading, generic validation never takes its early return,
   because the prelude's generic signatures are templates in every bundle, so

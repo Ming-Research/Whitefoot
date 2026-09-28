@@ -2632,6 +2632,166 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// An allocation whose count is proved only by its type: `u64::MAX` for a
+/// `u8` element, which OP-9 accepts and no supported target can allocate.
+/// This is the program a writer met in an image decoder, where the count came
+/// from the image's dimensions.
+const UNBOUNDED_TARGET_COUNT: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+
+/// [STOR-6] the target-layout stop at an allocation the selected target
+/// cannot hold names the call, the proved bound and the largest count the
+/// target admits, and its fix is carried out by the programs below it: the
+/// same program with the count guarded in the allocating function, and with
+/// the count required there and guarded by its caller. Every supported
+/// target allocates at most `i64::MAX` bytes, and a `Slots<u8>` block spends
+/// two header words, so `i64::MAX - 16` elements fit.
+#[test]
+fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
+    super::check(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect("the type's own bound passes OP-9");
+    let failure = compile(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect_err("no supported target allocates u64::MAX bytes");
+    assert_eq!(
+        failure.kind(),
+        CompilationFailureKind::TargetLayout,
+        "{failure}"
+    );
+    assert_eq!(failure.rule_id(), None, "a target stop cites no rule");
+    let rendered = failure.to_string();
+    for sentence in [
+        "unbounded.wf:8:14: target layout failure in TargetLayout: AllocationCountExceedsTarget\n",
+        "\n  count: \"count\"\n",
+        "\n  proved_count_bound: 18446744073709551615\n",
+        "\n  target_count_limit: 9223372036854775791\n",
+        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775791, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
+    ] {
+        assert!(
+            rendered.contains(sentence),
+            "the stop no longer carries this text.\nwanted: {sentence}\ngot:    {rendered}"
+        );
+    }
+    let guarded = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  if count <= 4096_u64 {
+    let cell = box_slots_new::<u8>(capacity: count);
+    return move cell;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  return move empty;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+    let required = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  if n <= 4096_u64 {
+    let cell = make(count: n);
+    let cap = cell.inner.cap;
+    let code = cvt.wrap::<u64, u8>(cap);
+    return exit_status(code: code);
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    for (name, source) in [("guarded.wf", &guarded[..]), ("required.wf", &required[..])] {
+        let contradictions = contradictory_successes(name, source)
+            .unwrap_or_else(|rejection| panic!("{name} is rejected:\n{rejection}"));
+        assert!(
+            contradictions.is_empty(),
+            "{name} succeeds only where its state is contradictory: {contradictions:?}"
+        );
+        if let Err(failure) = compile(&[SourceInput::new(name, source)], CompilerLimits::default())
+        {
+            panic!("{name} does not build:\n{failure}");
+        }
+    }
+}
+
+/// The printed limit is the target's exact threshold: a count proved at most
+/// that number builds, and one more stops at target layout [STOR-6].
+#[test]
+fn the_printed_target_count_limit_is_the_exact_threshold() {
+    let bounded = |limit: &str| {
+        format!(
+            "fn make(count: u64) -> made: Box<Slots<u8>> pure contract {{\n  requires count <= {limit}_u64;\n}} {{\n  let cell = box_slots_new::<u8>(capacity: count);\n  return move cell;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cell = make(count: 4_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        )
+    };
+    let at_limit = bounded("9223372036854775791");
+    if let Err(failure) = compile(
+        &[SourceInput::new("at-limit.wf", at_limit.as_bytes())],
+        CompilerLimits::default(),
+    ) {
+        panic!("a count at the printed limit does not build:\n{failure}");
+    }
+    let above = bounded("9223372036854775792");
+    let failure = compile(
+        &[SourceInput::new("above-limit.wf", above.as_bytes())],
+        CompilerLimits::default(),
+    )
+    .expect_err("one more than the printed limit exceeds the target");
+    assert!(
+        failure
+            .detail()
+            .lines()
+            .any(|line| line == "target_count_limit: 9223372036854775791"),
+        "{failure}"
+    );
+}
+
 /// The pair test's second condition is live: a guard around a refuted goal
 /// is accepted, and the goal inside it succeeds only because the branch
 /// state is contradictory, which is what makes guarding a refuted goal no

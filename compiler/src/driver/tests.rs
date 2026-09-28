@@ -1,5 +1,5 @@
 use super::{
-    CompilationFailureKind, CompilationStage, CompilerLimits, check, compile,
+    CompilationFailureKind, CompilationStage, CompilerLimits, DiagnosticFormat, check, compile,
     compile_with_permission_ledger,
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
@@ -2693,7 +2693,33 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(failure.stage(), CompilationStage::TargetLayout);
     assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
     assert_eq!(failure.rule_id(), None);
-    assert!(failure.detail().contains("RuntimeSizedAllocation"));
+    // [STOR-6] the stop names the allocating call, the bound the program
+    // proves and the largest count the target admits: every supported target
+    // allocates at most `i64::MAX` bytes, and an `Array<u16>` block spends one
+    // header word, so `(i64::MAX - 8) / 2` elements fit.
+    let location = failure.location().expect("the stop names the allocation");
+    assert_eq!(
+        (location.path(), location.line(), location.column()),
+        ("value.wf", 13, 10),
+        "{failure}"
+    );
+    assert!(
+        failure.render(DiagnosticFormat::Text).starts_with(
+            "value.wf:13:10: target layout failure in TargetLayout: AllocationCountExceedsTarget\n"
+        ),
+        "{failure}"
+    );
+    let detail = failure.detail();
+    for line in [
+        "count: \"bounded\"",
+        "proved_count_bound: 5000000000000000000",
+        "target_count_limit: 4611686018427387899",
+    ] {
+        assert!(
+            detail.lines().any(|field| field == line),
+            "{line}\n{detail}"
+        );
+    }
 }
 
 #[test]

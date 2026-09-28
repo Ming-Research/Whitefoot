@@ -1394,6 +1394,11 @@ pub(crate) struct IrSourceAllocation {
     pub(crate) count_argument: usize,
     pub(crate) layout_ceiling: IrLayoutCeiling,
     pub(crate) source_length_upper_bound: u64,
+    /// Where the call and its count argument are written, which a target
+    /// that cannot hold the bound names [STOR-6]. Presentation only: no
+    /// qualification reads them.
+    pub(crate) site: crate::SyntaxCoordinate,
+    pub(crate) count_site: crate::SyntaxCoordinate,
 }
 
 impl IrSourceAllocation {
@@ -1411,6 +1416,14 @@ impl IrSourceAllocation {
 
     pub(crate) const fn source_length_upper_bound(self) -> u64 {
         self.source_length_upper_bound
+    }
+
+    pub(crate) const fn site(self) -> crate::SyntaxCoordinate {
+        self.site
+    }
+
+    pub(crate) const fn count_site(self) -> crate::SyntaxCoordinate {
+        self.count_site
     }
 }
 
