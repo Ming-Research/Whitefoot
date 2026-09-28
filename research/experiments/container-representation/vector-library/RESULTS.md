@@ -3867,3 +3867,55 @@ reversing the saved patch. The pending amendment retains the failed result
 for disposition. Source restoration does not replace an already built
 compiler: preserve the identified Slots artifacts and rebuild the embedded
 compiler before the next source-only trial on original C lowering.
+
+### Zero-capacity `Slots` sentinel: complete pair and rejected candidate
+
+The next lowering discriminator keeps `Box<Slots<T>>`, all source contracts,
+the allocator refusal protocol and positive-capacity layout unchanged. A
+runtime-capacity `Slots` constructed with capacity zero points at one private
+module global `{ i64, i64 }` whose two words are zero. `grow` checks the old
+capacity before freeing, and `free_empty` skips the global. `Ring` and every
+positive-capacity `Slots` allocation retain the ordinary `malloc`/`free` path.
+The exact source-independent compiler patch is
+[`zero-slots.patch`](zero-slots.patch); it is a candidate artifact, not a
+production change. The pre-registered acceptance criterion was: all 1,260
+configurations and 8,820 executions pass with unchanged checksums and refusal
+cleanup; the accounting must show no request for a zero-capacity construction,
+one fewer request/release at each such trace, and unchanged positive-capacity
+rows; optimized IR must contain the shared header and no allocator call on the
+zero branch; and every qualified useful cell must improve or remain qualified.
+
+The unmodified current compiler and the candidate were rebuilt separately
+from the same branch and measured with `ECO_WORK=1048576`, seven samples and
+the same native inputs. Construction took 3.23 s for the baseline compiler,
+13.08 s for the candidate scratch compiler, 6.12 s for baseline correctness,
+3.14 s for candidate correctness, 82.01 s for the baseline matrix and 81.60 s
+for the candidate matrix. Both correctness images passed the full matrix,
+fault checksum, fault cleanup and accounting checks. The baseline and
+candidate sample files are
+[`baseline samples`](ecosystem-zero-slots-baseline-samples.csv) and
+[`candidate samples`](ecosystem-zero-slots-candidate-samples.csv), with target
+reductions in the paired [`baseline targets`](ecosystem-zero-slots-baseline-targets.csv)
+and [`candidate targets`](ecosystem-zero-slots-candidate-targets.csv).
+The allocator ledgers are [`baseline account`](ecosystem-zero-slots-baseline-account.csv)
+and [`candidate account`](ecosystem-zero-slots-candidate-account.csv).
+
+The accounting change is causal: for scalar reserved-16, Whitefoot falls from
+six requests/504 bytes to three requests/456 bytes per three-round trace; the
+positive reserve still allocates its new backing. Scalar growth-16 falls from
+21 requests/1,848 bytes to 18/1,800. The candidate target reduction is
+20 pass / 1 deficit / 15 inconclusive useful cells (six suffix-zero controls),
+versus the matched baseline's 14 / 5 / 17. The one qualified deficit is wide
+suffix-1 at 4096 (candidate 2.119/2.171 times the slower standard peer). The
+other useful cells either overlap or improve, but this strict loss rejects the
+candidate under the no-regression criterion. The IR confirms the sentinel is
+not an accounting-only artefact: the constructor returns the global on its
+zero branch, positive allocation remains in the other branch, and both growth
+and release contain the ownership test.
+
+The next discriminator is a source-equivalent lowering refinement: compare the
+old pointer directly with `@wf_zero_slots_header` in `grow` and `free_empty`,
+and specialize the zero-valued `box_slots_new` operation to return the global
+without a runtime zero test or phi. It is admitted only if the same complete
+matrix and accounting criterion passes and wide suffix-1 loses no qualified
+cell; otherwise the sentinel route is closed and Vector remains unresolved.
