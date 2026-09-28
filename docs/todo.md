@@ -1133,12 +1133,15 @@ rarely insert at the same place.
   many-context measurement on the helper or no-ring route attributes time to
   either pass.
 
-- **Windows contexts have not been run.** Waiting functions lower to
-  resumable frames on every target and the context driver is shared C, but
-  the Windows host job (`io-hosts.yml`) compiles it without starting a
-  context, so neither the completion port route nor the readiness route has
-  run a context there. Add a context program to that job's runs; until then
-  treat a Windows context server as unvalidated.
+- **Windows contexts run only on the completion port's route under test.**
+  The Windows host job (`io-hosts.yml`) runs the two context cases of
+  `compiler/tests/programs/network.rs`: twelve reverse-order peers each
+  served in its own context with the completion port required, and two bound
+  fetches on both routes. Without the port a Windows context's socket wait
+  is a blocking helper wait, because that host has no readiness wait, so a
+  server there holds only as many silent peers as the pool has helpers. A
+  `WSAPoll` readiness wait would give it the Linux readiness route's
+  behavior. Reopen when a Windows server has to run without the port.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
