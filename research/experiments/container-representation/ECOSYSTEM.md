@@ -193,6 +193,55 @@ the mixed accounting data unusable for candidate selection. The raw target
 reductions themselves replay from their sample files; replaying a reduction
 does not establish the identity or correctness of the image that produced it.
 
+### Ordinary Vector controller composition: criterion
+
+The next source-only discriminator starts from
+`7abd6bb34746b7b983b83103c68ee429b24859bb`, after the owner-directed hint
+withdrawal. Its freshly built compiler reproduces the retained T1H0 Vector
+LLVM and timed object byte for byte. The hypothesis is that the private
+trace-to-tail boundary repeats wide constructor setup and digest transport
+that the ordinary Rust and C++ trace compositions keep outside their cycles.
+The existing per-cycle calls and constant preparation are code observations;
+their separate elapsed-time shares are not established.
+
+Expand only `vector_library_tail_work` into the suffix cycle of
+`vector_library_trace`, by parameter substitution and local renaming. Keep
+the ordinary public append and truncate calls, all wrapping arithmetic,
+ownership/consumption order, the zero-removal truncate call, retained prefix,
+checksum recurrence and final drain/free. Leave the helper declaration and
+all reserved/growth/reuse source branches unchanged initially. No new API,
+compiler switch, attribute, metadata or special timed-count branch is part
+of this comparison. This is a successor to the recorded tail-only forced
+inlining experiment, whose wide suffix-two/count-16 loss remains a named
+falsifier, not a newly discovered hypothesis.
+
+Before construction, independently check the substituted block against the
+helper and freeze the exact source patch and compiler identity. Compare the
+optimized and native packages under the unchanged ordinary flags, including
+unchanged-source branches, calls, frames, constants, within-record SIMD,
+sections and placement. Require removal of the trace-to-tail call and wide
+constant preparation outside the outer cycle; reject before timing if that
+setup remains repeated or is replaced by comparable hot spills, a payload
+snapshot, lost within-record SIMD or new helper work.
+
+Both timed and accounting arms must pass the existing full correctness and
+fault controls, with all 1,260 configurations / 8,820 executions per image
+and identical 294-row instrumented allocation ledgers. That ledger describes
+the instrumented image, not timed allocation traffic. Only after the code and
+correctness screens pass, take one complete `measure 1048576 7` pair, both
+cohorts, all seven samples and 42 cells / 4,116 rows per arm. Apply the
+unchanged reducers, target and duration/stability qualifications; publish
+all six unranked controls and native drift. Any qualified useful-cell loss
+prevents selection. Overlap or unstable results do not complete the target.
+A success selects only the ordinary source composition, not a general
+inliner policy or a language amendment.
+
+In parallel, complete the already registered HashMap occupancy discriminator
+under the same source/compiler pin, with a fresh separate build and preserved
+practical samples. Its family report owns the capacity-sensitivity criterion
+and memory-pair selection; choose those pairs from fresh geometry before
+reading timing. No load-policy, layout or indexing change enters that sweep.
+
 ### Actual compiler factor isolation: criterion and result
 
 The criterion recorded before construction was to integrate main's

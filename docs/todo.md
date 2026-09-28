@@ -480,6 +480,17 @@ rarely insert at the same place.
   consumer that separates hinted and unhinted native code and passes matched
   performance checks. Terminal traversal's separate costs remain open.
 
+- **An empty-Slots sentinel needs every cleanup path checked before revival.**
+  The unselected [zero-capacity candidate](../research/experiments/container-representation/vector-library/RESULTS.md#zero-capacity-slots-sentinel-complete-samples-selection-unresolved)
+  changes explicit growth and empty release, but its patch does not change
+  derived Box cleanup's ordinary `FreePointer` path. A shared header must
+  never reach an allocator release through implicit scope cleanup. This is a
+  candidate-coverage concern, not a demonstrated retained-compiler defect.
+  Before reopening empty-state allocation removal, write implicit-drop and
+  nested-owner witnesses as well as explicit-release controls; either cover
+  every release path or establish why the candidate cannot reach it. Defer
+  this representation change while ordinary source-controller costs are tested.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn

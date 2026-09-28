@@ -1188,36 +1188,39 @@ This is a generic effect-row typing restriction, not a timing result. The
 scratch prelude, wrapper and module changes were restored; no candidate binary,
 matrix or production change was retained.
 
-### Follow-up discriminator: fused back-to-front rotation (scratch only)
+### Scratch compound back-to-front replacement
 
-The reverse churn trace always consumes the back element and immediately
-places that same owner at the front. A scratch-only compiler-owned helper will
-lower that exact pair as one `RunRotateBackFront` operation, with no new source
-language syntax or public library row. Its checked source witness remains the
-ordinary `take_back` followed by `place_front`; the candidate is a lowering
-comparison, not a change to the container contract. The fused body must read
-the old back slot, write the new front slot, and update length/head with the
-same modulo semantics and checksum/cleanup ledger as the pair.
+The original description called reverse churn a rotation of the same owner
+and proposed unchanged ordinary take/place source. The retained patch does
+neither. The original trace takes the back value, consumes it, constructs a
+new value from the next seed, and places the new value at the front. The
+scratch fixture constructs first, calls a new `replace_back_front` prelude
+row, then consumes the removed value. Its operation is
+`RunReplaceBackFront`, not `RunRotateBackFront`.
 
-Before timing, the candidate must pass all Deque correctness, allocation,
-checksum and cleanup images. Its optimized scalar reverse loop must remove the
-duplicate descriptor loads and boundary arithmetic attributable to the pair,
-with no new call, spill, frame growth or payload transfer. Forward, wide,
-rebase and cleanup bodies must be unchanged except for symbol identity. If the
-code criterion passes, the full qualified ecosystem matrix must show no useful
-cell regression; otherwise the fused lowering is rejected and all scratch
-compiler/source changes are restored. This experiment does not select a new
-prelude operation or amend the specification.
+The compound body captures the old back payload before writing the new front
+slot and updates head while leaving length unchanged. This covers the
+full-capacity same-slot case but changes the intermediate ring state and
+construction/consumption order. The measured scalar and inline-record
+bindings perform bounded local arithmetic, with no per-element allocation,
+nested-owner release or external effects; the consumers receive the same
+values in the same order. Their logical sequence, digest and instrumented
+allocation ledger are preserved. That evidence does not establish equivalence
+for arbitrary `DequeElement` implementations: a boxed payload can change from
+release-before-allocation to allocation-before-release. A `pure` constructor
+does not exclude allocation under STOR-8.
 
-The scratch lowering passed the code and oracle screens. It adds no call or
-payload transfer in the scalar reverse loop: the baseline optimized block
-loads the old length/head/capacity around two endpoint operations, whereas the
-candidate loads length and capacity once, captures the old back slot, writes
-the replacement front slot, and stores only the new head. The candidate reads
-the old value before the store, so the full-capacity same-slot case is covered.
-Both images passed 576 configurations and 2,592 executions, including the
-checksum and cleanup fault controls; the 120 accounting rows have the same
-request, byte, peak and release ledger as baseline.
+The recorded code criterion required removal of duplicate descriptor loads
+and boundary arithmetic without additional calls, spills, frame growth or
+payload transfers, and preservation of the other workload bodies apart from
+symbol identity. The scratch package passed those code and concrete-fixture
+oracle screens. The baseline optimized reverse block loads old
+length/head/capacity around two endpoint operations; the candidate loads
+length and capacity once, captures the back slot, writes the replacement
+front slot and stores only the new head. Both images passed 576 configurations
+and 2,592 executions, including checksum/cleanup faults; the 120 instrumented
+accounting rows match. These observations do not test callback commutation or
+nested-owner lifetimes for a general source transformation.
 
 The matched O3 matrix used the same work (`1048576`), seeds, seven samples,
 two cohorts and native controls. Baseline qualified as 14 pass, 5 deficit and
@@ -1233,11 +1236,13 @@ not a measured slowdown. Baseline and candidate samples are retained in
 `7713699d175a3ca4b041e247e1df617f5eefae9d1e98818512aeb50394d20`), with the
 scratch source/compiler patch in `deque-replace-back-front.patch`.
 
-This is a measured floor, not a production change: it adds a compiler-owned
-prelude row and changes the witness call shape. The patch is therefore kept as
-research evidence and restored from the worktree. A production choice would
-need either an owner-selected compound deque operation or a general checked
-fusion rule; neither is silently selected here.
+These timings describe the rewritten concrete fixture with a temporary
+compound prelude operation, not a source-equivalent production optimization.
+The patch remains research evidence and was restored from the worktree. A
+future ordinary operation or checked fusion proposal must state its ordering
+contract and prove the applicable owner/callback domain; the existing samples
+do not select either. The later ordinary front-slot reuse change below is
+independent and preserves the source operation sequence.
 
 ### Production lowering: reuse a front-placement slot
 
