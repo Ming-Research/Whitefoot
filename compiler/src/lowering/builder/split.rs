@@ -189,7 +189,7 @@ impl Synthesis {
     /// and the stable part of its symbol, which numbers it among `parent`'s
     /// own, so that an unchanged function's helpers keep their symbols when
     /// another function gains or loses a split [MOD-8].
-    fn reserve(&mut self, parent: &str) -> Result<(u32, String), LoweringFailure> {
+    pub(super) fn reserve(&mut self, parent: &str) -> Result<(u32, String), LoweringFailure> {
         let ordinal = u32::try_from(self.functions.len())
             .ok()
             .and_then(|offset| self.base.checked_add(offset))
@@ -203,7 +203,11 @@ impl Synthesis {
         Ok((ordinal, name))
     }
 
-    fn file(&mut self, ordinal: u32, function: IrFunction) -> Result<(), LoweringFailure> {
+    pub(super) fn file(
+        &mut self,
+        ordinal: u32,
+        function: IrFunction,
+    ) -> Result<(), LoweringFailure> {
         let slot = ordinal
             .checked_sub(self.base)
             .and_then(|offset| self.functions.get_mut(offset as usize))
@@ -1484,6 +1488,7 @@ mod tests {
             counted_ranges: Vec::new(),
             overlaps: Vec::new(),
             synthesis: Some(IrSynthesis::Chunk),
+            waits: false,
             blocks: vec![
                 IrBlock {
                     parameters: Vec::new(),

@@ -83,6 +83,7 @@ void wf__body_send_once(wf_write_result *result, wf_value *send, const wf_view *
 void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener);
 void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive);
 void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send);
+void wf__body_factory_share(wf_value *result, const wf_value *factory);
 
 /* Build launcher support: constructs ordinary argument representations. The
  * supplied argument backing remains valid until the selected call returns.

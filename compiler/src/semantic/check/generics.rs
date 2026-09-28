@@ -1163,6 +1163,15 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
+            waits: self
+                .types
+                .declarations
+                .tree
+                .direct_token_with(
+                    template.node,
+                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+                )?
+                .is_some(),
             formal_parameter: None,
             substitution,
         })

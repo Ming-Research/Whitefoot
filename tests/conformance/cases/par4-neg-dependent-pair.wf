@@ -1,0 +1,20 @@
+struct Counter {
+  value: u64;
+}
+
+fn bump(counter: &Counter, value: u64) -> result: unit writes(counter) {
+  set counter^.value = value;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = Counter(value: 0_u64);
+  let right = Counter(value: 0_u64);
+  mustpar bump(counter: &left, value: 1_u64);
+  bump(counter: &left, value: 2_u64);
+  let sum = left.value +wrap right.value;
+  if sum == 3_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

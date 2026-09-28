@@ -103,7 +103,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(files) waits {
   doc "Reads two argument-named files through independent positioned operations into two separate frame-resident arrays and publishes their first bytes in argument order. Each destination is a caller-formed range reference over one array, and the two arrays are distinct roots, so the call site proves every substituted pair disjoint [EFF-5, OWN-7].";
   let data_a = array_filled::<u8, 1>(value: 0_u8);
   let data_b = array_filled::<u8, 1>(value: 0_u8);
@@ -241,7 +241,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, files: &files);

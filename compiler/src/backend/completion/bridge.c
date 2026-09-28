@@ -47,6 +47,10 @@
 #include "../windows_runtime.h"
 #endif
 
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#endif
+
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -834,10 +838,14 @@ static void wf_bridge_require(void) {
 
 /* Publish exactly once, then notify using only permanent engine storage.
  * The waiter may reclaim its frame as soon as it observes DONE. */
+static void wf_context_record_published(const wf_completion_record *record);
+
 void wf_completion_record_complete(wf_completion_record *record) {
     if (!wf_bridge_ensure_wake()) wf_bridge_fail("completion wake initialization failed");
     atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
     wf_completion_record_publish(record);
+    /* The address only: the waiter may reclaim the record from here on. */
+    wf_context_record_published(record);
     wf_completion_notify_target(&wf_bridge_runtime);
 }
 
@@ -895,6 +903,736 @@ static void wf_bridge_park(uint64_t observed_epoch) {
             );
         }
     }
+}
+
+/* ------------------------------------------------------- waiting contexts */
+
+/* Contexts [WAIT-2]: the root, which runs the entry on the floor's thread,
+ * and every call a `mustpar` statement starts [PAR-4].
+ *
+ * A context is a chain of resumable frames
+ * (design/compiler/waiting-contexts.md).  Every waiting function
+ * is an LLVM coroutine: its frame comes from the running context's arena, a
+ * call transfers into the callee and a finished callee back into its caller
+ * without returning here, and a frame that has to wait registers its context
+ * and suspends, which returns to the driver below.  The driver resumes the
+ * next ready context, or reaps and parks the thread until one is ready.
+ *
+ * They all live on that one thread, and a context changes hands only where
+ * one of its frames suspends.  A compute task never waits [PAR-1, PAR-2], so
+ * no suspension happens between a compute offer and its join, and the
+ * scheduler's lane state stays with the thread.  With one thread and hand-
+ * overs only there, the queues need no lock and a context started with a
+ * factory shares its budget counter without an atomic.
+ *
+ * A record still carries no waiter: a parked context names its record, a
+ * record this thread publishes wakes its context by the record's address, and
+ * a pass over the parked contexts finds the ones another thread published. */
+
+static unsigned wf_bridge_record_state(const wf_completion_record *record);
+static int wf_bridge_transfer_now(wf_completion_record *record);
+static void wf_bridge_execute_here(wf_completion_record *record);
+
+/* The coroutine entries, defined over LLVM's intrinsics in the ordinary
+ * library every program links.  A build that links the bridge without it,
+ * such as the completion probes, starts no context and links these weak
+ * definitions. */
+__attribute__((weak)) void wf__coro_resume(void *frame) {
+    (void)frame;
+    wf_bridge_fail("contexts need the ordinary library, which this build does not link");
+}
+__attribute__((weak)) void wf__coro_destroy(void *frame) {
+    (void)frame;
+    wf_bridge_fail("contexts need the ordinary library, which this build does not link");
+}
+__attribute__((weak)) int wf__coro_done(void *frame) {
+    (void)frame;
+    wf_bridge_fail("contexts need the ordinary library, which this build does not link");
+}
+
+/* The memory contexts and their frames come from: blocks of host regions
+ * this section reserves itself, never the program's allocator, which the
+ * runtime every build links does not call [STOR-8].  A frame is the resumable
+ * form of a stack, and stacks were always the host's, reserved by the floor.
+ *
+ * A region is one 64 MiB reservation, so thousands of contexts share one
+ * kernel mapping, and only the pages a frame touches become resident.  Blocks
+ * are powers of two from 512 bytes to 2 MiB, carved from the current region
+ * in order and kept on a free list per size once released; every block is
+ * aligned to at least its smallest size.  A larger request gets a reservation
+ * of its own, released with it.  Only the driver thread takes and gives
+ * blocks, so the lists need no lock. */
+#define WF_POOL_SMALLEST_SHIFT 9u
+#define WF_POOL_CLASSES 13u
+#define WF_POOL_LARGEST ((size_t)1u << (WF_POOL_SMALLEST_SHIFT + WF_POOL_CLASSES - 1u))
+#define WF_POOL_REGION_BYTES ((size_t)64u * 1024u * 1024u)
+#define WF_POOL_LARGE_GRAIN ((size_t)64u * 1024u)
+
+typedef struct wf_pool_block wf_pool_block;
+struct wf_pool_block {
+    wf_pool_block *next;
+};
+
+static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
+static unsigned char *wf_pool_cursor;
+static size_t wf_pool_remaining;
+
+/* A frame no memory can hold ends the program: no source outcome can refuse
+ * a waiting call, exactly as none can refuse an ordinary call's stack frame
+ * [SCOPE-3]. */
+static _Noreturn void wf_context_exhausted(void) {
+    wf_bridge_fail("no memory could be reserved for a waiting function's frame");
+}
+
+static void *wf_pool_host_reserve(size_t bytes) {
+#if defined(_WIN32)
+    return VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#if defined(MAP_NORESERVE)
+    flags |= MAP_NORESERVE;
+#endif
+    void *region = mmap(NULL, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
+    return region == MAP_FAILED ? NULL : region;
+#endif
+}
+
+static void wf_pool_host_release(void *block, size_t bytes) {
+#if defined(_WIN32)
+    (void)bytes;
+    (void)VirtualFree(block, 0, MEM_RELEASE);
+#else
+    (void)munmap(block, bytes);
+#endif
+}
+
+static unsigned wf_pool_class_of(size_t size) {
+    unsigned index = 0;
+    while (((size_t)1u << (WF_POOL_SMALLEST_SHIFT + index)) < size) {
+        index += 1u;
+    }
+    return index;
+}
+
+/* Hands what is left of the current region to the free lists, largest
+ * blocks first, so a new region wastes none of the old one. */
+static void wf_pool_retire_region(void) {
+    unsigned index = WF_POOL_CLASSES;
+    while (index > 0u) {
+        size_t size;
+        index -= 1u;
+        size = (size_t)1u << (WF_POOL_SMALLEST_SHIFT + index);
+        while (wf_pool_remaining >= size) {
+            wf_pool_block *block = (wf_pool_block *)(void *)wf_pool_cursor;
+            block->next = wf_pool_released[index];
+            wf_pool_released[index] = block;
+            wf_pool_cursor += size;
+            wf_pool_remaining -= size;
+        }
+    }
+    wf_pool_cursor = NULL;
+    wf_pool_remaining = 0;
+}
+
+/* A block of at least `bytes`; its whole size is stored in `granted`. */
+static void *wf_pool_take(size_t bytes, size_t *granted) {
+    unsigned index;
+    size_t size;
+    void *block;
+    if (bytes > WF_POOL_LARGEST) {
+        if (bytes > SIZE_MAX - WF_POOL_LARGE_GRAIN) {
+            wf_context_exhausted();
+        }
+        size = (bytes + WF_POOL_LARGE_GRAIN - 1u) / WF_POOL_LARGE_GRAIN * WF_POOL_LARGE_GRAIN;
+        block = wf_pool_host_reserve(size);
+        if (block == NULL) {
+            wf_context_exhausted();
+        }
+        *granted = size;
+        return block;
+    }
+    index = wf_pool_class_of(bytes);
+    size = (size_t)1u << (WF_POOL_SMALLEST_SHIFT + index);
+    *granted = size;
+    if (wf_pool_released[index] != NULL) {
+        wf_pool_block *reused = wf_pool_released[index];
+        wf_pool_released[index] = reused->next;
+        return reused;
+    }
+    if (wf_pool_remaining < size) {
+        unsigned char *region;
+        wf_pool_retire_region();
+        region = (unsigned char *)wf_pool_host_reserve(WF_POOL_REGION_BYTES);
+        if (region == NULL) {
+            wf_context_exhausted();
+        }
+        wf_pool_cursor = region;
+        wf_pool_remaining = WF_POOL_REGION_BYTES;
+    }
+    block = wf_pool_cursor;
+    wf_pool_cursor += size;
+    wf_pool_remaining -= size;
+    return block;
+}
+
+static void wf_pool_give(void *block, size_t granted) {
+    wf_pool_block *released;
+    unsigned index;
+    if (block == NULL) {
+        return;
+    }
+    if (granted > WF_POOL_LARGEST) {
+        wf_pool_host_release(block, granted);
+        return;
+    }
+    index = wf_pool_class_of(granted);
+    released = (wf_pool_block *)block;
+    released->next = wf_pool_released[index];
+    wf_pool_released[index] = released;
+}
+
+/* One chunk of a context's frame arena.  Frames are allocated and released
+ * last in, first out, because a caller releases its callee's frame before it
+ * continues and a context's outermost frame is released last. */
+typedef struct wf_context_chunk wf_context_chunk;
+struct wf_context_chunk {
+    wf_context_chunk *previous;
+    size_t used;
+    size_t capacity;
+    /* Keeps the frames that follow at the alignment LLVM's frames need. */
+    uint64_t align[1];
+};
+#define WF_CONTEXT_CHUNK_HEADER ((sizeof(wf_context_chunk) + 15u) / 16u * 16u)
+/* A context's first chunk holds its argument block, its outermost frame and
+ * small callees.  A frame that does not fit gets a chunk of its own size plus
+ * room for the small frames it calls, so a large frame, such as one holding a
+ * connection's window, keeps its callees beside it instead of doubling into a
+ * chunk the host allocator would map separately. */
+#define WF_CONTEXT_FIRST_CHUNK 1024u
+#define WF_CONTEXT_CHUNK_SLACK 4096u
+
+typedef struct wf_context wf_context;
+struct wf_context {
+    /* The frame the driver resumes when the context is chosen. */
+    void *resume;
+    /* The context's outermost frame, done when the context has finished. */
+    void *root;
+    wf_context *next;
+    wf_context *previous;
+    /* The record a parked or polling context waits on; NULL while it runs,
+     * is ready, or waits for the contexts it started. */
+    wf_completion_record *record;
+    /* The starting activation's group: the count of its unfinished contexts
+     * and the context waiting for it to reach zero. */
+    uint64_t *group;
+    /* With no ring: the descriptor and events a context polling for
+     * readiness waits on, and zero events otherwise. */
+    int poll_descriptor;
+    unsigned poll_events;
+    /* The chain of parked contexts whose records hash alike. */
+    wf_context *record_next;
+    /* The frame arena: the chunk frames are taken from, and one emptied
+     * chunk kept for the next call that needs more than the current one. */
+    wf_context_chunk *arena;
+    wf_context_chunk *spare;
+    /* The pool block this record occupies, zero for the root's. */
+    size_t pool_bytes;
+    /* The one host operation the context has pending. */
+    union {
+        unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
+        uint64_t align[2];
+    } operation;
+};
+_Static_assert(
+    WF_CONTEXT_OPERATION_BYTES >= sizeof(wf_completion_record),
+    "a context's operation block must hold its completion record"
+);
+
+/* The group an activation keeps in its frame: two words the emitted code
+ * zeroes at entry.  Word 1 holds a context pointer. */
+_Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a context");
+
+static wf_context wf_context_root;
+static wf_context *wf_context_current;
+static wf_context *wf_context_ready_head;
+static wf_context *wf_context_ready_tail;
+static wf_context *wf_context_parked;
+/* Contexts waiting for a descriptor's readiness, with no ring to wait in. */
+static wf_context *wf_context_polling;
+static size_t wf_context_polling_count;
+static wf_file_readiness wf_context_polls[WF_FILE_READINESS_BATCH];
+static wf_context *wf_context_polled[WF_FILE_READINESS_BATCH];
+/* Started and not finished; the root is not counted. */
+static uint64_t wf_context_live;
+/* The context `wf__context_prepare` made and `wf__context_launch` starts. */
+static wf_context *wf_context_prepared;
+/* Parked contexts by the address of their record. A record published on the
+ * thread that runs the contexts wakes its context here at once; one another
+ * thread publishes is found by a pass over the parked contexts, which runs
+ * only after such a publication. */
+#define WF_CONTEXT_RECORD_BUCKETS 4096u
+static wf_context *wf_context_by_record[WF_CONTEXT_RECORD_BUCKETS];
+static _Thread_local int wf_context_driver;
+/* Publications made on any other thread, counted after each one is
+ * published, and the count the last pass over the parked contexts saw. */
+static _Atomic uint64_t wf_context_foreign_publications;
+static uint64_t wf_context_foreign_seen;
+
+static void wf_context_ready(wf_context *context) {
+    context->next = NULL;
+    context->previous = wf_context_ready_tail;
+    if (wf_context_ready_tail != NULL) {
+        wf_context_ready_tail->next = context;
+    } else {
+        wf_context_ready_head = context;
+    }
+    wf_context_ready_tail = context;
+}
+
+static wf_context *wf_context_take_ready(void) {
+    wf_context *context = wf_context_ready_head;
+    if (context != NULL) {
+        wf_context_ready_head = context->next;
+        if (wf_context_ready_head == NULL) {
+            wf_context_ready_tail = NULL;
+        }
+        context->next = NULL;
+    }
+    return context;
+}
+
+static void wf_context_link(wf_context **list, wf_context *context) {
+    context->previous = NULL;
+    context->next = *list;
+    if (*list != NULL) {
+        (*list)->previous = context;
+    }
+    *list = context;
+}
+
+static void wf_context_unlink(wf_context **list, wf_context *context) {
+    if (context->previous != NULL) {
+        context->previous->next = context->next;
+    } else {
+        *list = context->next;
+    }
+    if (context->next != NULL) {
+        context->next->previous = context->previous;
+    }
+    context->next = NULL;
+    context->previous = NULL;
+}
+
+static size_t wf_context_record_bucket(const wf_completion_record *record) {
+    uint64_t key = (uint64_t)(uintptr_t)record;
+    key = (key >> 3) * UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(key >> 52) % WF_CONTEXT_RECORD_BUCKETS;
+}
+
+static void wf_context_park(wf_context *context) {
+    size_t bucket = wf_context_record_bucket(context->record);
+    wf_context_link(&wf_context_parked, context);
+    context->record_next = wf_context_by_record[bucket];
+    wf_context_by_record[bucket] = context;
+}
+
+static void wf_context_unpark(wf_context *context) {
+    wf_context **link = &wf_context_by_record[wf_context_record_bucket(context->record)];
+    while (*link != NULL && *link != context) {
+        link = &(*link)->record_next;
+    }
+    if (*link == context) {
+        *link = context->record_next;
+    }
+    context->record_next = NULL;
+    wf_context_unlink(&wf_context_parked, context);
+}
+
+/* A context whose descriptor the host reported ready makes its operation now:
+ * a transfer is retried without waiting until the host takes it, and an
+ * accept is made once its listener is readable.  Returns nonzero when the
+ * record is complete and the context can run. */
+static int wf_context_readiness_answered(wf_context *context) {
+    wf_completion_record *record = context->record;
+    if (record->request.kind == WF_FILE_SOCKET_ACCEPT) {
+        wf_bridge_execute_here(record);
+        return 1;
+    }
+    return wf_bridge_transfer_now(record);
+}
+
+/* Polls the descriptors of the contexts waiting on readiness, at most one
+ * batch of them, and makes every one whose operation the host then answers
+ * ready to run.  timeout_ms bounds the wait; negative waits until one is
+ * ready.  Returns nonzero when it moved one. */
+static int wf_context_poll(int timeout_ms) {
+    size_t count = 0;
+    size_t index;
+    int answered;
+    int moved = 0;
+    wf_context *context = wf_context_polling;
+    while (context != NULL && count < WF_FILE_READINESS_BATCH) {
+        wf_context_polls[count].descriptor = context->poll_descriptor;
+        wf_context_polls[count].events = context->poll_events;
+        wf_context_polls[count].ready = 0;
+        wf_context_polled[count] = context;
+        count += 1;
+        context = context->next;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    /* A batch that leaves contexts unpolled must not wait: those are polled
+     * after the ones this batch finds ready rotate out of the list. */
+    if (context != NULL) {
+        timeout_ms = 0;
+    }
+    answered = wf_file_wait_readiness(wf_context_polls, count, timeout_ms);
+    if (answered < 0) {
+        wf_bridge_fail("a context could not wait for a descriptor's readiness");
+    }
+    for (index = 0; index < count; index++) {
+        if (wf_context_polls[index].ready != 0) {
+            wf_context *ready = wf_context_polled[index];
+            if (!wf_context_readiness_answered(ready)) {
+                continue;
+            }
+            wf_context_unlink(&wf_context_polling, ready);
+            wf_context_polling_count -= 1u;
+            ready->poll_events = 0;
+            ready->record = NULL;
+            wf_context_ready(ready);
+            moved = 1;
+        }
+    }
+    return moved || answered > 0;
+}
+
+/* Wakes the context parked on a record this thread just published. */
+static void wf_context_record_published(const wf_completion_record *record) {
+    wf_context *context;
+    if (!wf_context_driver) {
+        atomic_fetch_add_explicit(&wf_context_foreign_publications, 1, memory_order_release);
+        return;
+    }
+    context = wf_context_by_record[wf_context_record_bucket(record)];
+    while (context != NULL && context->record != record) {
+        context = context->record_next;
+    }
+    if (context != NULL) {
+        wf_context_unpark(context);
+        context->record = NULL;
+        wf_context_ready(context);
+    }
+}
+
+/* Moves every parked context whose record is done to the ready queue, once
+ * another thread has published since the last pass; records this thread
+ * publishes wake their contexts as they are published. Returns nonzero when
+ * it moved one. */
+static int wf_context_harvest(void) {
+    int moved = 0;
+    wf_context *context = wf_context_parked;
+    uint64_t foreign = atomic_load_explicit(
+        &wf_context_foreign_publications,
+        memory_order_acquire
+    );
+    if (foreign == wf_context_foreign_seen) {
+        return 0;
+    }
+    wf_context_foreign_seen = foreign;
+    while (context != NULL) {
+        wf_context *next = context->next;
+        if (wf_bridge_record_state(context->record) == WF_COMPLETION_DONE) {
+            wf_context_unpark(context);
+            context->record = NULL;
+            wf_context_ready(context);
+            moved = 1;
+        }
+        context = next;
+    }
+    return moved;
+}
+
+static void *wf_context_allocate(wf_context *context, uint64_t bytes) {
+    wf_context_chunk *chunk = context->arena;
+    size_t rounded;
+    void *frame;
+    if (bytes > SIZE_MAX / 4u) {
+        wf_context_exhausted();
+    }
+    rounded = ((size_t)bytes + 15u) / 16u * 16u;
+    if (chunk == NULL || chunk->capacity - chunk->used < rounded) {
+        size_t wanted = rounded + WF_CONTEXT_CHUNK_SLACK;
+        wf_context_chunk *fresh = context->spare;
+        if (chunk == NULL && rounded <= WF_CONTEXT_FIRST_CHUNK - WF_CONTEXT_CHUNK_HEADER) {
+            wanted = WF_CONTEXT_FIRST_CHUNK - WF_CONTEXT_CHUNK_HEADER;
+        }
+        if (fresh != NULL && fresh->capacity >= rounded) {
+            context->spare = NULL;
+        } else {
+            size_t granted;
+            if (fresh != NULL) {
+                wf_pool_give(fresh, WF_CONTEXT_CHUNK_HEADER + fresh->capacity);
+            }
+            context->spare = NULL;
+            fresh = (wf_context_chunk *)wf_pool_take(WF_CONTEXT_CHUNK_HEADER + wanted, &granted);
+            fresh->capacity = granted - WF_CONTEXT_CHUNK_HEADER;
+        }
+        fresh->used = 0;
+        fresh->previous = chunk;
+        context->arena = fresh;
+        chunk = fresh;
+    }
+    frame = (unsigned char *)chunk + WF_CONTEXT_CHUNK_HEADER + chunk->used;
+    chunk->used += rounded;
+    return frame;
+}
+
+static void wf_context_release(wf_context *context, void *frame) {
+    wf_context_chunk *chunk = context->arena;
+    unsigned char *base;
+    if (chunk == NULL) {
+        wf_bridge_fail("a frame was released from a context with no frames");
+    }
+    base = (unsigned char *)chunk + WF_CONTEXT_CHUNK_HEADER;
+    if ((unsigned char *)frame < base || (unsigned char *)frame >= base + chunk->used) {
+        wf_bridge_fail("a frame was released out of order");
+    }
+    chunk->used = (size_t)((unsigned char *)frame - base);
+    if (chunk->used == 0 && chunk->previous != NULL) {
+        context->arena = chunk->previous;
+        if (context->spare != NULL) {
+            wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+        }
+        context->spare = chunk;
+    }
+}
+
+static void wf_context_release_arena(wf_context *context) {
+    while (context->arena != NULL) {
+        wf_context_chunk *previous = context->arena->previous;
+        wf_pool_give(context->arena, WF_CONTEXT_CHUNK_HEADER + context->arena->capacity);
+        context->arena = previous;
+    }
+    if (context->spare != NULL) {
+        wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+    }
+    context->spare = NULL;
+}
+
+void *wf__context_frame_allocate(uint64_t bytes) {
+    if (wf_context_current == NULL) {
+        wf_bridge_fail("a waiting function was entered outside every context");
+    }
+    return wf_context_allocate(wf_context_current, bytes);
+}
+
+void wf__context_frame_release(void *frame) {
+    if (wf_context_current == NULL) {
+        wf_bridge_fail("a waiting function's frame was released outside every context");
+    }
+    wf_context_release(wf_context_current, frame);
+}
+
+void *wf__context_operation(void) {
+    if (wf_context_current == NULL) {
+        wf_bridge_fail("a host operation waited outside every context");
+    }
+    return wf_context_current->operation.bytes;
+}
+
+/* The frame's operation did not complete in its start.  A readiness-routed
+ * socket operation is made here when the host answers it without waiting,
+ * and otherwise waits for its descriptor; an operation with no ring and no
+ * readiness form is made here; every other one parks the context on its
+ * record. */
+int wf__context_wait(void *operation, void *frame) {
+    wf_context *self = wf_context_current;
+    wf_completion_record *record = (wf_completion_record *)operation;
+    if (self == NULL || frame == NULL) {
+        wf_bridge_fail("a host operation waited outside every context");
+    }
+    if (record->route == WF_COMPLETION_ROUTE_READINESS) {
+        const wf_file_request *request = &record->request;
+        switch (request->kind) {
+            case WF_FILE_SOCKET_RECEIVE:
+                if (wf_bridge_transfer_now(record)) return 0;
+                self->poll_descriptor = request->operation.receive.descriptor;
+                self->poll_events = WF_FILE_READABLE;
+                break;
+            case WF_FILE_SOCKET_SEND:
+                if (wf_bridge_transfer_now(record)) return 0;
+                self->poll_descriptor = request->operation.send.descriptor;
+                self->poll_events = WF_FILE_WRITABLE;
+                break;
+            case WF_FILE_SOCKET_ACCEPT:
+                self->poll_descriptor = request->operation.accept.descriptor;
+                self->poll_events = WF_FILE_READABLE;
+                break;
+            default:
+                wf_bridge_execute_here(record);
+                return 0;
+        }
+        self->record = record;
+        self->resume = frame;
+        wf_context_link(&wf_context_polling, self);
+        wf_context_polling_count += 1u;
+        return 1;
+    }
+    if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) {
+        return 0;
+    }
+    self->record = record;
+    self->resume = frame;
+    wf_context_park(self);
+    return 1;
+}
+
+/* [PAR-4] reserves a new context and returns the block its call's arguments
+ * are stored in; `wf__context_launch` starts it.  No source outcome can
+ * refuse a start, so memory the host will not reserve ends the program. */
+void *wf__context_prepare(uint64_t bytes) {
+    wf_context *context;
+    if (wf_context_prepared != NULL) {
+        wf_bridge_fail("a context was prepared while another waited to start");
+    }
+    {
+        size_t granted;
+        context = (wf_context *)wf_pool_take(sizeof(*context), &granted);
+        memset(context, 0, sizeof(*context));
+        context->pool_bytes = granted;
+    }
+    wf_context_prepared = context;
+    return wf_context_allocate(context, bytes);
+}
+
+/* Starts the prepared context: its outermost frame is made in the new
+ * context, so its arena holds it, the context joins the starting
+ * activation's group and waits its turn behind the ready contexts, while the
+ * starter continues with its next statement. */
+void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *arguments)) {
+    wf_context *context = wf_context_prepared;
+    wf_context *starter = wf_context_current;
+    void *frame;
+    if (group == NULL || arguments == NULL || start == NULL || context == NULL
+        || starter == NULL) {
+        wf_bridge_fail("a context was started without its group, arguments or call");
+    }
+    wf_context_prepared = NULL;
+    wf_context_current = context;
+    frame = start(arguments);
+    wf_context_current = starter;
+    if (frame == NULL) {
+        wf_bridge_fail("a started context has no frame");
+    }
+    context->root = frame;
+    context->resume = frame;
+    context->group = group;
+    group[0] += 1u;
+    wf_context_live += 1u;
+    wf_context_ready(context);
+}
+
+int wf__context_join_wait(uint64_t *group, void *frame) {
+    if (group[0] == 0u) {
+        return 0;
+    }
+    if (wf_context_current == NULL || frame == NULL) {
+        wf_bridge_fail("a join waited outside every context");
+    }
+    wf_context_current->resume = frame;
+    group[1] = (uint64_t)(uintptr_t)wf_context_current;
+    return 1;
+}
+
+/* A started context's outermost frame has finished: release it and the
+ * context, and wake the starting activation when it was the group's last. */
+static void wf_context_finish(wf_context *context) {
+    uint64_t *group = context->group;
+    wf_context *previous = wf_context_current;
+    wf_context_current = context;
+    wf__coro_destroy(context->root);
+    wf_context_current = previous;
+    wf_context_release_arena(context);
+    group[0] -= 1u;
+    if (group[0] == 0u && group[1] != 0u) {
+        wf_context *waiter = (wf_context *)(uintptr_t)group[1];
+        group[1] = 0u;
+        wf_context_ready(waiter);
+    }
+    wf_context_live -= 1u;
+    wf_pool_give(context, context->pool_bytes);
+}
+
+/* Runs contexts until the root's outermost frame has finished: resumes the
+ * next ready context, and with none ready reaps completions, polls for
+ * readiness, and parks the thread until a context is ready. */
+static void wf_context_drive(void) {
+    for (;;) {
+        wf_context *next = wf_context_take_ready();
+        if (next != NULL) {
+            void *frame = next->resume;
+            next->resume = NULL;
+            wf_context_current = next;
+            wf__coro_resume(frame);
+            wf_context_current = NULL;
+            if (wf__coro_done(next->root)) {
+                if (next == &wf_context_root) {
+                    return;
+                }
+                wf_context_finish(next);
+            }
+            continue;
+        }
+        if (wf_context_harvest() || wf_bridge_progress()) {
+            continue;
+        }
+        {
+            uint64_t epoch = wf_completion_wake_epoch(&wf_bridge_runtime);
+            if (wf_context_harvest()) {
+                continue;
+            }
+            if (wf_context_polling != NULL) {
+                /* A record another thread completes is seen within a
+                 * millisecond; with none pending the poll waits for a peer. */
+                (void)wf_context_poll(wf_context_parked != NULL ? 1 : -1);
+                continue;
+            }
+            if (wf_context_parked == NULL) {
+                wf_bridge_fail(
+                    "every context waits for a context that is not waiting for the host"
+                );
+            }
+            wf_bridge_park(epoch);
+        }
+    }
+}
+
+void wf__context_root_begin(void) {
+    if (wf_context_driver) {
+        wf_bridge_fail("the root context was begun twice");
+    }
+    wf_bridge_require();
+    wf_context_driver = 1;
+    wf_context_current = &wf_context_root;
+}
+
+void wf__context_root_run(void *frame) {
+    if (!wf_context_driver || wf_context_current != &wf_context_root || frame == NULL) {
+        wf_bridge_fail("the root context was run without being begun");
+    }
+    wf_context_root.root = frame;
+    wf_context_root.resume = frame;
+    wf_context_ready(&wf_context_root);
+    wf_context_drive();
+    if (wf_context_live != 0u) {
+        wf_bridge_fail("the entry finished while contexts it started were running");
+    }
+    wf_context_current = &wf_context_root;
+    wf__coro_destroy(frame);
+    wf_context_release_arena(&wf_context_root);
+    wf_context_current = NULL;
 }
 
 /* ------------------------------------------------------------- the join */
@@ -965,7 +1703,54 @@ static int wf_bridge_run_own(wf_completion_record *record) {
     return 1;
 }
 
+/* Waits, blocking this thread, until descriptor is ready for events. */
+static void wf_bridge_wait_ready(int descriptor, unsigned events) {
+    wf_file_readiness readiness;
+    readiness.descriptor = descriptor;
+    readiness.events = events;
+    readiness.ready = 0;
+    if (wf_file_wait_readiness(&readiness, 1, -1) < 0) {
+        wf_bridge_fail("a join could not wait for a descriptor's readiness");
+    }
+}
+
+/* Makes a readiness-routed operation: a transfer is retried without
+ * waiting until the host takes it, an accept is made once its listener is
+ * readable.  A frame's wait does this without blocking the thread
+ * (`wf__context_wait`); a blocking join, which no context makes, waits here. */
+static void wf_bridge_join_readiness(wf_completion_record *record) {
+    const wf_file_request *request = &record->request;
+    for (;;) {
+        switch (request->kind) {
+            case WF_FILE_SOCKET_RECEIVE:
+                if (wf_bridge_transfer_now(record)) return;
+                wf_bridge_wait_ready(request->operation.receive.descriptor, WF_FILE_READABLE);
+                break;
+            case WF_FILE_SOCKET_SEND:
+                if (wf_bridge_transfer_now(record)) return;
+                wf_bridge_wait_ready(request->operation.send.descriptor, WF_FILE_WRITABLE);
+                break;
+            case WF_FILE_SOCKET_ACCEPT:
+                wf_bridge_wait_ready(request->operation.accept.descriptor, WF_FILE_READABLE);
+                wf_bridge_execute_here(record);
+                return;
+            default:
+                wf_bridge_execute_here(record);
+                return;
+        }
+    }
+}
+
+/* Waits in place for a record: the join the completion probes and the
+ * harness make.  A waiting function never calls it; its frame suspends
+ * instead (`wf__context_wait`). */
 static void wf_bridge_join(wf_completion_record *record) {
+    /* A finish reads a record its frame's wait already saw complete, which
+     * for a readiness-routed transfer must not be made a second time. */
+    if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) return;
+    if (record->route == WF_COMPLETION_ROUTE_READINESS) {
+        wf_bridge_join_readiness(record);
+    }
     for (;;) {
         if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) return;
         if (wf_bridge_run_own(record) || wf_bridge_progress()) continue;
@@ -979,6 +1764,14 @@ static void wf_bridge_join(wf_completion_record *record) {
             wf_bridge_park(epoch);
         }
     }
+}
+
+int wf__completion_pending(const void *record) {
+    if (record == NULL) {
+        wf_bridge_fail("a pending test was given no record");
+    }
+    return wf_bridge_record_state((const wf_completion_record *)record)
+        != WF_COMPLETION_DONE;
 }
 
 static wf_completion_record *wf_bridge_record_of(const void *record) {
@@ -1229,12 +2022,34 @@ static int wf_bridge_transfer_now(wf_completion_record *record) {
     return 1;
 }
 
+/* Whether a socket operation this thread would otherwise block in has to
+ * wait for its descriptor's readiness instead: other contexts share the
+ * thread [WAIT-2], and no ring took the operation.  Its join waits for the
+ * descriptor and then makes the operation, which cannot wait by then. */
+static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
+    if (wf_context_live == 0u || !wf_file_readiness_supported()) {
+        return 0;
+    }
+    switch (record->request.kind) {
+        case WF_FILE_SOCKET_RECEIVE:
+        case WF_FILE_SOCKET_SEND:
+        case WF_FILE_SOCKET_ACCEPT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static void wf_bridge_dispatch(wf_completion_record *record) {
     if (wf_bridge_file_request_is_empty(&record->request)) {
         wf_bridge_complete_empty(record);
         return;
     }
     if (wf_bridge_ring_offer(record)) {
+        return;
+    }
+    if (wf_bridge_waits_for_readiness(record)) {
+        record->route = WF_COMPLETION_ROUTE_READINESS;
         return;
     }
     wf_bridge_submit_file(record);
@@ -1483,7 +2298,13 @@ void wf__completion_socket_receive_submit(
     held->request.operation.receive.descriptor = descriptor;
     held->request.operation.receive.buffer = buffer;
     held->request.operation.receive.count = (size_t)count;
-    if (wf_bridge_transfer_now(held)) {
+    /* With other contexts live and a ring to wait in, the receive goes to the
+     * ring at once: the scheduler submits it with every other staged
+     * operation in one entry, where a first attempt here costs a system call
+     * of its own and, when the peer has not answered yet, gains nothing
+     * (`WAITS.md`, Experiment 2). */
+    if (!(wf_context_live != 0u && wf_bridge_ring_ready())
+        && wf_bridge_transfer_now(held)) {
         return;
     }
     wf_bridge_dispatch(held);

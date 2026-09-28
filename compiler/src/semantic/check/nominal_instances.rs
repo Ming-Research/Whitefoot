@@ -1850,10 +1850,10 @@ impl<'unit> TypeContext<'unit> {
         &self,
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
-        if !self
+        if self
             .declarations
             .declaration_home(declaration)
-            .is_some_and(|(package, _)| package == crate::Package::Standard)
+            .is_none_or(|(package, _)| package != crate::Package::Standard)
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }

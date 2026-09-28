@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let last = 0_u64;
+  mustpar for (at in 0_u64..10_u64) {
+    set last = at;
+  }
+  if last == 9_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

@@ -212,7 +212,7 @@ fn detail<Source: LedgerSource>(
     })
 }
 
-fn denied_detail<Source: LedgerSource>(
+pub(crate) fn denied_detail<Source: LedgerSource>(
     denial: &Denial,
     source: &Source,
 ) -> Result<String, Source::Error> {
@@ -258,6 +258,11 @@ fn denied_detail<Source: LedgerSource>(
                 statement_name(*side)
             )
         }
+        Denial::WaitingCall { side, call } => format!(
+            "{} contains the waiting call {}",
+            statement_name(*side),
+            source.spelling(call)?
+        ),
     };
     Ok(format!("condition {condition}: {reason}"))
 }
@@ -280,7 +285,7 @@ fn loop_detail<Source: LedgerSource>(
     })
 }
 
-fn loop_denied_detail<Source: LedgerSource>(
+pub(crate) fn loop_denied_detail<Source: LedgerSource>(
     denial: &LoopDenial,
     source: &Source,
 ) -> Result<String, Source::Error> {
@@ -312,6 +317,10 @@ fn loop_denied_detail<Source: LedgerSource>(
         // the statement that costs the overlap.
         LoopDenial::BodyForm { form } => format!("the body contains {form}"),
         LoopDenial::Exit { edge } => format!("{edge} leaves the loop"),
+        LoopDenial::WaitingCall { call } => format!(
+            "the body contains the waiting call {}",
+            source.spelling(call)?
+        ),
     };
     Ok(format!("condition {condition}: {reason}"))
 }

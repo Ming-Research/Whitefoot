@@ -8114,7 +8114,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn range_contract_source(contract: &str, body: &str) -> String {
     format!(
-        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output){contract} {{\n{body}  return unit;\n}}\n"
+        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits{contract} {{\n{body}  return unit;\n}}\n"
     )
 }
 
@@ -8282,7 +8282,7 @@ fn a_transfer_endpoint_is_bounded_by_end_and_not_beyond_it() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
+fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
   let source_length = source^.len;
   let enough = 3_u64 <= source_length;
   if enough {
@@ -8297,7 +8297,7 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   return unit;
 }
 
-fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
+fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
   let source_length = source^.len;
   let enough = 4_u64 <= source_length;
   if enough {
@@ -8418,7 +8418,7 @@ fn a_named_boundary_outcome_uses_the_same_numeric_evidence_as_source_calls() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
   define capacity = source^.len;
   requires 3_u64 <= capacity;
 } {
@@ -8433,7 +8433,7 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   return unit;
 }
 
-fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {
@@ -8474,7 +8474,7 @@ fn a_read_at_endpoint_is_observed_on_its_own_outcome_variant() {
     // PRE-1 read_at uses Result and an ordinary selected ensures.
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) contract {
+fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) waits contract {
   requires 3_u64 <= destination^.len;
 } {
   match std::fs::read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {

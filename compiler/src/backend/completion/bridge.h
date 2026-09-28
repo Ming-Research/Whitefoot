@@ -193,6 +193,59 @@ uint64_t wf__completion_native_ring_submission_enters(void);
 uint64_t wf__completion_wait_announcements(void);
 uint64_t wf__completion_wait_signals(void);
 
+/* Whether a submitted record has not completed yet: what a waiting host
+ * operation's start answers, so the frame that called it waits only for an
+ * operation that is still pending. */
+int wf__completion_pending(const void *record);
+
+/* ------------------------------------------------------ waiting contexts */
+
+/* Contexts [WAIT-2], each a chain of resumable frames
+ * (design/compiler/waiting-contexts.md).  The emitted code of a
+ * waiting function allocates its frame with `wf__context_frame_allocate` and
+ * releases it with `wf__context_frame_release`, last in, first out, from the
+ * context that runs it. */
+void *wf__context_frame_allocate(uint64_t bytes);
+void wf__context_frame_release(void *frame);
+
+/* The block a context keeps for its one pending host operation: a completion
+ * record first, then whatever the operation's linked body keeps until its
+ * finish reads the record.  The linked bodies check that their layout fits. */
+#if defined(_WIN32)
+#define WF_CONTEXT_OPERATION_BYTES 704u
+#elif defined(__APPLE__)
+#define WF_CONTEXT_OPERATION_BYTES 1216u
+#else
+#define WF_CONTEXT_OPERATION_BYTES 448u
+#endif
+#define WF_CONTEXT_OPERATION_ALIGN 16u
+void *wf__context_operation(void);
+
+/* Called by a frame whose host operation `operation` did not complete in its
+ * start: returns zero when the record is complete after all, and otherwise
+ * parks the running context on it, to resume `frame` once it completes, and
+ * returns nonzero, after which the frame suspends. */
+int wf__context_wait(void *operation, void *frame);
+
+/* [PAR-4] a context start: `wf__context_prepare` makes the context and
+ * returns an argument block of `bytes` from its arena, and
+ * `wf__context_launch` calls `start` on that block, in the new context, to
+ * make its outermost frame, and makes it ready.  `group` is the two words
+ * the starting activation keeps: its unfinished contexts and its waiter. */
+void *wf__context_prepare(uint64_t bytes);
+void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *arguments));
+/* Returns zero when every context the group's activation started has
+ * finished, and otherwise records the running context as the group's waiter,
+ * to resume `frame`, and returns nonzero, after which the frame suspends. */
+int wf__context_join_wait(uint64_t *group, void *frame);
+
+/* The root context runs the entry: `wf__context_root_begin` makes it the
+ * running context, the launcher calls the entry's ramp, and
+ * `wf__context_root_run` drives every context until that frame finishes,
+ * then releases it. */
+void wf__context_root_begin(void);
+void wf__context_root_run(void *frame);
+
 #if defined(__cplusplus)
 }
 #endif

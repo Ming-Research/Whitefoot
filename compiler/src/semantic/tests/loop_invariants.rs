@@ -1614,7 +1614,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {
-    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {
