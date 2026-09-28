@@ -7,15 +7,15 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &two, value: 3_u8);
   place_back(window: &two, value: 4_u8);
   let window = &two[0_u64..2_u64];
-  let width = deref(window).len;
+  let width = window^.len;
   if width == 2_u64 {
   } else {
     return exit_status(code: 21_u8);
   }
   let second_view = &two[0_u64..2_u64];
-  let first = deref(window)[0_u64];
-  let second = deref(second_view)[1_u64];
-  let agreed = deref(second_view)[0_u64];
+  let first = window^[0_u64];
+  let second = second_view^[1_u64];
+  let agreed = second_view^[0_u64];
   if agreed == first {
   } else {
     return exit_status(code: 24_u8);

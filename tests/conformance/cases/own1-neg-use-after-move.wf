@@ -10,7 +10,7 @@ nocopy enum Sign {
 fn main() -> return_value: ExitStatus pure {
   doc "OWN-1/OWN-13: matching an own value moves it; a second use is use-after-move.";
   let s = Sign::Pos();
-  match s {
+  match move s {
     Neg(mag: m) => {
     }
     Zero() => {

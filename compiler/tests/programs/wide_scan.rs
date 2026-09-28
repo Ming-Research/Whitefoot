@@ -55,7 +55,7 @@ const ORACLE: &[u8] = br#"fn opaque_length(n: u64) -> result: u64 pure contract 
 }
 
 fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";

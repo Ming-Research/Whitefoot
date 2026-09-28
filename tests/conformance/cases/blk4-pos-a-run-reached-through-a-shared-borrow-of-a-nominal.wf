@@ -7,10 +7,10 @@ struct Source {
 
 fn head(input: &Source) -> byte: u8 reads(input.bytes) {
   doc "A run field reached through a shared reference to its owner is one measured place: the measure read and the subscript name the same place through the same reference, so the OP-4 obligation is discharged from the guard written over that measure.";
-  let size = deref(input).bytes.len;
+  let size = input^.bytes.len;
   let ok = 0_u64 < size;
   if ok {
-    return deref(input).bytes[0_u64];
+    return input^.bytes[0_u64];
   }
   return 0_u8;
 }

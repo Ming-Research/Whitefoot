@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill(destination: &[u8], value: u8) -> result: unit writes(destination) contract {
-  requires 2_u64 <= deref(destination).len;
+  requires 2_u64 <= destination^.len;
 } {
   doc "Writes two elements through the range reference it was handed, so what it writes is the storage that reference was formed over.";
-  set deref(destination)[0_u64] = value;
-  set deref(destination)[1_u64] = value;
+  set destination^[0_u64] = value;
+  set destination^[1_u64] = value;
   return unit;
 }
 

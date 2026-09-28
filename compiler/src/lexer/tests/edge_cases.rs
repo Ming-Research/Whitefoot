@@ -228,6 +228,7 @@ fn every_single_top_level_byte_has_a_controlled_lossless_outcome() {
                     | b'.'
                     | b'='
                     | b'&'
+                    | b'^'
                     | b'+'
                     | b'-'
                     | b'*'

@@ -14,7 +14,7 @@ alias socket_address_v4 = std::net::socket_address_v4;
 alias tcp_connect = std::net::tcp_connect;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -79,7 +79,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -103,7 +103,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
 }
 
 fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writes(receive), writes(send), writes(scratch) waits contract {
-  define room = deref(scratch).len;
+  define room = scratch^.len;
   requires 64_u64 <= room;
 } {
   doc "Reads one chunk from the receiving direction and sends it back through the sending direction, holding both directions at once.";

@@ -7,21 +7,21 @@ enum Cell {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A payload enum is matched twice through references [OWN-13]: reference-mode matching leaves the scrutinee live for the second read, each payload binder names the scrutinee path extended by its payload step [REF-1, GRAM-10], and each binder is itself a reference, so its value is reached through deref to feed a give-delivered computation [TYPE-7, GIVE-1]; the accumulated total pins both reads and it runs to exit 0.";
+  doc "A payload enum is matched twice through references [OWN-13]: reference-mode matching leaves the scrutinee live for the second read, each payload binder names the scrutinee path extended by its payload step [REF-1, GRAM-10], and each binder is itself a reference, so its value is reached through postfix ^ to feed a give-delivered computation [TYPE-7, GIVE-1]; the accumulated total pins both reads and it runs to exit 0.";
   let c = Cell::Full(v: 20_i32);
   let p = &c;
-  let a = match deref(p) {
+  let a = match p^ {
     Full(v: x) => {
-      give deref(x) +wrap 1_i32;
+      give x^ +wrap 1_i32;
     }
     Void() => {
       give 0_i32;
     }
   }
   let q = &c;
-  let b = match deref(q) {
+  let b = match q^ {
     Full(v: y) => {
-      give deref(y) *wrap 2_i32;
+      give y^ *wrap 2_i32;
     }
     Void() => {
       give 0_i32;

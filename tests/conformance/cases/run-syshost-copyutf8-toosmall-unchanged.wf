@@ -7,9 +7,9 @@ alias host_copy_utf8 = std::text::host_copy_utf8;
 
 fn sentinel_status(bytes: &[u8], failure: u8) -> result: u8 reads(bytes) {
   doc "Reports zero when every byte of the range still holds the sentinel, and the supplied failure code otherwise.";
-  let spare = deref(bytes).len;
+  let spare = bytes^.len;
   for (offset in 0_u64..spare) {
-    let byte = deref(bytes)[offset];
+    let byte = bytes^[offset];
     let intact = byte == 90_u8;
     if intact {
     } else {

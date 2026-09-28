@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn copy_bytes(out: &[u8], source: &[u8]) -> function_result: u64 reads(source), writes(out) contract {
-  define out_length = deref(out).len;
-  define source_length = deref(source).len;
+  define out_length = out^.len;
+  define source_length = source^.len;
   requires source_length <= out_length;
 } {
   doc "Copies the source range into the destination range; the requirement's body-entry axiom combines with each counted binder fact to prove every output write.";
-  let length = deref(source).len;
+  let length = source^.len;
   for (offset in 0_u64..length) {
-    let value = deref(source)[offset];
-    set deref(out)[offset] = value;
+    let value = source^[offset];
+    set out^[offset] = value;
   }
   return length;
 }
@@ -22,8 +22,8 @@ fn main() -> status: ExitStatus pure {
   let output = array_filled::<u8, 4>(value: 0_u8);
   let window = &source[0_u64..4_u64];
   let destination = &output[0_u64..4_u64];
-  let window_length = deref(window).len;
-  let destination_length = deref(destination).len;
+  let window_length = window^.len;
+  let destination_length = destination^.len;
   if window_length <= destination_length {
   } else {
     return exit_status(code: 203_u8);

@@ -416,27 +416,27 @@ fn main() -> status: std::process::ExitStatus pure {
 /// recorded, so the conjoined guard discharges exactly what the equivalent
 /// pair of nested single-bound guards discharges. Before the members were read
 /// through their bindings, the expanded conjunct read
-/// `at +wrap 1 < deref(input).len`, whose arithmetic root has no term form,
+/// `at +wrap 1 < input^.len`, whose arithmetic root has no term form,
 /// and the second subscript's obligation survived while the first discharged.
 ///
 /// The runtime length comes from a range reference [REF-4], which is what
 /// v0.59's `Slice<u8>` parameter became: its one measure is `len`, read as
-/// the place form `deref(input).len` [OP-15, MSR-1].
+/// the place form `input^.len` [OP-15, MSR-1].
 ///
 /// Both halves are branch guards. The guard proves the decomposition directly:
 /// without the binding-read the conjoined half fails `[OP-4]` on
-/// `next < deref(input).len` while the nested half still discharges.
+/// `next < input^.len` while the nested half still discharges.
 #[test]
 fn band_conjunct_over_a_derived_binding_discharges_like_the_single_bound_pair() {
     let conjoined = br#"fn read_pair(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   let both = band(at_ok, next_ok);
   if both {
-    let first = deref(input)[at];
-    let second = deref(input)[next];
+    let first = input^[at];
+    let second = input^[next];
     return first +wrap second;
   }
   return 0_u8;
@@ -448,13 +448,13 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let separate = br#"fn read_pair(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   if at_ok {
     if next_ok {
-      let first = deref(input)[at];
-      let second = deref(input)[next];
+      let first = input^[at];
+      let second = input^[next];
       return first +wrap second;
     }
     return 0_u8;
@@ -489,13 +489,13 @@ fn main() -> status: std::process::ExitStatus pure {
 fn band_guard_over_a_derived_binding_admits_the_true_edge_only() {
     let source = br#"fn window(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   let both = band(at_ok, next_ok);
   if both {
-    let first = deref(input)[at];
-    let second = deref(input)[next];
+    let first = input^[at];
+    let second = input^[next];
     return first +wrap second;
   }
   return 0_u8;
@@ -510,14 +510,14 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(summary.obligations.iter().all(|o| o.discharged));
     let else_edge = br#"fn window(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   let both = band(at_ok, next_ok);
   if both {
     return 0_u8;
   } else {
-    return deref(input)[next];
+    return input^[next];
   }
 }
 
@@ -544,13 +544,13 @@ fn band_over_derived_bindings_proves_no_unnamed_bound() {
     let uncovered = br#"fn read_three(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
   let far = at +wrap 2_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   let both = band(at_ok, next_ok);
   if both {
-    let first = deref(input)[at];
-    let third = deref(input)[far];
+    let first = input^[at];
+    let third = input^[far];
     return first +wrap third;
   }
   return 0_u8;
@@ -570,12 +570,12 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let disjoined = br#"fn read_pair(input: &[u8], at: u64) -> result: u8 reads(input) {
   let next = at +wrap 1_u64;
-  let spare = deref(input).len;
+  let spare = input^.len;
   let at_ok = at < spare;
   let next_ok = next < spare;
   let either = bor(at_ok, next_ok);
   if either {
-    return deref(input)[next];
+    return input^[next];
   }
   return 0_u8;
 }

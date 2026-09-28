@@ -22,13 +22,13 @@ struct Counter {
 }
 
 fn store(counter: &Counter, next: u64) -> result: unit writes(counter.value) {
-  set deref(counter).value = next;
+  set counter^.value = next;
   return unit;
 }
 ```
 
 An effect path is rooted at the bare parameter: write `writes(counter.value)`,
-never `writes(deref(counter).value)`. Use the narrowest truthful path. A body
+never `writes(counter^.value)`. Use the narrowest truthful path. A body
 that reads a whole parameter and writes one field of it declares both,
 `reads(stats), writes(stats.count)`, so a call kills only the caller facts
 whose support overlaps that field. An entry another entry already states is
@@ -68,7 +68,7 @@ relation over `len` and `cap`. `Array` has only `len`.
 
 A readonly integer field reached through subscripts is a term just as a
 measure is [ENT-2]. In an index-based tree, declare per-node structure such as
-`readonly count: u64;` and use `deref(nodes)[i].count` directly as a counted
+`readonly count: u64;` and use `nodes^[i].count` directly as a counted
 endpoint, in a `requires`, or as a `let` source equal to its copy. Mark a
 field readonly when only whole-element replacement should change it; an
 ordinary field below a subscript is no term, so copy it with `let` before
@@ -161,7 +161,7 @@ non-reflexive equality, zero-sized pairs and owned callback results.
 ## P3. Reach heap content through `Box.inner`
 
 `Box<T>` owns one heap cell. Its content is the ordinary field `inner`;
-`deref` is only for a reference [TYPE-7, TYPE-9].
+`^` is only for a reference [TYPE-7, TYPE-9].
 
 ```whitefoot
 nocopy struct Record {
@@ -228,8 +228,8 @@ Use a range reference for one contiguous run [REF-4]:
 
 ```whitefoot
 let part = &bytes[first..end];
-let count = deref(part).len;
-let byte = deref(part)[offset];
+let count = part^.len;
+let byte = part^[offset];
 ```
 
 Formation proves `first <= end <= bytes.len`. The range's own `len` is
@@ -394,8 +394,8 @@ Use `requires` when every valid caller must establish the condition, and
 
 ```whitefoot
 fn pop<T, const n: u64>(window: &Slots<T, n>) -> value: T writes(window.last), writes(window.len) contract {
-  requires deref(window).len > 0_u64;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires window^.len > 0_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let value = take_back(window: window);
   return move value;

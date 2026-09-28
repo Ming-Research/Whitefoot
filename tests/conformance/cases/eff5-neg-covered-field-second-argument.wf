@@ -8,9 +8,9 @@ struct Stats {
 
 fn record(stats: &Stats, extra: &u64) -> result: unit reads(stats), reads(extra), writes(stats.count) {
   doc "EFF-5: reads(stats) and writes(stats.count) come from one argument and are not compared with each other, but every entry of the other argument is.";
-  let whole = deref(stats);
-  let added = deref(extra);
-  set deref(stats).count = whole.total +wrap added;
+  let whole = stats^;
+  let added = extra^;
+  set stats^.count = whole.total +wrap added;
   return unit;
 }
 

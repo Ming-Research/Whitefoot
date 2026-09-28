@@ -16,21 +16,21 @@ fn delivered_reference_guards_check_every_named_path_across_retained_calls() {
     let source = br#"const alternative: u64 = 9_u64;
 
 fn indexed(value: &u64) -> result: u64 reads(value) contract {
-  requires deref(value) < 2_u64;
+  requires value^ < 2_u64;
 } {
   let rows = array_filled::<u64, 2>(value: 7_u64);
-  let index = deref(value);
+  let index = value^;
   return rows[index];
 }
 
 fn forward(value: &u64) -> result: u64 reads(value) {
-  let seen = deref(value);
+  let seen = value^;
   let chosen = if seen == 0_u64 {
     give &alternative;
   } else {
     give value;
   }
-  if deref(chosen) < 2_u64 {
+  if chosen^ < 2_u64 {
     return indexed(value: chosen);
   } else {
     return 99_u64;
@@ -74,14 +74,14 @@ fn main() -> status: std::process::ExitStatus pure {
 
 const OUTPUT_CAPACITY: &[u8] =
     br#"fn copy_bytes(out: &[u8], source: Box<Slots<u8>>) -> written: u64 writes(out) contract {
-  define out_length = deref(out).len;
+  define out_length = out^.len;
   define source_length = source.inner.len;
   requires source_length <= out_length;
 } {
   let length = source.inner.len;
   for (offset in 0_u64..length) {
     let value = source.inner[offset];
-    set deref(out)[offset] = value;
+    set out^[offset] = value;
   }
   return length;
 }
@@ -105,7 +105,7 @@ fn main() -> status: std::process::ExitStatus pure {
     place_back(window: &source.inner, value: 7_u8);
   }
   let destination = &output.inner[0_u64..4_u64];
-  let capacity = deref(destination).len;
+  let capacity = destination^.len;
   let held = source.inner.len;
   if held <= capacity {
   } else {

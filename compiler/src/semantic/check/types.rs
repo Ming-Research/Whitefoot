@@ -1643,7 +1643,7 @@ impl<'unit> TypeContext<'unit> {
     /// step selects.
     ///
     /// `epbase := IDENT` names the reference parameter's selected storage;
-    /// the row has no source `deref` wrapper.
+    /// the row has no source `^` suffix.
     fn effect_path(
         &self,
         check_context: &CheckContext<'_>,

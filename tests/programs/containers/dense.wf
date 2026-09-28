@@ -127,16 +127,16 @@ fn dense_wide16(seed: u64, rounds: u64) -> result: u64 pure {
     for (at in 0_u64..16_u64) {
       let previous = &values[at];
       let product_a = state *wrap 2862933555777941757_u64;
-      set state = product_a +wrap deref(previous).a;
+      set state = product_a +wrap previous^.a;
       let a = state;
       let product_b = state *wrap 2862933555777941757_u64;
-      set state = product_b +wrap deref(previous).b;
+      set state = product_b +wrap previous^.b;
       let b = state;
       let product_c = state *wrap 2862933555777941757_u64;
-      set state = product_c +wrap deref(previous).c;
+      set state = product_c +wrap previous^.c;
       let c = state;
       let product_d = state *wrap 2862933555777941757_u64;
-      set state = product_d +wrap deref(previous).d;
+      set state = product_d +wrap previous^.d;
       let d = state;
       let stored_entry = Wide(a: a, b: b, c: c, d: d);
       set values[at] = stored_entry;
@@ -146,13 +146,13 @@ fn dense_wide16(seed: u64, rounds: u64) -> result: u64 pure {
   for (at in 0_u64..16_u64) {
     let value = &values[at];
     let product_a = checksum *wrap 1099511628211_u64;
-    set checksum = product_a +wrap deref(value).a;
+    set checksum = product_a +wrap value^.a;
     let product_b = checksum *wrap 1099511628211_u64;
-    set checksum = product_b +wrap deref(value).b;
+    set checksum = product_b +wrap value^.b;
     let product_c = checksum *wrap 1099511628211_u64;
-    set checksum = product_c +wrap deref(value).c;
+    set checksum = product_c +wrap value^.c;
     let product_d = checksum *wrap 1099511628211_u64;
-    set checksum = product_d +wrap deref(value).d;
+    set checksum = product_d +wrap value^.d;
   }
   return checksum;
 }

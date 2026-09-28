@@ -19,7 +19,7 @@ alias tcp_accept = std::net::tcp_accept;
 alias tcp_listen = std::net::tcp_listen;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -84,7 +84,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -199,10 +199,10 @@ fn socket_class(error: IoError) -> result: u8 pure {
 
 fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
   doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
-  let room = deref(store).len;
+  let room = store^.len;
   let inside = index < room;
   if inside {
-    let value = deref(store)[index];
+    let value = store^[index];
     return value;
   }
   return 0_u8;
@@ -241,7 +241,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
 }
 
 fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";

@@ -79,7 +79,7 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 
 fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
   doc "Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path.";
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return Probe::Stop();
     }
@@ -87,7 +87,7 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
       return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
-      if deref(present) == key {
+      if present^ == key {
         return Probe::Match();
       }
       return Probe::Miss();
@@ -96,38 +96,38 @@ fn probe(slot: &Slot, key: u64) -> result: Probe reads(slot) {
 }
 
 fn fill_slots(slots: &Slots<Slot, 2>, count: u64) -> result: unit writes(slots) contract {
-  requires deref(slots).len == 0_u64;
-  requires count <= deref(slots).cap - deref(slots).len;
-  ensures deref(slots).len == count;
+  requires slots^.len == 0_u64;
+  requires count <= slots^.cap - slots^.len;
+  ensures slots^.len == count;
 } {
   doc "One vacant slot per position, under a counted header that carries the length and the remaining free slots.";
   for (
     index in 0_u64..count,
-    invariant filled: deref(slots).len >= index,
-    invariant bounded: deref(slots).len <= index,
-    invariant spare: deref(slots).cap - deref(slots).len + index >= count
+    invariant filled: slots^.len >= index,
+    invariant bounded: slots^.len <= index,
+    invariant spare: slots^.cap - slots^.len + index >= count
   ) {
     let vacant = Slot::Vacant();
     place_back(window: slots, value: move vacant);
   }
-  invariant complete_min: deref(slots).len >= count;
-  invariant complete_max: deref(slots).len <= count;
+  invariant complete_min: slots^.len >= count;
+  invariant complete_max: slots^.len <= count;
   return unit;
 }
 
 fn put(slots: &Slots<Slot, 2>, key: u64, payload: Box<Resource>) -> outcome: PutOutcome writes(slots) contract {
-  requires deref(slots).len > 0_u64;
-  ensures deref(slots).len == deref(entry(slots)).len;
+  requires slots^.len > 0_u64;
+  ensures slots^.len == entry(slots)^.len;
 } {
   doc "The probe loop only selects a destination, so the owning payload is never moved inside a loop body; the one insertion is written after it and exchanges the old occupant out by swap.";
-  let count = deref(slots).len;
+  let count = slots^.len;
   let first_deleted = count;
   let destination = count;
   for (step in 0_u64..count) {
     if destination == count {
       let home = key % count;
       let index = probe_index(home: home, step: step, count: count);
-      let action = probe(slot: &deref(slots)[index], key: key);
+      let action = probe(slot: &slots^[index], key: key);
       match action {
         Match() => {
           set destination = index;
@@ -160,8 +160,8 @@ fn put(slots: &Slots<Slot, 2>, key: u64, payload: Box<Resource>) -> outcome: Put
   }
   let tag = fingerprint(key: key);
   let replacement = Slot::Occupied(fingerprint: tag, key: key, payload: move payload);
-  swap(first: &deref(slots)[destination], second: &replacement);
-  match replacement {
+  swap(first: &slots^[destination], second: &replacement);
+  match move replacement {
     Occupied(fingerprint: old_tag, key: old_key, payload: old_payload) => {
       return PutOutcome::Replaced(previous: move old_payload);
     }
@@ -175,8 +175,8 @@ fn put(slots: &Slots<Slot, 2>, key: u64, payload: Box<Resource>) -> outcome: Put
 }
 
 fn allocate_put(slots: &Slots<Slot, 2>, key: u64, id: u64) -> outcome: PutOutcome writes(slots) contract {
-  requires deref(slots).len > 0_u64;
-  ensures deref(slots).len == deref(entry(slots)).len;
+  requires slots^.len > 0_u64;
+  ensures slots^.len == entry(slots)^.len;
 } {
   doc "Allocation is total, so the wrapper has no refusal arm and the cell reaches the insertion unconditionally.";
   let data0 = id *wrap 17_u64;
@@ -191,7 +191,7 @@ fn allocate_put(slots: &Slots<Slot, 2>, key: u64, id: u64) -> outcome: PutOutcom
 
 fn check_put(outcome: PutOutcome, kind: u64, expected: u64) -> code: u8 pure {
   doc "Refusal and ordinary cleanup retain their owning payloads: every arm's payload is released with its binder.";
-  match outcome {
+  match move outcome {
     Inserted() => {
       if kind != 1_u64 {
         return 1_u8;

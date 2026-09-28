@@ -4,7 +4,7 @@ alias directory_next = std::fs::directory_next;
 
 fn forward(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
   requires start <= end;
-  requires end <= deref(destination).len;
+  requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
 } {
@@ -22,7 +22,7 @@ fn forward(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -
 
 fn observe(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> result: unit writes(source), writes(destination) waits contract {
   requires start <= end;
-  requires end <= deref(destination).len;
+  requires end <= destination^.len;
 } {
   doc "The declared bounds cross the wrapper and remain available on both branches of the match.";
   let (outcome, cursor, count) = forward(source: source, destination: destination, start: start, end: end);

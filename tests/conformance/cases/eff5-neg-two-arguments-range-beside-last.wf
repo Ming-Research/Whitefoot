@@ -3,16 +3,16 @@ alias exit_status = std::process::exit_status;
 
 fn churn(source: &Slots<u64, 8>, target: &Slots<u64, 8>, lo: u64, hi: u64) -> result: u64 reads(source[lo..hi]), writes(target.last), writes(target.next), writes(target.len) contract {
   requires lo < hi;
-  requires hi <= deref(source).len;
-  requires 2_u64 <= deref(target).len;
+  requires hi <= source^.len;
+  requires 2_u64 <= target^.len;
 } {
   doc "Reads the first element of source[lo..hi], takes two elements back from target, appends one, and reads that element again. One writes(target.last) covers both take_back calls, so target.last stands for both slots they empty.";
-  let run = &deref(source)[lo..hi];
-  let before = deref(run)[0_u64];
+  let run = &source^[lo..hi];
+  let before = run^[0_u64];
   let a = take_back(window: target);
   let b = take_back(window: target);
   place_back(window: target, value: 77_u64);
-  let after = deref(run)[0_u64];
+  let after = run^[0_u64];
   return after -wrap before;
 }
 

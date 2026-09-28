@@ -148,8 +148,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/place_back.wf",
         PreludeSource::Function,
         r#"fn place_back<W, T>(window: &W, value: T) -> result: unit writes(window.next), writes(window.len) contract {
-  requires deref(window).len < deref(window).cap;
-  ensures deref(window).len == deref(entry(window)).len + 1_u64;
+  requires window^.len < window^.cap;
+  ensures window^.len == entry(window)^.len + 1_u64;
 };
 "#,
     ),
@@ -157,8 +157,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/take_back.wf",
         PreludeSource::Function,
         r#"fn take_back<W, T>(window: &W) -> value: T writes(window.last), writes(window.len) contract {
-  requires deref(window).len > 0_u64;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires window^.len > 0_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 };
 "#,
     ),
@@ -166,9 +166,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/insert_at.wf",
         PreludeSource::Function,
         r#"fn insert_at<W, T>(window: &W, index: u64, value: T) -> result: unit writes(window.filled), writes(window.next), writes(window.len) contract {
-  requires index <= deref(window).len;
-  requires deref(window).len < deref(window).cap;
-  ensures deref(window).len == deref(entry(window)).len + 1_u64;
+  requires index <= window^.len;
+  requires window^.len < window^.cap;
+  ensures window^.len == entry(window)^.len + 1_u64;
 };
 "#,
     ),
@@ -176,8 +176,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/remove_at.wf",
         PreludeSource::Function,
         r#"fn remove_at<W, T>(window: &W, index: u64) -> value: T writes(window.filled), writes(window.len) contract {
-  requires index < deref(window).len;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires index < window^.len;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 };
 "#,
     ),
@@ -185,10 +185,10 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/append.wf",
         PreludeSource::Function,
         r#"fn append<W, X>(destination: &W, source: &X) -> result: unit writes(destination.free), writes(destination.len), writes(source.filled), writes(source.len) contract {
-  requires deref(source).len <= deref(destination).cap - deref(destination).len;
-  ensures deref(destination).len >= deref(entry(destination)).len;
-  ensures deref(destination).len >= deref(entry(source)).len;
-  ensures deref(source).len == 0_u64;
+  requires source^.len <= destination^.cap - destination^.len;
+  ensures destination^.len >= entry(destination)^.len;
+  ensures destination^.len >= entry(source)^.len;
+  ensures source^.len == 0_u64;
 };
 "#,
     ),
@@ -196,10 +196,10 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/split_off.wf",
         PreludeSource::Function,
         r#"fn split_off<W, X>(source: &W, index: u64, destination: &X) -> result: unit writes(source.filled), writes(source.len), writes(destination.free), writes(destination.len) contract {
-  requires index <= deref(source).len;
-  requires deref(source).len - index <= deref(destination).cap - deref(destination).len;
-  ensures deref(source).len == index;
-  ensures deref(destination).len >= deref(entry(destination)).len;
+  requires index <= source^.len;
+  requires source^.len - index <= destination^.cap - destination^.len;
+  ensures source^.len == index;
+  ensures destination^.len >= entry(destination)^.len;
 };
 "#,
     ),
@@ -207,9 +207,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/grow.wf",
         PreludeSource::Function,
         r#"fn grow<T>(cell: &Box<Slots<T>>, capacity: u64) -> result: unit writes(cell) contract {
-  requires capacity >= deref(cell).inner.cap;
-  ensures deref(cell).inner.cap == capacity;
-  ensures deref(cell).inner.len == deref(entry(cell)).inner.len;
+  requires capacity >= cell^.inner.cap;
+  ensures cell^.inner.cap == capacity;
+  ensures cell^.inner.len == entry(cell)^.inner.len;
 };
 "#,
     ),
@@ -217,11 +217,11 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/place_front.wf",
         PreludeSource::Function,
         r#"fn place_front<W, T>(window: &W, value: T) -> result: unit writes(window) contract {
-  requires deref(window).len < deref(window).cap;
-  ensures deref(window).len == deref(entry(window)).len + 1_u64;
-  ensures deref(window).cap == deref(entry(window)).cap;
-  ensures deref(window).head >= 0_u64;
-  ensures deref(window).head <= deref(window).cap;
+  requires window^.len < window^.cap;
+  ensures window^.len == entry(window)^.len + 1_u64;
+  ensures window^.cap == entry(window)^.cap;
+  ensures window^.head >= 0_u64;
+  ensures window^.head <= window^.cap;
 };
 "#,
     ),
@@ -229,11 +229,11 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/take_front.wf",
         PreludeSource::Function,
         r#"fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
-  requires deref(window).len > 0_u64;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
-  ensures deref(window).cap == deref(entry(window)).cap;
-  ensures deref(window).head >= 0_u64;
-  ensures deref(window).head <= deref(window).cap;
+  requires window^.len > 0_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
+  ensures window^.cap == entry(window)^.cap;
+  ensures window^.head >= 0_u64;
+  ensures window^.head <= window^.cap;
 };
 "#,
     ),

@@ -6,5 +6,5 @@ public struct Counter {
 public fn start() -> counter: Counter pure doc "Starts a counter with room for one step.";
 
 public fn bump(counter: &Counter) -> result: unit writes(counter.count) contract {
-  requires deref(counter).limit > deref(counter).count;
+  requires counter^.limit > counter^.count;
 } doc "Counts one step.";

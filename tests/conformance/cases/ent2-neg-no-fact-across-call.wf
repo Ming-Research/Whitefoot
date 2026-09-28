@@ -8,7 +8,7 @@ fn identity(n: u64) -> result: u64 pure {
 
 fn get(b: &[u8]) -> result: u8 reads(b) {
   doc "No fact crosses a call boundary [ENT-2]. The checked branch bounds probe, but the value returned by identity is a fresh term carrying no relation to it, so the subscript is undischarged [OP-4] and the residual names the returned binding.";
-  let spare = deref(b).len;
+  let spare = b^.len;
   let probe = 0_u64;
   let inside = probe < spare;
   if inside {
@@ -16,7 +16,7 @@ fn get(b: &[u8]) -> result: u8 reads(b) {
     return 0_u8;
   }
   let echoed = identity(n: probe);
-  return deref(b)[echoed];
+  return b^[echoed];
 }
 
 fn main() -> status: ExitStatus pure {

@@ -11,7 +11,7 @@ fn main() -> status: ExitStatus pure {
   doc "Both OWN-13 scrutinee modes in one program: matching through a reference leaves the value live, then a later own-place match moves it exactly once (no double move); accepts and runs to exit 0.";
   let s = Sign::Pos();
   let b = &s;
-  match deref(b) {
+  match b^ {
     Neg(mag: m) => {
     }
     Zero() => {

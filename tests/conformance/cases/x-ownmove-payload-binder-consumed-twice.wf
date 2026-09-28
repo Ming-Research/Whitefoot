@@ -15,9 +15,9 @@ fn main() -> status: ExitStatus pure {
   doc "OWN-1: an affine payload binder is consumed by one inner match; a second inner match of it is a use-after-consume.";
   let inner = Inner::Value(number: 7_i32);
   let w = Wrap::W(inner: move inner);
-  match w {
+  match move w {
     W(inner: s) => {
-      match s {
+      match move s {
         Value(number: first) => {
         }
         Empty() => {

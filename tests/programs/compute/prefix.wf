@@ -2,33 +2,33 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn sum_block(input: &[u64]) -> result: u64 reads(input) {
-  let count = deref(input).len;
+  let count = input^.len;
   let total = 0_u64;
   for (i in 0_u64..count) {
-    set total = total +wrap deref(input)[i];
+    set total = total +wrap input^[i];
   }
   return total;
 }
 
 fn scan_block(input: &[u64], output: &[u64], base: u64) -> result: u64 reads(input), writes(output) contract {
-  requires deref(input).len <= deref(output).len;
+  requires input^.len <= output^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   let total = base;
   for (i in 0_u64..count) {
-    set deref(output)[i] = total;
-    set total = total +wrap deref(input)[i];
+    set output^[i] = total;
+    set total = total +wrap input^[i];
   }
   return total;
 }
 
 fn prefix(input: &[u64], block_size: u64) -> result: Box<Array<u64>> reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
+  requires input^.len <= 16777216_u64;
   requires 1_u64 <= block_size;
   requires block_size <= 65536_u64;
 } {
   doc "Exclusive scan modulo 2^64. Complete blocks use ordinary range references; the final partial block follows the same scan with the preceding blocks' total.";
-  let count = deref(input).len;
+  let count = input^.len;
   let blocks = count / block_size;
   let covered = blocks * block_size;
   invariant covered_input: covered <= count;
@@ -40,7 +40,7 @@ fn prefix(input: &[u64], block_size: u64) -> result: Box<Array<u64>> reads(input
     invariant block_end: end <= covered {
       use block_size times (block + 1_u64 <= blocks);
     }
-    let part = &deref(input)[first..end];
+    let part = &input^[first..end];
     set sums.inner[block] = sum_block(input: part);
   }
   let total = 0_u64;
@@ -55,12 +55,12 @@ fn prefix(input: &[u64], block_size: u64) -> result: Box<Array<u64>> reads(input
     invariant block_end: end <= covered {
       use block_size times (block + 1_u64 <= blocks);
     }
-    let part = &deref(input)[first..end];
+    let part = &input^[first..end];
     let destination = &output.inner[first..end];
     let base = sums.inner[block];
     let scanned = scan_block(input: part, output: destination, base: base);
   }
-  let tail = &deref(input)[covered..count];
+  let tail = &input^[covered..count];
   let tail_destination = &output.inner[covered..count];
   let scanned = scan_block(input: tail, output: tail_destination, base: total);
   return move output;

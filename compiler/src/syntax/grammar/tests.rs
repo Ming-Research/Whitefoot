@@ -17,11 +17,12 @@ fn complete_inventory_is_pinned() {
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
-    // v0.76 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
+    // v0.76 moves reference access from an expression start into psuffix;
+    // v0.77 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
     // the optional `mustpar` of `for_stmt`, and the alternation of the
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
     assert_eq!(DECISIONS.len(), 161);
-    assert_eq!(SELECT_ROWS.len(), 7_162);
+    assert_eq!(SELECT_ROWS.len(), 6_962);
     assert_eq!(diagnostic_terminal_order().len(), 110);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -402,6 +403,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 7_162);
+    assert_eq!(total_rows, 6_962);
     assert!(saw_atom_only);
 }

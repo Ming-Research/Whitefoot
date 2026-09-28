@@ -22,10 +22,10 @@ alias tcp_listen = std::net::tcp_listen;
 
 fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
   doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
-  let room = deref(store).len;
+  let room = store^.len;
   let inside = index < room;
   if inside {
-    let value = deref(store)[index];
+    let value = store^[index];
     return value;
   }
   return 0_u8;
@@ -64,7 +64,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
 }
 
 fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
@@ -130,7 +130,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure
 }
 
 fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64 reads(args), writes(window) contract {
-  requires 16_u64 <= deref(window).len;
+  requires 16_u64 <= window^.len;
 } {
   doc "Copies one invocation argument into the window and returns its length, or zero when it is absent or does not fit.";
   let carried = 0_u64;

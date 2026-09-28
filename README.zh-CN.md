@@ -63,12 +63,12 @@ Whitefoot 是一门研究性质的系统编程语言，围绕三个特性设计�
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
-    i in 0_u64..deref(buf).len,
+    i in 0_u64..buf^.len,
     invariant behind: kept <= i
   ) {
-    let byte = deref(buf)[i];
+    let byte = buf^[i];
     if byte != 32_u8 {
-      set deref(buf)[kept] = byte;
+      set buf^[kept] = byte;
       set kept = kept + 1_u64;
     }
   }
@@ -76,7 +76,7 @@ fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
 }
 ```
 
-我们测量了这个循环在 Rust 中的七种安全写法（rustc 1.98.1，x86-64），每一种编译出来的循环都保留了对 `kept` 的运行时检查；测得的写法中没有这项检查的，用的是 `unsafe`、对自有的 `Vec` 调用 `retain`，或者第二个缓冲区（[测量结果](research/experiments/bounds-check-spellings/README.md#results)）。如果没有这个不变式，Whitefoot 会拒绝这个函数，并指出缺少的事实 `kept < deref(buf).len`。[不用求解器，手工证明](docs/articles/proofs-by-hand.md)一文跟着编译器一步一步走完了这个证明。
+我们测量了这个循环在 Rust 中的七种安全写法（rustc 1.98.1，x86-64），每一种编译出来的循环都保留了对 `kept` 的运行时检查；测得的写法中没有这项检查的，用的是 `unsafe`、对自有的 `Vec` 调用 `retain`，或者第二个缓冲区（[测量结果](research/experiments/bounds-check-spellings/README.md#results)）。如果没有这个不变式，Whitefoot 会拒绝这个函数，并指出缺少的事实 `kept < buf^.len`。[不用求解器，手工证明](docs/articles/proofs-by-hand.md)一文跟着编译器一步一步走完了这个证明。
 
 ### 顺序的代码，并行的结果
 
@@ -84,14 +84,14 @@ fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
 
 ```
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
-  let n = deref(v).len;
+  let n = v^.len;
   if n <= 1_u64 {
     return unit;
   }
   let p = partition(v: v);
   let after = p + 1_u64;
-  let smaller = &deref(v)[0_u64..p];
-  let larger = &deref(v)[after..n];
+  let smaller = &v^[0_u64..p];
+  let larger = &v^[after..n];
   quicksort(v: smaller);
   quicksort(v: larger);
   return unit;
@@ -116,10 +116,10 @@ struct Cursor {
 }
 
 fn next_byte(input: &[u8], cursor: &Cursor) -> result: Option<u8> reads(input), writes(cursor) {
-  let at = deref(cursor).position;
-  if at < deref(input).len {
-    let byte = deref(input)[at];
-    set deref(cursor).position = at + 1_u64;
+  let at = cursor^.position;
+  if at < input^.len {
+    let byte = input^[at];
+    set cursor^.position = at + 1_u64;
     return Some<u8>(value: byte);
   }
   return None<u8>();
@@ -129,7 +129,7 @@ fn next_byte(input: &[u8], cursor: &Cursor) -> result: Option<u8> reads(input), 
 C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot 要求你把下面这些都写出来：
 
 - `reads(input), writes(cursor)`：函数可以读和写什么，也就是它的效应（effects），写在签名里。没有 `&mut`：只有效应中写明了，函数才能通过引用写入；
-- `deref(cursor)` 和 `set`：每一次通过引用读取，以及每一次赋值；
+- `cursor^` 和 `set`：每一次通过引用读取，以及每一次赋值；
 - `1_u64` 和 `value: byte`：每个数字的类型，以及传给函数或构造器的每个参数的名字；
 - 每个表达式只做一步运算，较长的计算每一步用一个 `let`，所以没有运算符优先级（[GRAM-6](spec/kernel-spec.md#3-grammar)）。
 
@@ -210,12 +210,12 @@ compiler/target/release/whitefootc tests/conformance/cases/op4-neg-index-undisch
 构建编译器大约需要一分钟，编译这个 grep 大约需要四秒。最后一条命令展示了一次拒绝：位置、引用的规则及其类别、标出问题的源代码行，以及每个载荷字段，都带有固定的标签。
 
 ```text
-tests/conformance/cases/op4-neg-index-undischarged.wf:6:18: error[OP-4]: UndischargedBoundsObligation
-  source:   return deref(b)[i];
-  marker:                  ^^^
-  residual: i < deref(b).len
+tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: UndischargedBoundsObligation
+  source:   return b^[i];
+  marker:            ^^^
+  residual: i < b^.len
   disposition: Unproved
-  mechanical_fix: add `requires i < deref(b).len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < deref(b).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare
+  mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare
 ```
 
 其他选项：

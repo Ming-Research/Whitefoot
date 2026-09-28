@@ -17,7 +17,7 @@ alias read_at = std::fs::read_at;
 alias write_once = std::io::write_once;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -82,7 +82,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -138,17 +138,17 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
           } else {
             return exit_status(code: 21_u8);
           }
-          let first_a = deref(name_window_a)[0_u64];
+          let first_a = name_window_a^[0_u64];
           if first_a == 65_u8 {
           } else {
             return exit_status(code: 22_u8);
           }
-          let second_a = deref(name_window_a)[1_u64];
+          let second_a = name_window_a^[1_u64];
           if second_a == 66_u8 {
           } else {
             return exit_status(code: 23_u8);
           }
-          let after_a = deref(name_window_a)[2_u64];
+          let after_a = name_window_a^[2_u64];
           if after_a == 125_u8 {
           } else {
             return exit_status(code: 24_u8);
@@ -167,17 +167,17 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
                   } else {
                     return exit_status(code: 21_u8);
                   }
-                  let first_b = deref(name_window_b)[0_u64];
+                  let first_b = name_window_b^[0_u64];
                   if first_b == 66_u8 {
                   } else {
                     return exit_status(code: 22_u8);
                   }
-                  let second_b = deref(name_window_b)[1_u64];
+                  let second_b = name_window_b^[1_u64];
                   if second_b == 66_u8 {
                   } else {
                     return exit_status(code: 23_u8);
                   }
-                  let after_b = deref(name_window_b)[2_u64];
+                  let after_b = name_window_b^[2_u64];
                   if after_b == 125_u8 {
                   } else {
                     return exit_status(code: 24_u8);

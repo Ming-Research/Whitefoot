@@ -3,7 +3,7 @@ alias exit_status = std::process::exit_status;
 
 fn view_total(window: &[u8]) -> total: u64 reads(window) {
   doc "The run is reached through one range reference, whose one measure is len [REF-4, MSR-1].";
-  let width = deref(window).len;
+  let width = window^.len;
   let sum = 0_u64;
   let at = 0_u64;
   loop @add {
@@ -13,7 +13,7 @@ fn view_total(window: &[u8]) -> total: u64 reads(window) {
     }
     let inside = at < width;
     if inside {
-      let slot = deref(window)[at];
+      let slot = window^[at];
       let widened = cvt::<u8, u64>(slot);
       set sum = sum +wrap widened;
       set at = at +wrap 1_u64;
@@ -32,7 +32,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &one, value: 4_u8);
   let two = move one;
   let window = &two[0_u64..two.len];
-  let width = deref(window).len;
+  let width = window^.len;
   if width == 2_u64 {
   } else {
     return exit_status(code: 21_u8);
@@ -62,7 +62,7 @@ fn main() -> status: ExitStatus pure {
   let last = remove_at(window: &shorter, index: 0_u64);
   let drained = move shorter;
   let nothing = &drained[0_u64..drained.len];
-  let empty_width = deref(nothing).len;
+  let empty_width = nothing^.len;
   if empty_width == 0_u64 {
   } else {
     return exit_status(code: 25_u8);
@@ -75,15 +75,15 @@ fn main() -> status: ExitStatus pure {
     place_back(window: &table, value: 7_u8);
   }
   let writer = &table[0_u64..3_u64];
-  set deref(writer)[0_u64] = 9_u8;
+  set writer^[0_u64] = 9_u8;
   let reader = &table[0_u64..3_u64];
-  let seen = deref(reader)[0_u64];
+  let seen = reader^[0_u64];
   if seen == 9_u8 {
   } else {
     return exit_status(code: 26_u8);
   }
-  set deref(writer)[1_u64] = 11_u8;
-  let written = deref(writer)[1_u64];
+  set writer^[1_u64] = 11_u8;
+  let written = writer^[1_u64];
   if written == 11_u8 {
   } else {
     return exit_status(code: 27_u8);

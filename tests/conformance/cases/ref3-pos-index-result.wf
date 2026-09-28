@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn head_value(values: &[u64]) -> result: u64 reads(values) contract {
-  requires deref(values).len > 0_u64;
+  requires values^.len > 0_u64;
 } {
   doc "REF-3: a function that finds something returns owned data, with its bounds relation in the contract, and never hands a reference back.";
-  let first = deref(values)[0_u64];
+  let first = values^[0_u64];
   return first;
 }
 

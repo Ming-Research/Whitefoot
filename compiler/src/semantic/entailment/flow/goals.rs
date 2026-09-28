@@ -622,7 +622,7 @@ impl Input<'_, '_> {
                 let binding = parameter.binding;
                 // [MSR-1, ENT-2] a formal-valued subscript names a value
                 // parameter of this same callable, so inside the body it is
-                // that parameter's own binding: `deref(rows)[i].len` written
+                // that parameter's own binding: `rows^[i].len` written
                 // in the clause and written in the body are one term because
                 // their canonical spellings are byte-identical there.
                 let projections = self
@@ -1429,7 +1429,7 @@ impl Reasoning<'_, '_, '_> {
     }
 
     /// [ENT-3.S6] the equality one range formation establishes on its
-    /// binder's `len`: `deref(part).len = hi - lo`, read over the exact
+    /// binder's `len`: `part^.len = hi - lo`, read over the exact
     /// current-value images captured where the endpoints are evaluated.
     ///
     /// L0 is a difference-bound fragment [ENT-4], so the equality is stored
@@ -1643,7 +1643,7 @@ impl Judging<'_, '_, '_> {
 /// language has one.
 ///
 /// A goal datum's place is a tracked place [ENT-2] clause (a) or a measure
-/// place clause (b): field selections, `deref` wrappings, subscripts, and the
+/// place clause (b): field selections, `^` suffixes, subscripts, and the
 /// one range step the image of an anonymous `&[T]` actual carries [REF-4]. A
 /// payload step preserves the selected variant and field. A window part is
 /// effect vocabulary, not a value projection. Support may conservatively

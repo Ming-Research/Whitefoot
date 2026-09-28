@@ -42,9 +42,9 @@ fn indexed_child(serial: u64) -> value: Box<IndexedChild> pure {
 }
 
 fn indexed_child_read(value: &Box<IndexedChild>) -> serial: u64 reads(value) {
-  let serial = deref(value).inner.serial;
+  let serial = value^.inner.serial;
   let expected = serial +wrap 101_u64;
-  if deref(value).inner.check != expected {
+  if value^.inner.check != expected {
     return 18446744073709551615_u64;
   }
   return serial;
@@ -73,7 +73,7 @@ fn indexed_wide(serial: u64) -> value: IndexedWide pure {
 }
 
 fn indexed_wide_read(value: &IndexedWide) -> serial: u64 reads(value) {
-  let serial = indexed_child_read(value: &deref(value).child);
+  let serial = indexed_child_read(value: &value^.child);
   let a = serial +wrap 11_u64;
   let b = serial +wrap 22_u64;
   let c = serial +wrap 33_u64;
@@ -81,25 +81,25 @@ fn indexed_wide_read(value: &IndexedWide) -> serial: u64 reads(value) {
   let e = serial +wrap 55_u64;
   let f = serial +wrap 66_u64;
   let g = serial +wrap 77_u64;
-  if deref(value).a != a {
+  if value^.a != a {
     return 18446744073709551615_u64;
   }
-  if deref(value).b != b {
+  if value^.b != b {
     return 18446744073709551615_u64;
   }
-  if deref(value).c != c {
+  if value^.c != c {
     return 18446744073709551615_u64;
   }
-  if deref(value).d != d {
+  if value^.d != d {
     return 18446744073709551615_u64;
   }
-  if deref(value).e != e {
+  if value^.e != e {
     return 18446744073709551615_u64;
   }
-  if deref(value).f != f {
+  if value^.f != f {
     return 18446744073709551615_u64;
   }
-  if deref(value).g != g {
+  if value^.g != g {
     return 18446744073709551615_u64;
   }
   return serial;
@@ -158,7 +158,7 @@ fn indexed_oracle() -> result: IndexedOracle pure {
 }
 
 fn indexed_fail(ledger: &IndexedLedger) -> result: unit writes(ledger.failures) {
-  set deref(ledger).failures = deref(ledger).failures +wrap 1_u64;
+  set ledger^.failures = ledger^.failures +wrap 1_u64;
   return unit;
 }
 
@@ -205,24 +205,24 @@ fn indexed_release<T, fn read(value: &T) -> serial: u64 reads(value), fn consume
   let Record(id: id, payload: payload, id_member: old_member, position: old_position) = move value;
   let serial = read(value: &payload);
   if serial < 64_u64 {
-    if deref(env).ids[serial] != id {
+    if env^.ids[serial] != id {
       indexed_fail(ledger: env);
     }
-    set deref(env).released[serial] = deref(env).released[serial] +wrap 1_u64;
+    set env^.released[serial] = env^.released[serial] +wrap 1_u64;
   } else {
     indexed_fail(ledger: env);
   }
-  if deref(env).ordered {
+  if env^.ordered {
     if old_member {
       indexed_fail(ledger: env);
     }
     if old_position != 8_u64 {
       indexed_fail(ledger: env);
     }
-    let at = deref(env).next;
-    if at < deref(env).count {
+    let at = env^.next;
+    if at < env^.count {
       if at < 32_u64 {
-        if deref(env).sequence[at] != serial {
+        if env^.sequence[at] != serial {
           indexed_fail(ledger: env);
         }
       } else {
@@ -231,7 +231,7 @@ fn indexed_release<T, fn read(value: &T) -> serial: u64 reads(value), fn consume
     } else {
       indexed_fail(ledger: env);
     }
-    set deref(env).next = at +wrap 1_u64;
+    set env^.next = at +wrap 1_u64;
   }
   consume(value: move payload);
   return unit;
@@ -245,21 +245,21 @@ fn indexed_release_payload<T, fn read(value: &T) -> serial: u64 reads(value), fn
 }
 
 fn indexed_read<T, fn read(value: &T) -> serial: u64 reads(value)>(env: &RecordEmpty, value: &Record<T>) -> result: u64 reads(value) {
-  return read(value: &deref(value).payload);
+  return read(value: &value^.payload);
 }
 
 fn indexed_accept<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64, id: u64, serial: u64, payload: T) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
   requires serial < 64_u64;
 } {
-  set deref(ledger).ids[serial] = id;
+  set ledger^.ids[serial] = id;
   let inserted = record_store_insert::<T, 8, 2>(store: store, id: id, payload: move payload);
   match move inserted {
     Ok(value: handle) => {
       let present = True();
       let absent = False();
       let expected = IndexedRow(live: present, id: id, serial: serial, member: absent, scheduled: absent, deadline: 0_u64, handle: handle);
-      set deref(oracle).rows[row] = expected;
+      set oracle^.rows[row] = expected;
     }
     Err(error: returned) => {
       indexed_fail(ledger: ledger);
@@ -272,62 +272,62 @@ fn indexed_accept<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, ora
 fn indexed_attach<T>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
 } {
-  let expected = deref(oracle).rows[row];
+  let expected = oracle^.rows[row];
   let status = record_store_attach::<T, 8, 2>(store: store, handle: expected.handle);
   indexed_status(ledger: ledger, actual: status, expected: 0_u64);
   for (index in 0_u64..32_u64) {
-    if deref(oracle).rows[index].id == expected.id {
-      set deref(oracle).rows[index].member = False();
+    if oracle^.rows[index].id == expected.id {
+      set oracle^.rows[index].member = False();
     }
   }
-  set deref(oracle).rows[row].member = True();
+  set oracle^.rows[row].member = True();
   return unit;
 }
 
 fn indexed_schedule<T>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64, deadline: u64) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
 } {
-  let status = record_store_schedule::<T, 8, 2>(store: store, handle: deref(oracle).rows[row].handle, deadline: deadline);
+  let status = record_store_schedule::<T, 8, 2>(store: store, handle: oracle^.rows[row].handle, deadline: deadline);
   indexed_status(ledger: ledger, actual: status, expected: 0_u64);
-  set deref(oracle).rows[row].scheduled = True();
-  set deref(oracle).rows[row].deadline = deadline;
+  set oracle^.rows[row].scheduled = True();
+  set oracle^.rows[row].deadline = deadline;
   return unit;
 }
 
 fn indexed_cancel<T>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
 } {
-  let status = record_store_cancel::<T, 8, 2>(store: store, handle: deref(oracle).rows[row].handle);
+  let status = record_store_cancel::<T, 8, 2>(store: store, handle: oracle^.rows[row].handle);
   indexed_status(ledger: ledger, actual: status, expected: 0_u64);
-  set deref(oracle).rows[row].scheduled = False();
+  set oracle^.rows[row].scheduled = False();
   return unit;
 }
 
 fn indexed_detach<T>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
 } {
-  let expected = deref(oracle).rows[row];
+  let expected = oracle^.rows[row];
   let status = record_store_detach::<T, 8, 2>(store: store, id: expected.id, handle: expected.handle);
   indexed_status(ledger: ledger, actual: status, expected: 0_u64);
-  set deref(oracle).rows[row].member = False();
+  set oracle^.rows[row].member = False();
   return unit;
 }
 
 fn indexed_delete<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, row: u64, expected_status: u64) -> result: unit writes(store), writes(oracle), writes(ledger) contract {
   requires row < 32_u64;
 } {
-  let removed = record_store_delete::<T, 8, 2>(store: store, handle: deref(oracle).rows[row].handle);
+  let removed = record_store_delete::<T, 8, 2>(store: store, handle: oracle^.rows[row].handle);
   match move removed {
     Ok(value: record) => {
       if expected_status != 0_u64 {
         indexed_fail(ledger: ledger);
       }
       let serial = IndexedPayload::read(value: &record.payload);
-      if serial != deref(oracle).rows[row].serial {
+      if serial != oracle^.rows[row].serial {
         indexed_fail(ledger: ledger);
       }
       indexed_release::<T, fn IndexedPayload::read, fn IndexedPayload::consume>(env: ledger, value: move record);
-      set deref(oracle).rows[row].live = False();
+      set oracle^.rows[row].live = False();
     }
     Err(error: reason) => {
       indexed_status(ledger: ledger, actual: reason, expected: expected_status);
@@ -340,7 +340,7 @@ fn indexed_check<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, orac
   doc "The dictionary model is a flat array keyed by external ID and insertion identity. It never reads the map's buckets or the heap's entries. Every live record is checked through borrowed application APIs, and each scheduled reverse position must validate against its own complete identity.";
   let empty = RecordEmpty();
   for (index in 0_u64..32_u64) {
-    let expected = deref(oracle).rows[index];
+    let expected = oracle^.rows[index];
     if expected.serial > 0_u64 {
       let info = record_store_info::<T, 8, 2>(store: store, handle: expected.handle);
       match info {
@@ -398,8 +398,8 @@ fn indexed_check<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, orac
       }
       let member = 32_u64;
       for (other in 0_u64..32_u64) {
-        if deref(oracle).rows[other].id == expected.id {
-          if deref(oracle).rows[other].member {
+        if oracle^.rows[other].id == expected.id {
+          if oracle^.rows[other].member {
             set member = other;
           }
         }
@@ -408,7 +408,7 @@ fn indexed_check<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, orac
       match lookup {
         Ok(value: handle) => {
           if member < 32_u64 {
-            let desired = deref(oracle).rows[member];
+            let desired = oracle^.rows[member];
             if desired.handle.object.index != handle.object.index {
               indexed_fail(ledger: ledger);
             }
@@ -428,7 +428,7 @@ fn indexed_check<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, orac
         }
         Err(error: reason) => {
           if member < 32_u64 {
-            if deref(oracle).rows[member].live {
+            if oracle^.rows[member].live {
               indexed_fail(ledger: ledger);
             } else {
               indexed_status(ledger: ledger, actual: reason, expected: 3_u64);
@@ -473,7 +473,7 @@ fn indexed_expire<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, ora
       let right = order[previous];
       if left < 32_u64 {
         if right < 32_u64 {
-          let before = indexed_before(left: deref(oracle).rows[left], right: deref(oracle).rows[right]);
+          let before = indexed_before(left: oracle^.rows[left], right: oracle^.rows[right]);
           if before {
             set order[previous] = left;
             set order[at] = right;
@@ -491,25 +491,25 @@ fn indexed_expire<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, ora
       }
     }
   }
-  set deref(ledger).count = 0_u64;
-  set deref(ledger).next = 0_u64;
+  set ledger^.count = 0_u64;
+  set ledger^.next = 0_u64;
   for (index in 0_u64..32_u64) {
     let row = order[index];
     if row < 32_u64 {
-      let expected = deref(oracle).rows[row];
+      let expected = oracle^.rows[row];
       if expected.scheduled {
         if expected.deadline <= now {
-          set deref(oracle).rows[row].scheduled = False();
-          set deref(oracle).rows[row].member = False();
+          set oracle^.rows[row].scheduled = False();
+          set oracle^.rows[row].member = False();
           if expected.live {
-            let at = deref(ledger).count;
+            let at = ledger^.count;
             if at < 32_u64 {
-              set deref(ledger).sequence[at] = expected.serial;
-              set deref(ledger).count = at + 1_u64;
+              set ledger^.sequence[at] = expected.serial;
+              set ledger^.count = at + 1_u64;
             } else {
               indexed_fail(ledger: ledger);
             }
-            set deref(oracle).rows[row].live = False();
+            set oracle^.rows[row].live = False();
           }
         }
       }
@@ -517,15 +517,15 @@ fn indexed_expire<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, ora
       indexed_fail(ledger: ledger);
     }
   }
-  set deref(ledger).ordered = True();
+  set ledger^.ordered = True();
   let count = record_store_expire::<T, IndexedLedger, fn indexed_release::<T, fn IndexedPayload::read, fn IndexedPayload::consume>, 8, 2>(store: store, now: now, env: ledger);
-  if count != deref(ledger).count {
+  if count != ledger^.count {
     indexed_fail(ledger: ledger);
   }
-  if deref(ledger).next != deref(ledger).count {
+  if ledger^.next != ledger^.count {
     indexed_fail(ledger: ledger);
   }
-  set deref(ledger).ordered = False();
+  set ledger^.ordered = False();
   indexed_check::<IndexedPayload<T>>(store: store, oracle: oracle, ledger: ledger);
   return unit;
 }
@@ -533,8 +533,8 @@ fn indexed_expire<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, ora
 fn indexed_cancel_position<interface IndexedPayload<T>>(store: &RecordStore<T, 8, 2>, oracle: &IndexedOracle, ledger: &IndexedLedger, position: u64) -> result: unit writes(store), writes(oracle), writes(ledger) {
   let selected = 32_u64;
   for (index in 0_u64..32_u64) {
-    if deref(oracle).rows[index].live {
-      let found = record_store_info::<T, 8, 2>(store: store, handle: deref(oracle).rows[index].handle);
+    if oracle^.rows[index].live {
+      let found = record_store_info::<T, 8, 2>(store: store, handle: oracle^.rows[index].handle);
       match found {
         Ok(value: info) => {
           if info.position == position {
@@ -548,7 +548,7 @@ fn indexed_cancel_position<interface IndexedPayload<T>>(store: &RecordStore<T, 8
     }
   }
   if selected < 32_u64 {
-    let deadline = deref(oracle).rows[selected].deadline;
+    let deadline = oracle^.rows[selected].deadline;
     indexed_cancel::<T>(store: store, oracle: oracle, ledger: ledger, row: selected);
     indexed_check::<IndexedPayload<T>>(store: store, oracle: oracle, ledger: ledger);
     indexed_schedule::<T>(store: store, oracle: oracle, ledger: ledger, row: selected, deadline: deadline);
@@ -806,8 +806,8 @@ struct IndexedWords {
 }
 
 fn indexed_word_consume(env: &IndexedWords, value: Record<u64>) -> result: unit writes(env) {
-  set deref(env).count = deref(env).count +wrap 1_u64;
-  set deref(env).sum = deref(env).sum +wrap value.payload;
+  set env^.count = env^.count +wrap 1_u64;
+  set env^.sum = env^.sum +wrap value.payload;
   return unit;
 }
 
@@ -820,7 +820,7 @@ fn indexed_word_insert<const ceiling: u64, const generation_limit: u64>(store: &
     Err(error: returned) => {
       indexed_fail(ledger: ledger);
       let object = SlabHandle(index: ceiling, generation: 0_u64);
-      return RecordHandle(store_id: deref(store).store_id, object: object);
+      return RecordHandle(store_id: store^.store_id, object: object);
     }
   }
 }
@@ -966,12 +966,12 @@ struct IndexedPositions {
 }
 
 fn indexed_placed(env: &IndexedPositions, value: &RecordDue, index: u64) -> result: unit reads(value), writes(env) {
-  let id = deref(value).id;
+  let id = value^.id;
   if id < 8_u64 {
-    set deref(env).positions[id] = index;
-    set deref(env).calls[id] = deref(env).calls[id] +wrap 1_u64;
+    set env^.positions[id] = index;
+    set env^.calls[id] = env^.calls[id] +wrap 1_u64;
   } else {
-    set deref(env).failures = deref(env).failures +wrap 1_u64;
+    set env^.failures = env^.failures +wrap 1_u64;
   }
   return unit;
 }
@@ -1058,7 +1058,7 @@ struct IndexedEdit {
 }
 
 fn indexed_edit_owner(env: &IndexedEdit, value: &IndexedWide) -> result: IndexedWide writes(env), writes(value) {
-  set deref(env).calls = deref(env).calls +wrap 1_u64;
+  set env^.calls = env^.calls +wrap 1_u64;
   let replacement = indexed_wide(serial: 41_u64);
   swap(first: &replacement, second: value);
   return move replacement;
@@ -1066,8 +1066,8 @@ fn indexed_edit_owner(env: &IndexedEdit, value: &IndexedWide) -> result: Indexed
 
 fn indexed_edit_consume(env: &IndexedWords, value: IndexedWide) -> result: unit writes(env) {
   let serial = indexed_wide_read(value: &value);
-  set deref(env).count = deref(env).count +wrap 1_u64;
-  set deref(env).sum = deref(env).sum +wrap serial;
+  set env^.count = env^.count +wrap 1_u64;
+  set env^.sum = env^.sum +wrap serial;
   indexed_wide_consume(value: move value);
   return unit;
 }

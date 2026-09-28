@@ -3,18 +3,18 @@ alias exit_status = std::process::exit_status;
 
 fn nested_length(values: &[u8], lo: u64, hi: u64) -> function_result: u64 reads(values[lo..hi].len) contract {
   requires lo <= hi;
-  requires hi <= deref(values).len;
+  requires hi <= values^.len;
 } {
   doc "A range reference re-sliced from another range reference is admitted, and len is its one measure; no reference is stored, so the reference-free closure is untouched.";
-  let part = &deref(values)[lo..hi];
-  let width = deref(part).len;
+  let part = &values^[lo..hi];
+  let width = part^.len;
   return width;
 }
 
 fn exchange(rows: &[Array<Box<u64>, 2>]) -> result: unit writes(rows) contract {
-  requires deref(rows).len == 2_u64;
+  requires rows^.len == 2_u64;
 } {
-  swap(first: &deref(rows)[0_u64], second: &deref(rows)[1_u64]);
+  swap(first: &rows^[0_u64], second: &rows^[1_u64]);
   return unit;
 }
 

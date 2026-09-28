@@ -455,7 +455,7 @@ fn returned_value<'a>(
     })
 }
 
-/// Field selections and `deref` are the steps a clause spells as written.
+/// Field and Box-content selections are steps a clause can spell as written.
 fn spelled(projections: &[GoalProjection]) -> bool {
     projections
         .iter()

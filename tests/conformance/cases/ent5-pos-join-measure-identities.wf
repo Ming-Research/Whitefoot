@@ -4,26 +4,26 @@ alias exit_status = std::process::exit_status;
 fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
   doc "Independent branch-local length reads denote the same measure term after scope exit [MSR-1], so the common bound survives the ordinary join and the subscript discharges [ENT-5, OP-4].";
   if pick {
-    let room_a = deref(b).len;
+    let room_a = b^.len;
     let inside_a = i < room_a;
     if inside_a {
     } else {
       return 0_u8;
     }
   } else {
-    let room_b = deref(b).len;
+    let room_b = b^.len;
     let inside_b = i < room_b;
     if inside_b {
     } else {
       return 0_u8;
     }
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn store_byte(out: &[u8], i: u64, value: u8, pick: Bool) -> result: unit writes(out) {
   doc "Opposite comparison spellings prove one joined bound for a write through a range reference the row declares.";
-  let spare = deref(out).len;
+  let spare = out^.len;
   if pick {
     let direct_bound = i < spare;
     if direct_bound {
@@ -37,7 +37,7 @@ fn store_byte(out: &[u8], i: u64, value: u8, pick: Bool) -> result: unit writes(
       return unit;
     }
   }
-  set deref(out)[i] = value;
+  set out^[i] = value;
   return unit;
 }
 

@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn stamp_head(run: &Box<Slots<u8>>) -> value: u8 writes(run) contract {
-  requires deref(run).inner.len > 0_u64;
+  requires run^.inner.len > 0_u64;
 } {
   doc "A reference parameter reaching a heap-resident run. Whether the callee may write through it is stated by the row alone, there being no permission marker on the reference; the element write below is exactly that declared effect, reported at its nearest statically nameable enclosing path.";
-  set deref(run).inner[0_u64] = 7_u8;
+  set run^.inner[0_u64] = 7_u8;
   return 7_u8;
 }
 

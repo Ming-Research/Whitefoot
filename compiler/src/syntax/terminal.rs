@@ -218,10 +218,10 @@ pub enum FixedTerminal {
     GreaterEqual,
     /// `musttail`.
     Musttail,
-    /// `deref`.
-    Deref,
     /// `.`.
     Dot,
+    /// `^`.
+    Caret,
     /// `pure`.
     Pure,
     /// `reads`.
@@ -330,8 +330,8 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
     FixedTerminal::LessEqual,
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
-    FixedTerminal::Deref,
     FixedTerminal::Dot,
+    FixedTerminal::Caret,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
     FixedTerminal::Writes,
@@ -440,7 +440,7 @@ impl FixedTerminal {
             Self::BangEqual => "!=",
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
-            Self::Deref => "deref",
+            Self::Caret => "^",
             Self::Entry => "entry",
             Self::Dot => ".",
             Self::Pure => "pure",
@@ -836,7 +836,7 @@ mod tests {
         // `std` qualifier [MOD-10] first occurs beside `pkg` in that header. The graph
         // productions close [GRAM-2], so `entry` now first occurs there, before
         // the primitive type atoms, and a call's `musttail` first occurs in
-        // [GRAM-5] after the comparison atoms. v0.76's `waits` [WAIT-1]
+        // [GRAM-5] after the comparison atoms. v0.77's `waits` [WAIT-1]
         // follows the declaration's `->` and `mustpar` [PAR-4] first occurs on
         // `for_stmt` [GRAM-4], just before `for`.
         assert_eq!(FixedTerminal::Alias as u8, 1);

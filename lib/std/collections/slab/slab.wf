@@ -7,31 +7,31 @@ fn slab_new<T, const ceiling: u64, const generation_limit: u64>(capacity: u64) -
 }
 
 fn slab_insert<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, value: T) -> result: Result<SlabHandle, T> writes(slab) contract {
-  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
-  ensures deref(slab).cells.inner.len >= deref(entry(slab)).cells.inner.len;
-  ensures deref(slab).cells.inner.len <= deref(entry(slab)).cells.inner.len + 1_u64;
+  ensures slab^.cells.inner.cap == entry(slab)^.cells.inner.cap;
+  ensures slab^.cells.inner.len >= entry(slab)^.cells.inner.len;
+  ensures slab^.cells.inner.len <= entry(slab)^.cells.inner.len + 1_u64;
 } {
   doc "Reuses the free-list head, or materializes the next reserved cell, in constant work. The one-slot window is an ordinary ownership-visible vacancy: its empty state never holds a dummy T and its filled state owns exactly one T. Err returns the offered owner unchanged when no available slot remains. Direct mutation of the slab's bookkeeping is outside this library protocol; malformed bookkeeping is still checked before any access.";
-  let index = deref(slab).free_head;
-  if index < deref(slab).cells.inner.len {
-    if deref(slab).cells.inner[index].storage.len == 0_u64 {
-      let generation = deref(slab).cells.inner[index].generation;
+  let index = slab^.free_head;
+  if index < slab^.cells.inner.len {
+    if slab^.cells.inner[index].storage.len == 0_u64 {
+      let generation = slab^.cells.inner[index].generation;
       if generation <= generation_limit {
-        let following = deref(slab).cells.inner[index].next;
-        place_back(window: &deref(slab).cells.inner[index].storage, value: move value);
-        set deref(slab).free_head = following;
+        let following = slab^.cells.inner[index].next;
+        place_back(window: &slab^.cells.inner[index].storage, value: move value);
+        set slab^.free_head = following;
         let handle = SlabHandle(index: index, generation: generation);
         return Ok<SlabHandle, T>(value: handle);
       }
     }
     return Err<SlabHandle, T>(error: move value);
   }
-  let materialized = deref(slab).cells.inner.len;
-  if materialized < deref(slab).cells.inner.cap {
+  let materialized = slab^.cells.inner.len;
+  if materialized < slab^.cells.inner.cap {
     let storage = slots_new::<T, 1>();
     place_back(window: &storage, value: move value);
-    let cell = SlabCell<T>(storage: move storage, generation: 0_u64, next: deref(slab).free_head);
-    place_back(window: &deref(slab).cells.inner, value: move cell);
+    let cell = SlabCell<T>(storage: move storage, generation: 0_u64, next: slab^.free_head);
+    place_back(window: &slab^.cells.inner, value: move cell);
     let handle = SlabHandle(index: materialized, generation: 0_u64);
     return Ok<SlabHandle, T>(value: handle);
   }
@@ -39,13 +39,13 @@ fn slab_insert<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T
 }
 
 fn slab_find_index<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle) -> found: Result<u64, unit> reads(slab) contract {
-  ensures when Ok(value: index): index < deref(slab).cells.inner.len;
+  ensures when Ok(value: index): index < slab^.cells.inner.len;
 } {
   doc "Checks materialization, occupancy and generation. The resulting index carries its outer bound; FN-9 does not publish a variant or an indexed cell's occupancy. A caller selecting the payload must re-read that cell's one-slot length, or use slab_visit to perform the complete borrowed access within one helper.";
   let index = handle.index;
-  if index < deref(slab).cells.inner.len {
-    if deref(slab).cells.inner[index].generation == handle.generation {
-      if deref(slab).cells.inner[index].storage.len > 0_u64 {
+  if index < slab^.cells.inner.len {
+    if slab^.cells.inner[index].generation == handle.generation {
+      if slab^.cells.inner[index].storage.len > 0_u64 {
         return Ok<u64, unit>(value: index);
       }
     }
@@ -56,10 +56,10 @@ fn slab_find_index<T, const ceiling: u64, const generation_limit: u64>(slab: &Sl
 fn slab_visit<interface SlabVisit<T, E, R>, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle, env: &E) -> result: Result<R, unit> reads(slab), writes(env) {
   doc "Borrows a present value only for the supplied monomorphized member call. REF-3 forbids returning a reference; R is ordinary owned data. A missing, deleted, reused or retired handle returns Err without invoking the member.";
   let index = handle.index;
-  if index < deref(slab).cells.inner.len {
-    if deref(slab).cells.inner[index].generation == handle.generation {
-      if deref(slab).cells.inner[index].storage.len > 0_u64 {
-        let observed = SlabVisit::visit(env: env, value: &deref(slab).cells.inner[index].storage[0_u64]);
+  if index < slab^.cells.inner.len {
+    if slab^.cells.inner[index].generation == handle.generation {
+      if slab^.cells.inner[index].storage.len > 0_u64 {
+        let observed = SlabVisit::visit(env: env, value: &slab^.cells.inner[index].storage[0_u64]);
         return Ok<R, unit>(value: move observed);
       }
     }
@@ -68,15 +68,15 @@ fn slab_visit<interface SlabVisit<T, E, R>, const ceiling: u64, const generation
 }
 
 fn slab_edit<interface SlabEdit<T, E, R>, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle, env: &E) -> result: Result<R, unit> writes(slab.cells), writes(env) contract {
-  ensures deref(slab).cells.inner.len == deref(entry(slab)).cells.inner.len;
-  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
+  ensures slab^.cells.inner.len == entry(slab)^.cells.inner.len;
+  ensures slab^.cells.inner.cap == entry(slab)^.cells.inner.cap;
 } {
   doc "Validates materialization, generation and occupancy before lending a writable payload to the supplied member. Missing, deleted, reused and retired handles return Err without invoking it. The payload argument supplies no containing-cell or free-list access. The member preserves ordinary ownership and returns owned data only; its environment must be disjoint from slab.cells. Successful payload edits preserve the outer storage extents and handle generation.";
   let index = handle.index;
-  if index < deref(slab).cells.inner.len {
-    if deref(slab).cells.inner[index].generation == handle.generation {
-      if deref(slab).cells.inner[index].storage.len > 0_u64 {
-        let changed = SlabEdit::edit(env: env, value: &deref(slab).cells.inner[index].storage[0_u64]);
+  if index < slab^.cells.inner.len {
+    if slab^.cells.inner[index].generation == handle.generation {
+      if slab^.cells.inner[index].storage.len > 0_u64 {
+        let changed = SlabEdit::edit(env: env, value: &slab^.cells.inner[index].storage[0_u64]);
         return Ok<R, unit>(value: move changed);
       }
     }
@@ -85,21 +85,21 @@ fn slab_edit<interface SlabEdit<T, E, R>, const ceiling: u64, const generation_l
 }
 
 fn slab_remove<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, handle: SlabHandle) -> result: Option<T> writes(slab) contract {
-  ensures deref(slab).cells.inner.cap == deref(entry(slab)).cells.inner.cap;
-  ensures deref(slab).cells.inner.len == deref(entry(slab)).cells.inner.len;
+  ensures slab^.cells.inner.cap == entry(slab)^.cells.inner.cap;
+  ensures slab^.cells.inner.len == entry(slab)^.cells.inner.len;
 } {
   doc "Returns exactly the matching owner. Below generation_limit the empty cell is linked at the free-list head with the next generation; at the limit it is permanently retired instead of wrapping. Retired cells remain materialized, so a handle's index never shifts or moves another payload.";
   let index = handle.index;
-  if index < deref(slab).cells.inner.len {
-    let generation = deref(slab).cells.inner[index].generation;
+  if index < slab^.cells.inner.len {
+    let generation = slab^.cells.inner[index].generation;
     if generation == handle.generation {
-      if deref(slab).cells.inner[index].storage.len > 0_u64 {
-        let value = take_back(window: &deref(slab).cells.inner[index].storage);
+      if slab^.cells.inner[index].storage.len > 0_u64 {
+        let value = take_back(window: &slab^.cells.inner[index].storage);
         if generation < generation_limit {
           let following_generation = generation + 1_u64;
-          set deref(slab).cells.inner[index].generation = following_generation;
-          set deref(slab).cells.inner[index].next = deref(slab).free_head;
-          set deref(slab).free_head = index;
+          set slab^.cells.inner[index].generation = following_generation;
+          set slab^.cells.inner[index].next = slab^.free_head;
+          set slab^.free_head = index;
         }
         return Some<T>(value: move value);
       }

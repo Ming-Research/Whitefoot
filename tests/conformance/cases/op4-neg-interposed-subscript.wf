@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn peek(v: &u64) -> result: u64 reads(v) {
-  doc "Reads through deref the value the reference names and hands back an owned copy.";
-  return deref(v);
+  doc "Reads through postfix ^ the value the reference names and hands back an owned copy.";
+  return v^;
 }
 
 fn probe(values: Array<u8, 8>, index: u64, cell: &u64, other: &u64) -> result: u64 reads(cell), reads(other) {

@@ -132,9 +132,9 @@ fn descending_reference_transfers_keep_the_counted_loop_sequential() {
 /// for, and the derived fixtures below change exactly one thing about it
 /// each.
 const RUNTIME_PARTITION_SOURCE: &str = r#"fn paint(output: &[u64]) -> result: u64 writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (x in 0_u64..count) {
-    set deref(output)[x] = 1_u64;
+    set output^[x] = 1_u64;
   }
   return count;
 }
@@ -167,13 +167,13 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
 
-/// An element write reached through `deref` of a reference parameter whose row
+/// An element write reached through `^` of a reference parameter whose row
 /// declares the write is one of the four places [PAR-2] admits.
 ///
 /// v0.59 refused this: a view element store had no map family of its own and
 /// needed the caller to hand down a range assignment. v0.60 names the shape
 /// outright — "one direct `Array` or `Slots` subscript rooted in an own
-/// binding declared outside L or reached through `deref` of a reference
+/// binding declared outside L or reached through `^` of a reference
 /// parameter whose row declares the write" — so the helper's own loop is the
 /// ordinary single-binder affine element map.
 #[test]
@@ -284,9 +284,9 @@ fn runtime_preheader_products_expand_transparent_stride_handles() {
 #[test]
 fn equivalent_product_endpoints_use_checked_images() {
     let source = br#"fn paint(output: &[u64]) -> result: u64 writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (x in 0_u64..count) {
-    set deref(output)[x] = 1_u64;
+    set output^[x] = 1_u64;
   }
   return count;
 }
@@ -347,7 +347,7 @@ fn disjoint_siblings_with_shifted_partitions_can_cross_between_iterations() {
 fn a_shifted_read_of_a_written_origin_can_cross_between_iterations() {
     let source = RUNTIME_PARTITION_SOURCE.replace(
         "    let painted = paint(output: row);",
-        "    let painted = paint(output: row);\n    let shifted = end + stride;\n    invariant room: shifted <= total {\n      use stride times (i + 2_u64 <= 6_u64);\n    }\n    let other = &values.inner[end..shifted];\n    let size = deref(other).len;\n    if 0_u64 < size {\n      let observed = deref(other)[0_u64];\n    }",
+        "    let painted = paint(output: row);\n    let shifted = end + stride;\n    invariant room: shifted <= total {\n      use stride times (i + 2_u64 <= 6_u64);\n    }\n    let other = &values.inner[end..shifted];\n    let size = other^.len;\n    if 0_u64 < size {\n      let observed = other^[0_u64];\n    }",
     );
     assert!(matches!(
         denied(source.as_bytes(), "partition", 2),
@@ -372,8 +372,8 @@ fn read_only_range_work_does_not_fabricate_an_independent_write_map() {
     let source = RUNTIME_PARTITION_SOURCE
         .replace("writes(output)", "reads(output)")
         .replace(
-            "    set deref(output)[x] = 1_u64;",
-            "    let observed = deref(output)[x];",
+            "    set output^[x] = 1_u64;",
+            "    let observed = output^[x];",
         );
     assert_eq!(
         permitted(source.as_bytes(), "partition").actualization,
@@ -459,11 +459,11 @@ fn a_constant_range_formed_at_the_call_argument_is_not_a_partition() {
 /// the partition `[1*i+0, 1*i+0+1)` relative to `w`. `{write}` passes that
 /// re-slice to `bump`, either formed at the call or bound first.
 const SHIFTING_ORIGIN_SOURCE: &str = r#"fn bump(output: &[u64], mark: u64) -> result: u64 writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (x in 0_u64..count) {
-    let old = deref(output)[x];
+    let old = output^[x];
     let next = old +wrap mark;
-    set deref(output)[x] = next;
+    set output^[x] = next;
   }
   return count;
 }
@@ -500,8 +500,8 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_partition_of_a_range_formed_inside_the_body_is_not_a_proved_range() {
     for write in [
-        "      let painted = bump(output: &deref(w)[i..hi], mark: 1_u64);\n",
-        "      let u = &deref(w)[i..hi];\n      let painted = bump(output: u, mark: 1_u64);\n",
+        "      let painted = bump(output: &w^[i..hi], mark: 1_u64);\n",
+        "      let u = &w^[i..hi];\n      let painted = bump(output: u, mark: 1_u64);\n",
     ] {
         let source = SHIFTING_ORIGIN_SOURCE.replace("{write}", write);
         assert!(
@@ -522,8 +522,8 @@ fn a_partition_of_a_range_formed_inside_the_body_is_not_a_proved_range() {
 #[test]
 fn a_reslice_of_a_proved_range_inherits_its_partition() {
     for write in [
-        "    let painted = paint(output: &deref(row)[0_u64..stride]);",
-        "    let part = &deref(row)[0_u64..stride];\n    let painted = paint(output: part);",
+        "    let painted = paint(output: &row^[0_u64..stride]);",
+        "    let part = &row^[0_u64..stride];\n    let painted = paint(output: part);",
     ] {
         let source =
             RUNTIME_PARTITION_SOURCE.replace("    let painted = paint(output: row);", write);
@@ -766,8 +766,8 @@ fn a_callee_writing_iteration_own_storage_is_permitted() {
 }
 
 fn bump(slot: &Cell, x: u64) -> result: u64 writes(slot.value) {
-  set deref(slot).value = deref(slot).value +wrap x;
-  return deref(slot).value;
+  set slot^.value = slot^.value +wrap x;
+  return slot^.value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -865,13 +865,13 @@ fn a_nested_map_is_granted_only_to_the_binder_in_its_retained_image() {
 #[test]
 fn an_unproved_source_premise_cannot_authorize_a_loop_subscript() {
     let source = br#"fn tally(src: &Slots<u64, 64>, limit: u64) -> result: u64 reads(src) {
-  let spare = deref(src).len;
+  let spare = src^.len;
   invariant scaled_limit_fits: 4_u64 * limit <= 4_u64 * spare {
     use 4 times (limit <= spare);
   }
   let total = 0_u64;
   for @sum (i in 0_u64..limit) {
-    let v = deref(src)[i];
+    let v = src^[i];
     set total = total +wrap v;
   }
   return total;
@@ -902,12 +902,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_dominating_bound_outside_the_loop_leaves_it_eligible() {
     let source = br#"fn tally(src: &Slots<u64, 64>, limit: u64) -> result: u64 reads(src) {
-  let spare = deref(src).len;
+  let spare = src^.len;
   let total = 0_u64;
   let fits = limit <= spare;
   if fits {
     for @sum (i in 0_u64..limit) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set total = total +wrap v;
     }
   }
@@ -1113,7 +1113,7 @@ fn a_reference_to_the_accumulator_is_a_read_of_it() {
   let total = 0_u64;
   for @sum (i in 0_u64..16_u64) {
     let view = &total;
-    let seen = deref(view);
+    let seen = view^;
     let bumped = seen +wrap i;
     set total = total +wrap i;
   }
@@ -1133,7 +1133,7 @@ fn a_reference_to_the_accumulator_is_a_read_of_it() {
     set total = total +wrap i;
   }
   let view = &total;
-  let seen = deref(view);
+  let seen = view^;
   let bumped = seen +wrap 1_u64;
   return std::process::exit_status(code: 0_u8);
 }
@@ -1354,10 +1354,10 @@ fn whole_box_replacement_and_growth_remain_denied() {
 }
 
 fn grow_owner(owner: &Box<Slots<u8>>) -> result: unit writes(owner) contract {
-  requires deref(owner).inner.cap <= 4_u64;
+  requires owner^.inner.cap <= 4_u64;
 } {
   for @remake (i in 0_u64..4_u64) {
-    let current = deref(owner).inner.cap;
+    let current = owner^.inner.cap;
     let done = grow(cell: owner, capacity: current);
   }
   return unit;
@@ -1472,11 +1472,11 @@ fn a_whole_collection_read_still_denies_a_same_map_update() {
 fn a_reference_output_accepts_a_proved_element_map() {
     let source =
         br#"fn fill(out: &Slots<u8, 64>, count: u64) -> result: unit writes(out) contract {
-  define spare = deref(out).len;
+  define spare = out^.len;
   requires count <= spare;
 } {
   for @fill (i in 0_u64..count) {
-    set deref(out)[i] = 1_u8;
+    set out^[i] = 1_u8;
   }
   return unit;
 }
@@ -1502,11 +1502,11 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_nested_range_element_map_requires_matching_read_and_write_indices() {
     let source = r#"fn update(rows: &[Array<u64, 3>]) -> result: unit writes(rows) contract {
-  requires 0_u64 < deref(rows).len;
+  requires 0_u64 < rows^.len;
 } {
   for @update (i in 0_u64..3_u64) {
-    let old = deref(rows)[0_u64][i];
-    set deref(rows)[0_u64][i] = old +wrap 1_u64;
+    let old = rows^[0_u64][i];
+    set rows^[0_u64][i] = old +wrap 1_u64;
   }
   return unit;
 }
@@ -1522,8 +1522,8 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 
     let shifted = source.replace(
-        "for @update (i in 0_u64..3_u64) {\n    let old = deref(rows)[0_u64][i];",
-        "for @update (i in 1_u64..3_u64) {\n    let prior = i -wrap 1_u64;\n    let old = deref(rows)[0_u64][prior];",
+        "for @update (i in 0_u64..3_u64) {\n    let old = rows^[0_u64][i];",
+        "for @update (i in 1_u64..3_u64) {\n    let prior = i -wrap 1_u64;\n    let old = rows^[0_u64][prior];",
     );
     let table = permission_of(shifted.as_bytes());
     let judged = only_loop(&table, "update");
@@ -1655,7 +1655,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_read_row_on_the_mapped_root_is_denied() {
     let source = b"fn observe(value: &Array<u64, 64>) -> result: u64 reads(value) {
-  return deref(value).len;
+  return value^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1746,8 +1746,8 @@ fn a_callee_writing_enclosing_storage_is_denied_by_condition_two() {
 }
 
 fn accum(slot: &Holder, x: f64) -> result: u64 writes(slot.value) {
-  set deref(slot).value = fadd.strict(deref(slot).value, x);
-  let bits = reinterpret::<f64, u64>(deref(slot).value);
+  set slot^.value = fadd.strict(slot^.value, x);
+  let bits = reinterpret::<f64, u64>(slot^.value);
   return iand(bits, 1_u64);
 }
 
@@ -1859,9 +1859,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_unit_row_helper_written_as_an_expression_statement_is_an_independent_map() {
     let template = "fn fill_row(output: &[u64], value: u64) -> result: unit writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (i in 0_u64..count) {
-    set deref(output)[i] = value;
+    set output^[i] = value;
   }
   return unit;
 }
@@ -1960,8 +1960,8 @@ fn an_expression_statement_writing_enclosing_storage_is_denied_as_its_let_bound_
 }
 
 fn bump(slot: &Cell, x: u64) -> result: u64 writes(slot.value) {
-  set deref(slot).value = deref(slot).value +wrap x;
-  return deref(slot).value;
+  set slot^.value = slot^.value +wrap x;
+  return slot^.value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1994,7 +1994,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// no loan: the helper's declared `writes(factory)` projects onto the caller's
 /// path, and that place is neither iteration-own nor a proved range.
 ///
-/// Since v0.76 the host functions that acquire and close wait [WAIT-1], so
+/// Since v0.77 the host functions that acquire and close wait [WAIT-1], so
 /// the wrapper waits too, and a body holding a waiting call is refused by
 /// that condition before its writes are consulted: a user function that
 /// waits denies the loop exactly as a host function does. The shared-write
@@ -2031,12 +2031,12 @@ fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> resu
 /// The direct PRE-1 declaration's ordinary factory, input and destination
 /// writes prevent loop-iteration overlap under the same condition. v0.58
 /// directory_next returns multiple results, outside PAR-2's direct-let shape;
-/// read_next preserves this test's single-result trigger. Since v0.76
+/// read_next preserves this test's single-result trigger. Since v0.77
 /// read_next waits, and the waiting condition refuses the loop first.
 #[test]
 fn a_direct_read_state_transition_writes_enclosing_storage() {
     let source = br#"fn main(factory: &std::io::HandleFactory, input: &std::io::InputStream, destination: &[u8]) -> result: unit writes(factory), writes(input), writes(destination) waits contract {
-  requires 1_u64 <= deref(destination).len;
+  requires 1_u64 <= destination^.len;
 } {
   let total = 0_u64;
   for @scan (i in 0_u64..4_u64) {
@@ -2183,12 +2183,12 @@ fn a_give_delivering_inside_the_body_is_permitted() {
 #[test]
 fn a_give_in_the_body_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Array<u64, 64>, needle: u64) -> result: u64 reads(src) {
-  let count = deref(src).len;
+  let count = src^.len;
   let acc = 0_u64;
   let always = True();
   let answer = if always {
     for @scan (i in 0_u64..count) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set acc = acc +wrap v;
       let hit = v == needle;
       if hit {
@@ -2217,12 +2217,12 @@ fn main() -> status: std::process::ExitStatus pure {
     // The same loop with the give removed is permitted, so the refusal is
     // about the edge and not about the shape.
     let contained = b"fn scan_until(src: &Array<u64, 64>, needle: u64) -> result: u64 reads(src) {
-  let count = deref(src).len;
+  let count = src^.len;
   let acc = 0_u64;
   let always = True();
   let answer = if always {
     for @scan (i in 0_u64..count) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set acc = acc +wrap v;
     }
     give 4096_u64;
@@ -2420,10 +2420,10 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn the_loop_verdict_is_the_same_under_every_route_to_the_same_fact() {
     let structural = b"fn tally(src: &Slots<u64, 64>) -> result: u64 reads(src) {
-  let count = deref(src).len;
+  let count = src^.len;
   let total = 0_u64;
   for @sum (i in 0_u64..count) {
-    let v = deref(src)[i];
+    let v = src^[i];
     set total = total +wrap v;
   }
   return total;
@@ -2438,15 +2438,15 @@ fn main() -> status: std::process::ExitStatus pure {
 ";
     let invariant_source =
         br#"fn tally(src: &Slots<u64, 64>, bounded_limit: u64, limit: u64) -> result: u64 reads(src) contract {
-  define capacity = deref(src).len;
+  define capacity = src^.len;
   requires bounded_limit <= limit;
   requires limit <= capacity;
 } {
-  let spare = deref(src).len;
+  let spare = src^.len;
   invariant limit_fits: bounded_limit <= spare;
   let total = 0_u64;
   for @sum (i in 0_u64..bounded_limit) {
-    let v = deref(src)[i];
+    let v = src^[i];
     set total = total +wrap v;
   }
   return total;
@@ -2460,11 +2460,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let dominating = b"fn tally(src: &Slots<u64, 64>, limit: u64) -> result: u64 reads(src) {
-  let spare = deref(src).len;
+  let spare = src^.len;
   let total = 0_u64;
   if limit <= spare {
     for @sum (i in 0_u64..limit) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set total = total +wrap v;
     }
   }
@@ -2479,12 +2479,12 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 ";
     let branched = b"fn tally(src: &Slots<u64, 64>, limit: u64) -> result: u64 reads(src) {
-  let spare = deref(src).len;
+  let spare = src^.len;
   let total = 0_u64;
   for @sum (i in 0_u64..limit) {
     let inside = i < spare;
     if inside {
-      let v = deref(src)[i];
+      let v = src^[i];
       set total = total +wrap v;
     }
   }
@@ -2542,7 +2542,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_reference_to_outer_storage_at_a_read_row_stays_permitted() {
     let source = br#"fn peek(cell: &u64) -> result: u64 reads(cell) {
-  return deref(cell);
+  return cell^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2572,7 +2572,7 @@ fn a_body_statement_forming_a_reference_is_an_ordinary_member() {
   let acc = 0_u64;
   for @sum (i in 0_u64..8_u64) {
     let g = &cell;
-    let v = deref(g);
+    let v = g^;
     set acc = acc +wrap v;
   }
   return std::process::exit_status(code: 0_u8);
@@ -2596,7 +2596,7 @@ fn a_body_reference_to_iteration_own_storage_stays_permitted() {
   for @sum (i in 0_u64..8_u64) {
     let local = array_filled::<u8, 4>(value: 7_u8);
     let h = &local;
-    let v = deref(h).len;
+    let v = h^.len;
     set acc = acc +wrap v;
   }
   return std::process::exit_status(code: 0_u8);

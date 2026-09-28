@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn pop_at(part: &[Slots<u64, 4>], i: u64) -> result: u64 writes(part[i].last), writes(part[i].len) contract {
-  requires i < deref(part).len;
+  requires i < part^.len;
 } {
-  doc "Takes the last element of deref(part)[i] back when there is one. Its row writes part[i].last through the range the caller passes.";
-  if 0_u64 < deref(part)[i].len {
-    let taken = take_back(window: &deref(part)[i]);
+  doc "Takes the last element of part^[i] back when there is one. Its row writes part[i].last through the range the caller passes.";
+  if 0_u64 < part^[i].len {
+    let taken = take_back(window: &part^[i]);
     return taken;
   }
   return 0_u64;
@@ -24,7 +24,7 @@ fn main() -> status: ExitStatus pure {
     if outer[1_u64].len == 1_u64 {
       let held = &outer[1_u64][0_u64];
       let got = pop_at(part: &outer[0_u64..2_u64], i: 1_u64);
-      let seen = deref(held);
+      let seen = held^;
       return exit_status(code: 0_u8);
     }
   }

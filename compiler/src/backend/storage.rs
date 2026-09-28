@@ -1417,7 +1417,7 @@ fn build(seed: u64) -> result: Row pure {
 fn exchange(old: &Row) -> result: Row writes(old) {
   let previous = build(seed: 11_u64);
   swap(first: old, second: &previous);
-  set deref(old).left = 99_u64;
+  set old^.left = 99_u64;
   return move previous;
 }
 

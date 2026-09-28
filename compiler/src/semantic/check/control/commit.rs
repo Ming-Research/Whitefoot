@@ -221,7 +221,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     value_node,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `deref(.)`",
+                        mechanical_fix: "write `p^`",
                     },
                 );
             }
@@ -436,7 +436,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 target_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(.)`",
+                    mechanical_fix: "write `p^`",
                 },
             );
         };
@@ -513,7 +513,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// Whether this target is the complete binding its own declaration names,
     /// which is the one target shape a commit reinitializes [SET-1].
     ///
-    /// A `deref` target writes a place the reference does not own, and a
+    /// A `^` target writes a place the reference does not own, and a
     /// projected or subscripted target writes one component of a value, so
     /// neither is that shape.
     fn commit_reinitializes_binding(mutation: &MutationTarget) -> bool {

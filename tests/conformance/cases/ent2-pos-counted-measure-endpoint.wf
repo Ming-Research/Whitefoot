@@ -4,8 +4,8 @@ alias exit_status = std::process::exit_status;
 fn sum_bytes(src: &[u8]) -> total: u64 reads(src) {
   doc "The range reference's len is itself the upper endpoint term; S11 equates the captured upper value with it, so the binder bound discharges the element read without a preceding let.";
   let acc = 0_u64;
-  for (i in 0_u64..deref(src).len) {
-    let byte = deref(src)[i];
+  for (i in 0_u64..src^.len) {
+    let byte = src^[i];
     let wide = cvt::<u8, u64>(byte);
     set acc = acc +wrap wide;
   }

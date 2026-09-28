@@ -13,16 +13,16 @@ fn inspect(first: &Node, second: &Node) -> result: u64 reads(first), writes(seco
   for (i in 0_u64..8_u64) {
     set a = b;
     set b = c;
-    match deref(c).next {
+    match c^.next {
       Some(value: child) => {
-        set c = &deref(child).inner;
+        set c = &child^.inner;
       }
       None() => {
       }
     }
   }
-  set deref(second).next = None<Box<Node>>();
-  return deref(a).value;
+  set second^.next = None<Box<Node>>();
+  return a^.value;
 }
 
 fn main() -> status: ExitStatus pure {

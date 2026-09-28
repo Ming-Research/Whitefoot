@@ -23,16 +23,16 @@ fn assert_no_internal_identity(rendered: &str) {
 
 const BOUNDS: &[u8] =
     br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {
-  requires deref(out).len >= deref(src).len;
+  requires out^.len >= src^.len;
 } {
   doc "Copies every byte of src that is not a space to the front of out.";
   let kept = 0_u64;
-  let count = deref(src).len;
+  let count = src^.len;
   for (at in 0_u64..count) {
-    let byte = deref(src)[at];
+    let byte = src^[at];
     if byte == 32_u8 {
     } else {
-      set deref(out)[kept] = byte;
+      set out^[kept] = byte;
       set kept = kept +wrap 1_u64;
     }
   }
@@ -47,16 +47,16 @@ fn main() -> status: std::process::ExitStatus pure {
 /// `kept` is a local the loop writes, so the repair offers the proof and
 /// guard routes rather than a requirement, and no call returns it, so no
 /// callee's `ensures` either [DIAG-1].
-const OP4_FIX: &str = "`kept < deref(out).len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if kept < deref(out).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare";
+const OP4_FIX: &str = "`kept < out^.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if kept < out^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare";
 
 #[test]
 fn an_undischarged_subscript_prints_its_residual_under_a_marked_line() {
     let failure = stop("bounds.wf", BOUNDS);
     let expected = format!(
-        "bounds.wf:11:21: error[OP-4]: UndischargedBoundsObligation
-  source:       set deref(out)[kept] = byte;
-  marker:                     ^^^^^^
-  residual: kept < deref(out).len
+        "bounds.wf:11:15: error[OP-4]: UndischargedBoundsObligation
+  source:       set out^[kept] = byte;
+  marker:               ^^^^^^
+  residual: kept < out^.len
   disposition: Unproved
   mechanical_fix: {OP4_FIX}"
     );
@@ -70,7 +70,7 @@ fn an_undischarged_subscript_prints_its_residual_under_a_marked_line() {
 fn the_json_record_is_complete_on_one_line() {
     let failure = stop("bounds.wf", BOUNDS);
     let expected = format!(
-        r#"{{"rule":"OP-4","kind":"UndischargedBoundsObligation","category":"Source","stage":"Semantics","at":{{"file":"bounds.wf","line":11,"column":21}},"bytes":{{"start":377,"end":383}},"source":"      set deref(out)[kept] = byte;","detail":{{"residual":"kept < deref(out).len","disposition":"Unproved","mechanical_fix":"{OP4_FIX}"}}}}"#
+        r#"{{"rule":"OP-4","kind":"UndischargedBoundsObligation","category":"Source","stage":"Semantics","at":{{"file":"bounds.wf","line":11,"column":15}},"bytes":{{"start":347,"end":353}},"source":"      set out^[kept] = byte;","detail":{{"residual":"kept < out^.len","disposition":"Unproved","mechanical_fix":"{OP4_FIX}"}}}}"#
     );
     let json = failure.render(DiagnosticFormat::Json);
     assert_eq!(json, expected);
@@ -86,19 +86,19 @@ fn the_json_record_is_complete_on_one_line() {
 fn a_call_requirement_names_the_callee_clause_by_its_position_and_text() {
     let source =
         br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {
-  requires deref(out).len >= deref(src).len;
+  requires out^.len >= src^.len;
 } {
   doc "Copies every byte of src that is not a space to the front of out.";
   let kept = 0_u64;
-  let count = deref(src).len;
+  let count = src^.len;
   for (
     at in 0_u64..count,
     invariant behind: kept <= at
   ) {
-    let byte = deref(src)[at];
+    let byte = src^[at];
     if byte == 32_u8 {
     } else {
-      set deref(out)[kept] = byte;
+      set out^[kept] = byte;
       set kept = kept + 1_u64;
     }
   }
@@ -118,7 +118,7 @@ fn main() -> status: std::process::ExitStatus pure {
   source:   let kept = drop_spaces(out: &buffer[0_u64..5_u64], src: &text[0_u64..6_u64]);
   marker:              {}
   concrete_callee: drop_spaces
-  requires_clause: caller.wf:2:3 \"requires deref(out).len >= deref(src).len;\"
+  requires_clause: caller.wf:2:3 \"requires out^.len >= src^.len;\"
   instantiated_goal: buffer[0..5].len >= text[0..6].len
   disposition: Refuted
   mechanical_fix: `buffer[0..5].len >= text[0..6].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
@@ -129,7 +129,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // The related position is an object with `at`, `bytes` and its own text.
     assert!(
         failure.render(DiagnosticFormat::Json).contains(
-            r#""requires_clause":{"at":{"file":"caller.wf","line":2,"column":3},"bytes":{"start":89,"end":131},"text":"requires deref(out).len >= deref(src).len;"}"#
+            r#""requires_clause":{"at":{"file":"caller.wf","line":2,"column":3},"bytes":{"start":89,"end":119},"text":"requires out^.len >= src^.len;"}"#
         ),
         "{}",
         failure.render(DiagnosticFormat::Json)
@@ -151,7 +151,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
     let detail = stop("fill.wf", prelude).detail();
     assert!(
         detail.contains(
-            "requires_clause: <prelude>/place_back.wf:2:3 \"requires deref(window).len < deref(window).cap;\"\n"
+            "requires_clause: <prelude>/place_back.wf:2:3 \"requires window^.len < window^.cap;\"\n"
         ),
         "{detail}"
     );
@@ -168,9 +168,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
 "#;
     let detail = stop("walk.wf", host).detail();
     assert!(
-        detail.contains(
-            "requires_clause: std/fs/module.wfm:54:3 \"requires end <= deref(name).len;\"\n"
-        ),
+        detail.contains("requires_clause: std/fs/module.wfm:54:3 \"requires end <= name^.len;\"\n"),
         "{detail}"
     );
 }
@@ -217,19 +215,19 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_failed_loop_invariant_names_its_obligation_and_required_relation() {
     let source =
         br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {
-  requires deref(out).len >= deref(src).len;
+  requires out^.len >= src^.len;
 } {
   doc "Copies every byte of src that is not a space to the front of out.";
   let kept = 0_u64;
-  let count = deref(src).len;
+  let count = src^.len;
   for (
     at in 0_u64..count,
     invariant behind: kept <= at
   ) {
-    let byte = deref(src)[at];
+    let byte = src^[at];
     if byte == 32_u8 {
     } else {
-      set deref(out)[kept] = byte;
+      set out^[kept] = byte;
       set kept = kept +wrap 1_u64;
     }
   }
@@ -296,7 +294,7 @@ fn a_grammar_rejection_quotes_the_expected_terminals_and_the_token_it_found() {
         r#"suffix.wf:2:11: error[FORM-5]: UnexpectedToken
   source:   let a = 42;
   marker:           ^^
-  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "mustpar", "match", literal, "musttail", OPNAME, "deref"]
+  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "mustpar", "match", literal, "musttail", OPNAME]
   found: "42""#
     );
 }

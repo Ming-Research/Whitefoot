@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn blend(target: &[u8], source: &[u8]) -> result: unit reads(source), writes(target) contract {
-  requires deref(target).len > 0_u64;
-  requires deref(source).len > 0_u64;
+  requires target^.len > 0_u64;
+  requires source^.len > 0_u64;
 } {
   doc "Copies one element from the read range into the written range.";
-  let first = deref(source)[0_u64];
-  set deref(target)[0_u64] = first;
+  let first = source^[0_u64];
+  set target^[0_u64] = first;
   return unit;
 }
 

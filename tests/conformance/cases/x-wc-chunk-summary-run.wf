@@ -55,51 +55,51 @@ fn summarize<const n: u64>(out: &Summary, input: Slots<u8, n>) -> function_resul
       set index_value = index_value +wrap 1_u64;
     }
   }
-  set deref(out).lines = lines;
-  set deref(out).words = words;
-  set deref(out).bytes = length;
-  set deref(out).first_space = first_space;
+  set out^.lines = lines;
+  set out^.words = words;
+  set out^.bytes = length;
+  set out^.first_space = first_space;
   if previous_space {
-    set deref(out).last_space = 1_u64;
+    set out^.last_space = 1_u64;
   } else {
-    set deref(out).last_space = 0_u64;
+    set out^.last_space = 0_u64;
   }
   return unit;
 }
 
 fn combine(out: &Summary, left: &Summary, right: &Summary) -> function_result: unit reads(left.lines), reads(left.words), reads(left.bytes), reads(left.first_space), reads(left.last_space), reads(right.lines), reads(right.words), reads(right.bytes), reads(right.first_space), reads(right.last_space), writes(out.lines), writes(out.words), writes(out.bytes), writes(out.first_space), writes(out.last_space) {
   doc "Combines two summaries associatively; the three reference parameters supply three distinct roots, so the call site proves every substituted pair disjoint [EFF-5, OWN-7].";
-  if deref(left).bytes == 0_u64 {
-    set deref(out).lines = deref(right).lines;
-    set deref(out).words = deref(right).words;
-    set deref(out).bytes = deref(right).bytes;
-    set deref(out).first_space = deref(right).first_space;
-    set deref(out).last_space = deref(right).last_space;
+  if left^.bytes == 0_u64 {
+    set out^.lines = right^.lines;
+    set out^.words = right^.words;
+    set out^.bytes = right^.bytes;
+    set out^.first_space = right^.first_space;
+    set out^.last_space = right^.last_space;
     return unit;
   }
-  if deref(right).bytes == 0_u64 {
-    set deref(out).lines = deref(left).lines;
-    set deref(out).words = deref(left).words;
-    set deref(out).bytes = deref(left).bytes;
-    set deref(out).first_space = deref(left).first_space;
-    set deref(out).last_space = deref(left).last_space;
+  if right^.bytes == 0_u64 {
+    set out^.lines = left^.lines;
+    set out^.words = left^.words;
+    set out^.bytes = left^.bytes;
+    set out^.first_space = left^.first_space;
+    set out^.last_space = left^.last_space;
     return unit;
   }
-  let lines = deref(left).lines +wrap deref(right).lines;
-  let raw_words = deref(left).words +wrap deref(right).words;
+  let lines = left^.lines +wrap right^.lines;
+  let raw_words = left^.words +wrap right^.words;
   let joined = 0_u64;
-  if deref(left).last_space == 0_u64 {
-    if deref(right).first_space == 0_u64 {
+  if left^.last_space == 0_u64 {
+    if right^.first_space == 0_u64 {
       set joined = 1_u64;
     }
   }
   let words = raw_words -wrap joined;
-  let bytes = deref(left).bytes +wrap deref(right).bytes;
-  set deref(out).lines = lines;
-  set deref(out).words = words;
-  set deref(out).bytes = bytes;
-  set deref(out).first_space = deref(left).first_space;
-  set deref(out).last_space = deref(right).last_space;
+  let bytes = left^.bytes +wrap right^.bytes;
+  set out^.lines = lines;
+  set out^.words = words;
+  set out^.bytes = bytes;
+  set out^.first_space = left^.first_space;
+  set out^.last_space = right^.last_space;
   return unit;
 }
 

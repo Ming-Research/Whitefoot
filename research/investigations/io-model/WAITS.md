@@ -384,7 +384,7 @@ What this does not establish:
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
-is kernel-spec v0.76 [WAIT-1, WAIT-2, PAR-4, HOST-1], and each choice below is
+is kernel-spec v0.77 [WAIT-1, WAIT-2, PAR-4, HOST-1], and each choice below is
 proposed to the design tree as an amendment.
 
 ### Waiting is a function kind the writer declares
@@ -481,7 +481,7 @@ Alternatives refused:
 
 ### `mustpar` asserts independence and starts contexts
 
-This is the kernel-spec v0.76 text. The next revision makes the third form an
+This is the kernel-spec v0.77 text. The next revision makes the third form an
 assertion like the other two ([The program means its sequential
 execution](#the-program-means-its-sequential-execution)).
 

@@ -37,21 +37,21 @@ fn filled<T: copy, const n: u64>(value: T) -> result: Ring<T, n> pure contract {
 }
 
 fn take_at<T: drop, const n: u64>(window: &Ring<T, n>, at: u64) -> taken: T writes(window) contract {
-  requires at + 2_u64 <= deref(window).len;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires at + 2_u64 <= window^.len;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   doc "Removes the element at at, moving the last element into its place. The exchange is the built-in swap, which no source body could write without a hole [OP-11, WIN-3].";
   let endv = take_back(window: window);
-  swap(first: &deref(window)[at], second: &endv);
+  swap(first: &window^[at], second: &endv);
   return move endv;
 }
 
 fn try_place<T: drop, const n: u64>(window: &Ring<T, n>, value: T) -> unplaced: Option<T> writes(window.next), writes(window.len) contract {
-  ensures deref(window).len <= deref(entry(window)).len + 1_u64;
-  ensures deref(window).len >= deref(entry(window)).len;
+  ensures window^.len <= entry(window)^.len + 1_u64;
+  ensures window^.len >= entry(window)^.len;
 } {
   doc "Appends one value, handing it back when the window is full; the fullness test is the length against the written capacity, and the standing identity len + (cap - len) = cap turns it into place_back's requirement [MSR-2].";
-  let held = deref(window).len;
+  let held = window^.len;
   let fits = held < n;
   if fits {
     place_back(window: window, value: move value);
@@ -61,11 +61,11 @@ fn try_place<T: drop, const n: u64>(window: &Ring<T, n>, value: T) -> unplaced: 
 }
 
 fn try_take<T: drop, const n: u64>(window: &Ring<T, n>) -> taken: Option<T> writes(window.last), writes(window.len) contract {
-  ensures deref(window).len <= deref(entry(window)).len;
-  ensures deref(window).len + 1_u64 >= deref(entry(window)).len;
+  ensures window^.len <= entry(window)^.len;
+  ensures window^.len + 1_u64 >= entry(window)^.len;
 } {
   doc "Removes one value from the end, or reports that the window is empty.";
-  let held = deref(window).len;
+  let held = window^.len;
   let any = held > 0_u64;
   if any {
     let one = take_back(window: window);

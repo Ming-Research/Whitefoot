@@ -14,7 +14,7 @@ fn main() -> status: ExitStatus pure {
   loop @l {
     break @l;
   }
-  let v = match deref(p) +checked 1_i32 {
+  let v = match p^ +checked 1_i32 {
     Ok(value: w) => {
       give w;
     }

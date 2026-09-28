@@ -745,7 +745,7 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by WIN-3.
         mechanical_fix: &'static str,
     },
-    /// [OWN-1] a `move` of a place reached through a `deref`, which is not
+    /// [OWN-1] a `move` of a place reached through a `^`, which is not
     /// rooted in a live own-mode binding of this function, so it is not one
     /// of the consumes that rule admits.
     MoveThroughReference {

@@ -11,7 +11,7 @@ fn takes_i32(value: i32) -> function_result: unit pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A reference formed over a field names that field's path [REF-1], but the reference variable denotes the reference and the field is reached only through deref, so the bare reference at a call argument whose parameter is own i32 is the missing dereference [TYPE-7]; the mechanical fix is deref(r).";
+  doc "A reference formed over a field names that field's path [REF-1], but the reference variable denotes the reference and the field is reached only through postfix ^, so the bare reference at a call argument whose parameter is own i32 is the missing dereference [TYPE-7]; the mechanical fix is r^.";
   let p = Point(x: 7_i32, y: 9_i32);
   let r = &p.x;
   let a = takes_i32(value: r);

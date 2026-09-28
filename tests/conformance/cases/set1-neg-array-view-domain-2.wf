@@ -6,7 +6,7 @@ const values: Array<u8, 2> =[0_u8, 0_u8];
 fn main() -> status: ExitStatus pure {
   doc "Range references over an array preserve element bounds and immutability. CONST-2 owns the refusal because a named const is never writable, although the read of the same element is admitted.";
   let view = &values[0_u64..2_u64];
-  set deref(view)[0_u64] = 1_u8;
-  let seen = deref(view)[0_u64];
+  set view^[0_u64] = 1_u8;
+  let seen = view^[0_u64];
   return exit_status(code: 0_u8);
 }

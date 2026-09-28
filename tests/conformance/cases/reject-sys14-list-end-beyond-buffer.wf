@@ -11,7 +11,7 @@ alias open_directory_source = std::fs::open_directory_source;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   doc "Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path.";
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -76,7 +76,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -100,7 +100,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
 }
 
 fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
-  doc "The end 4104 exceeds the 4096-element destination range. FN-8 rejects directory_next through its ordinary end <= deref(destination).len requirement.";
+  doc "The end 4104 exceeds the 4096-element destination range. FN-8 rejects directory_next through its ordinary end <= destination^.len requirement.";
   let entries = box_array_filled::<u8>(count: 4096_u64, value: 0_u8);
   let window = &entries.inner[0_u64..4096_u64];
   match open_directory_source(factory: files, directory: cwd) {

@@ -2,61 +2,61 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn unchanged(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
-  requires index < deref(rows).len;
+  requires index < rows^.len;
 } {
   doc "Both signs of an indexed measure goal survive while its named offset is unchanged [ENT-5]. The opposite branches remain unreachable [ENT-4].";
-  if deref(rows)[index].len == 1_u64 {
-    if deref(rows)[index].len == 1_u64 {
+  if rows^[index].len == 1_u64 {
+    if rows^[index].len == 1_u64 {
     } else {
-      return deref(rows)[index][0_u64];
+      return rows^[index][0_u64];
     }
   }
-  if deref(rows)[index].len == 0_u64 {
-  } else if deref(rows)[index].len == 0_u64 {
-    return deref(rows)[index][0_u64];
+  if rows^[index].len == 0_u64 {
+  } else if rows^[index].len == 0_u64 {
+    return rows^[index][0_u64];
   }
   return 0_u8;
 }
 
 fn unrelated_write(rows: &Slots<Slots<u8, 4>, 2>, index: u64) -> result: u8 reads(rows) contract {
-  requires index < deref(rows).len;
+  requires index < rows^.len;
 } {
   doc "Writing another binding changes no support of either indexed measure goal [ENT-5]. The opposite branches remain unreachable [ENT-4].";
   let other = 0_u64;
-  if deref(rows)[index].len == 1_u64 {
+  if rows^[index].len == 1_u64 {
     set other = 1_u64;
-    if deref(rows)[index].len == 1_u64 {
+    if rows^[index].len == 1_u64 {
     } else {
-      return deref(rows)[index][0_u64];
+      return rows^[index][0_u64];
     }
   }
-  if deref(rows)[index].len == 0_u64 {
+  if rows^[index].len == 0_u64 {
   } else {
     set other = 1_u64;
-    if deref(rows)[index].len == 0_u64 {
-      return deref(rows)[index][0_u64];
+    if rows^[index].len == 0_u64 {
+      return rows^[index][0_u64];
     }
   }
   return 0_u8;
 }
 
 fn literal_offset(rows: &Slots<Slots<u8, 4>, 2>, replacement: u64) -> result: u8 reads(rows) contract {
-  requires 0_u64 < deref(rows).len;
+  requires 0_u64 < rows^.len;
 } {
   doc "Literal offsets have no binding support [ENT-5, MSR-2]. Replacing the independent index binding preserves both signed measure goals over row zero.";
   let index = 0_u64;
-  if deref(rows)[0_u64].len == 1_u64 {
+  if rows^[0_u64].len == 1_u64 {
     set index = replacement;
-    if deref(rows)[0_u64].len == 1_u64 {
+    if rows^[0_u64].len == 1_u64 {
     } else {
-      return deref(rows)[0_u64][0_u64];
+      return rows^[0_u64][0_u64];
     }
   }
-  if deref(rows)[0_u64].len == 0_u64 {
+  if rows^[0_u64].len == 0_u64 {
   } else {
     set index = replacement;
-    if deref(rows)[0_u64].len == 0_u64 {
-      return deref(rows)[0_u64][0_u64];
+    if rows^[0_u64].len == 0_u64 {
+      return rows^[0_u64][0_u64];
     }
   }
   return 0_u8;

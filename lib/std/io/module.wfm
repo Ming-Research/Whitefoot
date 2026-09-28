@@ -47,14 +47,14 @@ public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(
 
 public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) waits contract {
   requires start <= end;
-  requires end <= deref(source).len;
+  requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written.";
 
 public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) waits contract {
   requires start <= end;
-  requires end <= deref(destination).len;
+  requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, and ReadEnd reports the end of the input.";

@@ -28,10 +28,10 @@ const line_end: Array<u8, 1> =[10_u8];
 const digit_glyphs: Array<u8, 10> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8];
 
 fn bs_reserve(s: &Box<Slots<u8>>, total: u64) -> result: unit writes(s) contract {
-  requires total >= deref(s).inner.cap;
+  requires total >= s^.inner.cap;
   requires total <= 9223372036854775791_u64;
-  ensures deref(s).inner.cap == total;
-  ensures deref(s).inner.len == deref(entry(s)).inner.len;
+  ensures s^.inner.cap == total;
+  ensures s^.inner.len == entry(s)^.inner.len;
 } {
   doc "Grows the backing window to total slots, preserving byte order. The native fixture's total bound leaves 16 descriptor bytes in the signed 64-bit allocation/address domain [STOR-6]. grow is defined on Box<Slots<T>> alone, remakes the cell's content whole, may reallocate in place, and carries the length across, so there is no superseded run to release and allocation has no failure arm [OP-10, STOR-8].";
   grow(cell: s, capacity: total);
@@ -40,94 +40,94 @@ fn bs_reserve(s: &Box<Slots<u8>>, total: u64) -> result: unit writes(s) contract
 
 fn bs_len(s: &Box<Slots<u8>>) -> result: u64 reads(s) {
   doc "Reports how many bytes the string holds; a measure read is a place form, not a call [OP-15].";
-  return deref(s).inner.len;
+  return s^.inner.len;
 }
 
 fn bs_byte(s: &Box<Slots<u8>>, index: u64) -> result: Option<u8> reads(s) {
   doc "Reads one stored byte, delivering None for a position the string does not hold.";
-  let stored = deref(s).inner.len;
+  let stored = s^.inner.len;
   let within = index < stored;
   if within {
-    let value = deref(s).inner[index];
+    let value = s^.inner[index];
     return Some<u8>(value: value);
   }
   return None<u8>();
 }
 
 fn bs_append_range(s: &Box<Slots<u8>>, capacity: u64, text: &[u8], total: u64) -> result: unit reads(text), writes(s) contract {
-  requires deref(s).inner.cap == capacity;
-  requires deref(s).inner.len + deref(text).len <= total;
-  requires deref(s).inner.len + deref(text).len >= total;
+  requires s^.inner.cap == capacity;
+  requires s^.inner.len + text^.len <= total;
+  requires s^.inner.len + text^.len >= total;
   requires total <= capacity;
-  ensures deref(s).inner.cap == capacity;
-  ensures deref(s).inner.len == total;
+  ensures s^.inner.cap == capacity;
+  ensures s^.inner.len == total;
 } {
   doc "Appends every byte of one static message. The caller names the final total explicitly: the three-datum addition is an FN-8 requirement, while the published FN-9 relation remains one output datum against that scalar total. The body writes the four-premise room proof explicitly because that composition is deliberately outside AUTO [FN-8, FN-9, PRF-1, REF-4].";
-  let count = deref(text).len;
-  let start = deref(s).inner.len;
+  let count = text^.len;
+  let start = s^.inner.len;
   for @append (
     at in 0_u64..count,
-    invariant filled: deref(s).inner.len == start + at,
-    invariant kept: deref(s).inner.cap == capacity,
+    invariant filled: s^.inner.len == start + at,
+    invariant kept: s^.inner.cap == capacity,
     invariant fits: start + count <= capacity
   ) {
-    let byte = deref(text)[at];
-    invariant room: deref(s).inner.len < deref(s).inner.cap {
-      use (deref(s).inner.len <= start + at);
+    let byte = text^[at];
+    invariant room: s^.inner.len < s^.inner.cap {
+      use (s^.inner.len <= start + at);
       use (at < count);
       use (start + count <= capacity);
-      use (capacity <= deref(s).inner.cap);
+      use (capacity <= s^.inner.cap);
     }
-    place_back(window: &deref(s).inner, value: byte);
+    place_back(window: &s^.inner, value: byte);
   }
   return unit;
 }
 
 fn bs_from(text: &[u8]) -> made: Box<Slots<u8>> reads(text) contract {
-  requires deref(text).len <= 9223372036854775791_u64;
-  ensures made.inner.cap == deref(text).len;
-  ensures made.inner.len == deref(text).len;
+  requires text^.len <= 9223372036854775791_u64;
+  ensures made.inner.cap == text^.len;
+  ensures made.inner.len == text^.len;
 } {
   doc "Builds one byte string holding exactly the bytes of one static message. The explicit input-length bound qualifies its complete native allocation, including the 16-byte descriptor [STOR-6]; allocation remains total within the stated domain.";
-  let count = deref(text).len;
+  let count = text^.len;
   let made = box_slots_new::<u8>(capacity: count);
   bs_append_range(s: &made, capacity: count, text: text, total: count);
   return move made;
 }
 
 fn bs_concat(destination: &Box<Slots<u8>>, capacity: u64, source: &Box<Slots<u8>>, total: u64) -> result: unit reads(source), writes(destination) contract {
-  requires deref(destination).inner.cap == capacity;
-  requires deref(destination).inner.len + deref(source).inner.len <= total;
-  requires deref(destination).inner.len + deref(source).inner.len >= total;
+  requires destination^.inner.cap == capacity;
+  requires destination^.inner.len + source^.inner.len <= total;
+  requires destination^.inner.len + source^.inner.len >= total;
   requires total <= capacity;
-  ensures deref(destination).inner.cap == capacity;
-  ensures deref(destination).inner.len == total;
+  ensures destination^.inner.cap == capacity;
+  ensures destination^.inner.len == total;
 } {
   doc "Appends every byte of one byte string to another; the two reference parameters name two different roots, so the call site proves their substituted paths disjoint. The local room certificate composes the counted guard with the three affine bounds [EFF-5, PRF-1].";
-  let count = deref(source).inner.len;
-  let start = deref(destination).inner.len;
+  let count = source^.inner.len;
+  let start = destination^.inner.len;
   for @concat (
     at in 0_u64..count,
-    invariant filled: deref(destination).inner.len == start + at,
-    invariant kept: deref(destination).inner.cap == capacity,
+    invariant filled: destination^.inner.len == start + at,
+    invariant kept: destination^.inner.cap == capacity,
     invariant fits: start + count <= capacity
   ) {
-    let byte = deref(source).inner[at];
-    invariant room: deref(destination).inner.len < deref(destination).inner.cap {
-      use (deref(destination).inner.len <= start + at);
+    let byte = source^.inner[at];
+    invariant room: destination^.inner.len < destination^.inner.cap {
+      use (destination^.inner.len <= start + at);
       use (at < count);
       use (start + count <= capacity);
-      use (capacity <= deref(destination).inner.cap);
+      use (capacity <= destination^.inner.cap);
     }
-    place_back(window: &deref(destination).inner, value: byte);
+    place_back(window: &destination^.inner, value: byte);
   }
   return unit;
 }
 
 fn bs_find(haystack: &Box<Slots<u8>>, needle: &Box<Slots<u8>>) -> result: Option<u64> reads(haystack), reads(needle) {
   doc "Reports the first position where the needle bytes occur, by the naive left-to-right scan. A position found by a search is returned as an index, never as a reference [REF-3].";
-  let hay_length = deref(haystack).inner.len;
-  let needle_length = deref(needle).inner.len;
+  let hay_length = haystack^.inner.len;
+  let needle_length = needle^.inner.len;
   let longer = needle_length > hay_length;
   if longer {
     return None<u64>();
@@ -179,12 +179,12 @@ fn bs_find(haystack: &Box<Slots<u8>>, needle: &Box<Slots<u8>>) -> result: Option
 fn bs_push_decimal(s: &Box<Slots<u8>>, capacity: u64, value: u64, digits: u64, total: u64) -> result: unit writes(s) contract {
   requires digits >= 1_u64;
   requires digits <= 20_u64;
-  requires deref(s).inner.cap == capacity;
-  requires deref(s).inner.len + digits <= total;
-  requires deref(s).inner.len + digits >= total;
+  requires s^.inner.cap == capacity;
+  requires s^.inner.len + digits <= total;
+  requires s^.inner.len + digits >= total;
   requires total <= capacity;
-  ensures deref(s).inner.cap == capacity;
-  ensures deref(s).inner.len == total;
+  ensures s^.inner.cap == capacity;
+  ensures s^.inner.len == total;
 } {
   doc "Appends exactly digits decimal glyphs of value, least significant digit extracted first into a fixed scratch window and drained from its back, which is the most significant digit. The runtime window's room proof is the explicit four-premise PRF-1 composition used by every append loop here.";
   let scratch = slots_new::<u8, 20>();
@@ -198,28 +198,28 @@ fn bs_push_decimal(s: &Box<Slots<u8>>, capacity: u64, value: u64, digits: u64, t
     place_back(window: &scratch, value: glyph);
     set rest = rest / 10_u64;
   }
-  let start = deref(s).inner.len;
+  let start = s^.inner.len;
   for @emit (
     at in 0_u64..digits,
     invariant left: scratch.len + at == digits,
-    invariant filled: deref(s).inner.len == start + at,
-    invariant kept: deref(s).inner.cap == capacity,
+    invariant filled: s^.inner.len == start + at,
+    invariant kept: s^.inner.cap == capacity,
     invariant fits: start + digits <= capacity
   ) {
     let emitted = take_back(window: &scratch);
-    invariant room: deref(s).inner.len < deref(s).inner.cap {
-      use (deref(s).inner.len <= start + at);
+    invariant room: s^.inner.len < s^.inner.cap {
+      use (s^.inner.len <= start + at);
       use (at < digits);
       use (start + digits <= capacity);
-      use (capacity <= deref(s).inner.cap);
+      use (capacity <= s^.inner.cap);
     }
-    place_back(window: &deref(s).inner, value: emitted);
+    place_back(window: &s^.inner, value: emitted);
   }
   return unit;
 }
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";

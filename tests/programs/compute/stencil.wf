@@ -2,21 +2,21 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn stencil_row(top: &[f64], middle: &[f64], bottom: &[f64], output: &[f64]) -> result: u64 reads(top), reads(middle), reads(bottom), writes(output) contract {
-  define width = deref(output).len;
+  define width = output^.len;
   requires 3_u64 <= width;
-  requires width <= deref(top).len;
-  requires width <= deref(middle).len;
-  requires width <= deref(bottom).len;
+  requires width <= top^.len;
+  requires width <= middle^.len;
+  requires width <= bottom^.len;
 } {
-  let width = deref(output).len;
+  let width = output^.len;
   let end = width - 1_u64;
   for (x in 1_u64..end) {
     let left = x - 1_u64;
     let right = x + 1_u64;
-    let vertical = fadd.strict(deref(top)[x], deref(bottom)[x]);
-    let horizontal = fadd.strict(deref(middle)[left], deref(middle)[right]);
+    let vertical = fadd.strict(top^[x], bottom^[x]);
+    let horizontal = fadd.strict(middle^[left], middle^[right]);
     let total = fadd.strict(vertical, horizontal);
-    set deref(output)[x] = fmul.strict(total, 0.25_f64);
+    set output^[x] = fmul.strict(total, 0.25_f64);
   }
   return width;
 }

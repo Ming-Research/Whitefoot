@@ -154,13 +154,7 @@ impl Input<'_, '_> {
             // rendered from the same source-order path every other consumer
             // reads rather than from a field list.
             CheckedExpression::ContainerMeasure { measure, root } => {
-                let mut path = container_root_path(root);
-                path.path
-                    .retain(|projection| !matches!(projection, PlaceStep::Deref));
-                let place = self.render_place(&ResolvedPlace {
-                    root: root.root,
-                    path: path.path,
-                });
+                let place = self.render_place(&container_root_path(root));
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             _ => return None,
@@ -204,17 +198,17 @@ impl Input<'_, '_> {
     pub(super) fn render_place(&self, place: &ResolvedPlace) -> String {
         let reference_root = matches!(place.root, PlaceRoot::Binding(binding)
             if self.places.is_reference(binding));
-        let (mut rendered, mut ty) = match place.root {
+        let (rendered, ty) = match place.root {
             PlaceRoot::Binding(binding) => (
                 {
                     // [REF-1, OP-15] a reference variable names a path and is
                     // not storage of its own, so the storage it names is
-                    // reached only through `deref`. A term over a reference
+                    // reached only through `^`. A term over a reference
                     // anchors at the binding and carries no step of its own,
                     // so the spelling the writer reads puts the step back.
                     let name = self.binding_name(binding);
                     if reference_root {
-                        format!("deref({name})")
+                        format!("{name}^")
                     } else {
                         name
                     }
@@ -233,7 +227,17 @@ impl Input<'_, '_> {
                     .map(|constant| constant.ty),
             ),
         };
-        for projection in &place.path {
+        self.render_place_projections(rendered, ty, &place.path)
+    }
+
+    /// Render body and entry paths through the same typed storage selectors.
+    fn render_place_projections(
+        &self,
+        mut rendered: String,
+        mut ty: Option<CheckedType>,
+        projections: &[PlaceStep],
+    ) -> String {
+        for projection in projections {
             match projection {
                 PlaceStep::Descendant(target) => {
                     rendered.push_str(".**");
@@ -299,7 +303,7 @@ impl Input<'_, '_> {
         if boxed {
             rendered.push_str(".inner");
         } else {
-            *rendered = format!("deref({rendered})");
+            *rendered = format!("{rendered}^");
         }
         *ty = ty.and_then(|current| self.deref_type(current));
     }
@@ -383,18 +387,14 @@ impl Input<'_, '_> {
                 let ty = self.summary(*root).and_then(|summary| summary.ty);
                 // [REF-1, OP-15] a reference variable names a path and is not
                 // storage of its own, so every place that goes through one is
-                // written under a `deref` step: `deref(p)`, `deref(p).field`,
-                // `deref(part).len`. A term rooted at a reference anchors at
+                // written under a `^` step: `p^`, `p^.field`,
+                // `part^.len`. A term rooted at a reference anchors at
                 // that binding and carries no step of its own — the parameter
                 // name *is* the path inside the body — so rendering puts that
                 // source wrapper back while retaining every concrete step
                 // below the referent.
                 let reference = self.places.is_reference(*root);
-                let base = if reference {
-                    format!("deref({base})")
-                } else {
-                    base
-                };
+                let base = if reference { format!("{base}^") } else { base };
                 self.render_goal_projections(base, ty, projections)
             }
             // Source cannot name this datum: render its structural source
@@ -618,7 +618,7 @@ impl Input<'_, '_> {
                 fields.clone(),
             )),
             CheckedExpression::DerefAddressed { binding, .. } => {
-                format!("deref({})", self.binding_name(*binding))
+                format!("{}^", self.binding_name(*binding))
             }
             CheckedExpression::BoxDeref { value, .. } => {
                 format!("{}.inner", self.render_expression(value))
@@ -747,49 +747,32 @@ impl Reasoning<'_, '_, '_> {
                 projections,
                 measure,
             } => {
-                let mut place = self
-                    .input
-                    .function
-                    .parameters
-                    .get(*formal as usize)
-                    .map_or_else(
-                        || "?".to_owned(),
-                        |parameter| {
-                            if matches!(parameter.mode, CheckedMode::Reference) {
-                                format!("entry({})", parameter.name)
-                            } else {
-                                parameter.name.clone()
-                            }
-                        },
-                    );
-                for projection in projections {
-                    match projection {
-                        PlaceStep::Descendant(_) => place.push_str(".**"),
-                        PlaceStep::Deref => place = format!("deref({place})"),
-                        PlaceStep::Field(field) => {
-                            place = format!("{place}.{field}");
+                let parameter = self.input.function.parameters.get(*formal as usize);
+                let (base, ty, projections) = parameter.map_or_else(
+                    || ("?".to_owned(), None, projections.as_slice()),
+                    |parameter| {
+                        if matches!(parameter.mode, CheckedMode::Reference) {
+                            // The clause retains its leading reference step;
+                            // the remaining steps select storage below it.
+                            let projections = match projections.split_first() {
+                                Some((PlaceStep::Deref, rest)) => rest,
+                                _ => projections,
+                            };
+                            (
+                                format!("entry({})^", parameter.name),
+                                Some(parameter.ty),
+                                projections,
+                            )
+                        } else {
+                            (
+                                parameter.name.clone(),
+                                Some(parameter.ty),
+                                projections.as_slice(),
+                            )
                         }
-                        PlaceStep::Payload { variant, field } => {
-                            place = format!("{place}.{variant}.{field}");
-                        }
-                        PlaceStep::Index(offset) => {
-                            place = format!("{place}[{}]", self.input.render_offset(*offset));
-                        }
-                        PlaceStep::Range(range) => {
-                            place = format!(
-                                "{place}[{}..{}]",
-                                self.input.render_offset(range.start),
-                                self.input.render_offset(range.end)
-                            );
-                        }
-                        PlaceStep::Part(part) => {
-                            place = format!("{place}.{}", part.spelling());
-                        }
-                        PlaceStep::Measure(measure) => {
-                            place = format!("{place}.{}", measure.spelling());
-                        }
-                    }
-                }
+                    },
+                );
+                let place = self.input.render_place_projections(base, ty, projections);
                 format!("{place}.{}", measure.spelling())
             }
             // A measure datum has no source spelling of its own: it is the

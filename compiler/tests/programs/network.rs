@@ -315,7 +315,7 @@ fn the_fanout_loop_has_only_ordinary_counted_permission() {
     // The serve loop's `close_listener` expression statement is judged by its
     // call's row, exactly as a let-bound call is, so the loop is no longer
     // refused for that spelling. It is refused for what it does. Before
-    // v0.76 the reported condition was the `outcome` it carries between
+    // v0.77 the reported condition was the `outcome` it carries between
     // iterations; `serve_one` now waits [WAIT-1], and a body holding a waiting
     // call is refused by that condition first [PAR-2].
     let ledger = program_permission_ledger("tcp_fanout.wf");
@@ -540,7 +540,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
-  match std::net::receive_next(receive: &deref(connection).receive, destination: destination, start: 0_u64, end: 1_u64) {
+  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64) {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -555,7 +555,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match std::net::send_once(send: &deref(connection).send, source: source, start: 0_u64, end: 1_u64) {
+  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64) {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;

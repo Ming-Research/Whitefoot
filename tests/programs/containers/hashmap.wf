@@ -36,9 +36,9 @@ fn occupied_slot(key: u64, value: u64) -> slot: Slot pure {
 }
 
 fn view_entry(stored_entry: &Option<Entry>, tombstone: Bool) -> view: SlotView reads(stored_entry) {
-  match deref(stored_entry) {
+  match stored_entry^ {
     Some(value: present) => {
-      return SlotView::Occupied(key: deref(present).key, value: deref(present).value);
+      return SlotView::Occupied(key: present^.key, value: present^.value);
     }
     None() => {
       if tombstone {
@@ -81,22 +81,22 @@ fn empty_slots() -> slots: Slots<Slot, 8> pure contract {
 }
 
 fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_size: u64, result: PutResult) writes(slots) contract {
-  requires 8_u64 <= deref(slots).len;
-  ensures deref(slots).len == deref(entry(slots)).len;
-  ensures 8_u64 <= deref(slots).len;
+  requires 8_u64 <= slots^.len;
+  ensures slots^.len == entry(slots)^.len;
+  ensures 8_u64 <= slots^.len;
 } {
   let home = key % 8_u64;
   let first_tombstone = 8_u64;
   for (step in 0_u64..8_u64) {
     let advanced = home +wrap step;
     let at = advanced % 8_u64;
-    let was_tombstone = deref(slots)[at].tombstone;
-    let view = view_entry(stored_entry: &deref(slots)[at].stored_entry, tombstone: was_tombstone);
+    let was_tombstone = slots^[at].tombstone;
+    let view = view_entry(stored_entry: &slots^[at].stored_entry, tombstone: was_tombstone);
     match view {
       Occupied(key: current_key, value: current_value) => {
         if current_key == key {
           let replacement = occupied_slot(key: key, value: value);
-          set deref(slots)[at] = replacement;
+          set slots^[at] = replacement;
           return size, PutResult::Replaced();
         }
       }
@@ -108,10 +108,10 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
       Empty() => {
         if first_tombstone < 8_u64 {
           let replacement = occupied_slot(key: key, value: value);
-          set deref(slots)[first_tombstone] = replacement;
+          set slots^[first_tombstone] = replacement;
         } else {
           let replacement = occupied_slot(key: key, value: value);
-          set deref(slots)[at] = replacement;
+          set slots^[at] = replacement;
         }
         let larger = size +wrap 1_u64;
         return larger, PutResult::Inserted();
@@ -120,7 +120,7 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
   }
   if first_tombstone < 8_u64 {
     let replacement = occupied_slot(key: key, value: value);
-    set deref(slots)[first_tombstone] = replacement;
+    set slots^[first_tombstone] = replacement;
     let larger = size +wrap 1_u64;
     return larger, PutResult::Inserted();
   }
@@ -128,14 +128,14 @@ fn insert(slots: &Slots<Slot, 8>, size: u64, key: u64, value: u64) -> (updated_s
 }
 
 fn find(slots: &Slots<Slot, 8>, key: u64) -> result: Option<u64> reads(slots) contract {
-  requires 8_u64 <= deref(slots).len;
+  requires 8_u64 <= slots^.len;
 } {
   let home = key % 8_u64;
   for (step in 0_u64..8_u64) {
     let advanced = home +wrap step;
     let at = advanced % 8_u64;
-    let was_tombstone = deref(slots)[at].tombstone;
-    let view = view_entry(stored_entry: &deref(slots)[at].stored_entry, tombstone: was_tombstone);
+    let was_tombstone = slots^[at].tombstone;
+    let view = view_entry(stored_entry: &slots^[at].stored_entry, tombstone: was_tombstone);
     match view {
       Occupied(key: current_key, value: current_value) => {
         if current_key == key {
@@ -153,21 +153,21 @@ fn find(slots: &Slots<Slot, 8>, key: u64) -> result: Option<u64> reads(slots) co
 }
 
 fn remove(slots: &Slots<Slot, 8>, size: u64, key: u64) -> (updated_size: u64, removed: Option<u64>) writes(slots) contract {
-  requires 8_u64 <= deref(slots).len;
-  ensures deref(slots).len == deref(entry(slots)).len;
+  requires 8_u64 <= slots^.len;
+  ensures slots^.len == entry(slots)^.len;
 } {
   let home = key % 8_u64;
   for (step in 0_u64..8_u64) {
     let advanced = home +wrap step;
     let at = advanced % 8_u64;
-    let was_tombstone = deref(slots)[at].tombstone;
-    let view = view_entry(stored_entry: &deref(slots)[at].stored_entry, tombstone: was_tombstone);
+    let was_tombstone = slots^[at].tombstone;
+    let view = view_entry(stored_entry: &slots^[at].stored_entry, tombstone: was_tombstone);
     match view {
       Occupied(key: current_key, value: current_value) => {
         if current_key == key {
           let tombstone = True();
           let removed_slot = vacant_slot(tombstone: tombstone);
-          set deref(slots)[at] = removed_slot;
+          set slots^[at] = removed_slot;
           let smaller = size -wrap 1_u64;
           return smaller, Some<u64>(value: current_value);
         }

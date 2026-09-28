@@ -260,16 +260,16 @@ fn inspect(length: u64, capacity: u64, first: u64, first_limit: u64, second: u64
 fn a_written_certificate_is_not_redundant_when_only_full_msr4_proves_its_target() {
     let source = format!(
         r#"fn inspect(storage: &Box<Slots<u8>>, start: u64, at: u64, count: u64, capacity: u64, cap: u64, blockless: Bool) -> result: unit pure contract {{
-  requires deref(storage).inner.len <= start + at;
+  requires storage^.inner.len <= start + at;
   requires at < count;
   requires start + count <= capacity;
   requires capacity <= cap;
 }} {{
   if blockless {{
-    invariant automatic_bound: deref(storage).inner.len < cap;
+    invariant automatic_bound: storage^.inner.len < cap;
   }} else {{
-    invariant certified_bound: deref(storage).inner.len < cap {{
-      use (deref(storage).inner.len <= start + at);
+    invariant certified_bound: storage^.inner.len < cap {{
+      use (storage^.inner.len <= start + at);
       use (at < count);
       use (start + count <= capacity);
       use (capacity <= cap);
@@ -870,7 +870,7 @@ fn three_written_uses_follow_the_certificate_when_auto_stops_at_two() {
 fn a_midpoint_certificate_halves_its_doubled_sum_and_discharges_the_subscript() {
     let source = format!(
         r#"fn probe(table: &[u8], lo: u64, hi: u64) -> found: u8 reads(table) contract {{
-  define spare = deref(table).len;
+  define spare = table^.len;
   requires lo < hi;
   requires hi <= spare;
 }} {{
@@ -881,7 +881,7 @@ fn a_midpoint_certificate_halves_its_doubled_sum_and_discharges_the_subscript() 
     use (lo < hi);
     use (2_u64 * half <= span);
   }}
-  let byte = deref(table)[mid];
+  let byte = table^[mid];
   return byte;
 }}
 

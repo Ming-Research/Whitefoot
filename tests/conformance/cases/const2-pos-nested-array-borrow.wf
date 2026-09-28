@@ -5,7 +5,7 @@ const rows: Array<Array<u64, 2>, 1> =[[7_u64, 9_u64]];
 
 fn read(values: &Array<Array<u64, 2>, 1>) -> result: u64 reads(values) {
   doc "Reads the selected inner element through a shared reference.";
-  return deref(values)[0_u64][1_u64];
+  return values^[0_u64][1_u64];
 }
 
 fn main() -> status: ExitStatus pure {

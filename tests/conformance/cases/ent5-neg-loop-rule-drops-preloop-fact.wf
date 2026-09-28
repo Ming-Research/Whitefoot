@@ -3,7 +3,7 @@ alias exit_status = std::process::exit_status;
 
 fn get(b: &[u8], start: u64) -> result: u8 reads(b) {
   doc "Loops carry no induction: the fact state at each iteration head removes every fact a continuing kill event may kill [ENT-5]. The set later in the body kills the branch-established bound and an else-free false edge can carry that kill to the next head, so the subscript is undischarged [ENT-6, OP-4] even on the first iteration, where the checked branch still dominates it.";
-  let spare = deref(b).len;
+  let spare = b^.len;
   let offset = 0_u64;
   let inside = offset < spare;
   if inside {
@@ -12,7 +12,7 @@ fn get(b: &[u8], start: u64) -> result: u8 reads(b) {
   }
   let sample = 0_u8;
   loop @walk {
-    set sample = deref(b)[offset];
+    set sample = b^[offset];
     set offset = start;
     if inside {
       break @walk;

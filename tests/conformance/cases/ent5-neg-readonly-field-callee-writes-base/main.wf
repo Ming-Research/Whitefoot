@@ -8,7 +8,7 @@ fn widen(xs: &Array<Entry, 4>, i: u64) -> result: unit writes(xs) contract {
 } {
   doc "The row writes the whole referent; replacing one element is the only change the readonly field admits.";
   let wide = kinds::make_entry(width: 8_u64, weight: 1_u64);
-  set deref(xs)[i] = wide;
+  set xs^[i] = wide;
   return unit;
 }
 

@@ -16,7 +16,7 @@ alias relative_path = std::fs::relative_path;
 alias write_once = std::io::write_once;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -81,7 +81,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -121,14 +121,14 @@ const reason_output_full: Array<u8, 63> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 
 const reason_write_failed: Array<u8, 56> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 112_u8, 117_u8, 98_u8, 108_u8, 105_u8, 115_u8, 104_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 100_u8, 101_u8, 99_u8, 111_u8, 100_u8, 101_u8, 100_u8, 32_u8, 111_u8, 117_u8, 116_u8, 112_u8, 117_u8, 116_u8, 10_u8];
 
 fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
-  requires capacity == deref(destination).len;
+  requires capacity == destination^.len;
   requires filled <= capacity;
   ensures result <= capacity;
 } {
   doc "Appends as much of one static message as the destination range reference still holds.";
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let admitted = filled <= spare;
-  let length = deref(text).len;
+  let length = text^.len;
   if admitted {
     for @append (at in filled..spare) {
       let taken = at -wrap filled;
@@ -136,8 +136,8 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
       if done {
         return at;
       }
-      let byte = deref(text)[taken];
-      set deref(destination)[at] = byte;
+      let byte = text^[taken];
+      set destination^[at] = byte;
     }
     return spare;
   } else {
@@ -147,8 +147,8 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {
   doc "Copies one half-open source range into the destination at one offset.";
-  let source_room = deref(source).len;
-  let destination_room = deref(destination).len;
+  let source_room = source^.len;
+  let destination_room = destination^.len;
   let target = at;
   let cursor = from;
   loop @copy {
@@ -161,13 +161,13 @@ fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) ->
     } else {
       return target;
     }
-    let byte = deref(source)[cursor];
+    let byte = source^[cursor];
     let write_ok = target < destination_room;
     if write_ok {
     } else {
       return target;
     }
-    set deref(destination)[target] = byte;
+    set destination^[target] = byte;
     set target = target +wrap 1_u64;
     set cursor = cursor +wrap 1_u64;
   }
@@ -202,7 +202,7 @@ fn inflate_status(error: InflateError) -> result: u8 pure {
 }
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";
@@ -226,7 +226,7 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 }
 
 fn assemble_reason(report: &[u8], capacity: u64, reason: u8) -> result: u64 writes(report) contract {
-  requires capacity == deref(report).len;
+  requires capacity == report^.len;
   ensures result <= capacity;
 } {
   doc "Assembles the static diagnostic that names one boundary outcome and hands its length back; the caller publishes it from the same range reference it handed in [REF-4].";

@@ -1,5 +1,5 @@
 fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 reads(out), writes(out) contract {
-  define out_len = len_of(deref(out));
+  define out_len = len_of(out^);
   define src_len = len_of(src);
   define groups = ishr.wrap(out_len, 2_u32);
   define covered = groups *wrap 3_u64;
@@ -13,8 +13,8 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 reads(out), writ
     if rem < 3_u64 {
       break @groups;
     }
-    let previous = deref(out)[o];
-    set deref(out)[o] = previous;
+    let previous = out^[o];
+    set out^[o] = previous;
     set i = i +wrap 3_u64;
     set o = o +wrap 4_u64;
   }

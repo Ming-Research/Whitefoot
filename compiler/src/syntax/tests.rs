@@ -463,7 +463,7 @@ fn token_limit_is_inclusive_and_precedes_membership_work() {
 
 #[test]
 fn repeated_classification_is_deterministic() {
-    let inputs = [SourceInput::new("main.wf", b"deref(x) unit 42")];
+    let inputs = [SourceInput::new("main.wf", b"x^ unit 42")];
     let Ok(bundle) = source_bundle(&inputs) else {
         panic!("test source bundle must be constructible");
     };

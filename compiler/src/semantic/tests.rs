@@ -795,7 +795,7 @@ fn effect_mismatch_is_located_at_the_written_effect_row() {
     // [OP-10, WIN-2], and the declaration writes the empty row instead. The
     // citation lands on the written row, which is the `pure` atom.
     let source = br#"fn fill(target: &Slots<u8, 4>) -> result: unit pure contract {
-  requires deref(target).len < deref(target).cap;
+  requires target^.len < target^.cap;
 } {
   place_back(window: target, value: 7_u8);
   return unit;
@@ -903,13 +903,13 @@ fn nominal_adjacent_unimplemented_behavior_stays_non_language_failure() {
     // [OWN-13] borrowed match this exercises, are on the normal path now.
     // Also written inline rather than read from
     // `x-enum-borrow-payload-live.wf` for the same reason: that case's
-    // `deref(x) + 1_i32` is an undischarged v0.31 class site (residual
-    // `deref(x) <= 2147483646`), so it too stays outside this capability
+    // `x^ + 1_i32` is an undischarged v0.31 class site (residual
+    // `x^ <= 2147483646`), so it too stays outside this capability
     // control. The shape kept here is the one under test — a payload enum
     // borrow-matched through `&'r` whose scrutinee stays live for a second
     // read, with each derived binder explicitly dereferenced.
     with_semantics(
-        b"enum Cell {\n  Full(v: i32);\n  Void();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let c = Cell::Full(v: 20_i32);\n  let p = &c;\n  let a = match deref(p) {\n    Full(v: x) => {\n      give deref(x);\n    }\n    Void() => {\n      give 0_i32;\n    }\n  }\n  let q = &c;\n  let b = match deref(q) {\n    Full(v: y) => {\n      give deref(y);\n    }\n    Void() => {\n      give 0_i32;\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        b"enum Cell {\n  Full(v: i32);\n  Void();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let c = Cell::Full(v: 20_i32);\n  let p = &c;\n  let a = match p^ {\n    Full(v: x) => {\n      give x^;\n    }\n    Void() => {\n      give 0_i32;\n    }\n  }\n  let q = &c;\n  let b = match q^ {\n    Full(v: y) => {\n      give y^;\n    }\n    Void() => {\n      give 0_i32;\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| assert!(matches!(outcome, SemanticOutcome::Complete(_))),
     );
     assert_unsupported(
@@ -966,7 +966,7 @@ fn ordinary_signature_effects_reject_both_row_directions() {
 #[test]
 fn a_bare_reference_subscript_is_a_type7_missing_dereference() {
     // [TYPE-7] a reference variable denotes the reference, and its referent is
-    // reached only through `deref`, so a bare reference operand in a
+    // reached only through `^`, so a bare reference operand in a
     // consuming context is the missing dereference. v0.59 also routed a `box`
     // holder here; v0.60 does not, a `Box` being an opaque struct and not a
     // reference at all [TYPE-2, TYPE-9], so the `Box` half of this test moved
@@ -976,20 +976,20 @@ fn a_bare_reference_subscript_is_a_type7_missing_dereference() {
         include_bytes!("../../../tests/conformance/cases/type7-neg-index-reference-holder.wf"),
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `deref(holder)`",
+            mechanical_fix: "write `holder^`",
         },
     );
 }
 
 /// [TYPE-7] the reference positions, each citing TYPE-7 and its own
-/// mechanical `deref(.)` repair.
+/// mechanical `p^` repair.
 #[test]
 fn reference_holders_written_bare_are_type7_missing_dereferences() {
     assert_rule(
         include_bytes!("../../../tests/conformance/cases/type7-neg-match-reference-holder.wf"),
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `deref(holder)`",
+            mechanical_fix: "write `holder^`",
         },
     );
 }
@@ -1082,7 +1082,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn reuse(outcome: Result<i32, StepError>) -> result: Result<i32, StepError> pure {
-  let accepted = propagate outcome;
+  let accepted = propagate move outcome;
   match outcome {
     Ok(value: second_value) => {
     }

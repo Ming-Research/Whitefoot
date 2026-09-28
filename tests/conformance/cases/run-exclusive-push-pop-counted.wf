@@ -2,9 +2,9 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push(values: &Slots<u64, 4>, value: u64) -> result: unit writes(values) contract {
-  requires deref(values).len < deref(values).cap;
-  ensures deref(values).len == deref(entry(values)).len + 1_u64;
-  ensures deref(values).cap == deref(entry(values)).cap;
+  requires values^.len < values^.cap;
+  ensures values^.len == entry(values)^.len + 1_u64;
+  ensures values^.cap == entry(values)^.cap;
 } {
   doc "One boundary move up, with both two-state relations published.";
   place_back(window: values, value: value);
@@ -12,13 +12,13 @@ fn push(values: &Slots<u64, 4>, value: u64) -> result: unit writes(values) contr
 }
 
 fn pop(values: &Slots<u64, 4>) -> (value: u64, count: u64) writes(values) contract {
-  requires deref(values).len > 0_u64;
-  ensures deref(values).len == deref(entry(values)).len - 1_u64;
-  ensures count == deref(values).len;
+  requires values^.len > 0_u64;
+  ensures values^.len == entry(values)^.len - 1_u64;
+  ensures count == values^.len;
 } {
   doc "One boundary move down, with the element and the resulting length handed back together.";
   let value = take_back(window: values);
-  let count = deref(values).len;
+  let count = values^.len;
   return value, count;
 }
 

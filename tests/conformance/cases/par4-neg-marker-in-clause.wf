@@ -9,7 +9,7 @@ fn id(value: u64) -> result: u64 pure {
 fn bump(counter: &Counter, value: u64) -> result: unit writes(counter) contract {
   requires mustpar id(value: value) == value;
 } {
-  set deref(counter).value = value;
+  set counter^.value = value;
   return unit;
 }
 

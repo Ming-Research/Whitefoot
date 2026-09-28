@@ -432,19 +432,19 @@ fn an_owning_box_index_renders_its_content_step_as_a_dereference() {
 }
 
 /// [REF-1] "A reference variable denotes the reference, and the storage it
-/// names is reached only through `deref` [TYPE-7]: every place expression,
+/// names is reached only through `^` [TYPE-7]: every place expression,
 /// subscript, field selection, payload step, and measure read that goes
-/// through a reference variable `p` is written under that step -- `deref(p)`,
-/// `deref(p).field`, `deref(part)[i]`, `deref(part).len`, and
-/// `deref(p).Some.value`." The residual therefore spells the indexed operand
-/// under its `deref` step, which is what the writer wrote and the only
+/// through a reference variable `p` is written under that step -- `p^`,
+/// `p^.field`, `part^[i]`, `part^.len`, and
+/// `p^.Some.value`." The residual therefore spells the indexed operand
+/// under its `^` step, which is what the writer wrote and the only
 /// spelling the writer can write. Resolving that step away is what [OWN-7]
 /// does to decide overlap, not what a diagnostic prints. The operand is still
 /// no term, which is what the rejection states.
 #[test]
 fn a_reference_parameter_index_renders_under_its_deref_step() {
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  return deref(values)[0_u64] + 1_u8;
+  return values^[0_u64] + 1_u8;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -458,7 +458,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(issue.rule(), SemanticRule::Op2);
         assert_integer_domain(
             issue.kind(),
-            "deref(values)[0_u64] +defined 1_u8",
+            "values^[0_u64] +defined 1_u8",
             StaticObligationDisposition::Unproved,
             ELEMENT_ROUTES,
         );

@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn scan(data: &[u8]) -> result: unit reads(data) {
-  let count = deref(data).len;
+  let count = data^.len;
   let cursor = 0_u64;
   loop (
     invariant bounded: cursor <= count
   ) {
-    let byte = deref(data)[cursor];
+    let byte = data^[cursor];
     if cursor >= count {
       break;
     }

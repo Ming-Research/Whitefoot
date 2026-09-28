@@ -7,7 +7,7 @@ struct Slot {
 
 fn change(cell: &Slot) -> result: u64 writes(cell.value) {
   doc "Writes the cell it was handed and returns an unrelated number.";
-  set deref(cell).value = 9_u64;
+  set cell^.value = 9_u64;
   return 7_u64;
 }
 

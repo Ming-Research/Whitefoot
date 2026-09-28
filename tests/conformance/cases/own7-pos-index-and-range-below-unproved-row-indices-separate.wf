@@ -9,9 +9,9 @@ fn record_run(rows: &Array<Array<u64, 4>, 4>, i: u64, j: u64, lo: u64, hi: u64, 
   requires k < 4_u64;
 } {
   doc "Writes the length of the run rows[i][lo..hi] into rows[j][k]. EFF-5: one argument supplies both entries, so every call compares them.";
-  let run = &deref(rows)[i][lo..hi];
-  let n = deref(run).len;
-  set deref(rows)[j][k] = n;
+  let run = &rows^[i][lo..hi];
+  let n = run^.len;
+  set rows^[j][k] = n;
   return unit;
 }
 

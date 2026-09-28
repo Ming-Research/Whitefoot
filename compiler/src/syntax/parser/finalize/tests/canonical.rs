@@ -560,16 +560,16 @@ fn local_invariant_certificates_render_their_header_and_steps_canonically() {
 /// [FORM-2] makes `heap_decl` a line-bearing item, so `program no_heap;` takes
 /// its own line and the blank line every top-level item pair gets. The range
 /// step, the payload step and `&` are all attachment members, so `&run[lo..hi]`,
-/// `node.Some.value`, `&deref(node).left` and `part: &[Int]` render compactly
+/// `node.Some.value`, `&node^.left` and `part: &[Int]` render compactly
 /// with no sentence of their own. The single exception is a destructuring
 /// consume's rest marker, which takes exactly one space after its preceding
 /// `,` — so `, ..` is canonical and `,..` is not, while `Leaf(..)` keeps the
 /// left attachment of `(` and takes no space at all.
 #[test]
 fn the_forms_the_amendment_adds_render_canonically() {
-    let canonical = b"program no_heap;\n\nfn probe(part: &[Int], node: &Tree, run: &Slots<Int, 4>, lo: u64, hi: u64) -> result: unit pure {\n  let whole = &run[lo..hi];\n  let through = &deref(node).left;\n  let payload = node.Some.value;\n  let slice_read = part[lo];\n  let Tree(left: kept, ..) = move taken;\n  let Leaf(..) = move spare;\n  return unit;\n}\n";
+    let canonical = b"program no_heap;\n\nfn probe(part: &[Int], node: &Tree, run: &Slots<Int, 4>, lo: u64, hi: u64) -> result: unit pure {\n  let whole = &run[lo..hi];\n  let through = &node^.left;\n  let payload = node.Some.value;\n  let slice_read = part[lo];\n  let Tree(left: kept, ..) = move taken;\n  let Leaf(..) = move spare;\n  return unit;\n}\n";
     only_these_trivia_bytes_render(canonical);
-    let sloppy = b"program  no_heap ;\nfn probe(part:&[Int],node:&Tree,run:&Slots<Int,4>,lo:u64,hi:u64)->result:unit pure{\nlet whole = & run [ lo .. hi ];\nlet through = & deref ( node ) . left;\nlet payload = node . Some . value;\nlet slice_read = part [ lo ];\nlet Tree(left: kept,..) = move taken;\nlet Leaf( .. ) = move spare;\nreturn unit;\n}\n";
+    let sloppy = b"program  no_heap ;\nfn probe(part:&[Int],node:&Tree,run:&Slots<Int,4>,lo:u64,hi:u64)->result:unit pure{\nlet whole = & run [ lo .. hi ];\nlet through = & node ^ . left;\nlet payload = node . Some . value;\nlet slice_read = part [ lo ];\nlet Tree(left: kept,..) = move taken;\nlet Leaf( .. ) = move spare;\nreturn unit;\n}\n";
     assert!(!reaches_canonical_syntax(sloppy));
     assert_eq!(
         rendered_bytes(sloppy).as_deref(),
@@ -588,6 +588,20 @@ fn ordinary_loop_header_invariants_use_the_same_multiline_layout() {
     let sloppy = b"fn probe(value:i32)->result:unit pure{ loop @again(invariant stable : value <= value){ break @again; } return unit; }";
     assert_eq!(
         rendered_bytes(sloppy).as_deref(),
+        Some(canonical.as_slice())
+    );
+}
+
+/// The reference suffix attaches on its left, while arithmetic/comparison
+/// operators and assignment retain their ordinary spaces [FORM-2].
+#[test]
+fn caret_attaches_to_places_without_absorbing_the_following_operator() {
+    let canonical = b"fn probe(p: &u64, q: &u64) -> result: unit writes(p), reads(q) {\n  let sum = p^ +wrap q^;\n  let greater = p^ > q^;\n  set p^ = q^;\n  return unit;\n}\n";
+    let spaced = b"fn probe(p: &u64, q: &u64) -> result: unit writes(p), reads(q) {\n  let sum = p ^+wrap q ^;\n  let greater = p ^>q ^;\n  set p ^=q ^;\n  return unit;\n}\n";
+    assert!(reaches_canonical_syntax(canonical));
+    assert!(!reaches_canonical_syntax(spaced));
+    assert_eq!(
+        rendered_bytes(spaced).as_deref(),
         Some(canonical.as_slice())
     );
 }

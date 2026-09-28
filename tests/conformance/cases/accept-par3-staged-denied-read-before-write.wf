@@ -10,7 +10,7 @@ alias open_file = std::fs::open_file;
 alias read_at = std::fs::read_at;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -75,7 +75,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -116,7 +116,7 @@ fn component() -> made: Slots<u8, 16> pure contract {
 
 fn fold_prefix(source: &[u8], produced: u64, seed: u64) -> result: u64 reads(source) {
   doc "Folds one read prefix into a running order-sensitive checksum.";
-  let spare = deref(source).len;
+  let spare = source^.len;
   let sum = seed;
   let at = 0_u64;
   loop @fold {
@@ -129,7 +129,7 @@ fn fold_prefix(source: &[u8], produced: u64, seed: u64) -> result: u64 reads(sou
     } else {
       break @fold;
     }
-    let byte = deref(source)[at];
+    let byte = source^[at];
     let widened = cvt::<u8, u64>(byte);
     set sum = sum *wrap 31_u64;
     set sum = sum +wrap widened;

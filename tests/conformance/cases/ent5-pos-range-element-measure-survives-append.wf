@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "The guard bounds deref(run)[0_u64].len by cells.len, where run is the range rows[0_u64..2_u64] formed while rows.len is 2. The place_back after it writes rows.next, and its entry state proves the range's end 2 at or below rows.len, so WIN-2 separates the range from the append slot, ENT-5 leaves the guarded measure fact alive, and the loop's cells[c] reads are proved in bounds. The program observes the sum over the element's two cells and the appended element.";
+  doc "The guard bounds run^[0_u64].len by cells.len, where run is the range rows[0_u64..2_u64] formed while rows.len is 2. The place_back after it writes rows.next, and its entry state proves the range's end 2 at or below rows.len, so WIN-2 separates the range from the append slot, ENT-5 leaves the guarded measure fact alive, and the loop's cells[c] reads are proved in bounds. The program observes the sum over the element's two cells and the appended element.";
   let rows = slots_new::<Slots<u64, 8>, 4>();
   let first = slots_new::<u64, 8>();
   let second = slots_new::<u64, 8>();
@@ -15,9 +15,9 @@ fn main() -> status: ExitStatus pure {
   let total = 0_u64;
   if rows.len == 2_u64 {
     let run = &rows[0_u64..2_u64];
-    if deref(run)[0_u64].len <= cells.len {
+    if run^[0_u64].len <= cells.len {
       place_back(window: &rows, value: move third);
-      for (c in 0_u64..deref(run)[0_u64].len) {
+      for (c in 0_u64..run^[0_u64].len) {
         let cell = cells[c];
         set total = total +wrap cell;
       }

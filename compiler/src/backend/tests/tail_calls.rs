@@ -225,11 +225,11 @@ fn one_function_can_mix_tail_transfers_with_calls_retaining_local_storage() {
     let module = compile(
         br#"fn walk(n: u64, value: &u64) -> result: u64 reads(value) {
   if n == 0_u64 {
-    return deref(value);
+    return value^;
   }
   let next = n - 1_u64;
   if n == 2_u64 {
-    let local = deref(value) +wrap 1_u64;
+    let local = value^ +wrap 1_u64;
     return walk(n: next, value: &local);
   }
   return walk(n: next, value: value);

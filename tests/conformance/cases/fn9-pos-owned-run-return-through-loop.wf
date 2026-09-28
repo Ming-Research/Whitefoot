@@ -2,13 +2,13 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn get_bounded<const n: u64>(b: &Slots<u8, n>, i: u64) -> (value: u8, length: u64) reads(b) contract {
-  define spare = deref(b).len;
+  define spare = b^.len;
   requires i < spare;
   ensures length == spare;
 } {
   doc "A two-result helper hands back the read byte and the run's unchanged length; the owner itself stays with the caller, so the helper reaches it through a reference [REF-1].";
-  let value = deref(b)[i];
-  return value, deref(b).len;
+  let value = b^[i];
+  return value, b^.len;
 }
 
 fn main() -> status: ExitStatus pure {

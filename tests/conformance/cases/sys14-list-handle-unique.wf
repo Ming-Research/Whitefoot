@@ -11,7 +11,7 @@ alias exit_status = std::process::exit_status;
 alias open_directory_source = std::fs::open_directory_source;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -76,7 +76,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();
@@ -100,7 +100,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
 }
 
 fn advance(first: &DirectorySource, second: &DirectorySource, destination: &[u8]) -> result: unit writes(first), writes(second), writes(destination) waits contract {
-  requires 1024_u64 <= deref(destination).len;
+  requires 1024_u64 <= destination^.len;
 } {
   doc "Advances two enumerations into one destination, so a call must prove its three substituted write paths pairwise disjoint.";
   let (first_result, first_next, first_entries) = directory_next(source: first, destination: destination, start: 0_u64, end: 1024_u64);
