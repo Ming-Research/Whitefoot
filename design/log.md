@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Locate the target-layout stop at an allocation the target cannot hold
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (located allocation-target stop) in the session handoff
+
+Summary: Apply the remaining part of the reviewed combined amendment for PR #168 unchanged. Add a decision to compiler/diagnostic-repairs: a target-layout stop at a source call whose proved allocation count the selected target cannot hold [STOR-6] is located at the call and lists the count as written, the proved bound, the largest count the target admits and a fix beside the OP-9 repair's words, with the checker handing the call's and the count's coordinates to lowering, because the stop cites no rule and is no rejection [DIAG-1] while the writer still fixes it in source by tightening the proved count. Refuse rendering the stop from the stage value's `Debug` text and a node path the driver resolves again through a side table. The OP-9 decision's reason and its refused ceiling alternative now say the stop comes only when the program is built rather than that it names nothing. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Name a call-formed range's length by its endpoints in repairs
 
 Nodes: compiler/diagnostic-repairs
