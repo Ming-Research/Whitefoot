@@ -623,15 +623,84 @@ checker cites, so nothing is implemented on this branch.
   than the evidence; `Option` is the one reported consumer and has a fixed
   success/failure pair like `Result`.
 
-## Pending amendments and follow-up
+## Ruling and follow-up
 
-- `design/amendments/loop-fact-retention-header-exit.md`: shape 1, on
-  `language/checks-and-proofs/obligation-discharge/loop-fact-retention`.
-- `design/amendments/automatic-facts-carrier-and-option.md`: shape 3's
-  carrier equality and shape 4's replacement of the conditional-Result
-  decision, on `language/checks-and-proofs/automatic-facts`.
-- `design/amendments/requires-entry-contract-some-route.md`: shape 4's
-  replacement of the `Ok(value: name)` decision, on
-  `language/checks-and-proofs/requires-entry-contract`.
-- `docs/todo.md` records the three language changes with their validation
-  criteria and the two diagnostics without a repair.
+The owner approved shapes 1, 3 and 4 on 2026-09-28. Shapes 1 and 3 landed in
+specification v0.79: the loop-exit decision in
+`language/checks-and-proofs/obligation-discharge/loop-fact-retention` and the
+carrier-equality decision in `language/checks-and-proofs/automatic-facts`,
+with the conformance cases the cost sections list. A literal or named-const
+carrier is specified as the give's evaluated value v with the literal's
+[ENT-3.S5] equality `v = value(d)`, so by criterion 3 the edge delivers
+exactly what `let v = 0_u64; give v;` delivers: the edge's own bounds on other
+terms included, and nothing from an unreachable edge, whose contradictory
+image is neutral. Two more functions of the literal-carrier case and one
+negative control pin that. Three unit tests changed: the two named above,
+and `value_match_delivers_common_bounds_while_a_missing_branch_does_not`,
+whose `missing` function now delivers its carrier equality `picked = value`
+on both edges while still not delivering the one-edge `value < 8`; a new
+unit test pins that a write before `break` leaves the retained header theorem
+about the old image. Delivering literals made the checker materialize their
+relation to every term, which the measurements below attribute; the lean
+delivery that keeps the proof and check-time cost within the recorded bounds
+is a compiler choice awaiting the owner's ruling in
+`design/amendments/checker-facts-delivery-roots.md`, and the real-program
+proof-size guard's ceilings rise with that attribution. Shape 4 lands together
+with PR #169; its two approved revisions remain in
+`design/amendments/automatic-facts-option-route.md` and
+`design/amendments/requires-entry-contract-some-route.md` until then.
+`docs/todo.md` records the `Some` route with its validation criteria and the
+two diagnostics without a repair.
+
+## Implementation measurements
+
+All runs compare the gate `whitefootc` built from origin/main at `9c4579fba`
+(v0.78) with the one built from this branch (v0.79), on the same host.
+
+**Clamp census.** The census above, repeated with both compilers on the same
+copy of Snowghost `trial/run-url` at `2377817` and without emulation, deletes
+each of the URL module's 23 clamp blocks alone, and for the four scans whose
+lower clamp needs a floor also adds a `start <= pos` header relation and a
+`start <= next` local invariant and deletes both clamps:
+
+| Site | v0.78 | v0.79 |
+|---|---|---|
+| `parser.wf` 1034, 1099, 1109, 1150, 1178 | removable | removable |
+| `parser.wf` 573, 740, 882 | FN-8, FN-8, OP-4 | removable |
+| `builder.wf` 110+114, `ipv4.wf` 90+94, `parser.wf` 614+618, 846+850, with the floor relation | REF-4, FN-9, REF-4, FN-9 | removable |
+| `parser.wf` 746, with a `host_start <= scan_pos` header relation | INV-1 at the backedge | INV-1 at the backedge |
+| `base.wf` 25, 30; `bytes.wf` 127, 131; `host.wf` 56; `parser.wf` 673 | rejected | rejected |
+
+The implementation removes 11 blocks beyond the 5 removable today, 16 of 23,
+as the emulation predicted: 3 by deletion alone and 8 with the writer-added
+floor relation. The one variant tried for `parser.wf` 746 does not prove its
+new header relation at a backedge under either compiler and was not pursued.
+
+**Retained proof.** The real-program guard
+`real_sources_retain_complete_proof_roots_without_counted_false_positives`
+measures `wfgrep.wf`. Main retains 4,180 nodes and 6,919 edges. Delivering a
+literal as the closure of its given value raised that to 13,844 nodes,
+because the value relates to every term of the function and two literal edges
+join every such pair as a root; an atom carrier with a bound on Z already did
+the same on main. Leaving out, per image, a bound the carrier's own Z bound
+implies through the other term's implicit bound gave 6,908 and 11,074; not
+rooting a joined bound the continuation derives from the joined Z bounds gave
+4,970 and 8,067; admitting a call-dependent premise when the joined bound
+itself depends on a call gave the final 4,535 and 7,460. The remainder is the
+path-dependent relations of the three literal value initializers, such as
+`matched_bit <= matched`, less the atom join of `name_before` that the same
+pruning removes.
+
+**Check time.** The criterion was fixed before the first run: over every
+`tests/programs` program and the Snowghost `pkg::url` copy, five alternating
+rounds each, the summed median check time of the workloads both compilers
+accept moves by less than 5%, and no workload whose base median is at least
+0.2 s slows by more than 10%. With a full closure per literal edge the sum
+rose 7.2% and `wfgrep.wf` 29%, failing it. Inserting the given value's
+equality into the edge's closure incrementally brought the final build's sum
+to +2.8%, with the 13 workloads of at least 0.2 s at a median ratio of 0.997
+and no verdict changed. `wfgrep.wf`, the largest, read +13.2% in that
+five-round run, so it was measured again over 21 paired rounds: +4.1%, paired
+ratios 0.87 to 1.16, with callgrind counting 6.0% more instructions (16.02 to
+16.97 billion) spread over the existing closure and join routines. Both are
+within the criterion.
