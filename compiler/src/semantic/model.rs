@@ -2745,8 +2745,8 @@ pub(crate) struct CheckedFunction {
 ///
 /// Permission reads `calls` to deny overlap to a statement that waits, and
 /// the `mustpar` validation reads `independent` against the finished
-/// permission table. Lowering reads `waits` and `context_starts`; nothing else
-/// here reaches it.
+/// permission table. Lowering reads `waits`, `context_starts` and
+/// `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
     /// Whether the declaration writes `waits` [WAIT-1].
@@ -2757,8 +2757,27 @@ pub(crate) struct CheckedWaiting {
     /// Every construct a `mustpar` marks under PAR-4's first two forms, whose
     /// statement the permission judgment must permit.
     pub(crate) independent: Vec<CheckedMustpar>,
-    /// Every `expr_stmt` PAR-4's third form starts in a context of its own.
+    /// Every `expr_stmt` or `let_stmt` PAR-4's third form marks, which this
+    /// compiler runs as a context of its own [WAIT-2].
     pub(crate) context_starts: Vec<NodePath>,
+    /// Where each marked `let_stmt` of `context_starts` waits for its context:
+    /// the number of statements after it in its block at which the binding is
+    /// first used or the block may be left, or `None` when no later statement
+    /// of the block is either, so the context is joined at the block's end.
+    /// The permission analysis fills it from the same footprints [PAR-1]
+    /// judges, after the checker, so the join precedes every read, write and
+    /// release of the binding [WAIT-2].
+    pub(crate) context_awaits: Vec<CheckedContextAwait>,
+}
+
+/// [WAIT-2] where one bound context start is joined.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedContextAwait {
+    /// The marked `let_stmt`.
+    pub(crate) statement: NodePath,
+    /// How many statements after it the join stands before, within its
+    /// block; `None` joins at the block's end.
+    pub(crate) before: Option<u32>,
 }
 
 /// One `mustpar` whose statement is proved by [PAR-1] or [PAR-2].
