@@ -338,6 +338,18 @@ the epoll one. `NET_LINES` names a subset of `uring epoll wf` when one server
 cannot complete a run yet and the others still owe a table; the table names
 the lines it holds.
 
+`redis-bench.sh` is Experiment 7 of
+`research/investigations/io-model/SHARED.md`: the Redis subset
+`tests/programs/redis_subset.wf` against `redis-server` with persistence off,
+both driven by `redis-benchmark`. It builds the subset with the worktree's
+compiler, requires every line to pass a correctness pass (100,000 increments
+from 50 clients reach one counter, and a short command sequence answers as
+Redis does) before any line reports a rate, and then runs `ROUNDS` interleaved
+passes of `SET` and `GET` without pipelining and with 16 requests per
+pipeline. The servers and the client are pinned to disjoint CPUs; the output
+is `redis-benchmark`'s CSV line per run, prefixed with the server line, the
+pass and the pipeline depth. It is removed with the experiment's record.
+
 ## Reproducing
 
     make -C research/experiments/io-completion-bench programs-check  # compile every program; the gate's `bench-programs` stage
@@ -355,6 +367,7 @@ the lines it holds.
     make -C research/experiments/io-completion-bench uring-check  # the reference's own traces
     make -C research/experiments/io-completion-bench net-verify   # bytes only
     make -C research/experiments/io-completion-bench linux-net    # the TCP table
+    sh research/experiments/io-completion-bench/redis-bench.sh    # the Redis subset
 
 The TCP targets are Linux-only, as `linux` and `linux-read` are: `epoll_echo`
 and `uring_echo` are written against Linux interfaces, and the workload's
