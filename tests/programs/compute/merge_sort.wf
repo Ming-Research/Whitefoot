@@ -2,17 +2,17 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: u64, next_upper: u64) reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
+  requires input^.len <= 16777216_u64;
   requires lower < upper;
-  requires upper <= deref(input).len;
+  requires upper <= input^.len;
   ensures next_lower <= next_upper;
-  ensures next_upper <= deref(input).len;
+  ensures next_upper <= input^.len;
 } {
   let last = upper - 1_u64;
   let span = last - lower;
   let half = span / 2_u64;
   let middle = lower + half;
-  let value = deref(input)[middle];
+  let value = input^[middle];
   if value < key {
     let first = middle + 1_u64;
     return first, upper;
@@ -21,10 +21,10 @@ fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: 
 }
 
 fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
-  ensures result <= deref(input).len;
+  requires input^.len <= 16777216_u64;
+  ensures result <= input^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   let lower = 0_u64;
   let upper = count;
   loop (
@@ -42,26 +42,26 @@ fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
 }
 
 fn copy_values(input: &[u64], output: &[u64]) -> result: u64 reads(input), writes(output) contract {
-  requires deref(input).len <= deref(output).len;
+  requires input^.len <= output^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   for (i in 0_u64..count) {
-    set deref(output)[i] = deref(input)[i];
+    set output^[i] = input^[i];
   }
   return count;
 }
 
 fn merge_values(first: &[u64], second: &[u64], output: &[u64]) -> result: u64 reads(first), reads(second), writes(output) contract {
-  requires deref(first).len <= 16777216_u64;
-  requires deref(second).len <= 16777216_u64;
-  requires deref(first).len <= deref(output).len;
-  requires deref(second).len <= deref(output).len;
-  requires deref(first).len + deref(second).len <= deref(output).len;
+  requires first^.len <= 16777216_u64;
+  requires second^.len <= 16777216_u64;
+  requires first^.len <= output^.len;
+  requires second^.len <= output^.len;
+  requires first^.len + second^.len <= output^.len;
 } {
   doc "Binary-split merge. The pivot's rank in the other sorted input determines two disjoint output ranges. Sibling recursive calls expose data-dependent output partitions without a shared scatter.";
-  let n = deref(first).len;
-  let m = deref(second).len;
-  let capacity = deref(output).len;
+  let n = first^.len;
+  let m = second^.len;
+  let capacity = output^.len;
   let total = n + m;
   invariant total_output: total <= capacity;
   if n == 0_u64 {
@@ -76,21 +76,21 @@ fn merge_values(first: &[u64], second: &[u64], output: &[u64]) -> result: u64 re
     for (at in 0_u64..total) {
       if a < n {
         if b < m {
-          let x = deref(first)[a];
-          let y = deref(second)[b];
+          let x = first^[a];
+          let y = second^[b];
           if x <= y {
-            set deref(output)[at] = x;
+            set output^[at] = x;
             set a = a + 1_u64;
           } else {
-            set deref(output)[at] = y;
+            set output^[at] = y;
             set b = b + 1_u64;
           }
         } else {
-          set deref(output)[at] = deref(first)[a];
+          set output^[at] = first^[a];
           set a = a + 1_u64;
         }
       } else if b < m {
-        set deref(output)[at] = deref(second)[b];
+        set output^[at] = second^[b];
         set b = b + 1_u64;
       }
     }
@@ -101,57 +101,57 @@ fn merge_values(first: &[u64], second: &[u64], output: &[u64]) -> result: u64 re
   }
   let last = n - 1_u64;
   let middle = last / 2_u64;
-  let pivot = deref(first)[middle];
+  let pivot = first^[middle];
   let rank = lower_bound(input: second, key: pivot);
   let split = middle + rank;
   invariant split_total: split <= total;
-  let a0 = &deref(first)[0_u64..middle];
-  let a1 = &deref(first)[middle..n];
-  let b0 = &deref(second)[0_u64..rank];
-  let b1 = &deref(second)[rank..m];
-  let out0 = &deref(output)[0_u64..split];
-  let out1 = &deref(output)[split..total];
+  let a0 = &first^[0_u64..middle];
+  let a1 = &first^[middle..n];
+  let b0 = &second^[0_u64..rank];
+  let b1 = &second^[rank..m];
+  let out0 = &output^[0_u64..split];
+  let out1 = &output^[split..total];
   let left = merge_values(first: a0, second: b0, output: out0);
   let right = merge_values(first: a1, second: b1, output: out1);
   return total;
 }
 
 fn sort_values(input: &[u64], output: &[u64]) -> result: u64 writes(input), writes(output) contract {
-  requires deref(input).len <= 16777216_u64;
-  requires deref(output).len <= deref(input).len;
-  requires deref(input).len <= deref(output).len;
+  requires input^.len <= 16777216_u64;
+  requires output^.len <= input^.len;
+  requires input^.len <= output^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   if count <= 1_u64 {
     for (i in 0_u64..count) {
-      set deref(output)[i] = deref(input)[i];
+      set output^[i] = input^[i];
     }
     return count;
   }
   let middle = count / 2_u64;
-  let in0 = &deref(input)[0_u64..middle];
-  let in1 = &deref(input)[middle..count];
-  let out0 = &deref(output)[0_u64..middle];
-  let out1 = &deref(output)[middle..count];
+  let in0 = &input^[0_u64..middle];
+  let in1 = &input^[middle..count];
+  let out0 = &output^[0_u64..middle];
+  let out1 = &output^[middle..count];
   let left = sort_values(input: out0, output: in0);
   let right = sort_values(input: out1, output: in1);
-  let sorted0 = &deref(input)[0_u64..middle];
-  let sorted1 = &deref(input)[middle..count];
-  let destination = &deref(output)[0_u64..count];
+  let sorted0 = &input^[0_u64..middle];
+  let sorted1 = &input^[middle..count];
+  let destination = &output^[0_u64..count];
   let merged = merge_values(first: sorted0, second: sorted1, output: destination);
   return count;
 }
 
 fn merge_sort(input: &[u64]) -> result: Box<Array<u64>> reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
+  requires input^.len <= 16777216_u64;
 } {
   doc "Out-of-place comparison sort with two reusable cells and parallel recursive merges. It preserves every unsigned key; stability is not part of the result contract.";
-  let count = deref(input).len;
+  let count = input^.len;
   let scratch = box_array_filled::<u64>(count: count, value: 0_u64);
   let output = box_array_filled::<u64>(count: count, value: 0_u64);
   for (i in 0_u64..count) {
-    set scratch.inner[i] = deref(input)[i];
-    set output.inner[i] = deref(input)[i];
+    set scratch.inner[i] = input^[i];
+    set output.inner[i] = input^[i];
   }
   let source = &scratch.inner[0_u64..count];
   let destination = &output.inner[0_u64..count];

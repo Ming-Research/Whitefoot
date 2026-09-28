@@ -504,7 +504,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn the_scaled_quotient_image_halves_into_an_automatic_midpoint_bound() {
     let source = br#"fn probe(table: &[u8], lo: u64, hi: u64) -> found: u8 reads(table) contract {
-  define spare = deref(table).len;
+  define spare = table^.len;
   requires lo < hi;
   requires hi <= spare;
 } {
@@ -512,7 +512,7 @@ fn the_scaled_quotient_image_halves_into_an_automatic_midpoint_bound() {
   let half = span / 2_u64;
   let mid = lo + half;
   invariant inside: 2_u64 * mid + 1_u64 <= 2_u64 * hi;
-  let byte = deref(table)[mid];
+  let byte = table^[mid];
   return byte;
 }
 
@@ -891,10 +891,10 @@ fn a_referenced_run_indexed_defined_guard_discharges_the_same_structural_exact_o
     // `ArrayIndex` row where the window above takes `RunIndex` [MSR-1], so
     // the two cases still pin two distinct index rows.
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  let spare = deref(values).len;
+  let spare = values^.len;
   if 0_u64 < spare {
-    if deref(values)[0_u64] +defined 1_u8 {
-      let result = deref(values)[0_u64] + 1_u8;
+    if values^[0_u64] +defined 1_u8 {
+      let result = values^[0_u64] + 1_u8;
       return result;
     } else {
       return 0_u8;
@@ -942,14 +942,14 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_range_reference_indexed_defined_guard_discharges_the_same_structural_exact_operation() {
     // The [REF-4] range reference `&[T]` replaces the retiring `Slice<T>`
     // view: the parameter kind is a reference kind and not a type, its one
-    // measure is `len`, and its element is reached through `deref` [REF-1].
+    // measure is `len`, and its element is reached through `^` [REF-1].
     // Its measured kind is `Range`, which is the third index row this file
     // pins beside the constant window and the constant array.
     let source = br#"fn increment(values: &[u8]) -> result: u8 reads(values) {
-  let spare = deref(values).len;
+  let spare = values^.len;
   if 0_u64 < spare {
-    if deref(values)[0_u64] +defined 1_u8 {
-      let result = deref(values)[0_u64] + 1_u8;
+    if values^[0_u64] +defined 1_u8 {
+      let result = values^[0_u64] + 1_u8;
       return result;
     } else {
       return 0_u8;

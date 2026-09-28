@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn headroom(run: &Slots<u8, 8>) -> total: u64 reads(run) contract {
-  requires 4_u64 <= deref(run).len;
+  requires 4_u64 <= run^.len;
 } {
   doc "The stated relation over the measure is wider than the requirement establishes.";
   let seen = 0_u64;
   for (
     at in 0_u64..4_u64,
-    invariant reserved: 8_u64 <= deref(run).len
+    invariant reserved: 8_u64 <= run^.len
   ) {
-    let byte = deref(run)[at];
+    let byte = run^[at];
   }
   return seen;
 }

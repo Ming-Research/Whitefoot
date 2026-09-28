@@ -117,8 +117,8 @@ rarely insert at the same place.
   comparisons, S11 counted captures, every S7 operation row and a checked
   integer row's success payload read an operand the specification calls an
   admitted term or constant through one reader that includes the MSR-1
-  measure terms, so `let r = x % deref(src).len;` establishes
-  `r < deref(src).len`. Other flow readers of the same shape (subscript offset
+  measure terms, so `let r = x % src^.len;` establishes
+  `r < src^.len`. Other flow readers of the same shape (subscript offset
   terms, S13 index captures, allocation lengths, range-formation operands,
   integer-domain operands, the `Ok` constructor's payload) are unverified;
   affine images already cover some of them. Repair with the same reader, and
@@ -213,7 +213,7 @@ rarely insert at the same place.
   validity gives `i < len` there, so WIN-2's single-state separation still
   holds. That recovers the one pair this rule newly denies in the maintained
   programs, `deque_push_back` against `let first_after_append =
-  deref(original_first)` at `tests/programs/containers/deque-program.wf:113`.
+  original_first^` at `tests/programs/containers/deque-program.wf:113`.
   The ledger's denial should also name the length change as its cause; it
   currently reports only the overlapping write and read. Investigate
   indexing and reuse without losing statement identity, captured endpoints,
@@ -286,7 +286,7 @@ rarely insert at the same place.
   pairwise and REF-2 preservation questions the structural checker submitted,
   plus literal index inequality. OWN-7 makes two ranges disjoint whenever the
   current ProofContext proves one of its four orderings, so a length fact over
-  `deref(head)[0_u64]` with `head = &rows[0_u64..1_u64]` should survive a write
+  `head^[0_u64]` with `head = &rows[0_u64..1_u64]` should survive a write
   through `rows[1_u64..3_u64]`, bound or formed at the call; today it dies and
   the dependent subscript is rejected, and binding offsets proved distinct
   only by a guard behave the same way. The effect is over-rejection, never an
@@ -350,7 +350,13 @@ rarely insert at the same place.
   content-move repair writes `free_empty(move b)` without the argument name
   GRAM-11 requires and offers the cell's scope-exit release to a content
   whose elements are linear, and PROV-6's partial-consume repair writes the
-  placeholder `let N(f: a, ...) = move v;`. Pin each with a program per
+  placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
+  offers that placeholder as its second route for every linear binding,
+  although an opaque host handle such as `ReadFile` cannot be taken apart
+  [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
+  value of an unbounded type parameter can only be moved whole; the
+  [beyond-memory article](articles/beyond-memory.md) shows it for
+  `ReadFile`. Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -402,7 +408,7 @@ rarely insert at the same place.
   opaque struct's fields obey the ordinary field, ownership and release
   rules, but the checker gives a source opaque struct the fieldless
   `CheckedNominalKind::Opaque` (`compiler/src/semantic/model.rs`), so
-  `token.value` and `deref(token).value` on a parameter of a program's
+  `token.value` and `token^.value` on a parameter of a program's
   `opaque struct Token { value: u64; }` are rejected with TYPE-5. No value of
   such a struct is ever formed, so only functions no call can reach with a
   value are refused, and host handles have no fields. Give the kind its
@@ -1243,7 +1249,7 @@ rarely insert at the same place.
   through it.** PAR-1 reads a reference variable's own binding at each use,
   which the `let` that forms it or a `set` that rebinds it writes. A
   reference parameter's binding also stands for the place it names, so once
-  a body rebinds the parameter (`set values = &deref(values)[0_u64..8_u64];`),
+  a body rebinds the parameter (`set values = &values^[0_u64..8_u64];`),
   that holder read overlaps every write through `values` and denies pairs
   PAR-1 permits, such as a call writing one range of `values` beside a `let`
   that forms another. Giving the holder a place root of its own, which
@@ -1265,7 +1271,7 @@ rarely insert at the same place.
   in place needs only its address, so only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
   formed path passes; validate with that pair denied, the rest of the
-  quicksort ledger unchanged, and `let larger = &deref(v)[after..n];` still
+  quicksort ledger unchanged, and `let larger = &v^[after..n];` still
   permitted beside `quicksort(v: smaller);`. Found while checking the
   parallelism article's ledger; reopen before the lowering admits a member
   that is not a call.
@@ -1661,9 +1667,8 @@ rarely insert at the same place.
   third list. `lib.rs` re-exports modules by glob, so no public item is ever
   reported unused, and the driver's fifteen entry points come in cached and
   uncached twins that drop options: `--graph --check` without `--entry`
-  ignores `--cache`. `--no-overlap` now selects the default lowering while its
-  help text says the default actualizes completion I/O. One library module for
-  native construction and one request type (the
+  ignores `--cache`. One library module for native construction and one
+  request type (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p5-driver-and-api)'s P5.1 and P5.2)
   remove the copies. Validate with identical executables and verdicts from the
   CLI and every harness. Reopen when a runtime unit or entry point is
@@ -1751,21 +1756,6 @@ each is resolved by a discussion and a tree change.
   These language extensions are deferred because the selected ordinary
   local composition rule can be validated without widening the storage or
   predicate vocabulary.
-- **Ownership transfer and reference-access forms.** Audit unnecessary
-  owner-in/owner-out APIs now expressible with reference parameters and exact
-  effect rows, the differing consumption spellings of calls, returns, matches
-  and `propagate`, and repeated `deref`/`&deref` paths. `move` still marks a
-  consumption boundary; `deref` distinguishes a reference holder from its
-  referent and from owned `Box.inner`, so neither is redundant solely because
-  the signature `own` qualifier was. Compare the same container and owned-link
-  operations under proposed forms, preserving copy/drop capabilities,
-  whole-owner consumption, atomic replacement, reference rebinding,
-  invalidation and effect separation.
-  Require the ordinary positive and invalid-use examples to remain explainable
-  by one rule per operation, with no additional runtime checks or transfers.
-  Reduced ceremony is an opportunity, not an established gain. Defer these
-  interface and syntax choices to a dedicated discussion; reopen with those
-  same-operation comparisons.
 - **Expression composition and canonical source policy.** Reassess mandatory
   three-address computation and intermediate names together with the ban on
   comments and rejection of noncanonical formatting. Compare authoring,
@@ -1873,7 +1863,7 @@ condition under which it is taken up.
   restore the exact-sum contracts of `append` and `split_off`.
   (2) A `requires` stating a variant refinement (`p is Some`).
   (3) An `ensures` naming a single indexed path
-  (`deref(p.slots)[h.idx].gen == h.gen`), which decides whether a guarded
+  (`p.slots^[h.idx].gen == h.gen`), which decides whether a guarded
   pool access pays one load, compare and branch per call.
   Reopen with a library operation that needs one of these facts; retain the
   exact refused clause and its best ordinary implementation. Validate support
@@ -1884,7 +1874,7 @@ condition under which it is taken up.
 - **Reference exit fields and custom outcome contracts remain restricted.**
   FN-9 gives exit-state denotation to a written reference parameter's storage
   measures, not its ordinary mutable integer fields. An owning sparse map
-  cannot publish `deref(map).length == deref(entry(map)).length` for its own
+  cannot publish `map^.length == entry(map)^.length` for its own
   scalar occupancy counter; the caller can still read that counter normally.
   FN-9 routes only the integer success payload of the prelude Result, so a
   custom `Inserted / Replaced / Full` outcome cannot directly publish a
@@ -1910,7 +1900,7 @@ condition under which it is taken up.
   negative goals, alias invalidation and deterministic checking cost. Defer
   a rule change while the exact paired-bound interface supplies the needed
   proof without runtime or ownership cost.
-- **Whole-owner swap does not publish exchanged descriptor facts.** PRE-1's
+- **Container replacement and measure transport.** PRE-1's
   `swap` declares writes to both referents and no postcondition; MSR-3's
   placement rules do not include swap. Exchanging two boxed windows therefore
   kills their supported length/capacity facts without connecting the incoming
@@ -1920,8 +1910,22 @@ condition under which it is taken up.
   Reopen with the contract-publication work: retain scalar-only and nested
   owner controls, alias invalidation and input/output swaps, and compare the
   source/proof benefit with checking cost before selecting a general relation.
-  Defer a language extension while ordinary reads suffice for the map;
-  do not manufacture an impossible branch to satisfy a postcondition.
+  The [Deque reference-rebuild probes](../research/investigations/contract-surface/OWNERSHIP.md#deque-reference-rebuild-probes)
+  expose a stronger consumer: swapping in the completed backing loses the
+  emptied old backing's zero length needed by `free_empty`. An OP-12 wrapper
+  instead rejects an unbounded element type under WIN-3 because its target
+  may be linear; adding `T: drop` excludes supported elements and still leaves
+  its exact length postcondition unproved under FN-9. Classify that latter
+  establishment limit against the current rules before choosing a compiler
+  fix or a language extension. Compare a general swap relation with measured
+  atomic-result publication and possible linear atomic updates, retaining
+  no-hole ownership, no implicit linear release, failure-exit rules and
+  reference invalidation. Use the existing scalar/boxed/nodrop/unit Deque
+  oracle and its exact length/capacity/head contract; no extra runtime proof
+  branch may count as the same-contract success. Defer changes from the
+  syntax investigation while the owned rebase meets that contract; reopen
+  when selecting its reference counterpart. Do not manufacture an impossible
+  branch or weaken a postcondition to complete the comparison.
 - **Conditional measure preservation needs a precise remaining diagnosis.**
   A counted-loop control calling a length/capacity-preserving helper in only
   one arm rejects its backedge facts. Capturing both measures before the
@@ -2107,8 +2111,8 @@ condition under which it is taken up.
 - **Readonly-field terms stop at L0.** A readonly field below a subscript is
   an ENT-2 term for comparisons, requirements, copies and counted endpoints,
   but it is no FN-9 relation datum, no INV-1 atom and has no ENT-6 affine
-  image, so `ensures result <= deref(nodes)[i].count` is refused and
-  `requires deref(nodes)[i].first + deref(nodes)[i].count <= deref(kids).len`
+  image, so `ensures result <= nodes^[i].count` is refused and
+  `requires nodes^[i].first + nodes^[i].count <= kids^.len`
   gives the body no usable affine premise. FN-9 needs the formal offset
   substituted on both the body and the caller side and an `ensures` place
   judged where it is formed (see the next entry); affine images need their
@@ -2116,8 +2120,8 @@ condition under which it is taken up.
   each support member, and unchanged verdicts elsewhere; reopen when an
   index-based program needs one of these surfaces.
 - **FN-9 relations read a formal subscript as an unknown offset.** A
-  published relation over `deref(rows)[i].len` with `i` a formal renders as
-  `deref(entry(rows))[?].len`: the body side and the caller side
+  published relation over `rows^[i].len` with `i` a formal renders as
+  `entry(rows)^[?].len`: the body side and the caller side
   (`call_parameter_place`) turn `GoalProjection::FormalSubscript` into an
   unknown capture instead of the parameter binding or the actual's offset,
   as requirement instantiation already does. Nothing but standing facts is
@@ -2125,7 +2129,7 @@ condition under which it is taken up.
   today, but any extension of what can be proved about it would conflate the
   elements of two calls. Nothing judges the subscript of an `ensures` place
   either: ENT-2 fixes where a requirement's places are formed, at body entry,
-  but not an `ensures` place's, and `ensures r <= deref(rows)[i].len` with
+  but not an `ensures` place's, and `ensures r <= rows^[i].len` with
   `i` unconstrained is accepted. The extension must form such a place where
   its relation is judged, each selected return, with its subscripts owing
   OP-4 there, and state that point in ENT-2. Substitute the formal on both
@@ -2136,7 +2140,7 @@ condition under which it is taken up.
   any clause (a) term as an offset, but the compiler captures only literals,
   consts and bare bindings. A measure read such as `table[s.k].len` and a
   readonly-field read such as `nodes[n.parent_slot].count` or
-  `deref(nodes)[deref(r)].count` are reported unsupported, never rejected, and
+  `nodes^[r^].count` are reported unsupported, never rejected, and
   so is such a place in a contract clause. Capture such offsets with their own
   support (the field place, the reference's referent) and a spelling identity
   that keeps `n.a` and `n.b` apart, so OWN-7 separation and ENT-5 kills read
@@ -2166,8 +2170,8 @@ condition under which it is taken up.
   indices, two ranges, or an index and a range where the current
   ProofContext proves them apart, but an ENT-5 kill asks only written
   literals and the separations an EFF-5 call recorded in the flow's ledger.
-  So in a body that requires `i < j`, a fact over `deref(rows)[i].len` dies
-  at `set deref(rows)[j] = move fresh`, and a later read that needs it is
+  So in a body that requires `i < j`, a fact over `rows^[i].len` dies
+  at `set rows^[j] = move fresh`, and a later read that needs it is
   refused although the specification separates the two; a fact at an index
   before a range a callee writes through dies the same way. Asking the
   entailment fragment only for a fact whose place meets a written position
@@ -2183,11 +2187,11 @@ condition under which it is taken up.
   `grow`, and at every other call whose row writes the window's `last` or
   `filled`, whatever the callee ensures. So `&front[0_u64]` dies at
   `append(destination: &front, source: &back)` although `append` ensures
-  `deref(destination).len >= deref(entry(destination)).len`, and a slot
+  `destination^.len >= entry(destination)^.len`, and a slot
   reference dies at a user function declared `writes(window.last),
   writes(window.next), writes(window.len)` that takes one element back,
-  places one back and ensures `deref(window).len ==
-  deref(entry(window)).len`. The v0.73 checker accepted the second, since it
+  places one back and ensures `window^.len ==
+  entry(window)^.len`. The v0.73 checker accepted the second, since it
   ended no bound at a user call, which also let a reference outlive a user
   function that took its slot back. This refuses programs only. Reopen when
   a program needs such a reference: after the call, ask the entailment
@@ -2200,10 +2204,10 @@ condition under which it is taken up.
   two ranges, or an index and a range, under containing paths that are
   identical step for step or differ only in index steps. The checker counts
   two range steps as identical only when they come from one formation, so
-  after `let left = &deref(values)[a..b];` and
-  `let right = &deref(values)[a..b];`, with `a` and `b` unwritten between
-  them, a call passing `&deref(left)[0_u64..2_u64]` and
-  `&deref(right)[2_u64..4_u64]` is refused with EFF-5 although both frames
+  after `let left = &values^[a..b];` and
+  `let right = &values^[a..b];`, with `a` and `b` unwritten between
+  them, a call passing `&left^[0_u64..2_u64]` and
+  `&right^[2_u64..4_u64]` is refused with EFF-5 although both frames
   captured the same endpoints. The v0.73 checker refuses it too. The
   specification does not say whether two range steps whose captured
   endpoints are equal are identical; whether the checker proves such steps
@@ -2212,9 +2216,9 @@ condition under which it is taken up.
   ruling admits or refuses it. Found by the recheck of PR #141's
   containing-path ruling.
 - **An EFF-5 refusal for runs below different range frames names the
-  runs.** For runs `&deref(left)[0_u64..2_u64]` and
-  `&deref(right)[2_u64..4_u64]` of frames `left = &deref(values)[a..b]` and
-  `right = &deref(values)[c..d]`, the residual quotes the complete paths and
+  runs.** For runs `&left^[0_u64..2_u64]` and
+  `&right^[2_u64..4_u64]` of frames `left = &values^[a..b]` and
+  `right = &values^[c..d]`, the residual quotes the complete paths and
   the repair asks to prove that one ends at or before the other starts,
   which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
   The unproved pair is the frames: proving `b <= c` separates everything
@@ -2225,8 +2229,8 @@ condition under which it is taken up.
   containing-path ruling.
 - **OP-11 admits equal-depth slots under one identical array or window
   only.** The checker also admits them under containing paths that differ
-  only in index steps: `swap(first: &deref(outer)[i][k], second:
-  &deref(outer)[j][l])` with nothing relating `i` and `j` is accepted by the
+  only in index steps: `swap(first: &outer^[i][k], second:
+  &outer^[j][l])` with nothing relating `i` and `j` is accepted by the
   v0.73 and v0.74 checkers. Two slots of equal depth are one storage or two
   disjoint ones, so the acceptance is sound, but the checker admits calls
   the specification's wording refuses, the gap the owner closed for OWN-7's
@@ -2235,12 +2239,14 @@ condition under which it is taken up.
   window. Validate with that swap. Found by the recheck of PR #141's
   containing-path ruling.
 - **A range below a subscript of a range reference is not formed.**
-  `&deref(strip)[i][1_u64..3_u64]`, where `strip` is a range reference, is
+  `&strip^[i][1_u64..3_u64]`, where `strip` is a range reference, is
   refused as the unsupported capability `ReferenceFormation` by the v0.73
   and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
-  any step between the `deref` and the range. REF-4 admits the form, and
-  binding the row first, `let row = &deref(strip)[i];` and then
-  `&deref(row)[1_u64..3_u64]`, is accepted. Validate with the direct form
+  any step between the reference-access step and the range. The examples
+  here use the current caret spelling; the observations used the baseline
+  `deref` spelling and have not been remeasured on v0.76. REF-4 admits the form, and
+  binding the row first, `let row = &strip^[i];` and then
+  `&row^[1_u64..3_u64]`, is accepted. Validate with the direct form
   accepted and its separations and REF-2 invalidations matching the bound
   form. Found by the recheck of PR #141's containing-path ruling.
 - **Member names `len`, `cap` and `head` are classified by spelling in two
@@ -2279,7 +2285,7 @@ condition under which it is taken up.
   eight engineering tasks until it answers a concrete selection question;
   a passing new library does not dispose of the remaining matrix claims.
 - **A write refused for a written index parameter does not name that
-  write.** After `set index = 0_u64`, a body write `deref(window)[index]`
+  write.** After `set index = 0_u64`, a body write `window^[index]`
   under `writes(window[index])` is refused with SET-1's "a reference whose
   declared row does not write this path", and a call passing `index` with
   EFF-2's repair `writes(window)`. Neither names the earlier write of
@@ -2299,3 +2305,25 @@ condition under which it is taken up.
   after the rebinding is what works. Select the route from what the `?`
   stands for, and pin each pair with a repaired source that is accepted.
   Found while fixing the completion review of PR #145.
+
+## Verification tooling
+
+- **Static verification uses inconsistent, mutable comparison refs.** The
+  root `spec-archives` target hard-codes local `main`; after a branch integrates
+  current upstream, an older local ref can report multiple new archives even
+  when the PR changes no specification. Local `design-lint` instead defaults
+  to the current `origin/main` tip: if it advances past the branch's merge
+  base, new upstream nodes can appear as branch deletions and trigger missing
+  approval-log coverage. Both were observed on the ownership-surface research
+  branch; explicit checks against its actual review base retain the intended
+  obligations. The same advancing-main mismatch recurred during the container
+  branch integration: `Makefile` still defaults `DESIGN_REVIEW_BASE` to
+  `origin/main`, while `.github/design-review-base.sh` selects the work
+  branch's merge base. Select and report one pinned review base consistently
+  with `make review-scope` and the hosted event/fork-point rules. Validate old
+  local main, advancing remote main, an integrated branch and a real branch
+  amendment; retain archive
+  immutability, version-transition and changed-node coverage checks. Reopen
+  at the next workflow-maintenance change. This research uses the existing
+  `DESIGN_REVIEW_BASE` override for the actual merge base and records default
+  failures; it does not change the checks or another worktree's main ref.

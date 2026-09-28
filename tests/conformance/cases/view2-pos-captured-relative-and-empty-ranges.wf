@@ -12,16 +12,16 @@ fn first(start: u64, end: u64) -> result: u64 pure contract {
   }
   let view = &values[start..end];
   set start = end;
-  let count = deref(view).len;
-  let empty = &deref(view)[count..count];
-  let empty_count = deref(empty).len;
+  let count = view^.len;
+  let empty = &view^[count..count];
+  let empty_count = empty^.len;
   if empty_count != 0_u64 {
     return 99_u64;
   }
   if count == 0_u64 {
     return 0_u64;
   }
-  return deref(view)[0_u64];
+  return view^[0_u64];
 }
 
 fn main() -> status: ExitStatus pure {

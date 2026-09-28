@@ -7,7 +7,7 @@ struct Cell {
 
 fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
   if n == 0_u64 {
-    return deref(target).value;
+    return target^.value;
   }
   let next = n - 1_u64;
   let initial = Cell(value: 0_u64);
@@ -16,7 +16,7 @@ fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
   let cursor = target;
   let done = False();
   loop {
-    set deref(cursor) = Cell(value: 7_u64);
+    set cursor^ = Cell(value: 7_u64);
     set cursor = target;
     if done {
       return musttail walk(n: next, target: target);

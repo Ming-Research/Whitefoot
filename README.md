@@ -124,12 +124,12 @@ plain store:
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
-    i in 0_u64..deref(buf).len,
+    i in 0_u64..buf^.len,
     invariant behind: kept <= i
   ) {
-    let byte = deref(buf)[i];
+    let byte = buf^[i];
     if byte != 32_u8 {
-      set deref(buf)[kept] = byte;
+      set buf^[kept] = byte;
       set kept = kept + 1_u64;
     }
   }
@@ -143,7 +143,7 @@ measured spellings without one use `unsafe`, `retain` on an owned `Vec`, or a
 second buffer
 ([measurements](research/experiments/bounds-check-spellings/README.md#results)).
 Without the invariant, Whitefoot rejects the function and names the missing
-fact, `kept < deref(buf).len`. [Proofs without a solver, by
+fact, `kept < buf^.len`. [Proofs without a solver, by
 hand](docs/articles/proofs-by-hand.md) follows the compiler through this
 proof step by step.
 
@@ -157,14 +157,14 @@ asks for parallelism:
 
 ```
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
-  let n = deref(v).len;
+  let n = v^.len;
   if n <= 1_u64 {
     return unit;
   }
   let p = partition(v: v);
   let after = p + 1_u64;
-  let smaller = &deref(v)[0_u64..p];
-  let larger = &deref(v)[after..n];
+  let smaller = &v^[0_u64..p];
+  let larger = &v^[after..n];
   quicksort(v: smaller);
   quicksort(v: larger);
   return unit;
@@ -210,10 +210,10 @@ struct Cursor {
 }
 
 fn next_byte(input: &[u8], cursor: &Cursor) -> result: Option<u8> reads(input), writes(cursor) {
-  let at = deref(cursor).position;
-  if at < deref(input).len {
-    let byte = deref(input)[at];
-    set deref(cursor).position = at + 1_u64;
+  let at = cursor^.position;
+  if at < input^.len {
+    let byte = input^[at];
+    set cursor^.position = at + 1_u64;
     return Some<u8>(value: byte);
   }
   return None<u8>();
@@ -226,7 +226,7 @@ Whitefoot asks you to write out:
 - `reads(input), writes(cursor)`: what the function may read and write, its
   effects, stated in its signature. There is no `&mut`: a function writes
   through a reference only when its effects say so;
-- `deref(cursor)` and `set`: every read through a reference, and every
+- `cursor^` and `set`: every read through a reference, and every
   assignment;
 - `1_u64` and `value: byte`: the type of every number, and the name of each
   argument to a function or a constructor;
@@ -301,12 +301,14 @@ Safe, fast and small are the core. These are the other things worth knowing.
 
 - **Concurrent I/O without async.** The language has no `async`, `await`,
   futures, callbacks or tasks: files and sockets are ordinary values, and an
-  I/O operation is an ordinary call. The compiled program submits I/O through
-  a completion runtime (io_uring on Linux, I/O completion ports on Windows),
-  and independent calls in plain sequential code are issued together, so
-  code is never split into synchronous and asynchronous kinds. The `reads`
-  and `writes` rows that let computation run in parallel decide which I/O
-  calls may overlap. Serving many connections at once is being designed.
+  I/O operation is an ordinary call, so code is never split into synchronous
+  and asynchronous kinds. The compiled program carries out I/O through a
+  completion runtime (io_uring on Linux, I/O completion ports on Windows).
+  The `reads` and `writes` rows that let computation run in parallel also
+  decide which I/O calls may overlap. Today the overlap comes from `--par`,
+  which can run two independent calls on two workers, I/O included; the
+  default build issues I/O one call at a time. Serving many connections at
+  once is being designed.
 
 ### Planned
 
@@ -348,25 +350,27 @@ Not started. Each builds on what the proofs already establish.
 Short pieces, each on one idea, with programs that compile. The first three
 start from the examples above:
 
-1. Prove it or write a branch — bounds and overflow checks that disappear
-   because they are proved.
+1. [Prove it or write a branch](docs/articles/prove-it-or-write-a-branch.md) —
+   bounds and overflow checks that disappear because they are proved.
 2. [Write sequential code, get parallel
    results](docs/articles/sequential-code-parallel-results.md) — how the
    compiler finds independence in plain code, recursion included, and hands
    it to the workers.
 3. [Proofs without a solver, by hand](docs/articles/proofs-by-hand.md) —
    difference bounds, closure and loop invariants, worked on paper.
-4. What a rejection tells you — diagnostics written for the agent that fixes
-   the code.
-5. Integers — every operation states its meaning.
-6. One build — no panic, no debug/release split, a fixed record on resource
-   exhaustion.
-7. Beyond memory — no heap, linear resources, and the plan for a
-   maximum-safety mode.
-8. What a reviewer reads — contracts and effect rows as the review surface.
+4. [What a rejection tells you](docs/articles/what-a-rejection-tells-you.md) —
+   diagnostics written for the agent that fixes the code.
+5. [Integers](docs/articles/integers.md) — every operation states its meaning.
+6. [One build](docs/articles/one-build.md) — no panic, no debug/release
+   split, a fixed record on resource exhaustion.
+7. [Beyond memory](docs/articles/beyond-memory.md) — no heap, linear
+   resources, and the plan for a maximum-safety mode.
+8. [What a reviewer reads](docs/articles/what-a-reviewer-reads.md) —
+   contracts and effect rows as the review surface.
 9. The trusted base — what is trusted, and the plan to shrink it.
-10. Where the speed comes from — every way the proofs are used.
-11. I/O without async — ordinary calls that the compiler overlaps.
+10. [Where the speed comes from](docs/articles/where-the-speed-comes-from.md) —
+    every way the proofs are used.
+11. I/O without async — ordinary calls, and when they may overlap.
 12. A layout engine — the first large program.
 13. How this project is built with agents.
 
@@ -393,12 +397,12 @@ rule and its kind, the marked source line, and every payload field under a
 stable label.
 
 ```text
-tests/conformance/cases/op4-neg-index-undischarged.wf:6:18: error[OP-4]: UndischargedBoundsObligation
-  source:   return deref(b)[i];
-  marker:                  ^^^
-  residual: i < deref(b).len
+tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: UndischargedBoundsObligation
+  source:   return b^[i];
+  marker:            ^^^
+  residual: i < b^.len
   disposition: Unproved
-  mechanical_fix: add `requires i < deref(b).len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < deref(b).len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare
+  mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare
 ```
 
 Other options:

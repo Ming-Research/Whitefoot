@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn take_block(free: &Slots<Box<Slots<u8>>, 2>) -> block: Box<Slots<u8>> writes(free) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len + 1_u64 == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len + 1_u64 == entry(free)^.len;
 } {
   doc "Takes the last stocked cell out of the pool and publishes what that did to the pool alone.";
   let block = take_back(window: free);
@@ -11,8 +11,8 @@ fn take_block(free: &Slots<Box<Slots<u8>>, 2>) -> block: Box<Slots<u8>> writes(f
 }
 
 fn return_block(free: &Slots<Box<Slots<u8>>, 2>, block: Box<Slots<u8>>) -> result: unit writes(free) contract {
-  requires deref(free).len < deref(free).cap;
-  ensures deref(free).len == deref(entry(free)).len + 1_u64;
+  requires free^.len < free^.cap;
+  ensures free^.len == entry(free)^.len + 1_u64;
 } {
   doc "Puts one cell back into the pool.";
   place_back(window: free, value: move block);

@@ -7,9 +7,9 @@ struct Pair {
 }
 
 fn observe(pair: &Pair) -> result: i32 reads(pair.left) contract {
-  ensures result == deref(pair).left;
+  ensures result == pair^.left;
 } {
-  return deref(pair).left;
+  return pair^.left;
 }
 
 fn guard(left: i32, right: i32) -> result: unit pure contract {
@@ -19,16 +19,16 @@ fn guard(left: i32, right: i32) -> result: unit pure contract {
 }
 
 fn ordinary(pair: &Pair) -> result: unit reads(pair.left), writes(pair.right) {
-  let observed = deref(pair).left;
-  set deref(pair).right = 1_i32;
-  guard(left: observed, right: deref(pair).left);
+  let observed = pair^.left;
+  set pair^.right = 1_i32;
+  guard(left: observed, right: pair^.left);
   return unit;
 }
 
 fn from_call(pair: &Pair) -> result: unit reads(pair.left), writes(pair.right) {
-  let observed = observe(pair: &deref(pair));
-  set deref(pair).right = 1_i32;
-  guard(left: observed, right: deref(pair).left);
+  let observed = observe(pair: &pair^);
+  set pair^.right = 1_i32;
+  guard(left: observed, right: pair^.left);
   return unit;
 }
 

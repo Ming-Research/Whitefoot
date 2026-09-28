@@ -3,12 +3,12 @@ alias exit_status = std::process::exit_status;
 
 fn count_then_insert(window: &Slots<u64, 8>, lo: u64, hi: u64) -> result: unit reads(window[lo..hi]), writes(window.filled), writes(window.next), writes(window.len) contract {
   requires lo <= hi;
-  requires hi <= deref(window).len;
-  requires deref(window).len < deref(window).cap;
+  requires hi <= window^.len;
+  requires window^.len < window^.cap;
 } {
   doc "Inserts the length of the run window[lo..hi] at the front of the window. EFF-5, WIN-2: a run of a window overlaps window.filled whatever its endpoints, as every element does, so a call does not compare reads(window[lo..hi]) with writes(window.filled), and this body is checked against both.";
-  let run = &deref(window)[lo..hi];
-  let count = deref(run).len;
+  let run = &window^[lo..hi];
+  let count = run^.len;
   insert_at(window: window, index: 0_u64, value: count);
   return unit;
 }

@@ -221,17 +221,17 @@ fn taking_then_swapping_keeps_independent_storage_and_orders_the_take() {
 
 fn accept(seen: &u64, value: Row) -> result: unit writes(seen) {
   for (index in 0_u64..32_u64) {
-    set deref(seen) = deref(seen) +wrap value.words[index];
+    set seen^ = seen^ +wrap value.words[index];
   }
   return unit;
 }
 
 fn transfer(values: &Slots<Row, 4>, index: u64, seen: &u64) -> result: unit writes(values), writes(seen) contract {
-  requires index + 2_u64 <= deref(values).len;
-  ensures deref(values).len + 1_u64 == deref(entry(values)).len;
+  requires index + 2_u64 <= values^.len;
+  ensures values^.len + 1_u64 == entry(values)^.len;
 } {
   let value = take_back(window: values);
-  swap(first: &deref(values)[index], second: &value);
+  swap(first: &values^[index], second: &value);
   accept(seen: seen, value: move value);
   return unit;
 }

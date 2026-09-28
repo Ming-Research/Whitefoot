@@ -20,7 +20,7 @@ fn main() -> status: ExitStatus pure {
   let record = Block(bytes: move passed);
   let Block(bytes: held) = move record;
   let outcome = Some<Slots<u8, 4>>(value: move held);
-  match outcome {
+  match move outcome {
     None() => {
       return exit_status(code: 1_u8);
     }

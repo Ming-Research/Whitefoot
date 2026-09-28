@@ -2009,7 +2009,7 @@ mod range_argument_kill_tests {
         }))
     }
 
-    /// `&origin[lo..hi]` or `&deref(view)[lo..hi]` formed at a call argument.
+    /// `&origin[lo..hi]` or `&view^[lo..hi]` formed at a call argument.
     fn formation(
         source: CheckedRangeSource,
         captured: CapturedRange,

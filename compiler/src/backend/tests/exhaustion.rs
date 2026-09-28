@@ -52,7 +52,7 @@ const MIXED_DEFINITIONS: &[u8] = br#"enum Chain {
 }
 
 fn depth(chain: &Box<Chain>) -> result: u64 reads(chain) {
-  match deref(chain).inner {
+  match chain^.inner {
     End() => {
       return 0_u64;
     }
@@ -699,7 +699,7 @@ const LARGE_FRAME_SPINE: &[u8] =
     br#"fn read_pad(values: &Array<u64, 7168>, index: u64) -> result: u64 reads(values) contract {
   requires index < 7168_u64;
 } {
-  return deref(values)[index];
+  return values^[index];
 }
 
 fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {

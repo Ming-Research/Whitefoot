@@ -37,8 +37,8 @@ fn pool_new() -> made: BlockPool pure {
 }
 
 fn take_free(free: &Slots<Block, 8>) -> block: Block writes(free.last), writes(free.len) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len + 1_u64 == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len + 1_u64 == entry(free)^.len;
 } {
   doc "One block off the back boundary; the row names exactly the last filled slot and the length take_back moves [OP-10].";
   let block = take_back(window: free);
@@ -46,8 +46,8 @@ fn take_free(free: &Slots<Block, 8>) -> block: Block writes(free.last), writes(f
 }
 
 fn return_free(free: &Slots<Block, 8>, block: Block) -> result: unit writes(free.next), writes(free.len) contract {
-  requires deref(free).len < deref(free).cap;
-  ensures deref(free).len == deref(entry(free)).len + 1_u64;
+  requires free^.len < free^.cap;
+  ensures free^.len == entry(free)^.len + 1_u64;
 } {
   doc "One block back onto the append slot, under the caller's proof that the free list has room.";
   place_back(window: free, value: move block);
@@ -82,8 +82,8 @@ struct StaticBlock {
 }
 
 fn take_static(free: &Slots<StaticBlock, 2>) -> block: StaticBlock writes(free.last), writes(free.len) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len + 1_u64 == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len + 1_u64 == entry(free)^.len;
 } {
   doc "The same boundary take over a frame-resident element type.";
   let block = take_back(window: free);
@@ -91,8 +91,8 @@ fn take_static(free: &Slots<StaticBlock, 2>) -> block: StaticBlock writes(free.l
 }
 
 fn return_static(free: &Slots<StaticBlock, 2>, block: StaticBlock) -> result: unit writes(free.next), writes(free.len) contract {
-  requires deref(free).len < deref(free).cap;
-  ensures deref(free).len == deref(entry(free)).len + 1_u64;
+  requires free^.len < free^.cap;
+  ensures free^.len == entry(free)^.len + 1_u64;
 } {
   doc "The same boundary place over a frame-resident element type.";
   place_back(window: free, value: move block);
@@ -172,7 +172,7 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 2_u8);
   }
   let (rest, leased) = pool_take(pool: move pool);
-  match leased {
+  match move leased {
     None() => {
       return exit_status(code: 3_u8);
     }

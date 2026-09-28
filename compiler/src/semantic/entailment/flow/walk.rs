@@ -581,7 +581,7 @@ impl Analyzer<'_, '_> {
                             &mut state.affine,
                         );
                         // [ENT-3.S6] the same formation establishes
-                        // `deref(part).len = hi - lo` as an ordinary fact, so
+                        // `part^.len = hi - lo` as an ordinary fact, so
                         // a requirement stated over the range's length is
                         // judged against the length the range has and not
                         // merely against an affine premise.
@@ -1030,8 +1030,8 @@ impl Analyzer<'_, '_> {
                 // ordinary effects and kills", and a call's projected writes
                 // and its published exit relation are exactly those effects
                 // [CALL-6]. Judging the clause before them read the referent's
-                // entry state at the exit, which made `deref(p).len ==
-                // deref(entry(p)).len` hold over a callee that had just
+                // entry state at the exit, which made `p^.len ==
+                // entry(p)^.len` hold over a callee that had just
                 // changed it.
                 let judgment = if matches!(value, CheckedExpression::UserCall { .. }) {
                     self.expression_effects(value, state)

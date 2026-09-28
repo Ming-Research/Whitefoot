@@ -11,7 +11,7 @@ fn main() -> status: ExitStatus pure {
     place_back(window: &run, value: 1_u8);
   }
   let window = &run[0_u64..4_u64];
-  let last = deref(window)[3_u64];
+  let last = window^[3_u64];
   if last == 1_u8 {
     return exit_status(code: 0_u8);
   }

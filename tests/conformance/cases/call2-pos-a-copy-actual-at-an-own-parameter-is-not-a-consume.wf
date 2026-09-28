@@ -3,10 +3,10 @@ alias exit_status = std::process::exit_status;
 
 fn get_bounded(window: &Slots<u8, 4>, i: u64, limit: u64) -> value: u8 reads(window) contract {
   requires i < limit;
-  requires limit <= deref(window).len;
+  requires limit <= window^.len;
 } {
   doc "Reads one element under a bound handed over by value.";
-  return deref(window)[i];
+  return window^[i];
 }
 
 fn main() -> status: ExitStatus pure {

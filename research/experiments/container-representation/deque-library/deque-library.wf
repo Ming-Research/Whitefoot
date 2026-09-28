@@ -28,8 +28,8 @@ fn deque_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn deque_word_accept(env: &DequeDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).value *wrap 131_u64;
-  set deref(env).value = prefix +wrap value;
+  let prefix = env^.value *wrap 131_u64;
+  set env^.value = prefix +wrap value;
   return unit;
 }
 
@@ -44,8 +44,8 @@ fn deque_record_make(seed: u64) -> value: DequeRecord pure {
 fn deque_record_accept(env: &DequeDigest, value: DequeRecord) -> result: unit writes(env) {
   for (index in 0_u64..32_u64) {
     let word = value.words[index];
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap word;
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap word;
   }
   return unit;
 }
@@ -61,16 +61,16 @@ binding DequeRecordElement : DequeElement<DequeRecord> {
 }
 
 fn deque_library_fill<interface DequeElement<T>>(values: &Box<Ring<T>>, count: u64, seed: u64) -> result: unit writes(values) contract {
-  requires deref(values).inner.len == 0_u64;
-  requires deref(values).inner.cap >= count;
-  ensures deref(values).inner.len == count;
-  ensures deref(values).inner.cap == deref(entry(values)).inner.cap;
+  requires values^.inner.len == 0_u64;
+  requires values^.inner.cap >= count;
+  ensures values^.inner.len == count;
+  ensures values^.inner.cap == entry(values)^.inner.cap;
 } {
-  let capacity = deref(values).inner.cap;
+  let capacity = values^.inner.cap;
   for @fill (
     index in 0_u64..count,
-    invariant filled: deref(values).inner.len == index,
-    invariant kept_capacity: deref(values).inner.cap == capacity
+    invariant filled: values^.inner.len == index,
+    invariant kept_capacity: values^.inner.cap == capacity
   ) {
     let next = seed +wrap index;
     let value = DequeElement::make(seed: next);

@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn filter(input: &[f64], taps: &[f64], first: u64, end: u64, last_tap: u64) -> result: Box<Array<f64>> reads(input), reads(taps) contract {
-  define input_count = deref(input).len;
-  define tap_count = deref(taps).len;
+  define input_count = input^.len;
+  define tap_count = taps^.len;
   requires last_tap < tap_count;
   requires last_tap <= 63_u64;
   requires last_tap <= first;
@@ -21,8 +21,8 @@ fn filter(input: &[f64], taps: &[f64], first: u64, end: u64, last_tap: u64) -> r
     let sum = 0.0_f64;
     for (k in 0_u64..tap_count) {
       let source = position - k;
-      let coefficient = deref(taps)[k];
-      let sample = deref(input)[source];
+      let coefficient = taps^[k];
+      let sample = input^[source];
       let product = fmul.strict(coefficient, sample);
       set sum = fadd.strict(sum, product);
     }

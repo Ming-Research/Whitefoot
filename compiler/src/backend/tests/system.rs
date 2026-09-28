@@ -132,7 +132,7 @@ fn ordinary_declarations_have_no_frame_and_share_the_call_abi() {
 /// binder changes neither the declared relation nor the ABI being compared.
 const COPY_BYTES_WRAPPER: &str = r#"fn copy_bytes(value: &std::text::HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, std::text::CopyError> reads(value), writes(destination) contract {
   requires start <= end;
-  requires end <= deref(destination).len;
+  requires end <= destination^.len;
   ensures when Ok(value: copied): start <= copied;
   ensures when Ok(value: copied): copied <= end;
 } {
@@ -204,7 +204,7 @@ fn behavior_actuals_preserve_ordinary_range_reference_calls_rows_and_contracts()
     let formal = r#"interface Copier {
   fn transfer(value: &std::text::HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, std::text::CopyError> reads(value), writes(destination) contract {
     requires start <= end;
-    requires end <= deref(destination).len;
+    requires end <= destination^.len;
     ensures when Ok(value: copied): start <= copied;
     ensures when Ok(value: copied): copied <= end;
   };
@@ -285,7 +285,7 @@ fn behavior_actuals_preserve_ordinary_range_reference_calls_rows_and_contracts()
         // `requires` instead of an `ensures`.
         for changed_formal in [
             formal.replace(", writes(destination)", ""),
-            formal.replace("    requires end <= deref(destination).len;\n", ""),
+            formal.replace("    requires end <= destination^.len;\n", ""),
         ] {
             // FN-4 checks the binding itself, before any generic caller is
             // needed. Keeping the forwarding body out of these negatives

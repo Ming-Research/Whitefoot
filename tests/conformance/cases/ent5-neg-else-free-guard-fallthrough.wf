@@ -3,11 +3,11 @@ alias exit_status = std::process::exit_status;
 
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   doc "An else-free guard whose body falls through also has a reaching false edge. A bound available only on the true edge cannot prove the subscript after the join [ENT-5, OP-4].";
-  let spare = deref(b).len;
+  let spare = b^.len;
   let inside = i < spare;
   if inside {
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

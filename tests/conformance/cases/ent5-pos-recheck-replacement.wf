@@ -39,14 +39,14 @@ fn guarded_field(b: Cell, w: u8) -> result: u8 pure {
 
 fn guarded_element(buf: &[u8], i: u64, w: u8) -> result: u8 writes(buf) {
   doc "The same recheck after an element write through a range reference the row declares.";
-  let limit = deref(buf).len;
+  let limit = buf^.len;
   let in_range = i < limit;
   if in_range {
-    let old = deref(buf)[i];
+    let old = buf^[i];
     let bounded = old <= 5_u8;
     if bounded {
-      set deref(buf)[i] = w;
-      let cur = deref(buf)[i];
+      set buf^[i] = w;
+      let cur = buf^[i];
       let ok = cur <= 5_u8;
       if ok {
         let z = cur + 250_u8;

@@ -9,7 +9,7 @@ alias read_next = std::io::read_next;
 alias write_once = std::io::write_once;
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";

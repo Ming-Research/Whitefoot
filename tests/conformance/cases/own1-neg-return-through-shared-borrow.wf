@@ -8,7 +8,7 @@ struct Pair {
 
 fn steal(holder: &Pair) -> return_value: Pair reads(holder) {
   doc "A return cannot move an owned struct out of the path a reference names; the place is not rooted in a live own-mode binding of this function.";
-  return move deref(holder);
+  return move holder^;
 }
 
 fn main() -> return_value: ExitStatus pure {

@@ -13,9 +13,9 @@ enum Packet {
 
 fn steal(packet: &Packet) -> return_value: unit reads(packet) {
   doc "A payload binder derived from matching through a reference names the scrutinee path, which is not rooted in a live own-mode binding of this function, so its affine referent cannot be moved out.";
-  match deref(packet) {
+  match packet^ {
     Data(item: element) => {
-      let stolen = move deref(element);
+      let stolen = move element^;
     }
     Empty() => {
     }

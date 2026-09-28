@@ -9,10 +9,10 @@ struct Node {
 fn exchange(rows: &Array<Node, 2>, i: u64, j: u64) -> result: unit writes(rows) {
   if i < j {
     if j < 2_u64 {
-      let parent = &deref(rows)[j];
-      match deref(parent).next {
+      let parent = &rows^[j];
+      match parent^.next {
         Some(value: child) => {
-          swap(first: &deref(rows)[i], second: &deref(child).inner);
+          swap(first: &rows^[i], second: &child^.inner);
         }
         None() => {
         }

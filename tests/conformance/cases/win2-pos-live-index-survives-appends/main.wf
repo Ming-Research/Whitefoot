@@ -4,19 +4,19 @@ alias exit_status = std::process::exit_status;
 alias kinds = pkg::kinds;
 
 fn grow_twice(rows: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(kids), writes(rows) contract {
-  requires i < deref(rows).len;
-  requires deref(rows).len + 1_u64 < deref(rows).cap;
-  requires deref(rows)[i].count <= deref(kids).len;
+  requires i < rows^.len;
+  requires rows^.len + 1_u64 < rows^.cap;
+  requires rows^[i].count <= kids^.len;
 } {
-  doc "WIN-2, ENT-5: each place_back writes r.next, which is separate from deref(rows)[i] only while i < deref(rows).len is proved at that event. The entry state proves it at the first append and the first append's ensures proves it at the second, so the bound on the element's count survives both and the counted endpoint discharges every child read.";
+  doc "WIN-2, ENT-5: each place_back writes r.next, which is separate from rows^[i] only while i < rows^.len is proved at that event. The entry state proves it at the first append and the first append's ensures proves it at the second, so the bound on the element's count survives both and the counted endpoint discharges every child read.";
   let wide = kinds::make_node(count: 9_u64, weight: 0_u64);
   place_back(window: rows, value: wide);
   let wider = kinds::make_node(count: 9_u64, weight: 0_u64);
   place_back(window: rows, value: wider);
   let acc = 0_u64;
-  if i < deref(rows).len {
-    for (c in 0_u64..deref(rows)[i].count) {
-      let kid = deref(kids)[c];
+  if i < rows^.len {
+    for (c in 0_u64..rows^[i].count) {
+      let kid = kids^[c];
       set acc = acc +wrap kid;
     }
   }
@@ -32,7 +32,7 @@ fn main() -> status: ExitStatus pure {
   let children = &kids[0_u64..3_u64];
   if 0_u64 < arena.len {
     if arena.len < 3_u64 {
-      if arena[0_u64].count <= deref(children).len {
+      if arena[0_u64].count <= children^.len {
         let total = grow_twice(rows: &arena, kids: children, i: 0_u64);
         if total == 10_u64 {
           return exit_status(code: 0_u8);

@@ -6,7 +6,7 @@ fn main() -> status: ExitStatus pure {
   let a = array_filled::<u64, 4>(value: 0_u64);
   let p = &a[1_u64];
   set a[1_u64] = 8_u64;
-  let seen = deref(p);
+  let seen = p^;
   if seen == 8_u64 {
   } else {
     return exit_status(code: 1_u8);

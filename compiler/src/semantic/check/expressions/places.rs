@@ -1,14 +1,9 @@
-//! Places written with an explicit `deref` [GRAM-5, TYPE-7].
+//! Type-directed place suffixes [GRAM-5, TYPE-7].
 //!
-//! `pbase := IDENT | "deref" "(" place ")" | "entry" "(" IDENT ")"` and the
-//! `deref` alternative takes any `place` whose selected kind is a reference,
-//! `&T` or `&[T]`, and spells its referent. A `Box`'s content is *not* reached
-//! that way: it is the field `inner`, an ordinary field step [TYPE-9], and a
-//! `deref` of anything that is not a reference is [TYPE-7]'s rejection.
-//!
-//! Resolving a place whose `deref` step names a reference variable replaces
-//! that step with the path the reference names, recursively, and every
-//! [OWN-7] judgment reads the resolved place [REF-1].
+//! The postfix `^` selects the referent of `&T` or `&[T]`. A Box instead
+//! exposes its content through the ordinary field `inner` [TYPE-9]. Resolving
+//! a reference step substitutes the path that reference names; every
+//! [OWN-7] judgment reads that same resolved place [REF-1].
 
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
@@ -71,10 +66,10 @@ impl PlaceMember {
 ///
 /// The v0.59 `borrow` and `holder_pending` fields are gone with the loans: a
 /// reference is not storage of its own, so a resolved place never carries one
-/// — the `deref` step has already been replaced by the path the reference
+/// — the `^` step has already been replaced by the path the reference
 /// names [REF-1].
 pub(super) struct ElaboratedPlace {
-    /// The source declaration the *written* base names. For a `deref` chain
+    /// The source declaration the *written* base names. For a `^` path
     /// that is the reference binding, whose [REF-2] validity the caller
     /// rechecks; `resolved` below is rooted at what that reference names.
     pub(super) declaration: DeclarationId,
@@ -87,7 +82,7 @@ pub(super) struct ElaboratedPlace {
     /// always the last written suffix and the place it is read over is the
     /// one this record otherwise describes.
     pub(super) measure: Option<super::super::super::model::CheckedMeasure>,
-    /// Whether the written base was `deref` of a `&[T]` range reference
+    /// Whether the written path starts with `^` on a `&[T]` range reference
     /// [REF-4]. [MSR-1] gives `&[T]` its own row, whose one cell is the
     /// range's element count, and the referent type the deref selects is the
     /// element type, so the row cannot be recovered from that type.
@@ -114,26 +109,17 @@ impl ElaboratedPlace {
 }
 
 impl<'unit> Checker<'_, 'unit> {
-    /// A read of a place written through an explicit `deref` [TYPE-7].
+    /// A read of a place written through an explicit `^` [TYPE-7].
     pub(super) fn check_dereferenced_place_use(
         &mut self,
         check_context: &CheckContext<'_>,
         use_node: NodeId,
         node: NodeId,
-        pbase: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
         let place = self.elaborate_value_place(check_context, use_node, node, bindings)?;
-        self.check_elaborated_place_use(
-            check_context,
-            use_node,
-            node,
-            pbase,
-            bindings,
-            options,
-            place,
-        )
+        self.check_elaborated_place_use(check_context, use_node, node, bindings, options, place)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -142,7 +128,6 @@ impl<'unit> Checker<'_, 'unit> {
         check_context: &CheckContext<'_>,
         use_node: NodeId,
         node: NodeId,
-        pbase: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
         place: ElaboratedPlace,
@@ -221,7 +206,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .collect(),
             });
         }
-        // [TYPE-8] `&[T]` is a reference kind and not a type, so `deref(p)`
+        // [TYPE-8] `&[T]` is a reference kind and not a type, so `p^`
         // of a range reference denotes the run it names and never a value of
         // its own: the admitted readers are its one measure above and one
         // subscript [MSR-1, OP-4], both of which resolve before this point.
@@ -231,8 +216,8 @@ impl<'unit> Checker<'_, 'unit> {
                 use_node,
                 SemanticIssueKind::type_mismatch(
                     "a value place",
-                    "the run a range reference names, which is read by `deref(p)[i]` or \
-                     `deref(p).len` [REF-4, MSR-1]",
+                    "the run a range reference names, which is read by `p^[i]` or \
+                     `p^.len` [REF-4, MSR-1]",
                 ),
             );
         }
@@ -261,18 +246,12 @@ impl<'unit> Checker<'_, 'unit> {
         if !copy && !read_out {
             if options.explicit_move {
                 // [OWN-1] a consume is admitted only for a place rooted in a
-                // live own-mode binding. A place written under a `deref` is
+                // live own-mode binding. A place written under a `^` is
                 // rooted at the storage the reference names, which this
                 // function does not own, so the `move` is refused there and
                 // not by [WIN-3], whose subject is a window slot or an array
                 // element.
-                if self
-                    .types
-                    .declarations
-                    .tree
-                    .place_base(pbase)?
-                    .is_dereference()
-                {
+                if self.types.declarations.tree.place_has_dereference(node)? {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
@@ -318,7 +297,9 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-            if matches!(options.context, PlaceUseContext::Ordinary) {
+            if matches!(options.context, PlaceUseContext::Ordinary)
+                || !self.types.declarations.tree.place_has_dereference(node)?
+            {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
@@ -377,7 +358,7 @@ impl<'unit> Checker<'_, 'unit> {
         })
     }
 
-    /// [GRAM-5, REF-1] the complete written `place`, with every `deref` step
+    /// [GRAM-5, REF-1] the complete written `place`, with every `^` step
     /// already replaced by the path the reference it names names.
     pub(super) fn elaborate_value_place(
         &mut self,
@@ -386,66 +367,69 @@ impl<'unit> Checker<'_, 'unit> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<ElaboratedPlace, CheckStop> {
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        self.elaborate_place_prefix(
+            check_context,
+            carrier,
+            node,
+            &suffixes,
+            bindings,
+            LexicalUseRole::PlaceBase,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn elaborate_place_prefix(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        carrier: NodeId,
+        node: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<ElaboratedPlace, CheckStop> {
         let pbase = self
             .types
             .declarations
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let place = if self
-            .types
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
-        {
-            let inner = self
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+            return self
                 .types
                 .declarations
-                .tree
-                .dereferenced_place(pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let inner = self.elaborate_value_place(check_context, carrier, inner, bindings)?;
-            self.resolve_explicit_dereference(carrier, pbase, inner, bindings)?
-        } else {
-            if !self.types.declarations.tree.children(pbase)?.is_empty() {
-                return self
-                    .types
-                    .declarations
-                    .unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
-            }
-            let usage =
-                self.types
-                    .declarations
-                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
-            let ResolvedTarget::Source {
-                declaration,
-                class: DeclarationClass::Value,
-            } = usage.target()
-            else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            let local = bindings
-                .get(&declaration)
-                .cloned()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if !local.live {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Own1,
-                    node,
-                    SemanticIssueKind::UseAfterMove {
-                        mechanical_fix: "introduce a new `let` binding before reuse",
-                    },
-                );
-            }
-            self.local_place(carrier, &local)?
-        };
-        let suffixes = self
+                .unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
+        }
+        let usage = self
             .types
             .declarations
-            .tree
-            .children_with(node, Production::Psuffix)?;
-        self.elaborate_place_members(check_context, carrier, &suffixes, place)
+            .use_at(check_context, pbase, root_role)?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = usage.target()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let local = bindings
+            .get(&declaration)
+            .cloned()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if !local.live {
+            return self.types.declarations.issue_node(
+                SemanticRule::Own1,
+                node,
+                SemanticIssueKind::UseAfterMove {
+                    mechanical_fix: "introduce a new `let` binding before reuse",
+                },
+            );
+        }
+        let place = self.local_place(carrier, &local)?;
+        self.elaborate_place_members(check_context, carrier, suffixes, place, bindings)
     }
 
     fn local_place(
@@ -475,9 +459,10 @@ impl<'unit> Checker<'_, 'unit> {
         carrier: NodeId,
         suffixes: &[NodeId],
         local: &LocalBinding,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<ElaboratedPlace, CheckStop> {
         let place = self.local_place(carrier, local)?;
-        self.elaborate_place_members(check_context, carrier, suffixes, place)
+        self.elaborate_place_members(check_context, carrier, suffixes, place, bindings)
     }
 
     fn elaborate_place_members(
@@ -486,8 +471,16 @@ impl<'unit> Checker<'_, 'unit> {
         carrier: NodeId,
         suffixes: &[NodeId],
         mut place: ElaboratedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<ElaboratedPlace, CheckStop> {
         for &suffix in suffixes {
+            if matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+                place = self.resolve_explicit_dereference(carrier, suffix, place, bindings)?;
+                continue;
+            }
             // [OP-15] a measure is read as a member of the measured place,
             // and [MSR-1] gives it no storage below itself, so it ends the
             // written path. [TYPE-10] refuses a write of one and a read of a
@@ -523,14 +516,14 @@ impl<'unit> Checker<'_, 'unit> {
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, suffix);
             }
             // [TYPE-7] a reference binding used where a value of its referent
-            // type is expected needs `deref(.)`; a suffix on one is exactly
+            // type is expected needs `p^`; a suffix on one is exactly
             // that use.
             if place.mode.is_reference() {
                 return self.types.declarations.issue_node(
                     SemanticRule::Type7,
                     suffix,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `deref(p)`",
+                        mechanical_fix: "write `p^`",
                     },
                 );
             }
@@ -630,10 +623,10 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(place)
     }
 
-    /// [TYPE-7] `deref(place)` denotes the referent of a reference, and
+    /// [TYPE-7] `place^` denotes the referent of a reference, and
     /// nothing else.
     ///
-    /// [REF-1] resolving a place whose `deref` step names a reference
+    /// [REF-1] resolving a place whose `^` step names a reference
     /// variable replaces that step with the path that reference names, so the
     /// resolved place below this step is rooted wherever that path is rooted.
     pub(super) fn resolve_explicit_dereference(
@@ -646,7 +639,8 @@ impl<'unit> Checker<'_, 'unit> {
         if !inner.mode.is_reference() {
             return self.types.declarations.issue_node(
                 SemanticRule::Type7,
-                pbase,
+                self.types.declarations.tree.parent(pbase)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
                 SemanticIssueKind::MissingDereference {
                     mechanical_fix:
                         "a Box's content is its field inner [TYPE-9]; an owned place is named \
@@ -733,6 +727,23 @@ impl<'unit> TypeContext<'unit> {
         suffix: NodeId,
         ty: CheckedType,
     ) -> Result<PlaceMember, CheckStop> {
+        // [TYPE-8] stored fields and elements are values, never references.
+        // A caret encountered after selecting one therefore violates TYPE-7.
+        if matches!(
+            self.declarations.tree.place_suffix(suffix)?,
+            crate::syntax::views::PlaceSuffix::Dereference
+        ) {
+            return self.declarations.issue_node(
+                SemanticRule::Type7,
+                self.declarations
+                    .tree
+                    .parent(suffix)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
+                SemanticIssueKind::MissingDereference {
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                },
+            );
+        }
         if self.declarations.tree.subscript_offset(suffix)?.is_some() {
             return self
                 .declarations
@@ -1302,7 +1313,7 @@ impl<'unit> TypeContext<'unit> {
     /// expression that names the same storage at this point of the body.
     ///
     /// A reference parameter roots every path that goes through it, and the
-    /// storage it names is written under `deref` [REF-1, TYPE-7]; a local
+    /// storage it names is written under `^` [REF-1, TYPE-7]; a local
     /// reference never roots a resolved place, because resolution replaced it
     /// by the path it names. A `Box` content step is the field `inner`
     /// [TYPE-9] and a payload step names its variant and field [FORM-2]. An
@@ -1328,7 +1339,7 @@ impl<'unit> TypeContext<'unit> {
                         let name = self.declarations.declaration_spelling(local.declaration)?;
                         range = local.mode == CheckedMode::Range;
                         if local.mode.is_reference() {
-                            (format!("deref({name})"), Some(local.ty))
+                            (format!("{name}^"), Some(local.ty))
                         } else {
                             (name, Some(local.ty))
                         }
@@ -1376,7 +1387,7 @@ impl<'unit> TypeContext<'unit> {
                         ty = Some(referent);
                     }
                     _ => {
-                        rendered = format!("deref({rendered})");
+                        rendered = format!("{rendered}^");
                         ty = None;
                     }
                 },

@@ -1,22 +1,22 @@
 fn store_dynamic_length(literal_lengths: &[u8], distance_lengths: &[u8], literal_count: u64, position: u64, value: u8) -> result: Result<unit, InflateError> writes(literal_lengths), writes(distance_lengths) contract {
-  define literal_room = deref(literal_lengths).len;
+  define literal_room = literal_lengths^.len;
   define enough_literals = literal_count <= literal_room;
   requires enough_literals;
 } {
   doc "The two length runs are two range references over two distinct windows, so the call site proves the substituted write paths disjoint by their different roots [EFF-5, OWN-7].";
   let is_literal = position < literal_count;
   if is_literal {
-    set deref(literal_lengths)[position] = value;
+    set literal_lengths^[position] = value;
   } else {
     let distance_index = position -wrap literal_count;
-    let distance_room = deref(distance_lengths).len;
+    let distance_room = distance_lengths^.len;
     let distance_ok = distance_index < distance_room;
     if distance_ok {
     } else {
       let error = InflateError::InvalidHuffmanTree();
       return Err<unit, InflateError>(error: error);
     }
-    set deref(distance_lengths)[distance_index] = value;
+    set distance_lengths^[distance_index] = value;
   }
   return Ok<unit, InflateError>(value: unit);
 }
@@ -36,7 +36,7 @@ fn ordered_code_symbol(index: u64) -> result: Result<u64, InflateError> pure {
 
 fn read_dynamic_code_lengths(state: &InflateState, input: &[u8], code_lengths: &[u8], code_count: u64) -> result: Result<unit, InflateError> reads(input), writes(state.input_offset), writes(state.hold), writes(state.bits), writes(code_lengths) contract {
   define code_count_fits = code_count <= 19_u64;
-  define code_room = deref(code_lengths).len;
+  define code_room = code_lengths^.len;
   define order_fits = 19_u64 <= code_room;
   requires code_count_fits;
   requires order_fits;
@@ -66,10 +66,10 @@ fn read_dynamic_code_lengths(state: &InflateState, input: &[u8], code_lengths: &
         }
       }
       let length = cvt::<u64, u8>(length_bits);
-      let code_room = deref(code_lengths).len;
+      let code_room = code_lengths^.len;
       let ordered_ok = ordered_symbol < code_room;
       if ordered_ok {
-        set deref(code_lengths)[ordered_symbol] = length;
+        set code_lengths^[ordered_symbol] = length;
       } else {
         let error = InflateError::InvalidHuffmanTree();
         return Err<unit, InflateError>(error: error);
@@ -257,9 +257,9 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
       }
     }
   }
-  let end_room = deref(literal_window).len;
+  let end_room = literal_window^.len;
   let end_ok = 256_u64 < end_room;
-  let end_length = deref(literal_window)[256_u64];
+  let end_length = literal_window^[256_u64];
   let missing_end = end_length == 0_u8;
   if missing_end {
     let error = InflateError::InvalidHuffmanTree();

@@ -12,7 +12,7 @@ alias exit_status = std::process::exit_status;
 alias open_directory_source = std::fs::open_directory_source;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -77,7 +77,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();

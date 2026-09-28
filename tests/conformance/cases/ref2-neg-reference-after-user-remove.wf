@@ -3,7 +3,7 @@ alias exit_status = std::process::exit_status;
 
 fn remove_first(window: &Slots<u64, 4>) -> result: u64 writes(window.filled), writes(window.len) {
   doc "Removes the first element when there is one. Its row writes window.filled, so a call may lower window.len as remove_at does.";
-  if 0_u64 < deref(window).len {
+  if 0_u64 < window^.len {
     let taken = remove_at(window: window, index: 0_u64);
     return taken;
   }
@@ -17,7 +17,7 @@ fn main() -> status: ExitStatus pure {
   if w.len == 1_u64 {
     let e = &w[0_u64];
     let got = remove_first(window: &w);
-    let seen = deref(e);
+    let seen = e^;
     return exit_status(code: 0_u8);
   }
   return exit_status(code: 0_u8);

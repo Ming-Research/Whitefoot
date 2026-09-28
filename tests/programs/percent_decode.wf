@@ -4,12 +4,12 @@ alias exit_status = std::process::exit_status;
 const percent_input: Array<u8, 11> =[65_u8, 37_u8, 52_u8, 50_u8, 37_u8, 52_u8, 97_u8, 37_u8, 122_u8, 122_u8, 37_u8];
 
 fn decode(out: &[u8], src: &[u8]) -> result: u64 reads(src), writes(out) contract {
-  define output_length = deref(out).len;
-  define source_length = deref(src).len;
+  define output_length = out^.len;
+  define source_length = src^.len;
   define sufficient = output_length >= source_length;
   requires sufficient;
 } {
-  let source_length = deref(src).len;
+  let source_length = src^.len;
   let consumed_until = 0_u64;
   let output_index = 0_u64;
   for (
@@ -19,7 +19,7 @@ fn decode(out: &[u8], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
     let already_consumed = input_index < consumed_until;
     if already_consumed {
     } else {
-      let byte = deref(src)[input_index];
+      let byte = src^[input_index];
       let is_percent = byte == 37_u8;
       let next_index = input_index +wrap 1_u64;
       let last_index = input_index +wrap 2_u64;
@@ -28,8 +28,8 @@ fn decode(out: &[u8], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
       let has_pair = band(high_in_source, low_in_source);
       let candidate = band(is_percent, has_pair);
       if candidate {
-        let high_byte = deref(src)[next_index];
-        let low_byte = deref(src)[last_index];
+        let high_byte = src^[next_index];
+        let low_byte = src^[last_index];
         let high_decimal_low = high_byte >= 48_u8;
         let high_decimal_high = high_byte <= 57_u8;
         let high_decimal = band(high_decimal_low, high_decimal_high);
@@ -86,16 +86,16 @@ fn decode(out: &[u8], src: &[u8]) -> result: u64 reads(src), writes(out) contrac
           }
           let shifted = high *wrap 16_u8;
           let decoded = shifted +wrap low;
-          set deref(out)[output_index] = decoded;
+          set out^[output_index] = decoded;
           set consumed_until = last_index + 1_u64;
           set output_index = output_index + 1_u64;
         } else {
-          set deref(out)[output_index] = byte;
+          set out^[output_index] = byte;
           set consumed_until = input_index + 1_u64;
           set output_index = output_index + 1_u64;
         }
       } else {
-        set deref(out)[output_index] = byte;
+        set out^[output_index] = byte;
         set consumed_until = input_index + 1_u64;
         set output_index = output_index + 1_u64;
       }
@@ -115,8 +115,8 @@ fn main() -> status: ExitStatus pure {
   }
   let input = &percent_input[0_u64..11_u64];
   let window = &output[0_u64..11_u64];
-  let window_length = deref(window).len;
-  let input_length = deref(input).len;
+  let window_length = window^.len;
+  let input_length = input^.len;
   if window_length >= input_length {
   } else {
     return exit_status(code: 2_u8);

@@ -4,11 +4,11 @@ alias exit_status = std::process::exit_status;
 alias kinds = pkg::kinds;
 
 fn clobber(v: &[Entry], at: u64) -> result: unit writes(v) contract {
-  requires at < deref(v).len;
+  requires at < v^.len;
 } {
   doc "Replaces one element of the range with a wide one.";
   let wide = kinds::make_entry(width: 8_u64, weight: 1_u64);
-  set deref(v)[at] = wide;
+  set v^[at] = wide;
   return unit;
 }
 

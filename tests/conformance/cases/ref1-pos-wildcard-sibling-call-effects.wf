@@ -7,17 +7,17 @@ struct Node {
 }
 
 fn read_and_clear(node: &Node) -> result: u64 reads(node.value), writes(node.next) {
-  let observed = deref(node).value;
-  set deref(node).next = None<Box<Node>>();
+  let observed = node^.value;
+  set node^.next = None<Box<Node>>();
   return observed;
 }
 
 fn inspect(root: &Node) -> result: u64 writes(root) {
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;

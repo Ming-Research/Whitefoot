@@ -30,8 +30,8 @@ fn vector_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn vector_word_accept(env: &VectorDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).value *wrap 131_u64;
-  set deref(env).value = prefix +wrap value;
+  let prefix = env^.value *wrap 131_u64;
+  set env^.value = prefix +wrap value;
   return unit;
 }
 
@@ -46,8 +46,8 @@ fn vector_record_make(seed: u64) -> value: VectorRecord pure {
 fn vector_record_accept(env: &VectorDigest, value: VectorRecord) -> result: unit writes(env) {
   for (index in 0_u64..32_u64) {
     let word = value.words[index];
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap word;
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap word;
   }
   return unit;
 }
@@ -64,13 +64,13 @@ binding RecordElement : VectorElement<VectorRecord> {
 
 fn vector_library_work<interface VectorElement<T>>(values: &GrowVector<T, 8193>, count: u64, seed: u64, digest: &VectorDigest) -> result: unit writes(values.storage), writes(digest) contract {
   requires count <= 8192_u64;
-  requires deref(values).storage.inner.len <= 0_u64;
-  ensures deref(values).storage.inner.len == 0_u64;
+  requires values^.storage.inner.len <= 0_u64;
+  ensures values^.storage.inner.len == 0_u64;
 } {
   for @fill (
     index in 0_u64..count,
-    invariant length_lo: deref(values).storage.inner.len >= index,
-    invariant length_hi: deref(values).storage.inner.len <= index
+    invariant length_lo: values^.storage.inner.len >= index,
+    invariant length_hi: values^.storage.inner.len <= index
   ) {
     let next = seed +wrap index;
     let value = VectorElement::make(seed: next);
@@ -86,7 +86,7 @@ fn vector_library_work<interface VectorElement<T>>(values: &GrowVector<T, 8193>,
     let first = grow_vector_swap_remove::<T, 8193>(values: values, index: 0_u64);
     VectorElement::accept(env: digest, value: move first);
   }
-  let remaining = deref(values).storage.inner.len;
+  let remaining = values^.storage.inner.len;
   let retained = remaining / 2_u64;
   grow_vector_truncate::<T, VectorDigest, fn VectorElement::accept, 8193>(values: values, retained: retained, env: digest);
   grow_vector_drain::<T, VectorDigest, fn VectorElement::accept, 8193>(values: values, env: digest);
@@ -112,15 +112,15 @@ fn vector_library_round<interface VectorElement<T>>(count: u64, seed: u64, reser
 }
 
 fn vector_library_tail_work<interface VectorElement<T>>(values: &GrowVector<T, 8193>, retained: u64, removed: u64, seed: u64, digest: &VectorDigest) -> result: unit writes(values.storage), writes(digest) contract {
-  requires deref(values).storage.inner.len >= retained;
-  requires deref(values).storage.inner.len <= retained;
+  requires values^.storage.inner.len >= retained;
+  requires values^.storage.inner.len <= retained;
   requires retained + removed <= 8192_u64;
-  ensures deref(values).storage.inner.len == retained;
+  ensures values^.storage.inner.len == retained;
 } {
   for @suffix (
     index in 0_u64..removed,
-    invariant length_lo: deref(values).storage.inner.len >= retained + index,
-    invariant length_hi: deref(values).storage.inner.len <= retained + index
+    invariant length_lo: values^.storage.inner.len >= retained + index,
+    invariant length_hi: values^.storage.inner.len <= retained + index
   ) {
     let base = seed +wrap retained;
     let next = base +wrap index;

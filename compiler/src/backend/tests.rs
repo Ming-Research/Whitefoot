@@ -46,7 +46,7 @@ mod parallel;
 mod ranges;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
-// returning `&uniq 'r deref(target)`, the child chain through a `box<u64>`
+// returning `&uniq 'r target^`, the child chain through a `box<u64>`
 // field, and the test-only reborrow-extension checker entry
 // `emit_reborrow_extension` the last of them read. v0.60 has no permission
 // markers, no region parameters and no loan extension: [REF-1] makes a

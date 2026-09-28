@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn width_of<T>(blocks: &Slots<T, 4>) -> taken: Option<T> writes(blocks.last), writes(blocks.len) contract {
-  requires deref(blocks).len > 0_u64;
+  requires blocks^.len > 0_u64;
 } {
   doc "Takes one block off the back of a run of runs, generic over the element type [OP-10].";
   let one = take_back(window: blocks);
@@ -15,7 +15,7 @@ fn main() -> status: ExitStatus pure {
   let block = box_slots_new::<u8>(capacity: 16_u64);
   place_back(window: &blocks, value: move block);
   let taken = width_of::<Box<Slots<u8>>>(blocks: &blocks);
-  match taken {
+  match move taken {
     None() => {
       return exit_status(code: 1_u8);
     }

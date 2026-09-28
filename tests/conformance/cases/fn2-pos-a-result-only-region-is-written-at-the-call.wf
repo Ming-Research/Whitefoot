@@ -8,7 +8,7 @@ fn nothing<T>() -> made: Option<T> pure {
 
 fn absorb(spare: Option<Slots<u8, 4>>) -> width: u64 pure {
   doc "Reports the capacity of the run it was handed, or zero when there is none.";
-  match spare {
+  match move spare {
     None() => {
       return 0_u64;
     }

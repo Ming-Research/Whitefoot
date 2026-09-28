@@ -29,7 +29,7 @@ fn open<T, const n: u64>(values: Array<T, n>) -> result: Slots<T, n> pure contra
 
 fn lead_tag(values: &Array<Record, 3>) -> result: u64 reads(values) {
   doc "Reads one scalar field of the first element through a shared reference.";
-  return deref(values)[0_u64].tag;
+  return values^[0_u64].tag;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -7,7 +7,7 @@ interface Inspect<T> {
 
 fn shorter(values: &Array<u64, 4>) -> result: u64 reads(values) {
   doc "Parameter mode and exact type agree with the instantiated member, so the binding is admitted before any call exists.";
-  return deref(values)[0_u64];
+  return values^[0_u64];
 }
 
 binding Narrow : Inspect<Array<u64, 4>> {

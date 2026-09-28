@@ -13,9 +13,9 @@ enum Packet {
 
 fn inspect(packet: &Packet) -> result: i32 reads(packet) {
   doc "Matching through a reference binds the affine struct payload as a reference naming the scrutinee path extended by its payload step, so a field of it is read without consuming the enum.";
-  match deref(packet) {
+  match packet^ {
     Data(item: payload) => {
-      return deref(payload).left;
+      return payload^.left;
     }
     Empty() => {
       return 0_i32;

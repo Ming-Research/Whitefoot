@@ -614,7 +614,7 @@ impl<'unit> DeclarationInventory<'unit> {
     }
     /// The const generic one clause `atom` names directly [MSR-6], if any.
     ///
-    /// A const generic is one `pbase` with no `deref` wrapping and no
+    /// A const generic is one `pbase` with no `^` suffix and no
     /// suffix; every other place shape resolves through the ordinary walk.
     fn clause_const_generic_base(
         &self,
@@ -634,9 +634,6 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
             return Ok(None);
         };
-        if self.tree.place_base(pbase)?.is_dereference() {
-            return Ok(None);
-        }
         let usage = self.use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
         Ok(match usage.target() {
             ResolvedTarget::Source {
@@ -885,14 +882,10 @@ impl<'unit> DeclarationInventory<'unit> {
         entry: NodeId,
         place: NodeId,
     ) -> Result<(), CheckStop> {
-        let pbase = self
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         // [ENT-2] clause (b): a place formed with field selections,
-        // `deref` wrappings and at least one subscript whose final step
+        // `^` suffixes and at least one subscript whose final step
         // selects a readonly field is a term of the clause language,
-        // `deref(rows)[i].len` and `deref(nodes)[i].count` alike. A clause names no element value, so
+        // `rows^[i].len` and `nodes^[i].count` alike. A clause names no element value, so
         // a subscript that ends the place is this rule's refusal here; one
         // followed by a further step is judged against the selected field's
         // declaration once the place is typed [`validate_clause_checked_forms`].
@@ -901,13 +894,6 @@ impl<'unit> DeclarationInventory<'unit> {
             if self.tree.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
                 return self.invalid_clause(clause, entry);
             }
-        }
-        if self.tree.place_base(pbase)?.is_dereference() {
-            let nested = self
-                .tree
-                .dereferenced_place(pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            self.validate_clause_place(clause, entry, nested)?;
         }
         Ok(())
     }
@@ -934,7 +920,7 @@ impl<'unit> TypeContext<'unit> {
     /// [OP-15].
     ///
     /// A range referent carries its own row: [MSR-1] gives `&[T]` a row of
-    /// its own, and the referent type a `deref` of one selects is the
+    /// its own, and the referent type a `^` on one selects is the
     /// element type, so the row cannot be recovered from that type.
     fn clause_measure_row(
         &mut self,
@@ -1624,8 +1610,8 @@ impl<'unit> TypeContext<'unit> {
     /// datum of this type.
     ///
     /// [TYPE-9] gives a `Box` exactly one member, `inner`, and that member
-    /// is the box content itself, so the goal place below it is the same
-    /// dereference a `deref` former used to write. Every other member is the
+    /// is the box content itself, represented by a `GoalProjection::Deref`
+    /// step in the goal place. Every other member is the
     /// ordinary struct field step and is judged by the ordinary walk.
     ///
     /// `range_referent` says the datum is the run a range reference names,
@@ -1644,7 +1630,7 @@ impl<'unit> TypeContext<'unit> {
         for suffix in suffixes {
             let range_step = std::mem::replace(&mut range_referent, false);
             // [ENT-2] clause (b) forms a place with field selections,
-            // `deref` wrappings and subscripts, which is what makes
+            // `^` suffixes and subscripts, which is what makes
             // `table[i].len` and `nodes[i].count` terms. A clause reads that place exactly as the
             // body does, so a subscript written here is one projection and not
             // a composite value this version cannot represent.
@@ -1859,10 +1845,9 @@ impl<'unit> TypeContext<'unit> {
     /// Mirrors the already-completed TYPE-7 dereference type walk while
     /// retaining only predicate identity.
     ///
-    /// [TYPE-7] `deref` denotes the referent of a reference and nothing else:
+    /// [TYPE-7] `^` denotes the referent of a reference and nothing else:
     /// a `Box`'s content is its field `inner` and is reached by the ordinary
-    /// field step [TYPE-9], so the only nested place this step admits is a
-    /// reference. The written step is retained as one projection of the
+    /// field step [TYPE-9], so only a reference admits the caret step. The written step is retained as one projection of the
     /// declaration-boundary template because a caller substitutes the
     /// actual's own path for the formal and consumes exactly that leading
     /// projection [FN-8, CALL-6]; the callee body, where [REF-1] makes the
@@ -1879,33 +1864,7 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let (mut expression, holder_pending, mut range_referent) = if self
-            .declarations
-            .tree
-            .place_base(pbase)?
-            .is_dereference()
-        {
-            let nested = self
-                .declarations
-                .tree
-                .dereferenced_place(pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let (nested, nested_holder_pending, nested_range) =
-                self.build_clause_place_inner(check_context, nested, bindings, expanded_bindings)?;
-            if !nested_holder_pending {
-                // [TYPE-7] an owned place is named as itself; only a
-                // reference has a referent this step can name.
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            }
-            let ty = nested.ty();
-            (
-                nested
-                    .with_projection(GoalProjection::Deref, ty)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                false,
-                nested_range,
-            )
-        } else {
+        let (mut expression, mut holder_pending, mut range_referent) = {
             let usage =
                 self.declarations
                     .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
@@ -1962,14 +1921,31 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .tree
             .children_with(place, Production::Psuffix)?;
+        let suffixes = if let Some(&first) = suffixes.first()
+            && matches!(
+                self.declarations.tree.place_suffix(first)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+            if !holder_pending {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+            let ty = expression.ty();
+            expression = expression
+                .with_projection(GoalProjection::Deref, ty)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            holder_pending = false;
+            &suffixes[1..]
+        } else {
+            suffixes.as_slice()
+        };
         // [OP-15] a measure is read as a member of the measured place and
         // [MSR-1] gives it no storage below itself, so it is the last written
         // suffix and everything before it is the ordinary field path.
-        let measure = self.declarations.trailing_measure_member(&suffixes)?;
+        let measure = self.declarations.trailing_measure_member(suffixes)?;
         let fields_only = if measure.is_some() {
             &suffixes[..suffixes.len() - 1]
         } else {
-            suffixes.as_slice()
+            suffixes
         };
         if holder_pending && !fields_only.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());

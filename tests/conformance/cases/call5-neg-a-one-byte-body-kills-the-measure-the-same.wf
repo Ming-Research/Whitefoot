@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn nibble(run: &Slots<u8, 64>) -> result: unit writes(run) contract {
-  requires deref(run).len < deref(run).cap;
+  requires run^.len < run^.cap;
 } {
   doc "Places one byte and no more, so the amount its body moves the boundary by is not a fact of the signature.";
   place_back(window: run, value: 0_u8);
@@ -10,7 +10,7 @@ fn nibble(run: &Slots<u8, 64>) -> result: unit writes(run) contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "No transport reads the callee's body. This callee moves the boundary by one byte and the caller's whole length fact nevertheless dies: the declared row is a whole-state write of a reference parameter, and a projected write through a parameter that is not a range reference reaches the ordinary descriptor storage. A body that places one byte and a body that places two are the same declaration to every reader of the signature, so both reach the same undischarged requires deref(window).len > 0_u64.";
+  doc "No transport reads the callee's body. This callee moves the boundary by one byte and the caller's whole length fact nevertheless dies: the declared row is a whole-state write of a reference parameter, and a projected write through a parameter that is not a range reference reaches the ordinary descriptor storage. A body that places one byte and a body that places two are the same declaration to every reader of the signature, so both reach the same undischarged requires window^.len > 0_u64.";
   let workspace = slots_new::<u8, 64>();
   let taken = nibble(run: &workspace);
   let extra = take_back(window: &workspace);

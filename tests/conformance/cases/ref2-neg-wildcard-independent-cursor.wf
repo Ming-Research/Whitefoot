@@ -10,9 +10,9 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
   doc "An independent cursor write may destroy a previously saved target in the same subtree.";
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
@@ -21,17 +21,17 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
   }
   let saved = cursor;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
       }
     }
   }
-  set deref(cursor).next = None<Box<Node>>();
-  return deref(saved).value;
+  set cursor^.next = None<Box<Node>>();
+  return saved^.value;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -7,7 +7,7 @@ enum Packet {
 
 fn inspect(holder: &Packet) -> return_value: unit reads(holder) {
   doc "A move requires a place rooted in a live own-mode binding, so it cannot steal the referent a reference names; a bare match through the reference leaves the scrutinee live and binds the payload as a reference [OWN-13].";
-  match move deref(holder) {
+  match move holder^ {
     Data(value: payload) => {
       let saved = payload;
     }

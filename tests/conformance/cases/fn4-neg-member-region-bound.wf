@@ -7,7 +7,7 @@ interface Inspect<T> {
 
 fn shorter(values: &Array<u64, 4>) -> result: u64 reads(values) {
   doc "The instantiated member takes a reference to an eight-slot array; this actual takes a four-slot one.";
-  return deref(values)[0_u64];
+  return values^[0_u64];
 }
 
 binding Narrow : Inspect<Array<u64, 8>> {

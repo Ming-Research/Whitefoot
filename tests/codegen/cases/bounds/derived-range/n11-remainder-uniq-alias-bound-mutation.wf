@@ -4,7 +4,7 @@ fn probe(src: buffer<u8>) -> result: u64 pure {
   let sum = 0_u64;
   region {
     let p = &uniq n;
-    set deref(p) = 3_u64;
+    set p^ = 3_u64;
   }
   loop @triples {
     let rem = n -wrap i;

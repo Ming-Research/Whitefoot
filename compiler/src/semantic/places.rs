@@ -2,7 +2,7 @@
 //!
 //! A resolved place is a root — a local variable, a parameter, or a named
 //! const [CONST-2] — and the ordered steps below it: field selections,
-//! `deref` of `Box` content [TYPE-7], enum payload steps, index steps, range
+//! `Box.inner` selection [TYPE-9], enum payload steps, index steps, range
 //! steps [REF-4], window parts [WIN-2] and measure reads [OP-15]. That is the
 //! one path type in the checker; a reference variable is not storage of its
 //! own, so resolving a place rooted at one replaces that root by the path the
@@ -317,8 +317,7 @@ pub(crate) enum PlaceStep {
     Descendant(DescendantTarget),
     /// One struct field selection, by source ordinal.
     Field(u32),
-    /// `deref` of `Box` content [TYPE-7]. It is an ordinary path step and is
-    /// not erased: `deref(h).value` and `deref(h.value)` are two paths.
+    /// `Box.inner` selection [TYPE-9]. Its position in the path is preserved.
     Deref,
     /// One enum payload step, available under the refinement fact that the
     /// enum currently holds this variant [REF-1, ENT-3.S15].
@@ -614,8 +613,8 @@ impl ResolvedPlace {
             .extend(fields.iter().copied().map(PlaceStep::Field));
     }
 
-    /// One place spelled as an optional leading `deref` [TYPE-7] followed by
-    /// field selections, which is the shape most checked place nodes carry.
+    /// One resolved place with an optional initial Box-content step [TYPE-9]
+    /// followed by field selections.
     pub(crate) fn spelled(root: PlaceRoot, deref: bool, fields: Vec<u32>) -> Self {
         let mut path = Vec::with_capacity(usize::from(deref) + fields.len());
         if deref {
@@ -1172,7 +1171,7 @@ pub(crate) enum NamingForm {
     /// A binding named whole: a reference names its referent, any other
     /// binding its own storage.
     Binding(BindingId),
-    /// `deref(r)`, a field projection or a Box-content take, reading the
+    /// `r^`, a field projection or a Box-content take, reading the
     /// storage it names.
     Read,
     /// A `borrow_expr` written at the expression, a range element's included

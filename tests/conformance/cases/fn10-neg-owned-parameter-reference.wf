@@ -1,4 +1,4 @@
 fn walk(owned: u64, value: &u64) -> result: u64 reads(value) {
-  let seen = deref(value);
+  let seen = value^;
   return musttail walk(owned: seen, value: &owned);
 }

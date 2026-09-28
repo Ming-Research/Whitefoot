@@ -24,8 +24,8 @@ fn escape_count(real: f64, imaginary: f64, limit: u64) -> result: u64 pure contr
 }
 
 fn render_points(real: &[f64], imaginary: &[f64], first: u64, end: u64, limit: u64) -> result: Box<Array<u64>> reads(real), reads(imaginary) contract {
-  define real_count = deref(real).len;
-  define imaginary_count = deref(imaginary).len;
+  define real_count = real^.len;
+  define imaginary_count = imaginary^.len;
   requires first <= end;
   requires end <= real_count;
   requires end <= imaginary_count;
@@ -37,7 +37,7 @@ fn render_points(real: &[f64], imaginary: &[f64], first: u64, end: u64, limit: u
   let output = box_array_filled::<u64>(count: count, value: 0_u64);
   for (target in 0_u64..count) {
     let point = first + target;
-    let value = escape_count(real: deref(real)[point], imaginary: deref(imaginary)[point], limit: limit);
+    let value = escape_count(real: real^[point], imaginary: imaginary^[point], limit: limit);
     set output.inner[target] = value;
   }
   return move output;

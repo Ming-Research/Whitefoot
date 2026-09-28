@@ -7,7 +7,7 @@ alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
 alias grow_vector_new = std::collections::vector::grow_vector_new;
 
 fn add(env: &u64, value: u64) -> result: unit writes(env) {
-  set deref(env) = deref(env) +wrap value;
+  set env^ = env^ +wrap value;
   return unit;
 }
 

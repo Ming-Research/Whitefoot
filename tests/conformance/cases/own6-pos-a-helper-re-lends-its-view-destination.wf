@@ -2,17 +2,17 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn inner(destination: &[u8], value: u8) -> written: u64 writes(destination) contract {
-  requires 2_u64 <= deref(destination).len;
+  requires 2_u64 <= destination^.len;
   ensures written == 2_u64;
 } {
   doc "Writes the first two element positions of the destination it was handed.";
-  set deref(destination)[0_u64] = value;
-  set deref(destination)[1_u64] = value;
+  set destination^[0_u64] = value;
+  set destination^[1_u64] = value;
   return 2_u64;
 }
 
 fn outer(destination: &[u8], value: u8) -> written: u64 writes(destination) contract {
-  requires 2_u64 <= deref(destination).len;
+  requires 2_u64 <= destination^.len;
   ensures written == 2_u64;
 } {
   doc "Passes its own destination on to a helper of the same parameter shape.";
@@ -27,7 +27,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &table, value: 3_u8);
   let window = &table[0_u64..2_u64];
   let count = outer(destination: window, value: 200_u8);
-  let seen = deref(window).len;
+  let seen = window^.len;
   if seen == 2_u64 {
   } else {
     return exit_status(code: 201_u8);

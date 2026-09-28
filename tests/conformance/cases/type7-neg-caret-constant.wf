@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const answer: i32 = 42_i32;
+
+fn main() -> status: ExitStatus pure {
+  let read = answer^;
+  return exit_status(code: 0_u8);
+}

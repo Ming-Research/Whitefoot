@@ -19,10 +19,10 @@ fn sign_of(x: i32) -> function_result: Sign pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "let-initializer match with give, a reference read through deref, named binders, a named user-fn call, and checked arithmetic.";
+  doc "let-initializer match with give, a reference read through postfix ^, named binders, a named user-fn call, and checked arithmetic.";
   let a = 40_i32;
   let p = &a;
-  let v = match deref(p) +checked 2_i32 {
+  let v = match p^ +checked 2_i32 {
     Ok(value: w) => {
       give w;
     }

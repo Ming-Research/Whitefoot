@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn take_wrong(free: &Slots<Box<Slots<u8>>, 2>) -> block: Box<Slots<u8>> writes(free.last), writes(free.len) contract {
-  requires deref(free).len > 0_u64;
-  ensures deref(free).len == deref(entry(free)).len;
+  requires free^.len > 0_u64;
+  ensures free^.len == entry(free)^.len;
 } {
   doc "Taking one element off the back moves the window boundary down by one [OP-10], so a postcondition claiming the length equals the entry length is refuted independently of the capacity or the derived cap - len value.";
   return take_back(window: free);

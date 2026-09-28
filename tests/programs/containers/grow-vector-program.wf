@@ -23,11 +23,11 @@ struct OwnedItem {
 
 fn sum_accept(env: &Sum, value: u64) -> result: unit writes(env) {
   doc "One drain member: folds each drained value into the caller's accumulator through the reference the row declares.";
-  let running = deref(env).total;
-  set deref(env).total = running +wrap value;
-  let prefix = deref(env).sequence *wrap 257_u64;
-  set deref(env).sequence = prefix +wrap value;
-  set deref(env).count = deref(env).count +wrap 1_u64;
+  let running = env^.total;
+  set env^.total = running +wrap value;
+  let prefix = env^.sequence *wrap 257_u64;
+  set env^.sequence = prefix +wrap value;
+  set env^.count = env^.count +wrap 1_u64;
   return unit;
 }
 

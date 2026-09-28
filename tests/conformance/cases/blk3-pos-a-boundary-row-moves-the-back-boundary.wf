@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push(window: &Slots<u8, 4>, value: u8) -> result: unit writes(window.next), writes(window.len) contract {
-  requires deref(window).len < deref(window).cap;
+  requires window^.len < window^.cap;
 } {
   doc "Places one value at the back boundary of a run, declaring exactly the two window parts place_back writes.";
   place_back(window: window, value: value);

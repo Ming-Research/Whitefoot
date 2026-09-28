@@ -4,13 +4,13 @@ alias exit_status = std::process::exit_status;
 alias kinds = pkg::kinds;
 
 fn row_sum(entries: &[Entry], cells: &[u8], i: u64) -> total: u64 reads(entries), reads(cells) contract {
-  requires i < deref(entries).len;
+  requires i < entries^.len;
 } {
   doc "Through a range reference the element's readonly field is the same clause (b) term, so its guard carries to the endpoint and the binder bound discharges the element read.";
   let acc = 0_u64;
-  if deref(entries)[i].width <= deref(cells).len {
-    for (c in 0_u64..deref(entries)[i].width) {
-      let cell = deref(cells)[c];
+  if entries^[i].width <= cells^.len {
+    for (c in 0_u64..entries^[i].width) {
+      let cell = cells^[c];
       let widened = cvt::<u8, u64>(cell);
       set acc = acc +wrap widened;
     }

@@ -81,7 +81,7 @@ fn counted_ranges_execute_exact_half_open_edges_without_a_hidden_trap() {
   let upper = 3_u64;
   for @captured (i in 0_u64..upper) {
     let held = &i;
-    let seen = deref(held);
+    let seen = held^;
     set total = total +wrap seen;
     set upper = 0_u64;
   }

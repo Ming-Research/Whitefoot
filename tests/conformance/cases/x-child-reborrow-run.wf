@@ -6,36 +6,36 @@ struct Counter {
 }
 
 fn write_byte(out: &[u8]) -> function_result: unit writes(out) contract {
-  define spare = deref(out).len;
+  define spare = out^.len;
   requires 0_u64 < spare;
 } {
   doc "Writes one element through the range reference it was handed.";
-  set deref(out)[0_u64] = 7_u8;
+  set out^[0_u64] = 7_u8;
   return unit;
 }
 
 fn proxy_byte(out: &[u8]) -> function_result: unit writes(out) contract {
-  define spare = deref(out).len;
+  define spare = out^.len;
   requires 1_u64 < spare;
 } {
   doc "Hands its own reference parameter onward to another callee and then writes through it again; a reference that is itself an argument is the thing being accessed and does not invalidate itself [EFF-5].";
   write_byte(out: out);
-  set deref(out)[1_u64] = 9_u8;
+  set out^[1_u64] = 9_u8;
   return unit;
 }
 
 fn bump_counter(counter: &Counter) -> function_result: unit writes(counter.value) {
   doc "Reads and writes one field through a reference parameter; writes subsumes reads for one path, so the pair is never written [EFF-1].";
-  let next = deref(counter).value +wrap 1_u64;
-  set deref(counter).value = next;
+  let next = counter^.value +wrap 1_u64;
+  set counter^.value = next;
   return unit;
 }
 
 fn proxy_counter(counter: &Counter) -> function_result: unit writes(counter.value) {
   doc "Passes its reference parameter onward and writes the same field again afterward.";
   bump_counter(counter: counter);
-  let next = deref(counter).value +wrap 1_u64;
-  set deref(counter).value = next;
+  let next = counter^.value +wrap 1_u64;
+  set counter^.value = next;
   return unit;
 }
 

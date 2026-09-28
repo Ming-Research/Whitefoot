@@ -5,10 +5,10 @@ fn clear(part: &[u64]) -> result: unit writes(part) {
   doc "Writes 9 to every element of the range part names.";
   let i = 0_u64;
   loop {
-    if deref(part).len <= i {
+    if part^.len <= i {
       break;
     }
-    set deref(part)[i] = 9_u64;
+    set part^[i] = 9_u64;
     set i = i +wrap 1_u64;
   }
   return unit;
@@ -16,10 +16,10 @@ fn clear(part: &[u64]) -> result: unit writes(part) {
 
 fn write_run(window: &Slots<u64, 4>, lo: u64, hi: u64) -> result: unit writes(window[lo..hi]) contract {
   requires lo <= hi;
-  requires hi <= deref(window).len;
+  requires hi <= window^.len;
 } {
   doc "Clears the run from lo to hi on every iteration of a loop that writes lo.";
-  let part = &deref(window)[lo..hi];
+  let part = &window^[lo..hi];
   let n = 0_u64;
   loop {
     clear(part: part);
@@ -39,7 +39,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &r, value: 2_u64);
   let p = &r[0_u64];
   write_run(window: &r, lo: 1_u64, hi: 2_u64);
-  let seen = deref(p);
+  let seen = p^;
   if seen == 1_u64 {
     return exit_status(code: 0_u8);
   }

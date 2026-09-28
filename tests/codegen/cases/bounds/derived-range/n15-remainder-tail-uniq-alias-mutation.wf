@@ -12,7 +12,7 @@ fn probe(src: buffer<u8>) -> result: u64 pure {
   let tail = n -wrap i;
   region {
     let p = &uniq tail;
-    set deref(p) = 2_u64;
+    set p^ = 2_u64;
   }
   if tail == 2_u64 {
     let i1 = i +wrap 1_u64;

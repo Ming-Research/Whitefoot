@@ -5,7 +5,7 @@ fn probe(x: u32) -> result: u8 pure {
   let slot = cvt::<u32, u64>(masked);
   region {
     let p = &uniq slot;
-    set deref(p) = 8_u64;
+    set p^ = 8_u64;
   }
   return table[slot];
 }

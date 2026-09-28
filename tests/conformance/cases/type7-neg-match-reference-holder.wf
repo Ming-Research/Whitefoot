@@ -7,7 +7,7 @@ enum State {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Matching through a reference is the canonical borrowed match [OWN-13], but a reference variable denotes the reference [REF-1] and its referent is reached only through deref, so the bare reference scrutinee is the missing dereference [TYPE-7]; the fix is match deref(holder).";
+  doc "Matching through a reference is the canonical borrowed match [OWN-13], but a reference variable denotes the reference [REF-1] and its referent is reached only through postfix ^, so the bare reference scrutinee is the missing dereference [TYPE-7]; the fix is match holder^.";
   let state = State::Ready();
   let holder = &state;
   match holder {

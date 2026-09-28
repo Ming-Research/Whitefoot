@@ -20,6 +20,6 @@ fn main() -> status: ExitStatus pure {
   let rows = slots_into_array::<Row, 4>(values: move slots);
   let saved = &rows[0_u64].left;
   set rows[0_u64].right = 9_u64;
-  let observed = deref(saved);
+  let observed = saved^;
   return exit_status(code: 0_u8);
 }

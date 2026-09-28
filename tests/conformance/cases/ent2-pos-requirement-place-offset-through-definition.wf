@@ -3,11 +3,11 @@ alias exit_status = std::process::exit_status;
 
 fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
   define row = i;
-  requires i < deref(rows).len;
-  requires k < deref(rows)[row].len;
+  requires i < rows^.len;
+  requires k < rows^[row].len;
 } {
-  doc "The place's offset is a definition. Definitions are erased by expansion, so the place is deref(rows)[i] and the earlier requirement discharges its subscript; the body reads the element both requirements bound.";
-  return deref(rows)[i][k];
+  doc "The place's offset is a definition. Definitions are erased by expansion, so the place is rows^[i] and the earlier requirement discharges its subscript; the body reads the element both requirements bound.";
+  return rows^[i][k];
 }
 
 fn main() -> status: ExitStatus pure {

@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fold_pair(left: &[u64], right: &[u64], length: u64) -> total: u64 reads(left), reads(right) contract {
-  define left_length = deref(left).len;
-  define right_length = deref(right).len;
+  define left_length = left^.len;
+  define right_length = right^.len;
   requires length <= left_length;
   requires length <= right_length;
 } {
@@ -13,8 +13,8 @@ fn fold_pair(left: &[u64], right: &[u64], length: u64) -> total: u64 reads(left)
     i in 0_u64..length,
     invariant bounded: i <= length
   ) {
-    let l = deref(left)[i];
-    let r = deref(right)[i];
+    let l = left^[i];
+    let r = right^[i];
     set acc = acc +wrap l;
     set acc = acc +wrap r;
   }

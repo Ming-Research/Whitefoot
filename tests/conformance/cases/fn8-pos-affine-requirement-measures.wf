@@ -2,19 +2,19 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill(first: &[u64], second: &[u64], output: &[u64]) -> result: u64 reads(first.len), reads(second.len), writes(output) contract {
-  requires deref(first).len <= 16_u64;
-  requires deref(second).len <= 16_u64;
-  requires deref(first).len + deref(second).len <= deref(output).len;
+  requires first^.len <= 16_u64;
+  requires second^.len <= 16_u64;
+  requires first^.len + second^.len <= output^.len;
 } {
   doc "Two length observations are read as place forms rather than calls [OP-15], so the affine requirement constrains their images directly; their sum bounds the one write into the caller-provided output. The whole-output write subsumes its descriptor read [EFF-1], while the two input measure reads remain explicit.";
-  let a = deref(first).len;
-  let b = deref(second).len;
-  let capacity = deref(output).len;
+  let a = first^.len;
+  let b = second^.len;
+  let capacity = output^.len;
   let total = a + b;
   invariant fits: total <= capacity;
   if total > 0_u64 {
     let last = total - 1_u64;
-    set deref(output)[last] = 7_u64;
+    set output^[last] = 7_u64;
   }
   return total;
 }

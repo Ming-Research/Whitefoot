@@ -39,23 +39,23 @@ fn priority_cost_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn priority_cost_word_accept(env: &PriorityCostDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).value *wrap 131_u64;
-  set deref(env).value = prefix +wrap value;
+  let prefix = env^.value *wrap 131_u64;
+  set env^.value = prefix +wrap value;
   return unit;
 }
 
 fn priority_cost_word_compare(env: &PriorityCostOrder, left: &u64, right: &u64) -> order: i32 reads(left), reads(right) {
-  if deref(left) < deref(right) {
+  if left^ < right^ {
     return -1_i32;
   }
-  if deref(left) > deref(right) {
+  if left^ > right^ {
     return 1_i32;
   }
   return 0_i32;
 }
 
 fn priority_cost_word_observe(env: &PriorityCostDigest, value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn priority_cost_record_make(seed: u64) -> value: PriorityCostRecord pure {
@@ -70,24 +70,24 @@ fn priority_cost_record_accept(env: &PriorityCostDigest, value: PriorityCostReco
   let PriorityCostRecord(words: words) = move value;
   for (index in 0_u64..32_u64) {
     let word = words[index];
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap word;
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap word;
   }
   return unit;
 }
 
 fn priority_cost_record_compare(env: &PriorityCostOrder, left: &PriorityCostRecord, right: &PriorityCostRecord) -> order: i32 reads(left), reads(right) {
-  if deref(left).words[0_u64] < deref(right).words[0_u64] {
+  if left^.words[0_u64] < right^.words[0_u64] {
     return -1_i32;
   }
-  if deref(left).words[0_u64] > deref(right).words[0_u64] {
+  if left^.words[0_u64] > right^.words[0_u64] {
     return 1_i32;
   }
   return 0_i32;
 }
 
 fn priority_cost_record_observe(env: &PriorityCostDigest, value: &PriorityCostRecord) -> result: u64 reads(value) {
-  return deref(value).words[0_u64];
+  return value^.words[0_u64];
 }
 
 binding PriorityCostWord : PriorityCostElement<u64> {

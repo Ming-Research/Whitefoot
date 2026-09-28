@@ -44,16 +44,16 @@ fn ordered_cost_mix(value: u64) -> result: u64 pure {
 }
 
 fn ordered_cost_ordered(env: &OrderedCostDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).ordered *wrap 131_u64;
-  set deref(env).ordered = prefix +wrap value;
+  let prefix = env^.ordered *wrap 131_u64;
+  set env^.ordered = prefix +wrap value;
   return unit;
 }
 
 fn ordered_cost_consumed(env: &OrderedCostDigest, value: u64) -> result: unit writes(env) {
-  set deref(env).sum = deref(env).sum +wrap value;
+  set env^.sum = env^.sum +wrap value;
   let mixed = ordered_cost_mix(value: value);
-  set deref(env).parity = ixor(deref(env).parity, mixed);
-  set deref(env).consumed = deref(env).consumed +wrap 1_u64;
+  set env^.parity = ixor(env^.parity, mixed);
+  set env^.consumed = env^.consumed +wrap 1_u64;
   return unit;
 }
 
@@ -67,10 +67,10 @@ fn ordered_cost_finish(digest: OrderedCostDigest) -> result: u64 pure {
 }
 
 fn ordered_cost_compare(env: &unit, left: &u64, right: &u64) -> result: i32 reads(left), reads(right) {
-  if deref(left) < deref(right) {
+  if left^ < right^ {
     return -7_i32;
   }
-  if deref(left) > deref(right) {
+  if left^ > right^ {
     return 9_i32;
   }
   return 0_i32;
@@ -85,8 +85,8 @@ fn ordered_cost_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn ordered_cost_word_content(key: &u64, value: &u64) -> result: u64 reads(key), reads(value) {
-  let prefix = deref(key) *wrap 131_u64;
-  return prefix +wrap deref(value);
+  let prefix = key^ *wrap 131_u64;
+  return prefix +wrap value^;
 }
 
 fn ordered_cost_word_observe(env: &OrderedCostDigest, key: &u64, value: &u64) -> result: u64 reads(key), reads(value), writes(env) {
@@ -102,7 +102,7 @@ fn ordered_cost_word_visit(env: &OrderedCostDigest, key: &u64, value: &u64) -> r
 }
 
 fn ordered_cost_word_edit(env: &OrderedCostDigest, key: &u64, value: &u64) -> result: u64 reads(key), writes(value), writes(env) {
-  set deref(value) = deref(value) +wrap 1_u64;
+  set value^ = value^ +wrap 1_u64;
   let content = ordered_cost_word_content(key: key, value: value);
   ordered_cost_ordered(env: env, value: content);
   return content;
@@ -123,10 +123,10 @@ fn ordered_cost_record_make(seed: u64) -> value: OrderedCostRecord pure {
 }
 
 fn ordered_cost_record_content(key: &u64, value: &OrderedCostRecord) -> result: u64 reads(key), reads(value) {
-  let content = deref(key);
+  let content = key^;
   for (index in 0_u64..32_u64) {
     let prefix = content *wrap 131_u64;
-    set content = prefix +wrap deref(value).words[index];
+    set content = prefix +wrap value^.words[index];
   }
   return content;
 }
@@ -145,7 +145,7 @@ fn ordered_cost_record_visit(env: &OrderedCostDigest, key: &u64, value: &Ordered
 
 fn ordered_cost_record_edit(env: &OrderedCostDigest, key: &u64, value: &OrderedCostRecord) -> result: u64 reads(key), writes(value), writes(env) {
   for (index in 0_u64..32_u64) {
-    set deref(value).words[index] = deref(value).words[index] +wrap 1_u64;
+    set value^.words[index] = value^.words[index] +wrap 1_u64;
   }
   let content = ordered_cost_record_content(key: key, value: value);
   ordered_cost_ordered(env: env, value: content);

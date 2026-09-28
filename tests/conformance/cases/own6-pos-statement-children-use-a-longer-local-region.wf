@@ -11,23 +11,23 @@ struct Counter {
 
 fn exchange(target: &Holder, incoming: Box<u64>) -> previous: u64 writes(target.value) {
   doc "The old content is read out, then one commit installs the incoming cell and releases the old one.";
-  let previous = deref(target).value.inner;
-  set deref(target).value = move incoming;
+  let previous = target^.value.inner;
+  set target^.value = move incoming;
   return previous;
 }
 
 fn observe(owner: &Holder, incoming: Box<u64>) -> (old: u64, current: u64) writes(owner.value) {
   doc "A by-value parameter contributes no effect entry, so the row states only the write of the referenced field.";
   let old = exchange(target: owner, incoming: move incoming);
-  let current = deref(owner).value.inner;
+  let current = owner^.value.inner;
   return old, current;
 }
 
 fn tick(counter: &Counter) -> result: unit writes(counter.total) {
   doc "One declared write of the referenced field.";
-  let seen = deref(counter).total;
+  let seen = counter^.total;
   let raised = seen +wrap 1_u64;
-  set deref(counter).total = raised;
+  set counter^.total = raised;
   return unit;
 }
 
@@ -39,9 +39,9 @@ fn repeat(counter: &Counter) -> result: unit writes(counter.total) {
       break @again;
     }
     tick(counter: counter);
-    let seen = deref(counter).total;
+    let seen = counter^.total;
     let raised = seen +wrap 1_u64;
-    set deref(counter).total = raised;
+    set counter^.total = raised;
     let next_index = index +wrap 1_u64;
     set index = next_index;
   }

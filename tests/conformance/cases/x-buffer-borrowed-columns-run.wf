@@ -7,31 +7,31 @@ struct Columns {
 }
 
 fn fill(left: &[u64], right: &[u64], length: u64) -> function_result: unit writes(left), writes(right) contract {
-  define left_length = deref(left).len;
-  define right_length = deref(right).len;
+  define left_length = left^.len;
+  define right_length = right^.len;
   requires length <= left_length;
   requires length <= right_length;
 } {
   doc "Writes both ranges; the two declared write paths have different roots, so the call site proves them disjoint [EFF-5].";
   for (index_value in 0_u64..length) {
-    set deref(left)[index_value] = index_value;
+    set left^[index_value] = index_value;
     let shifted = index_value +wrap 10_u64;
-    set deref(right)[index_value] = shifted;
+    set right^[index_value] = shifted;
   }
   return unit;
 }
 
 fn fold(left: &[u64], right: &[u64], length: u64) -> function_result: u64 reads(left), reads(right) contract {
-  define left_length = deref(left).len;
-  define right_length = deref(right).len;
+  define left_length = left^.len;
+  define right_length = right^.len;
   requires length <= left_length;
   requires length <= right_length;
 } {
   doc "Reads both ranges and returns their combined total.";
   let total = 0_u64;
   for (index_value in 0_u64..length) {
-    let left_value = deref(left)[index_value];
-    let right_value = deref(right)[index_value];
+    let left_value = left^[index_value];
+    let right_value = right^[index_value];
     set total = total +wrap left_value;
     set total = total +wrap right_value;
   }

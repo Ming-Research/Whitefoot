@@ -2,8 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-7: deref(place) takes a place whose selected kind is a reference, &T or &[T]; deref(place) where place is not a reference, a Box included, is a hard error citing TYPE-7 at the complete place, with the restructuring a Box's content is its field inner [TYPE-9]; an owned place is named as itself.";
+  doc "TYPE-7: place^ takes a place whose selected kind is a reference, &T or &[T]; place^ where place is not a reference, a Box included, is a hard error citing TYPE-7 at the complete place, with the restructuring a Box's content is its field inner [TYPE-9]; an owned place is named as itself.";
   let b = box_new::<i32>(value: 42_i32);
-  let v = deref(b);
+  let v = b^;
   return exit_status(code: 0_u8);
 }

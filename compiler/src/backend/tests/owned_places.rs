@@ -171,15 +171,15 @@ fn indexed_child_references_update_only_the_selected_field() {
 }
 
 fn write(value: &u64) -> result: unit writes(value) {
-  set deref(value) = 7_u64;
+  set value^ = 7_u64;
   return unit;
 }
 
 fn update(points: &Array<Point, 2>, index: u64) -> result: unit writes(points) contract {
   requires index < 2_u64;
 } {
-  write(value: &deref(points)[index].x);
-  write(value: &deref(points)[index].x);
+  write(value: &points^[index].x);
+  write(value: &points^[index].x);
   return unit;
 }
 
@@ -229,17 +229,17 @@ struct Row {
 }
 
 fn add_to(value: &u64, amount: u64) -> result: unit writes(value) {
-  let old = deref(value);
-  set deref(value) = old +wrap amount;
+  let old = value^;
+  set value^ = old +wrap amount;
   return unit;
 }
 
 fn adjust(rows: &Box<Array<Row>>, index: u64, amount: u64) -> result: unit writes(rows) contract {
-  requires index < deref(rows).inner.len;
+  requires index < rows^.inner.len;
 } {
-  let old = deref(rows).inner[index].pair.right;
-  set deref(rows).inner[index].pair.right = old +wrap 1_u64;
-  let selected = &deref(rows).inner[index].pair.right;
+  let old = rows^.inner[index].pair.right;
+  set rows^.inner[index].pair.right = old +wrap 1_u64;
+  let selected = &rows^.inner[index].pair.right;
   add_to(value: selected, amount: amount);
   return unit;
 }
@@ -456,7 +456,7 @@ fn choose_referenced(seed: u64) -> result: Array<u64, 512> pure {
   }
   let reader = &original[0_u64..512_u64];
   let candidate = array_filled::<u64, 512>(value: 43_u64);
-  let trailing = deref(reader)[511_u64];
+  let trailing = reader^[511_u64];
   if trailing != seed {
     return array_filled::<u64, 512>(value: 99_u64);
   }
@@ -517,7 +517,7 @@ fn an_owned_parameter_uses_same_or_distinct_result_storage_after_entry_transfer(
 }
 
 fn extend(items: Row, value: u64, watch: &u64) -> updated: Row reads(watch) {
-  let bias = deref(watch);
+  let bias = watch^;
   let adjusted = value +wrap bias;
   set items.value = adjusted;
   return move items;
@@ -590,7 +590,7 @@ fn discard(value: Row) -> result: unit pure {
 }
 
 fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
-  let expected = deref(watch);
+  let expected = watch^;
   if right.value != expected {
     let ignored = discard(value: move left);
     return Row(value: 99_u64);
@@ -645,7 +645,7 @@ fn zero_sized_aggregate_assignment_preserves_adjacent_fields() {
 }
 
 fn install_empty(target: &Envelope, value: Array<u64, 0>) -> result: unit writes(target.empty) {
-  set deref(target).empty = value;
+  set target^.empty = value;
   return unit;
 }
 
@@ -734,7 +734,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn box_assignment_updates_the_owner_and_releases_each_cell_once() {
     let source = br#"fn install(slot: &Box<u64>, incoming: Box<u64>) -> result: unit writes(slot) {
-  set deref(slot) = move incoming;
+  set slot^ = move incoming;
   return unit;
 }
 
@@ -776,29 +776,29 @@ fn enum_payload_assignment_updates_the_child_owner_in_its_box() {
 }
 
 fn exchange_child(tree: &Box<Node>, incoming: Box<u64>) -> kept: u64 writes(tree) {
-  match deref(tree).inner {
+  match tree^.inner {
     Marker(prefix: marker_prefix, suffix: marker_suffix) => {
       return 0_u64;
     }
     HasChildren(left: left_slot, right: child_slot) => {
-      set deref(child_slot) = move incoming;
-      let kept = deref(left_slot).inner;
+      set child_slot^ = move incoming;
+      let kept = left_slot^.inner;
       return kept;
     }
   }
 }
 
 fn read_child(tree: &Box<Node>) -> result: u64 reads(tree) {
-  match deref(tree).inner {
+  match tree^.inner {
     Marker(prefix: marker_prefix, suffix: marker_suffix) => {
       return 0_u64;
     }
     HasChildren(left: left_slot, right: child_slot) => {
-      let sibling = deref(left_slot).inner;
+      let sibling = left_slot^.inner;
       if sibling != 33_u64 {
         return 0_u64;
       }
-      let child = deref(child_slot).inner;
+      let child = child_slot^.inner;
       return child;
     }
   }
@@ -853,9 +853,9 @@ fn main() -> status: std::process::ExitStatus pure {
 fn indexed_targets_are_captured_before_disjoint_rhs_effects() {
     let module = compile(
         br#"fn advance(offset: &u64, trace: &u64) -> result: u64 writes(offset), writes(trace) {
-  set deref(offset) = 1_u64;
-  let shifted = deref(trace) *wrap 10_u64;
-  set deref(trace) = shifted +wrap 1_u64;
+  set offset^ = 1_u64;
+  let shifted = trace^ *wrap 10_u64;
+  set trace^ = shifted +wrap 1_u64;
   return 41_u64;
 }
 
@@ -931,7 +931,7 @@ fn an_element_target_is_captured_before_the_rhs_changes_its_index() {
 }
 
 fn replacement(offset: &u64) -> result: Row writes(offset) {
-  set deref(offset) = 1_u64;
+  set offset^ = 1_u64;
   return Row(left: 19_u64, right: 23_u64);
 }
 
@@ -1059,18 +1059,18 @@ fn make_row(value: u64) -> result: Row pure {
 
 fn exchange(values: &Ring<Row, 3>, first: u64, second: u64) -> result: unit writes(values) contract {
   requires first < second;
-  requires second < deref(values).len;
-  ensures deref(values).len == deref(entry(values)).len;
+  requires second < values^.len;
+  ensures values^.len == entry(values)^.len;
 } {
-  swap(first: &deref(values)[first], second: &deref(values)[second]);
+  swap(first: &values^[first], second: &values^[second]);
   return unit;
 }
 
 fn same(values: &Ring<Row, 3>, index: u64) -> result: unit writes(values) contract {
-  requires index < deref(values).len;
-  ensures deref(values).len == deref(entry(values)).len;
+  requires index < values^.len;
+  ensures values^.len == entry(values)^.len;
 } {
-  swap(first: &deref(values)[index], second: &deref(values)[index]);
+  swap(first: &values^[index], second: &values^[index]);
   return unit;
 }
 
@@ -1152,13 +1152,13 @@ fn main() -> status: std::process::ExitStatus pure {
   let bytes = array_filled::<u8, 2>(value: 13_u8);
   let table = Table(rows: rows, bytes: bytes, tag: 17_u64);
   let saved = &table.rows[0_u64];
-  let base = deref(saved).left;
+  let base = saved^.left;
   let changed = &table.rows[1_u64].right;
-  set deref(changed) = base +wrap 19_u64;
+  set changed^ = base +wrap 19_u64;
   let view = &table.bytes[0_u64..2_u64];
-  set deref(view)[0_u64] = 23_u8;
+  set view^[0_u64] = 23_u8;
   let sibling = &table.tag;
-  set deref(sibling) = 29_u64;
+  set sibling^ = 29_u64;
   if table.rows[0_u64].left != 3_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -1255,7 +1255,7 @@ fn owner_cleanup_releases_cell_fields_in_checked_order() {
 }
 
 fn touch(value: &u64) -> result: unit writes(value) {
-  set deref(value) = 41_u64;
+  set value^ = 41_u64;
   return unit;
 }
 
@@ -1594,7 +1594,7 @@ fn inspect(values: Slots<Box<u64>, 2>) -> code: u8 pure {
 fn exercise(storage: Box<Slots<Box<u64>, 2>>) -> result: Checked pure {
   let first = box_new::<u64>(value: 17_u64);
   let (one, first_returned) = try_append(storage: move storage, value: move first);
-  match first_returned {
+  match move first_returned {
     None() => {
     }
     Some(value: unwanted) => {
@@ -1603,7 +1603,7 @@ fn exercise(storage: Box<Slots<Box<u64>, 2>>) -> result: Checked pure {
   }
   let second = box_new::<u64>(value: 29_u64);
   let (two, second_returned) = try_append(storage: move one, value: move second);
-  match second_returned {
+  match move second_returned {
     None() => {
     }
     Some(value: unwanted) => {
@@ -1612,7 +1612,7 @@ fn exercise(storage: Box<Slots<Box<u64>, 2>>) -> result: Checked pure {
   }
   let third = box_new::<u64>(value: 41_u64);
   let (full, third_returned) = try_append(storage: move two, value: move third);
-  match third_returned {
+  match move third_returned {
     None() => {
       return Checked(storage: move full, code: 3_u8);
     }
@@ -1725,12 +1725,12 @@ fn referencing_owned_box_content_addresses_the_allocation() {
 }
 
 fn write(value: &u64, fresh: u64) -> result: unit writes(value) {
-  set deref(value) = fresh;
+  set value^ = fresh;
   return unit;
 }
 
 fn read(value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1769,9 +1769,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn boxed_window_contracts_keep_the_content_projection_through_a_holder() {
     let source = br#"fn first(values: &Slots<u64, 2>) -> result: u64 reads(values) contract {
-  requires deref(values).len > 0_u64;
+  requires values^.len > 0_u64;
 } {
-  return deref(values)[0_u64];
+  return values^[0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {

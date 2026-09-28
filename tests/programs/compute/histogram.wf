@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn count_block(input: &[u64], counters: &[u64]) -> result: u64 reads(input), writes(counters) contract {
-  requires 1_u64 <= deref(counters).len;
+  requires 1_u64 <= counters^.len;
 } {
-  let count = deref(input).len;
-  let buckets = deref(counters).len;
+  let count = input^.len;
+  let buckets = counters^.len;
   for (i in 0_u64..count) {
-    let key = deref(input)[i];
+    let key = input^[i];
     let bucket = key % buckets;
-    let previous = deref(counters)[bucket];
-    set deref(counters)[bucket] = previous +wrap 1_u64;
+    let previous = counters^[bucket];
+    set counters^[bucket] = previous +wrap 1_u64;
   }
   return count;
 }
@@ -18,10 +18,10 @@ fn count_block(input: &[u64], counters: &[u64]) -> result: u64 reads(input), wri
 fn merge_bucket(counters: &[u64], bucket: u64, buckets: u64) -> result: u64 reads(counters) contract {
   requires 1_u64 <= buckets;
   requires buckets <= 256_u64;
-  requires deref(counters).len <= 4294967552_u64;
+  requires counters^.len <= 4294967552_u64;
   requires bucket < buckets;
 } {
-  let count = deref(counters).len;
+  let count = counters^.len;
   let rows = count / buckets;
   let covered = rows * buckets;
   invariant covered_counters: covered <= count;
@@ -33,20 +33,20 @@ fn merge_bucket(counters: &[u64], bucket: u64, buckets: u64) -> result: u64 read
       use buckets times (row + 1_u64 <= rows);
     }
     let at = start + bucket;
-    set total = total +wrap deref(counters)[at];
+    set total = total +wrap counters^[at];
   }
   return total;
 }
 
 fn histogram(input: &[u64], block_size: u64, buckets: u64) -> result: Box<Array<u64>> reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
+  requires input^.len <= 16777216_u64;
   requires 1_u64 <= block_size;
   requires block_size <= 65536_u64;
   requires 1_u64 <= buckets;
   requires buckets <= 256_u64;
 } {
   doc "Counts keys modulo the runtime bucket count. Each input block scatters into its own counter range, and a separate phase merges the private counters.";
-  let count = deref(input).len;
+  let count = input^.len;
   let blocks = count / block_size;
   let covered = blocks * block_size;
   invariant covered_input: covered <= count;
@@ -65,11 +65,11 @@ fn histogram(input: &[u64], block_size: u64, buckets: u64) -> result: Box<Array<
     invariant workspace_end: row_end <= cells {
       use buckets times (block <= blocks);
     }
-    let part = &deref(input)[first..end];
+    let part = &input^[first..end];
     let workspace = &counters.inner[row_start..row_end];
     let counted = count_block(input: part, counters: workspace);
   }
-  let tail = &deref(input)[covered..count];
+  let tail = &input^[covered..count];
   let spare = &counters.inner[full_cells..cells];
   let counted = count_block(input: tail, counters: spare);
   for (bucket in 0_u64..buckets) {

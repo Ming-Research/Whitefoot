@@ -10,9 +10,9 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
   doc "A straight-line alias shares the current target and may change its content without removing that target.";
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
@@ -20,8 +20,8 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
     }
   }
   let aliased = cursor;
-  set deref(aliased).next = None<Box<Node>>();
-  return deref(cursor).value;
+  set aliased^.next = None<Box<Node>>();
+  return cursor^.value;
 }
 
 fn main() -> status: ExitStatus pure {

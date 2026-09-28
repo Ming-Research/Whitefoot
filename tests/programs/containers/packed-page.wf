@@ -17,7 +17,7 @@ fn blank_page() -> page: Slots<u8, 32> pure contract {
 }
 
 fn checksum(page: &Slots<u8, 32>, used: u64) -> result: Option<u64> reads(page) contract {
-  requires deref(page).len >= 32_u64;
+  requires page^.len >= 32_u64;
 } {
   if used > 32_u64 {
     return None<u64>();
@@ -26,13 +26,13 @@ fn checksum(page: &Slots<u8, 32>, used: u64) -> result: Option<u64> reads(page) 
   let sum = 0_u64;
   loop @records (
     invariant within: at <= used,
-    invariant extent: used <= deref(page).len,
+    invariant extent: used <= page^.len,
     invariant small: used <= 32_u64
   ) {
     if at >= used {
       break @records;
     }
-    let width_byte = deref(page)[at];
+    let width_byte = page^[at];
     let width = cvt::<u8, u64>(width_byte);
     let start = at + 1_u64;
     let remaining = used - start;
@@ -46,7 +46,7 @@ fn checksum(page: &Slots<u8, 32>, used: u64) -> result: Option<u64> reads(page) 
       offset in start..end,
       invariant contained: end <= used
     ) {
-      let byte = deref(page)[offset];
+      let byte = page^[offset];
       let word = cvt::<u8, u64>(byte);
       let prefix = sum *wrap 131_u64;
       set sum = prefix +wrap word;
@@ -57,8 +57,8 @@ fn checksum(page: &Slots<u8, 32>, used: u64) -> result: Option<u64> reads(page) 
 }
 
 fn remove_first(page: &Slots<u8, 32>, used: u64) -> (remaining: u64, removed: Bool) writes(page) contract {
-  requires deref(page).len >= 32_u64;
-  ensures deref(page).len == deref(entry(page)).len;
+  requires page^.len >= 32_u64;
+  ensures page^.len == entry(page)^.len;
 } {
   if used == 0_u64 {
     return used, False();
@@ -66,7 +66,7 @@ fn remove_first(page: &Slots<u8, 32>, used: u64) -> (remaining: u64, removed: Bo
   if used > 32_u64 {
     return used, False();
   }
-  let width_byte = deref(page)[0_u64];
+  let width_byte = page^[0_u64];
   let width = cvt::<u8, u64>(width_byte);
   let after_header = used - 1_u64;
   if width > after_header {
@@ -76,21 +76,21 @@ fn remove_first(page: &Slots<u8, 32>, used: u64) -> (remaining: u64, removed: Bo
   let remaining = used - start;
   for (destination in 0_u64..remaining) {
     let source = destination + start;
-    let byte = deref(page)[source];
-    set deref(page)[destination] = byte;
+    let byte = page^[source];
+    set page^[destination] = byte;
   }
   return remaining, True();
 }
 
 fn prepend(page: &Slots<u8, 32>, used: u64, payload: &Slots<u8, 8>, width_byte: u8) -> (occupied: u64, inserted: Bool) reads(payload), writes(page) contract {
-  requires deref(page).len >= 32_u64;
-  ensures deref(page).len == deref(entry(page)).len;
+  requires page^.len >= 32_u64;
+  ensures page^.len == entry(page)^.len;
 } {
   if used > 32_u64 {
     return used, False();
   }
   let width = cvt::<u8, u64>(width_byte);
-  let available = deref(payload).len;
+  let available = payload^.len;
   if width > available {
     return used, False();
   }
@@ -102,22 +102,22 @@ fn prepend(page: &Slots<u8, 32>, used: u64, payload: &Slots<u8, 8>, width_byte: 
   let occupied = used + record_width;
   for (
     step in 0_u64..used,
-    invariant size: used + record_width <= deref(page).len,
-    invariant payload_size: width <= deref(payload).len,
+    invariant size: used + record_width <= page^.len,
+    invariant payload_size: width <= payload^.len,
     invariant result_size: occupied <= 32_u64
   ) {
     let end = used - step;
     let source = end - 1_u64;
     let destination = source + record_width;
-    let byte = deref(page)[source];
-    set deref(page)[destination] = byte;
+    let byte = page^[source];
+    set page^[destination] = byte;
   }
   for (offset in 0_u64..width) {
-    let byte = deref(payload)[offset];
+    let byte = payload^[offset];
     let destination = offset + 1_u64;
-    set deref(page)[destination] = byte;
+    set page^[destination] = byte;
   }
-  set deref(page)[0_u64] = width_byte;
+  set page^[0_u64] = width_byte;
   return occupied, True();
 }
 

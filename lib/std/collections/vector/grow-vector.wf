@@ -6,28 +6,28 @@ fn grow_vector_new<T, const ceiling: u64>() -> made: GrowVector<T, ceiling> pure
 
 fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, total: u64) -> capacity: u64 writes(values.storage) contract {
   requires total <= ceiling;
-  ensures capacity == deref(values).storage.inner.cap;
+  ensures capacity == values^.storage.inner.cap;
   ensures capacity >= total;
-  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
 } {
   doc "Raises capacity to at least total within this vector's caller-selected ceiling, preserving the window. The concrete ceiling gives every monomorphized grow site its OP-9 bound, while target qualification still checks the complete selected layout under STOR-6. grow remakes the cell's content whole and may reallocate in place [OP-10], so there is no superseded backing to release here.";
-  let current = deref(values).storage.inner.cap;
+  let current = values^.storage.inner.cap;
   if current >= total {
     return current;
   }
-  grow(cell: &deref(values).storage, capacity: total);
+  grow(cell: &values^.storage, capacity: total);
   return total;
 }
 
 fn grow_vector_grow_full<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
-  requires deref(values).storage.inner.len < ceiling;
-  requires deref(values).storage.inner.cap <= deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.cap > deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+  requires values^.storage.inner.len < ceiling;
+  requires values^.storage.inner.cap <= values^.storage.inner.len;
+  ensures values^.storage.inner.cap > values^.storage.inner.len;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
 } {
-  let current = deref(values).storage.inner.cap;
+  let current = values^.storage.inner.cap;
   if current == 0_u64 {
     let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
     return unit;
@@ -44,12 +44,12 @@ fn grow_vector_grow_full<T, const ceiling: u64>(values: &GrowVector<T, ceiling>)
 }
 
 fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
-  requires deref(values).storage.inner.len < ceiling;
-  ensures deref(values).storage.inner.cap > deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+  requires values^.storage.inner.len < ceiling;
+  ensures values^.storage.inner.cap > values^.storage.inner.len;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
 } {
-  let spare = deref(values).storage.inner.cap - deref(values).storage.inner.len;
+  let spare = values^.storage.inner.cap - values^.storage.inner.len;
   if spare > 0_u64 {
     return unit;
   }
@@ -58,95 +58,95 @@ fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>)
 }
 
 fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
-  requires deref(values).storage.inner.len < ceiling;
-  ensures length == deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
-  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+  requires values^.storage.inner.len < ceiling;
+  ensures length == values^.storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
 } {
   doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty. The written length bound and the concrete ceiling discharge each allocation-size obligation [OP-9].";
   grow_vector_make_room::<T, ceiling>(values: values);
-  place_back(window: &deref(values).storage.inner, value: move value);
-  let reached = deref(values).storage.inner.len;
+  place_back(window: &values^.storage.inner, value: move value);
+  let reached = values^.storage.inner.len;
   return reached;
 }
 
 fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64, value: T) -> length: u64 writes(values.storage) contract {
-  requires index <= deref(values).storage.inner.len;
-  requires deref(values).storage.inner.len < ceiling;
-  ensures length == deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len + 1_u64;
-  ensures deref(values).storage.inner.cap >= deref(entry(values)).storage.inner.cap;
+  requires index <= values^.storage.inner.len;
+  requires values^.storage.inner.len < ceiling;
+  ensures length == values^.storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
 } {
   doc "Inserts before a proved index and preserves order. The manual exchange-and-shift loop v0.59 wrote for this retired with [OP-10]'s insert_at, which is the one operation that writes the append slot and the filled run together.";
   grow_vector_make_room::<T, ceiling>(values: values);
-  insert_at(window: &deref(values).storage.inner, index: index, value: move value);
-  let reached = deref(values).storage.inner.len;
+  insert_at(window: &values^.storage.inner, index: index, value: move value);
+  let reached = values^.storage.inner.len;
   return reached;
 }
 
 fn grow_vector_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64) -> removed: T writes(values.storage) contract {
-  requires index < deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.len + 1_u64 == deref(entry(values)).storage.inner.len;
-  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+  requires index < values^.storage.inner.len;
+  ensures values^.storage.inner.len + 1_u64 == entry(values)^.storage.inner.len;
+  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
   doc "Removes a proved index and preserves order. As with insert, the shift loop retired with [OP-10]'s remove_at.";
-  let taken = remove_at(window: &deref(values).storage.inner, index: index);
+  let taken = remove_at(window: &values^.storage.inner, index: index);
   return move taken;
 }
 
 fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64) -> removed: T writes(values.storage) contract {
-  requires index < deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.len + 1_u64 == deref(entry(values)).storage.inner.len;
-  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+  requires index < values^.storage.inner.len;
+  ensures values^.storage.inner.len + 1_u64 == entry(values)^.storage.inner.len;
+  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
   doc "Returns the selected value and fills its position with the last value, without preserving order. OP-11 admits exchanging a slot with itself, so selecting the last element needs no separate branch. The operation moves a constant number of elements.";
-  let count = deref(values).storage.inner.len;
+  let count = values^.storage.inner.len;
   let last = count - 1_u64;
-  swap(first: &deref(values).storage.inner[index], second: &deref(values).storage.inner[last]);
-  let removed = take_back(window: &deref(values).storage.inner);
+  swap(first: &values^.storage.inner[index], second: &values^.storage.inner[last]);
+  let removed = take_back(window: &values^.storage.inner);
   return move removed;
 }
 
 fn grow_vector_truncate<interface VectorDrain<T, E>, const ceiling: u64>(values: &GrowVector<T, ceiling>, retained: u64, env: &E) -> result: unit writes(values.storage), writes(env) contract {
-  requires retained <= deref(values).storage.inner.len;
-  ensures deref(values).storage.inner.len == retained;
-  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+  requires retained <= values^.storage.inner.len;
+  ensures values^.storage.inner.len == retained;
+  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
   doc "Preserves the prefix and capacity, consuming the removed suffix in original order through the caller's monomorphized behavior. The member cannot access this backing: EFF-5 requires its environment effect to be disjoint from the vector's write. For each first-half suffix position, take the last element into a local, exchange it with that position, and consume the local. The reversed remainder is then taken directly. This touches only removed elements, uses constant local storage, and allocates no scratch backing.";
-  let count = deref(values).storage.inner.len;
+  let count = values^.storage.inner.len;
   let removed = count - retained;
   let half = removed / 2_u64;
   for @first_half (
     offset in 0_u64..half,
-    invariant length_lo: deref(values).storage.inner.len >= count - offset,
-    invariant length_hi: deref(values).storage.inner.len <= count - offset
+    invariant length_lo: values^.storage.inner.len >= count - offset,
+    invariant length_hi: values^.storage.inner.len <= count - offset
   ) {
     let left = retained + offset;
-    invariant pair: deref(values).storage.inner.len >= retained + offset + 2_u64 {
+    invariant pair: values^.storage.inner.len >= retained + offset + 2_u64 {
       use length_lo;
       use (2_u64 * half <= removed);
       use 2 times (offset < half);
     }
-    let value = take_back(window: &deref(values).storage.inner);
-    swap(first: &deref(values).storage.inner[left], second: &value);
+    let value = take_back(window: &values^.storage.inner);
+    swap(first: &values^.storage.inner[left], second: &value);
     VectorDrain::accept(env: env, value: move value);
   }
   loop @truncate (
-    invariant prefix: deref(values).storage.inner.len >= retained
+    invariant prefix: values^.storage.inner.len >= retained
   ) {
-    if deref(values).storage.inner.len <= retained {
-      invariant exhausted: deref(values).storage.inner.len == retained;
+    if values^.storage.inner.len <= retained {
+      invariant exhausted: values^.storage.inner.len == retained;
       break @truncate;
     }
-    let value = take_back(window: &deref(values).storage.inner);
+    let value = take_back(window: &values^.storage.inner);
     VectorDrain::accept(env: env, value: move value);
   }
   return unit;
 }
 
 fn grow_vector_drain<interface VectorDrain<T, E>, const ceiling: u64>(values: &GrowVector<T, ceiling>, env: &E) -> result: unit writes(values.storage), writes(env) contract {
-  ensures deref(values).storage.inner.len == 0_u64;
-  ensures deref(values).storage.inner.cap == deref(entry(values)).storage.inner.cap;
+  ensures values^.storage.inner.len == 0_u64;
+  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
   doc "Consumes every element in original order with linear element movement, preserving the backing for reuse.";
   grow_vector_truncate::<VectorDrain<T, E>, ceiling>(values: values, retained: 0_u64, env: env);

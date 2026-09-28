@@ -1,4 +1,4 @@
 fn walk(value: &u64) -> result: u64 reads(value) {
-  let local = deref(value);
+  let local = value^;
   return musttail walk(value: &local);
 }

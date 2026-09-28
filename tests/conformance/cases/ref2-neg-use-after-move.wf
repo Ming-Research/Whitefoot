@@ -11,7 +11,7 @@ fn main() -> status: ExitStatus pure {
   let v = Owner(values: values);
   let p = &v.values[1_u64];
   let w = move v;
-  let seen = deref(p);
+  let seen = p^;
   if seen == 6_u64 {
   } else {
     return exit_status(code: 1_u8);

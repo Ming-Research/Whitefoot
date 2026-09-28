@@ -12,7 +12,7 @@ fn main() -> status: ExitStatus pure {
   } else {
     give &a[2_u64];
   }
-  let seen = deref(p);
+  let seen = p^;
   if seen == 3_u64 {
   } else {
     return exit_status(code: 1_u8);

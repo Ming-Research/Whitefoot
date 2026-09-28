@@ -7,12 +7,12 @@ struct Columns {
 }
 
 fn fill(left: &Box<Slots<u64>>, right: &Box<Slots<u64>>, value: u64) -> function_result: unit reads(left), reads(right) contract {
-  requires deref(left).inner.len < deref(left).inner.cap;
-  requires deref(right).inner.len < deref(right).inner.cap;
+  requires left^.inner.len < left^.inner.cap;
+  requires right^.inner.len < right^.inner.cap;
 } {
   doc "Places one element in each column while declaring only reads of them, so the writes the body exhibits are missing from the row.";
-  place_back(window: &deref(left).inner, value: value);
-  place_back(window: &deref(right).inner, value: value);
+  place_back(window: &left^.inner, value: value);
+  place_back(window: &right^.inner, value: value);
   return unit;
 }
 

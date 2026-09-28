@@ -8,7 +8,7 @@ enum InnerKind {
 
 fn fetch_from_if(b: &[u8], i: u64, wide: Bool, kind: InnerKind) -> result: u8 reads(b) {
   doc "A match nested inside an if: direct and negated comparison edges establish the same strict bound on every reaching path, and both the inner and the outer join must retain it [ENT-5, OP-4].";
-  let spare = deref(b).len;
+  let spare = b^.len;
   if wide {
     match kind {
       Head() => {
@@ -32,7 +32,7 @@ fn fetch_from_if(b: &[u8], i: u64, wide: Bool, kind: InnerKind) -> result: u8 re
       return 0_u8;
     }
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 enum OuterKind {
@@ -42,7 +42,7 @@ enum OuterKind {
 
 fn fetch_from_match(b: &[u8], i: u64, kind: OuterKind, safe: Bool) -> result: u8 reads(b) {
   doc "The opposite nesting order, an if inside a match, must retain the same common bound.";
-  let spare = deref(b).len;
+  let spare = b^.len;
   match kind {
     Exact() => {
       let inside = i < spare;
@@ -66,7 +66,7 @@ fn fetch_from_match(b: &[u8], i: u64, kind: OuterKind, safe: Bool) -> result: u8
       }
     }
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

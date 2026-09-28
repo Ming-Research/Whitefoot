@@ -2,16 +2,16 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn probe<const n: u64>(table: &Slots<u8, n>, a: u64) -> found: u8 reads(table) contract {
-  define spare = deref(table).len;
+  define spare = table^.len;
   requires a <= spare;
 } {
   doc "A wrapping subtraction publishes a fresh value image, so the ordered fact about its original operand is no finite certificate for the wrapped index bound.";
   let idx = a -wrap 1_u64;
-  let bound_room = deref(table).len;
+  let bound_room = table^.len;
   invariant bound: idx < bound_room {
     use (a <= bound_room);
   }
-  let byte = deref(table)[idx];
+  let byte = table^[idx];
   return byte;
 }
 

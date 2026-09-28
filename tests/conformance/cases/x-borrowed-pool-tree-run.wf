@@ -14,31 +14,31 @@ struct Cursor {
 fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_result: Result<u64, PoolError> writes(left), writes(right), writes(cursor.position) {
   doc "Build a complete tree bottom-up in two parallel runs; index zero is the null sentinel. The three write paths have three distinct roots, so the call site proves them disjoint [EFF-5].";
   let leaves = ishl.wrap(1_u64, depth);
-  let start = deref(cursor).position;
+  let start = cursor^.position;
   let index_value = 0_u64;
   loop @leaves {
     let done = index_value >= leaves;
     if done {
       break @leaves;
     } else {
-      let slot = deref(cursor).position;
-      let left_room = deref(left).len;
+      let slot = cursor^.position;
+      let left_room = left^.len;
       let left_ok = slot < left_room;
       if left_ok {
       } else {
         let error = PoolError::LeftOutOfBounds();
         return Err<u64, PoolError>(error: error);
       }
-      set deref(left)[slot] = 0_u64;
-      let right_room = deref(right).len;
+      set left^[slot] = 0_u64;
+      let right_room = right^.len;
       let right_ok = slot < right_room;
       if right_ok {
       } else {
         let error = PoolError::RightOutOfBounds();
         return Err<u64, PoolError>(error: error);
       }
-      set deref(right)[slot] = 0_u64;
-      set deref(cursor).position = slot + 1_u64;
+      set right^[slot] = 0_u64;
+      set cursor^.position = slot + 1_u64;
       set index_value = index_value + 1_u64;
     }
   }
@@ -49,7 +49,7 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
       break @levels;
     } else {
       let half = ishr.wrap(width, 1_u32);
-      let next_start = deref(cursor).position;
+      let next_start = cursor^.position;
       let parent = 0_u64;
       loop @parents {
         let parents_done = parent >= half;
@@ -77,24 +77,24 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
             return Err<u64, PoolError>(error: error);
           }
           let right_child = left_child + 1_u64;
-          let slot = deref(cursor).position;
-          let left_room = deref(left).len;
+          let slot = cursor^.position;
+          let left_room = left^.len;
           let left_ok = slot < left_room;
           if left_ok {
           } else {
             let error = PoolError::LeftOutOfBounds();
             return Err<u64, PoolError>(error: error);
           }
-          set deref(left)[slot] = left_child;
-          let right_room = deref(right).len;
+          set left^[slot] = left_child;
+          let right_room = right^.len;
           let right_ok = slot < right_room;
           if right_ok {
           } else {
             let error = PoolError::RightOutOfBounds();
             return Err<u64, PoolError>(error: error);
           }
-          set deref(right)[slot] = right_child;
-          set deref(cursor).position = slot + 1_u64;
+          set right^[slot] = right_child;
+          set cursor^.position = slot + 1_u64;
           set parent = parent + 1_u64;
         }
       }
@@ -107,26 +107,26 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
 
 fn checksum(left: &[u64], right: &[u64], root: u64) -> function_result: Result<u64, PoolError> reads(left), reads(right) {
   doc "Walks the built tree through two read-only range references and counts its nodes.";
-  let left_room = deref(left).len;
+  let left_room = left^.len;
   let left_ok = root < left_room;
   if left_ok {
   } else {
     let error = PoolError::LeftOutOfBounds();
     return Err<u64, PoolError>(error: error);
   }
-  let left_child = deref(left)[root];
+  let left_child = left^[root];
   let leaf = left_child == 0_u64;
   if leaf {
     return Ok<u64, PoolError>(value: 1_u64);
   }
-  let right_room = deref(right).len;
+  let right_room = right^.len;
   let right_ok = root < right_room;
   if right_ok {
   } else {
     let error = PoolError::RightOutOfBounds();
     return Err<u64, PoolError>(error: error);
   }
-  let right_child = deref(right)[root];
+  let right_child = right^[root];
   let left_count = propagate checksum(left: left, right: right, root: left_child);
   let right_count = propagate checksum(left: left, right: right, root: right_child);
   let child_sum_defined = left_count +defined right_count;

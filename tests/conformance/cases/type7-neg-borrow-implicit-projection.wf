@@ -1,0 +1,12 @@
+struct Pair {
+  number: u64;
+}
+
+fn read(pair: &Pair) -> result: u64 reads(pair) {
+  let selected = &pair.number;
+  return selected^;
+}
+
+fn main() -> result: unit pure {
+  return unit;
+}

@@ -3,12 +3,12 @@ alias exit_status = std::process::exit_status;
 
 fn count_then_take(window: &Slots<u64, 8>, lo: u64, hi: u64) -> result: u64 reads(window[lo..hi]), writes(window.last), writes(window.len) contract {
   requires lo <= hi;
-  requires hi <= deref(window).len;
-  requires 0_u64 < deref(window).len;
+  requires hi <= window^.len;
+  requires 0_u64 < window^.len;
 } {
   doc "Returns the length of the run window[lo..hi] plus the last element, which it takes out of the window. EFF-5, WIN-2: a range position overlaps window.last whatever its endpoints, as an index does, so a call does not compare the two entries and this body is checked against both.";
-  let run = &deref(window)[lo..hi];
-  let count = deref(run).len;
+  let run = &window^[lo..hi];
+  let count = run^.len;
   let last = take_back(window: window);
   let total = count +wrap last;
   return total;

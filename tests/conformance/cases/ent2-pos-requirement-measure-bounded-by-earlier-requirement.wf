@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
-  requires i < deref(rows).len;
-  requires k < deref(rows)[i].len;
+  requires i < rows^.len;
+  requires k < rows^[i].len;
 } {
-  doc "ENT-2, FN-8, OP-4, MSR-1: the second requirement forms deref(rows)[i] at body entry, after the first discharges i < deref(rows).len; S4 then gives both bounds the nested read owes.";
-  return deref(rows)[i][k];
+  doc "ENT-2, FN-8, OP-4, MSR-1: the second requirement forms rows^[i] at body entry, after the first discharges i < rows^.len; S4 then gives both bounds the nested read owes.";
+  return rows^[i][k];
 }
 
 fn main() -> status: ExitStatus pure {

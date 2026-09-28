@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push_one(window: &Slots<u64, 4>) -> result: unit writes(window.next), writes(window.len) contract {
-  requires deref(window).len < deref(window).cap;
+  requires window^.len < window^.cap;
 } {
   doc "WIN-2: r.next is the append slot at index r.len and the measure r.len is itself a write target; the part vocabulary is ordinary, so a user function declares the same rows place_back declares.";
   place_back(window: window, value: 7_u64);

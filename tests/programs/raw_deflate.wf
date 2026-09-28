@@ -28,27 +28,27 @@ fn read_bits(state: &InflateState, input: &[u8], count: u32, mask: u64) -> outco
 } {
   doc "The bit reservoir is reached through the state reference its row declares, and the compressed bytes through a range reference the caller formed.";
   loop @fill_bits {
-    let enough = deref(state).bits >= count;
+    let enough = state^.bits >= count;
     if enough {
       break @fill_bits;
     } else {
-      let input_length = deref(input).len;
-      let input_done = deref(state).input_offset >= input_length;
+      let input_length = input^.len;
+      let input_done = state^.input_offset >= input_length;
       if input_done {
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let next_byte = deref(input)[deref(state).input_offset];
+      let next_byte = input^[state^.input_offset];
       let next_word = cvt::<u8, u64>(next_byte);
-      let shifted = ishl.wrap(next_word, deref(state).bits);
-      set deref(state).hold = ior(deref(state).hold, shifted);
-      set deref(state).bits = deref(state).bits +wrap 8_u32;
-      set deref(state).input_offset = deref(state).input_offset +wrap 1_u64;
+      let shifted = ishl.wrap(next_word, state^.bits);
+      set state^.hold = ior(state^.hold, shifted);
+      set state^.bits = state^.bits +wrap 8_u32;
+      set state^.input_offset = state^.input_offset +wrap 1_u64;
     }
   }
-  let value = iand(deref(state).hold, mask);
-  set deref(state).hold = ishr.wrap(deref(state).hold, count);
-  set deref(state).bits = deref(state).bits -wrap count;
+  let value = iand(state^.hold, mask);
+  set state^.hold = ishr.wrap(state^.hold, count);
+  set state^.bits = state^.bits -wrap count;
   return Ok<u64, InflateError>(value: value);
 }
 
@@ -114,14 +114,14 @@ fn decode_fixed_symbol(state: &InflateState, input: &[u8]) -> result: Result<u64
 
 fn emit_byte(state: &InflateState, out: &[u8], value: u8) -> result: Result<unit, InflateError> writes(state.output_offset), writes(out) {
   doc "One decoded byte lands in the caller's range reference; its length is the range's own measure [REF-4, MSR-1].";
-  let output_length = deref(out).len;
-  let output_full = deref(state).output_offset >= output_length;
+  let output_length = out^.len;
+  let output_full = state^.output_offset >= output_length;
   if output_full {
     let error = InflateError::OutputFull();
     return Err<unit, InflateError>(error: error);
   }
-  set deref(out)[deref(state).output_offset] = value;
-  set deref(state).output_offset = deref(state).output_offset +wrap 1_u64;
+  set out^[state^.output_offset] = value;
+  set state^.output_offset = state^.output_offset +wrap 1_u64;
   return Ok<unit, InflateError>(value: unit);
 }
 
@@ -190,8 +190,8 @@ fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Resul
 
 fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(input), writes(out) {
   doc "The decoder owns no storage: its compressed input and its destination are two range references the caller formed, and the bit reservoir is one frame-resident struct [REF-4, STOR-1].";
-  let input_length = deref(input).len;
-  let output_length = deref(out).len;
+  let input_length = input^.len;
+  let output_length = out^.len;
   let state = InflateState(input_offset: 0_u64, output_offset: 0_u64, hold: 0_u64, bits: 0_u32);
   loop @blocks {
     let final_value = 0_u64;
@@ -226,35 +226,35 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       let len_high_offset = state.input_offset +wrap 1_u64;
       let nlen_low_offset = state.input_offset +wrap 2_u64;
       let nlen_high_offset = state.input_offset +wrap 3_u64;
-      let header_room = deref(input).len;
+      let header_room = input^.len;
       let header_zero_ok = state.input_offset < header_room;
       if header_zero_ok {
       } else {
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let len_low_byte = deref(input)[state.input_offset];
+      let len_low_byte = input^[state.input_offset];
       let header_one_ok = len_high_offset < header_room;
       if header_one_ok {
       } else {
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let len_high_byte = deref(input)[len_high_offset];
+      let len_high_byte = input^[len_high_offset];
       let header_two_ok = nlen_low_offset < header_room;
       if header_two_ok {
       } else {
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let nlen_low_byte = deref(input)[nlen_low_offset];
+      let nlen_low_byte = input^[nlen_low_offset];
       let header_three_ok = nlen_high_offset < header_room;
       if header_three_ok {
       } else {
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let nlen_high_byte = deref(input)[nlen_high_offset];
+      let nlen_high_byte = input^[nlen_high_offset];
       set state.input_offset = state.input_offset +wrap 4_u64;
       let len_low = cvt::<u8, u16>(len_low_byte);
       let len_high_word = cvt::<u8, u16>(len_high_byte);
@@ -291,14 +291,14 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
           break @copy_stored;
         } else {
           let source_index = state.input_offset +wrap copied;
-          let stored_room = deref(input).len;
+          let stored_room = input^.len;
           let source_in_input = source_index < stored_room;
           if source_in_input {
           } else {
             let error = InflateError::Truncated();
             return Err<u64, InflateError>(error: error);
           }
-          let byte = deref(input)[source_index];
+          let byte = input^[source_index];
           match emit_byte(state: &state, out: out, value: byte) {
             Ok(value: emitted) => {
             }

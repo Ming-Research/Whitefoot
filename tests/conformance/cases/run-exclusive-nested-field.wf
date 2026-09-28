@@ -7,11 +7,11 @@ struct Pair {
 }
 
 fn push(pair: &Pair, value: u64) -> result: unit writes(pair.changed) contract {
-  requires deref(pair).changed.len < deref(pair).changed.cap;
-  ensures deref(pair).changed.len == deref(entry(pair)).changed.len + 1_u64;
+  requires pair^.changed.len < pair^.changed.cap;
+  ensures pair^.changed.len == entry(pair)^.changed.len + 1_u64;
 } {
   doc "The projected write names one field, so the sibling field's support survives the call.";
-  place_back(window: &deref(pair).changed, value: value);
+  place_back(window: &pair^.changed, value: value);
   return unit;
 }
 

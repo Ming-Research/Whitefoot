@@ -870,7 +870,7 @@ impl<'unit> Checker<'_, 'unit> {
                 ty: *ty,
             }),
             // [FN-9] a parameter or named-const datum carries field and
-            // `deref` projections only: a subscripted readonly field is an
+            // Box-content projections only: a subscripted readonly field is an
             // [ENT-2] clause (b) term a requirement may name, but no relation
             // datum in this version, and only a measure member of a formal
             // place reaches a relation through a subscript (the arm below).
@@ -1542,8 +1542,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// [OP-15] reads a measure as a member of the measured place, so
     /// `result.len` is one place whose base is the clause's own result datum
     /// rather than a call over it. The base still has to be exactly that
-    /// datum: a `deref` around it, or any other `pbase` shape, names no
-    /// result.
+    /// datum. The ordinary type walk checks each suffix on that result.
     pub(super) fn postcondition_selector_place_base(
         &self,
         check_context: &CheckContext<'_>,
@@ -2443,7 +2442,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 Ok(Some(PostconditionReturnDatum::Measure(*measure, place)))
             }
-            // [FN-9, REF-4] a direct `return deref(part).len` is one exact
+            // [FN-9, REF-4] a direct `return part^.len` is one exact
             // ENT-2 range-measure term. TYPE-8 carries the range kind in the
             // binding mode rather than `CheckedType`, so retain that kind for
             // the selected-return proof instead of trying to recover it from

@@ -14,13 +14,13 @@ const EMPTY_SWAP: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure
   let earlier = content;
   swap(first: content, second: &full.inner);
   swap(first: earlier, second: content);
-  if deref(earlier).cap != 1_u64 {
+  if earlier^.cap != 1_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if deref(earlier).len != 1_u64 {
+  if earlier^.len != 1_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if deref(earlier)[0_u64] != 7_u64 {
+  if earlier^[0_u64] != 7_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   if full.inner.cap != 0_u64 {
@@ -60,17 +60,17 @@ fn scalar_source() -> String {
 }
 
 fn interchange_array<T>(first: &Box<Array<T>>, second: &Box<Array<T>>) -> result: unit writes(first.inner), writes(second.inner) {
-  swap(first: &deref(first).inner, second: &deref(second).inner);
+  swap(first: &first^.inner, second: &second^.inner);
   return unit;
 }
 
 fn generic_array(first: &Box<Array<u64>>, second: &Box<Array<u64>>) -> result: u64 writes(first.inner), writes(second.inner) {
-  let earlier = &deref(first).inner;
+  let earlier = &first^.inner;
   interchange_array::<u64>(first: first, second: second);
-  let hash = deref(earlier).len;
-  for (index in 0_u64..deref(earlier).len) {
+  let hash = earlier^.len;
+  for (index in 0_u64..earlier^.len) {
     let scaled = hash *wrap 257_u64;
-    set hash = scaled +wrap deref(earlier)[index];
+    set hash = scaled +wrap earlier^[index];
   }
   return hash;
 }
@@ -79,33 +79,33 @@ fn generic_array(first: &Box<Array<u64>>, second: &Box<Array<u64>>) -> result: u
     );
     for (name, shape) in [("slots", "Slots"), ("ring", "Ring")] {
         let head = if shape == "Ring" {
-            "  let head_prefix = hash *wrap 257_u64;\n  set hash = head_prefix +wrap deref(earlier).head;\n"
+            "  let head_prefix = hash *wrap 257_u64;\n  set hash = head_prefix +wrap earlier^.head;\n"
         } else {
             ""
         };
         source.push_str(&format!(
             r#"fn interchange_{name}<T>(first: &Box<{shape}<T>>, second: &Box<{shape}<T>>) -> result: unit writes(first.inner), writes(second.inner) {{
-  swap(first: &deref(first).inner, second: &deref(second).inner);
+  swap(first: &first^.inner, second: &second^.inner);
   return unit;
 }}
 
 fn {name}_exchange(first: &Box<{shape}<u64>>, second: &Box<{shape}<u64>>, choice: Bool) -> result: u64 writes(first.inner), writes(second.inner) {{
-  let content = &deref(first).inner;
+  let content = &first^.inner;
   let earlier = content;
   let selected = if choice {{
     give earlier;
   }} else {{
-    give &deref(first).inner;
+    give &first^.inner;
   }}
-  let rebound = &deref(second).inner;
-  set rebound = &deref(first).inner;
+  let rebound = &second^.inner;
+  set rebound = &first^.inner;
   interchange_{name}::<u64>(first: first, second: second);
   swap(first: selected, second: rebound);
-  let hash = deref(earlier).cap *wrap 257_u64;
-  set hash = hash +wrap deref(earlier).len;
-{head}  for (index in 0_u64..deref(earlier).len) {{
+  let hash = earlier^.cap *wrap 257_u64;
+  set hash = hash +wrap earlier^.len;
+{head}  for (index in 0_u64..earlier^.len) {{
     let scaled = hash *wrap 257_u64;
-    set hash = scaled +wrap deref(earlier)[index];
+    set hash = scaled +wrap earlier^[index];
   }}
   return hash;
 }}
@@ -118,7 +118,7 @@ fn {name}_exchange(first: &Box<{shape}<u64>>, second: &Box<{shape}<u64>>, choice
   requires first < second;
   requires second < 3_u64;
 } {
-  return slots_exchange(first: &deref(shelf).cells[first], second: &deref(shelf).cells[second], choice: choice);
+  return slots_exchange(first: &shelf^.cells[first], second: &shelf^.cells[second], choice: choice);
 }
 
 fn captured_pair(first: &Box<Slots<u64>>, second: &Box<Slots<u64>>, third: &Box<Slots<u64>>, fourth: &Box<Slots<u64>>) -> result: u64 writes(first.inner), writes(second.inner), writes(third.inner), writes(fourth.inner) {
@@ -131,8 +131,8 @@ fn captured_pair(first: &Box<Slots<u64>>, second: &Box<Slots<u64>>, third: &Box<
 }
 
 fn whole_read(values: &Box<Slots<u64>>) -> result: u64 reads(values) {
-  let scaled = deref(values).inner.cap *wrap 257_u64;
-  return scaled +wrap deref(values).inner.len;
+  let scaled = values^.inner.cap *wrap 257_u64;
+  return scaled +wrap values^.inner.len;
 }
 
 fn blocked_pair(first: &Box<Slots<u64>>, second: &Box<Slots<u64>>) -> result: u64 reads(first), writes(first.inner), writes(second.inner) {
@@ -301,10 +301,10 @@ fn release_array(values: Box<Array<Box<u64>>>) -> result: unit pure {
 }
 
 fn read_range(values: &[Box<u64>]) -> result: u64 reads(values) {
-  let hash = deref(values).len;
-  for (index in 0_u64..deref(values).len) {
+  let hash = values^.len;
+  for (index in 0_u64..values^.len) {
     let scaled = hash *wrap 257_u64;
-    set hash = scaled +wrap deref(values)[index].inner;
+    set hash = scaled +wrap values^[index].inner;
   }
   return hash;
 }
@@ -313,12 +313,12 @@ fn array_own(first: Box<Array<Box<u64>>>, second: Box<Array<Box<u64>>>) -> resul
   let earlier = &first.inner;
   swap(first: earlier, second: &second.inner);
   swap(first: earlier, second: &first.inner);
-  let hash = deref(earlier).len;
-  for (index in 0_u64..deref(earlier).len) {
+  let hash = earlier^.len;
+  for (index in 0_u64..earlier^.len) {
     let scaled = hash *wrap 257_u64;
-    set hash = scaled +wrap deref(earlier)[index].inner;
+    set hash = scaled +wrap earlier^[index].inner;
   }
-  let ranged = read_range(values: &deref(earlier)[0_u64..deref(earlier).len]);
+  let ranged = read_range(values: &earlier^[0_u64..earlier^.len]);
   release_array(values: move first);
   release_array(values: move second);
   let scaled = hash *wrap 257_u64;
@@ -510,30 +510,22 @@ fn runtime_content_swap_owning_cleanup_reaches_a_real_worker() {
 #[test]
 fn runtime_content_swap_invalidates_element_and_range_descendants() {
     for (shape, reference, observation) in [
-        ("Slots<u64>", "&deref(first).inner[0_u64]", "deref(stale)"),
-        (
-            "Slots<u64>",
-            "&deref(first).inner[0_u64..1_u64]",
-            "deref(stale).len",
-        ),
-        ("Ring<u64>", "&deref(first).inner[0_u64]", "deref(stale)"),
+        ("Slots<u64>", "&first^.inner[0_u64]", "stale^"),
+        ("Slots<u64>", "&first^.inner[0_u64..1_u64]", "stale^.len"),
+        ("Ring<u64>", "&first^.inner[0_u64]", "stale^"),
+        ("Array<Box<u64>>", "&first^.inner[0_u64]", "stale^.inner"),
         (
             "Array<Box<u64>>",
-            "&deref(first).inner[0_u64]",
-            "deref(stale).inner",
-        ),
-        (
-            "Array<Box<u64>>",
-            "&deref(first).inner[0_u64..1_u64]",
-            "deref(stale).len",
+            "&first^.inner[0_u64..1_u64]",
+            "stale^.len",
         ),
     ] {
         let source = format!(
             r#"fn inspect(first: &Box<{shape}>, second: &Box<{shape}>) -> result: u64 writes(first.inner), writes(second.inner) contract {{
-  requires deref(first).inner.len > 0_u64;
+  requires first^.inner.len > 0_u64;
 }} {{
   let stale = {reference};
-  swap(first: &deref(first).inner, second: &deref(second).inner);
+  swap(first: &first^.inner, second: &second^.inner);
   return {observation};
 }}
 
@@ -551,7 +543,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 fn runtime_content_swap_preserves_copy_spelling_and_runtime_value_rules() {
     for (parameter, place, row) in [
         ("Box<Array<u64>>", "values.inner", "pure"),
-        ("&Box<Array<u64>>", "deref(values).inner", "reads(values)"),
+        ("&Box<Array<u64>>", "values^.inner", "reads(values)"),
     ] {
         let source = format!(
             "fn inspect(values: {parameter}) -> result: unit {row} {{\n  let content = {place};\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -561,7 +553,7 @@ fn runtime_content_swap_preserves_copy_spelling_and_runtime_value_rules() {
     }
     for (parameter, place) in [
         ("Box<Array<u64>>", "move values.inner"),
-        ("&Box<Array<u64>>", "move deref(values).inner"),
+        ("&Box<Array<u64>>", "move values^.inner"),
     ] {
         let source = format!(
             "fn inspect(values: {parameter}) -> result: unit pure {{\n  let moved = {place};\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -572,7 +564,7 @@ fn runtime_content_swap_preserves_copy_spelling_and_runtime_value_rules() {
     for parameter in ["u64", "T"] {
         let generic = if parameter == "T" { "<T: copy>" } else { "" };
         let source = format!(
-            "fn invalid{generic}(first: &Box<Array<{parameter}>>, second: &Box<Array<{parameter}>>) -> result: unit writes(first.inner), writes(second.inner) {{\n  swap(first: &deref(first).inner, second: &deref(second).inner);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn invalid{generic}(first: &Box<Array<{parameter}>>, second: &Box<Array<{parameter}>>) -> result: unit writes(first.inner), writes(second.inner) {{\n  swap(first: &first^.inner, second: &second^.inner);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         let failure = compile_rejection(source.as_bytes());
         assert_eq!(failure.rule_id(), Some("OP-11"), "{source}\n{failure}");

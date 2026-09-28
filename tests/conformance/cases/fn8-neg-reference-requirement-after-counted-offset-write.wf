@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn get(x: &Slots<u64, 4>, i: u64) -> result: u64 reads(x) contract {
-  requires i < deref(x).len;
+  requires i < x^.len;
 } {
   doc "Reads element i of the window x names.";
-  let v = deref(x)[i];
+  let v = x^[i];
   return v;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "REF-1, FN-8: the counted form of fn8-neg-reference-requirement-after-loop-offset-write. The body writes set k = 1_u64 after the call, so the call's next iteration reaches it with k naming another row than the one wr = &rows[k] names, and its requirement 2 < deref(wr).len is refused.";
+  doc "REF-1, FN-8: the counted form of fn8-neg-reference-requirement-after-loop-offset-write. The body writes set k = 1_u64 after the call, so the call's next iteration reaches it with k naming another row than the one wr = &rows[k] names, and its requirement 2 < wr^.len is refused.";
   let rows = slots_new::<Slots<u64, 4>, 4>();
   let a = slots_new::<u64, 4>();
   let b = slots_new::<u64, 4>();

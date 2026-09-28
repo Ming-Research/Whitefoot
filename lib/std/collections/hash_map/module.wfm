@@ -51,13 +51,13 @@ public fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceilin
 public fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) doc "Lends the value stored under key, with that key, to observe and returns its owned result in Ok; Err reports an absent key. Hash and equality come from the key binding.";
 
 public fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } doc "Lets update write the value stored under key while reading the key, and returns its owned result in Ok; Err reports an absent key. Capacity and backing length stay.";
 
 public fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } doc "Inserts an owned pair within the current capacity, never growing it: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
 
 public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map to hold at least capacity pairs within its ceiling; a no-op at or below the current capacity, and Err for a request above the ceiling.";

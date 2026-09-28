@@ -20,9 +20,9 @@ struct Ledger {
 
 fn receive(log: &Ledger, item: Parcel) -> result: unit writes(log) {
   let Parcel(owner: owner) = move item;
-  set deref(log).count = deref(log).count +wrap 1_u64;
-  let shifted = deref(log).sequence *wrap 257_u64;
-  set deref(log).sequence = shifted +wrap owner.inner;
+  set log^.count = log^.count +wrap 1_u64;
+  let shifted = log^.sequence *wrap 257_u64;
+  set log^.sequence = shifted +wrap owner.inner;
   return unit;
 }
 
@@ -32,13 +32,13 @@ fn receive_other(log: &Ledger, item: Parcel) -> result: unit writes(log) {
 }
 
 fn receive_zero(log: &Ledger, item: EmptyOwner) -> result: unit writes(log) {
-  set deref(log).count = deref(log).count +wrap 1_u64;
+  set log^.count = log^.count +wrap 1_u64;
   return unit;
 }
 
 fn record_length(log: &Ledger, length: u64) -> result: unit writes(log) {
-  let shifted = deref(log).sequence *wrap 257_u64;
-  set deref(log).sequence = shifted +wrap length;
+  let shifted = log^.sequence *wrap 257_u64;
+  set log^.sequence = shifted +wrap length;
   return unit;
 }
 
@@ -110,37 +110,31 @@ fn program() -> String {
     source.push_str(&retire(
         "retire_slots",
         "Slots<Parcel, 8>",
-        "deref(items)",
+        "items^",
         "receive",
     ));
     source.push_str(&retire(
         "retire_ring",
         "Ring<Parcel, 8>",
-        "deref(items)",
+        "items^",
         "receive",
     ));
     source.push_str(&retire(
         "retire_runtime",
         "Box<Slots<Parcel>>",
-        "deref(items).inner",
+        "items^.inner",
         "receive",
     ));
     source.push_str(&retire(
         "retire_zero",
         "Box<Ring<EmptyOwner>>",
-        "deref(items).inner",
+        "items^.inner",
         "receive_zero",
     ));
     source.push_str(
-        &retire(
-            "retire_observed",
-            "Slots<Parcel, 8>",
-            "deref(items)",
-            "receive",
-        )
-        .replacen(
+        &retire("retire_observed", "Slots<Parcel, 8>", "items^", "receive").replacen(
             "    swap(first:",
-            "    record_length(log: log, length: deref(items).len);\n    swap(first:",
+            "    record_length(log: log, length: items^.len);\n    swap(first:",
             1,
         ),
     );
@@ -277,27 +271,21 @@ fn terminal_consumption_preserves_owners_prefix_and_wrapped_zero_stride_windows(
 
 #[test]
 fn terminal_consumption_keeps_observers_different_consumers_and_partial_exits() {
-    let base = retire(
-        "unrelated_name",
-        "Slots<Parcel, 8>",
-        "deref(items)",
-        "receive",
-    );
+    let base = retire("unrelated_name", "Slots<Parcel, 8>", "items^", "receive");
     for changed in [
         base.replace(
             "    swap(first:",
-            "    record_length(log: log, length: deref(items).len);\n    swap(first:",
+            "    record_length(log: log, length: items^.len);\n    swap(first:",
         ),
         base.replacen(
             "    receive(log: log, item: move item);",
             "    receive_other(log: log, item: move item);",
             1,
         ),
-        base.replace("  ensures deref(items).len == keep;\n", "")
-            .replace(
-                "  let original =",
-                "  if keep == 0_u64 {\n    return unit;\n  }\n  let original =",
-            ),
+        base.replace("  ensures items^.len == keep;\n", "").replace(
+            "  let original =",
+            "  if keep == 0_u64 {\n    return unit;\n  }\n  let original =",
+        ),
         base.replace(
             "  let original =",
             "  let borrowed = items;\n  let original =",

@@ -55,7 +55,7 @@ impl Input<'_, '_> {
             CheckedExpression::DerefAddressed { binding, .. } => Some(ResolvedPlace {
                 root: PlaceRoot::Binding(*binding),
                 // A reference binding is the body-local name of its referent
-                // path [REF-1]. The written `deref` is that boundary wrapper;
+                // path [REF-1]. The written `^` marks that reference boundary;
                 // concrete Box content steps are appended below.
                 path: Vec::new(),
             }),

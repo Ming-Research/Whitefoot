@@ -19,6 +19,6 @@ fn main() -> status: ExitStatus pure {
   let table = Table(rows: rows);
   let left = &table.rows[0_u64].left;
   set table.rows[0_u64].right = 9_u64;
-  let observed = deref(left);
+  let observed = left^;
   return exit_status(code: 0_u8);
 }

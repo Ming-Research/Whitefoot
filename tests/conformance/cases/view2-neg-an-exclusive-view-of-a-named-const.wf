@@ -6,6 +6,6 @@ const fixed_bytes: Array<u8, 4> =[1_u8, 2_u8, 3_u8, 4_u8];
 fn main() -> status: ExitStatus pure {
   doc "A named const is immutable, program-lifetime, read-only storage, so a range reference over one is a read route and never a write route. The write through it is refused at the target place because the storage is not writable at all, and CONST-2 rather than any loan rule owns the refusal.";
   let window = &fixed_bytes[0_u64..4_u64];
-  set deref(window)[0_u64] = 9_u8;
+  set window^[0_u64] = 9_u8;
   return exit_status(code: 0_u8);
 }

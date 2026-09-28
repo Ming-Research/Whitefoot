@@ -98,9 +98,9 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
     for shape in ["Slots", "Ring"] {
         for capacity in ["", ", 4"] {
             let (ty, window) = if capacity.is_empty() {
-                (format!("Box<{shape}<u64>>"), "deref(values).inner")
+                (format!("Box<{shape}<u64>>"), "values^.inner")
             } else {
-                (format!("{shape}<u64{capacity}>"), "deref(values)")
+                (format!("{shape}<u64{capacity}>"), "values^")
             };
             let source = format!(
                 "fn read(values: &{ty}, index: u64) -> result: u64 reads(values) contract {{\n  requires index < {window}.len;\n}} {{\n  return {window}[index];\n}}\n\nfn roundtrip(values: &{ty}, value: u64) -> result: u64 writes(values) contract {{\n  requires {window}.len < {window}.cap;\n}} {{\n  place_back(window: &{window}, value: value);\n  let result = take_back(window: &{window});\n  return result;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -176,9 +176,9 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
 #[test]
 fn front_placement_reuses_the_written_ring_slot_for_the_new_head() {
     let source = br#"fn front(values: &Box<Ring<u64>>, value: u64) -> result: unit writes(values.inner) contract {
-  requires deref(values).inner.len < deref(values).inner.cap;
+  requires values^.inner.len < values^.inner.cap;
 } {
-  place_front(window: &deref(values).inner, value: value);
+  place_front(window: &values^.inner, value: value);
   return unit;
 }
 
@@ -380,7 +380,7 @@ fn zero_capacity_windows_keep_header_layout_inside_nonempty_storage() {
 }
 
 fn empty_length(values: &[std::io::OutputStream]) -> result: u64 reads(values) {
-  return deref(values).len;
+  return values^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -579,7 +579,7 @@ fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
 #[test]
 fn weigh_invariant_proves_domains_then_erases_before_llvm() {
     let source = br#"fn weigh(weights: &[u8], count: u64) -> total: u32 reads(weights) contract {
-  define capacity = deref(weights).len;
+  define capacity = weights^.len;
   requires count <= capacity;
   requires count <= 1000_u64;
   ensures total <= 255000_u32;
@@ -589,7 +589,7 @@ fn weigh_invariant_proves_domains_then_erases_before_llvm() {
     i in 0_u64..count,
     invariant per_byte: sum <= 255_u32 * i
   ) {
-    let w = deref(weights)[i];
+    let w = weights^[i];
     let wide = cvt::<u8, u32>(w);
     set sum = sum + wide;
   }
@@ -934,21 +934,21 @@ fn a_reference_parameter_updates_caller_storage_through_one_address_path() {
 }
 
 fn update(pool: &Pool) -> result: unit writes(pool.left), writes(pool.count) {
-  let spare = deref(pool).left.inner.len;
+  let spare = pool^.left.inner.len;
   let ok = 1_u64 < spare;
   if ok {
-    set deref(pool).left.inner[1_u64] = 13_u64;
-    set deref(pool).count = 1_u64;
+    set pool^.left.inner[1_u64] = 13_u64;
+    set pool^.count = 1_u64;
   }
   return unit;
 }
 
 fn observe(pool: &Pool) -> result: u64 reads(pool.left), reads(pool.count) {
-  let spare = deref(pool).left.inner.len;
+  let spare = pool^.left.inner.len;
   let ok = 1_u64 < spare;
-  let count = deref(pool).count;
+  let count = pool^.count;
   if ok {
-    let value = deref(pool).left.inner[1_u64];
+    let value = pool^.left.inner[1_u64];
     return value +wrap count;
   } else {
     return count;

@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn read_then_take(window: &Slots<u64, 8>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {
-  requires i < deref(window).len;
+  requires i < window^.len;
 } {
   doc "Returns element i plus the last element, which it takes out of the window. EFF-5, WIN-2: an index position overlaps window.last whatever its value, because one writes(window.last) covers every take_back the body makes, so a call does not compare the two entries and this body is checked against both.";
-  let kept = deref(window)[i];
+  let kept = window^[i];
   let last = take_back(window: window);
   let total = kept +wrap last;
   return total;

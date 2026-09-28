@@ -9,9 +9,9 @@ fn main() -> status: ExitStatus pure {
   doc "Matching through a reference derives a payload binder that names the scrutinee path extended by its payload step; reading that copy payload leaves the enum live.";
   let packet = Packet::Data(value: 4_i32);
   let holder = &packet;
-  match deref(holder) {
+  match holder^ {
     Data(value: payload) => {
-      let saved = deref(payload);
+      let saved = payload^;
     }
   }
   return exit_status(code: 0_u8);
