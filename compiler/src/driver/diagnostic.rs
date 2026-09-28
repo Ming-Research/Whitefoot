@@ -562,6 +562,12 @@ impl FieldValue for u32 {
     }
 }
 
+impl FieldValue for u64 {
+    fn value(&self, _: &SourceBundle) -> Option<Value> {
+        Some(Value::Number(*self))
+    }
+}
+
 /// Exact bytes that must be read quoted, such as trivia a canonical-form
 /// rejection wanted and found.
 struct Exact<'text>(&'text str);
@@ -703,8 +709,8 @@ variant_names! {
     }
     ReservedNameClass { DotlessOperation, ModeWord }
     SourceIssueKind {
-        InvalidUtf8, UnexpectedByte, MissingLabelName, UnterminatedString, InvalidStringByte,
-        InvalidStringEscape, InvalidSourceByte, CommentPrefix,
+        InvalidUtf8, UnexpectedByte, MissingLabelName, UnterminatedText, InvalidTextByte,
+        InvalidTextEscape, InvalidSourceByte, CommentPrefix,
     }
     StaticObligationDisposition { Refuted, Unproved }
     UnsupportedSemanticFeature {
@@ -818,6 +824,9 @@ impl Report for SemanticIssueKind {
         report_variants!(SemanticIssueKind, self, fields;
             InvalidIntegerLiteral;
             InvalidFloatLiteral;
+            InvalidTextItem { reason, mechanical_fix };
+            NonAsciiByteCharacter { mechanical_fix };
+            TextLengthMismatch { declared_length, byte_length, mechanical_fix };
             InvalidConstValue;
             InaccessibleField { field, reason };
             InaccessibleVariant { variant, reason };

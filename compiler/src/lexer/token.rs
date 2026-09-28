@@ -78,6 +78,9 @@ pub enum TokenKind {
     OperatorForm,
     /// A decimal numeric candidate retained for later literal checking.
     NumberForm,
+    /// A `'`-quoted candidate with a lexically valid raw body and escape
+    /// structure and its maximal suffix, retained for literal checking.
+    CharacterForm,
     /// A string with a lexically valid raw body and escape structure.
     StringForm,
     /// `(`.

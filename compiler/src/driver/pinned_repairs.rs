@@ -45,6 +45,129 @@ struct RepairPair {
 
 const REPAIRS: &[RepairPair] = &[
     // -------------------------------------------------------------------
+    // [FORM-7] a text item's one spelling and a `u8` character's range.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "character-escaped-printable.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{41}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
+            "\n  mechanical_fix: write `A` in place of `\\u{41}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 'A'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "string-escaped-newline.wf",
+        rejected: br#"const line: Array<u8, 3> = "ok\u{a}";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\n` in place of `\\u{a}`\n",
+        ],
+        repaired: &[br#"const line: Array<u8, 3> = "ok\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "u8-character-above-ascii.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{e9}'_u32` for the character, or `233_u8` for the byte\n",
+        ],
+        repaired: &[
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 233_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "u8-character-beyond-a-byte.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{3b1}'_u32`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [CONST-2] a STRING constant's length.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "string-length-mismatch.wf",
+        rejected: br#"const usage: Array<u8, 5> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-2",
+        sentences: &[
+            "]: TextLengthMismatch\n",
+            "\n  declared_length: 5\n",
+            "\n  byte_length: 6\n",
+            "\n  mechanical_fix: this text is 6 bytes in UTF-8: write `Array<u8, 6>` where this array's type is declared, or change the text to 5 bytes\n",
+        ],
+        repaired: &[
+            br#"const usage: Array<u8, 6> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"const usage: Array<u8, 5> = "usage";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    // -------------------------------------------------------------------
     // [FN-8] an ordinary call's requirement.
     // -------------------------------------------------------------------
     RepairPair {

@@ -475,10 +475,19 @@ in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 A named const may contain primitives, const-eligible structs, and
 constant-capacity `Array` values [CONST-2]. A full array literal writes every
-element:
+element; an element that denotes a character is written as a character
+literal, and a number keeps its numeric literal [FORM-5]:
 
 ```whitefoot
-const digits: Array<u8, 4> =[48_u8, 49_u8, 50_u8, 51_u8];
+const digits: Array<u8, 4> =['0'_u8, '1'_u8, '2'_u8, '3'_u8];
+```
+
+A message or other text is an `Array<u8, N>` written as a STRING, whose N is
+its UTF-8 byte length; a non-ASCII character is written `\u{H}`, and the
+checker states the right N when it differs:
+
+```whitefoot
+const usage: Array<u8, 12> = "usage: tool\n";
 ```
 
 Borrow and subscript it under the ordinary rules. Const storage is immutable;

@@ -49,15 +49,15 @@ fn active_spec_pre_tree_defects_use_the_exact_specified_spans() {
     for (source, expected) in [
         (
             b"\"\\\xc2\xa2\"".as_slice(),
-            (SourceIssueKind::InvalidStringEscape, 1, 4),
+            (SourceIssueKind::InvalidTextEscape, 1, 4),
         ),
         (
             b"\"\\\xe2\x98\x83\"".as_slice(),
-            (SourceIssueKind::InvalidStringEscape, 1, 5),
+            (SourceIssueKind::InvalidTextEscape, 1, 5),
         ),
         (
             b"\"\\\xf0\x9f\x98\x80\"".as_slice(),
-            (SourceIssueKind::InvalidStringEscape, 1, 6),
+            (SourceIssueKind::InvalidTextEscape, 1, 6),
         ),
         (
             b"\"\\\xff\"".as_slice(),
@@ -76,7 +76,7 @@ fn active_spec_pre_tree_defects_use_the_exact_specified_spans() {
     );
     assert_eq!(
         issue(b"\"\xe2\x98\x83\""),
-        (SourceIssueKind::InvalidStringByte, 1, 4)
+        (SourceIssueKind::InvalidTextByte, 1, 4)
     );
 }
 
@@ -86,35 +86,69 @@ fn malformed_prefixed_names_report_the_marker() {
     assert_eq!(issue(b"@9"), (SourceIssueKind::MissingLabelName, 0, 1));
 }
 
-/// v0.60 has no apostrophe-prefixed form, so `'` begins no specified token.
-///
-/// [GRAM-1]'s list of maximal forms names only `@` as a sigil, and [DIAG-1]'s
-/// raw-lexical clauses keep an apostrophe clause no longer: it falls to the
-/// residual "any other ASCII byte that cannot begin a specified token cites
-/// FORM-1 and spans that byte". The v0.59 cases asserting a FORM-3
-/// `MissingRegionName` at the same two inputs are rewritten here rather than
-/// deleted, because the inputs still have a defined verdict — a different one.
+/// `'` opens a character form [GRAM-1]: a candidate with no closing quote is
+/// unterminated from its opening quote through end of source, and its
+/// interior follows the STRING interior's lexical clauses with `'` as its
+/// own quote [DIAG-1]. The v0.60 through v0.77 verdict, an unexpected byte
+/// citing FORM-1, is rewritten rather than deleted because the inputs still
+/// have a defined verdict, a different one.
 #[test]
-fn an_apostrophe_is_an_unexpected_byte() {
-    assert_eq!(issue(b"'"), (SourceIssueKind::UnexpectedByte, 0, 1));
-    assert_eq!(issue(b"'region"), (SourceIssueKind::UnexpectedByte, 0, 1));
-    assert_eq!(issue(b"'Upper"), (SourceIssueKind::UnexpectedByte, 0, 1));
-    assert_eq!(SourceIssueKind::UnexpectedByte.rule_id(), "FORM-1");
+fn an_apostrophe_opens_a_character_form() {
+    assert_eq!(issue(b"'"), (SourceIssueKind::UnterminatedText, 0, 1));
+    assert_eq!(issue(b"'region"), (SourceIssueKind::UnterminatedText, 0, 7));
+    assert_eq!(
+        issue(b"a 'Upper"),
+        (SourceIssueKind::UnterminatedText, 2, 8)
+    );
+    assert_eq!(SourceIssueKind::UnterminatedText.rule_id(), "FORM-5");
+    // Each quoted form escapes its own quote and not the other's.
+    assert_eq!(
+        issue(br#"'\"'_u8"#),
+        (SourceIssueKind::InvalidTextEscape, 1, 3)
+    );
+    assert_eq!(
+        issue(br#""\'""#),
+        (SourceIssueKind::InvalidTextEscape, 1, 3)
+    );
+    assert_eq!(
+        issue(br"'\t'_u8"),
+        (SourceIssueKind::InvalidTextEscape, 1, 3)
+    );
+    assert_eq!(issue(br"'\n\n"), (SourceIssueKind::UnterminatedText, 0, 5));
+    assert_eq!(
+        issue(b"'\\n\n'_u8"),
+        (SourceIssueKind::InvalidTextByte, 3, 4)
+    );
+    for source in [
+        b"'a'_u8".as_slice(),
+        b"'\\''_u8",
+        b"'\"'_u32",
+        b"'\\u{e9}'_u32",
+        b"'ab'_i32",
+        b"\"\\u{e9}\"",
+    ] {
+        let LexOutcome::Complete(lexed) =
+            crate::lex(&bundle(&[("text.wf", source)]), generous_limits())
+        else {
+            panic!("{source:?} forms one token");
+        };
+        assert_eq!(lexed.token_count(), 1, "{source:?}");
+    }
 }
 
 #[test]
 fn strings_reject_unknown_escapes_raw_controls_unicode_and_eof() {
-    assert_eq!(issue(br#""bad\t""#).0, SourceIssueKind::InvalidStringEscape);
-    assert_eq!(issue(b"\"bad\n\"").0, SourceIssueKind::InvalidStringByte);
+    assert_eq!(issue(br#""bad\t""#).0, SourceIssueKind::InvalidTextEscape);
+    assert_eq!(issue(b"\"bad\n\"").0, SourceIssueKind::InvalidTextByte);
     assert_eq!(
         issue("\"snowman ☃\"".as_bytes()).0,
-        SourceIssueKind::InvalidStringByte
+        SourceIssueKind::InvalidTextByte
     );
     assert_eq!(
         issue(b"\"unterminated").0,
-        SourceIssueKind::UnterminatedString
+        SourceIssueKind::UnterminatedText
     );
-    assert_eq!(issue(b"\"bad \\ ").0, SourceIssueKind::InvalidStringEscape);
+    assert_eq!(issue(b"\"bad \\ ").0, SourceIssueKind::InvalidTextEscape);
 }
 
 #[test]

@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const high: u8 = '\u{80}'_u8;
+
+fn main() -> status: ExitStatus pure {
+  doc "U+0080 is the first value a u8 character literal cannot hold, including as a const value [FORM-7].";
+  return exit_status(code: 0_u8);
+}

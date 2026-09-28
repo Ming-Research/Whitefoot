@@ -85,7 +85,8 @@ impl<'bytes> Scanner<'bytes> {
                 });
             }
             b'+' | b'-' | b'*' | b'/' | b'%' => self.operator_form(start),
-            b'"' => self.string(start)?,
+            b'"' => self.quoted(start, TokenKind::StringForm)?,
+            b'\'' => self.quoted(start, TokenKind::CharacterForm)?,
             b'(' => self.fixed(start, 1, RawKind::Token(TokenKind::LeftParen)),
             b')' => self.fixed(start, 1, RawKind::Token(TokenKind::RightParen)),
             b'{' => self.fixed(start, 1, RawKind::Token(TokenKind::LeftBrace)),
@@ -189,9 +190,8 @@ impl<'bytes> Scanner<'bytes> {
 
     /// Forms one label token: the `@` sigil and its mandatory lowercase name.
     ///
-    /// v0.60 leaves `@` as the only sigil-prefixed form; the apostrophe-
-    /// prefixed REGIONID retired with regions [FORM-3], so a `'` reaches the
-    /// residual unexpected-byte arm instead of a second call here.
+    /// `@` is the only sigil-prefixed form; a `'` opens a character form
+    /// [GRAM-1].
     fn label_form(&self, start: usize) -> Result<RawLexeme, RawIssue> {
         let missing = RawIssue {
             start,
@@ -233,22 +233,35 @@ impl<'bytes> Scanner<'bytes> {
         }
     }
 
-    fn string(&self, start: usize) -> Result<RawLexeme, RawIssue> {
+    /// Forms one quoted candidate, a STRING or a character form [GRAM-1]:
+    /// raw printable bytes and two-byte escapes up to the first unescaped
+    /// occurrence of the opening quote, and, for a character form, the
+    /// maximal `[A-Za-z0-9_]*` suffix after it.
+    ///
+    /// The escapes are `\\`, `\n`, `\u`, and the form's own quote escaped;
+    /// the `{H}` completing a `\u` is ordinary interior bytes whose shape
+    /// terminal membership decides [FORM-5].
+    fn quoted(&self, start: usize, kind: TokenKind) -> Result<RawLexeme, RawIssue> {
+        let quote = self.bytes[start];
         let mut cursor = start + 1;
         loop {
             let Some(byte) = self.bytes.get(cursor).copied() else {
                 return Err(RawIssue {
                     start,
                     end: self.bytes.len(),
-                    kind: SourceIssueKind::UnterminatedString,
+                    kind: SourceIssueKind::UnterminatedText,
                 });
             };
             match byte {
-                b'"' => {
+                _ if byte == quote => {
+                    let mut end = cursor + 1;
+                    if kind == TokenKind::CharacterForm {
+                        end = take_while(self.bytes, end, is_suffix_continuation);
+                    }
                     return Ok(RawLexeme {
                         start,
-                        end: cursor + 1,
-                        kind: RawKind::Token(TokenKind::StringForm),
+                        end,
+                        kind: RawKind::Token(kind),
                     });
                 }
                 b'\\' => {
@@ -256,7 +269,7 @@ impl<'bytes> Scanner<'bytes> {
                         return Err(RawIssue {
                             start: cursor,
                             end: cursor + 1,
-                            kind: SourceIssueKind::InvalidStringEscape,
+                            kind: SourceIssueKind::InvalidTextEscape,
                         });
                     };
                     if !escaped.is_ascii() {
@@ -270,14 +283,14 @@ impl<'bytes> Scanner<'bytes> {
                         return Err(RawIssue {
                             start: cursor,
                             end: cursor + 1 + length,
-                            kind: SourceIssueKind::InvalidStringEscape,
+                            kind: SourceIssueKind::InvalidTextEscape,
                         });
                     }
-                    if !matches!(escaped, b'\\' | b'"' | b'n') {
+                    if !matches!(escaped, b'\\' | b'n' | b'u') && escaped != quote {
                         return Err(RawIssue {
                             start: cursor,
                             end: cursor + 2,
-                            kind: SourceIssueKind::InvalidStringEscape,
+                            kind: SourceIssueKind::InvalidTextEscape,
                         });
                     }
                     cursor += 2;
@@ -285,7 +298,7 @@ impl<'bytes> Scanner<'bytes> {
                 0x20..=0x7e => cursor += 1,
                 _ if !byte.is_ascii() => {
                     let (end, kind) = match utf8_scalar_len(&self.bytes[cursor..]) {
-                        Some(length) => (cursor + length, SourceIssueKind::InvalidStringByte),
+                        Some(length) => (cursor + length, SourceIssueKind::InvalidTextByte),
                         None => (cursor + 1, SourceIssueKind::InvalidUtf8),
                     };
                     return Err(RawIssue {
@@ -298,7 +311,7 @@ impl<'bytes> Scanner<'bytes> {
                     return Err(RawIssue {
                         start: cursor,
                         end: cursor + 1,
-                        kind: SourceIssueKind::InvalidStringByte,
+                        kind: SourceIssueKind::InvalidTextByte,
                     });
                 }
             }

@@ -1406,6 +1406,35 @@ rarely insert at the same place.
   and wire their compilation or delete them with the workflow sentence;
   reopen with the next edit of any of these files.
 
+- **A reserved spelling used as a name does not say it is reserved.** The
+  Snowghost renderer's writers found by trial that `copy`, `is` and `checked`
+  cannot name a binder [FORM-3]: `let copy = 1_u8;` and `let is = 1_u8;` stop
+  as a grammar `UnexpectedToken` expecting an IDENT at `copy`, and
+  `let checked = 1_u8;` as `ReservedName` with `class: ModeWord` and an
+  inventory ordinal, and neither says that the spelling is a fixed atom or a
+  mode word nor which grammar uses it (`capability_bound`, `result_route`,
+  the OPNAME and `infix_op` suffixes). The rejection should name the
+  reservation and the production that owns the spelling, with a repair to
+  choose another name. Validate with a pinned probe per reservation class,
+  fixed atom and mode word, in a `let`, a parameter and a field, reading
+  that a writer renames on the first round. Reopen with the next change to
+  FORM-3 attribution or name reservation.
+
+- **A runtime-formed relative path with several components cannot be
+  opened.** `std::fs::relative_path` takes only a `HostString`, which a
+  program receives as an argument, and `open_directory` and `open_file`
+  open one component each while refusing a symbolic link at every
+  component, so a program cannot open `a/b/c` from bytes it read at run
+  time, such as a file named in data, when a directory on that path is or
+  passes through a link. The Snowghost renderer met this reading resources
+  named in its input; the related root case is the linked-directory item
+  above. Lifting it needs a specification change: a `RelativePath` formed
+  from bytes, validated as `relative_path` validates a `HostString`, or a
+  multi-component open that follows links as `open_read` does. Validate with
+  a program that reads a path from a file and opens it below a directory
+  holding a link, with an enumerated link left unfollowed. Reopen when a
+  program must open data-named files below linked directories.
+
 ## Modules and libraries
 
 - **Finish and qualify the modular incremental design.** The module

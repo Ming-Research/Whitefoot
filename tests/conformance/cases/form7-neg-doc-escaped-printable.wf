@@ -1,0 +1,7 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A doc entry's text items obey the one-spelling rule too: \u{41} is written A.";
+  return exit_status(code: 0_u8);
+}

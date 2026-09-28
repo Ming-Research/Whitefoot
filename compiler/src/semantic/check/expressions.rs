@@ -756,7 +756,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .check_generic_numeric_identity(context, node, bytes == b"1_T");
             }
             return Ok(TypedExpression::owned(
-                CheckedExpression::Constant(self.types.declarations.parse_literal(node, bytes)?),
+                CheckedExpression::Constant(self.types.declarations.parse_literal(node, literal)?),
                 EffectSet::NONE,
             ));
         }
