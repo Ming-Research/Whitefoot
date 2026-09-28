@@ -309,6 +309,42 @@ functions that carry it, so a module compiled from IR without it checks the
 runtime alone. With the lock removed, the instrumented build reports the
 write-write race on the counter's state, so the check can fail.
 
+## Experiment 7: a Redis subset
+
+### Design
+
+`tests/programs/redis_subset.wf` serves `PING`, `SET`, `GET`, `DEL` and
+`INCR` in RESP2 over TCP, pipelined requests included. Each connection runs
+in its own context, reads into its own buffer, answers every complete command
+the buffer holds with one send, and keeps an incomplete one for the next
+read. The keyspace is one `Shared<HashMap<Box<Slots<u8>>, Box<Slots<u8>>, c>>`
+from the standard library, and each command is one atomic statement over it;
+parsing, encoding and the socket calls run outside the statement.
+
+### What would distinguish the hypotheses, stated before measuring
+
+`redis-server` 7.0.15 with persistence off (`--save "" --appendonly no`) is
+the reference; both servers run pinned to CPUs 0 and 1 and `redis-benchmark`
+to CPUs 2 and 3 with `--threads 2`, 50 clients, 16-byte values and keys drawn
+from 100,000, one million requests per test, the two servers interleaved and
+each measured twice:
+
+- **Correct.** Every run completes with no error reply, and after
+  `redis-benchmark -t incr -n 100000 -c 50` the shared counter reads 100,000
+  on both servers.
+- **The object does not serialize the server.** Without pipelining the subset
+  on two drivers reaches at least the reference's rate for `SET` and `GET`:
+  one request per system call is mostly socket work, which the subset spreads
+  over both drivers while the reference runs it on one thread.
+- **The drivers are used.** Without pipelining the subset on two drivers
+  reaches at least 1.3 times its own rate on one driver.
+- **A command costs no more than twice the reference's.** With 16 requests
+  per pipeline, where the command itself dominates, the subset on two
+  drivers reaches at least half the reference's rate for `SET` and `GET`.
+
+A criterion that fails is attributed with a profile of the subset before any
+conclusion is drawn from it.
+
 ## Remaining questions
 
 1. Spelling: `atomic s = &h { }`. This reuses `&` in a position where `h` is
