@@ -144,10 +144,69 @@ baseline, the sufficient range test gives:
 These are baseline classifications, not gains from an optimization. The
 twelve controls remain in the output with an unranked status.
 
+The later optimization pairs are separate experiments, not a fresh run of all
+five families on one revision. Their supported conclusions are:
+
+| Family | Supported result and remaining question |
+|---|---|
+| Vector | The actual-compiler terminal traversal plus function-actual hint pair improved several scalar paths but regressed wide suffix-one and the empty-suffix controls. It does not select a production policy. The later append-only trial has mismatched accounting provenance and a false code premise; its claimed attribution is withdrawn in the [family report](vector-library/RESULTS.md). |
+| Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) removes duplicate descriptor work and improves scalar reverse churn in a matched pair. Scalar growth at 256 and 4096 remains below target. |
+| HashMap | The [occupancy series](map-library/RESULTS.md) has geometry and allocation observations, but no occupancy timing yet. Current lookup/find calls already inline; the fixed-eight result cannot attribute this map's remaining gap. |
+| PriorityQueue | The [four-ary trial](priority-library/RESULTS.md) does not remove the wide-value deficit. Movement and result handling remain hypotheses, not measured cost shares. |
+| OrderedMap | [Node occupancy and wide cleanup](ordered-library/RESULTS.md) provide concrete code leads; their independent time costs and a successful production change remain unestablished. |
+
+In the most recent Vector diagnostics, a remaining deficit against a native
+peer was incorrectly described as a regression from the candidate. Those are
+different comparisons. The family report now separates them, preserves both
+generations of the previously overwritten tail/truncate artifacts, and marks
+the mixed accounting data unusable for candidate selection. The raw target
+reductions themselves replay from their sample files; replaying a reduction
+does not establish the identity or correctness of the image that produced it.
+
+### Next discriminator: separate the two actual compiler changes
+
+Before further Vector timing, integrate main's ownership-surface migration at
+`c84c4dd7ab46848f6a5b816fcf57fce32b98158e` and pin the resulting compiler,
+library and harness revision. Then construct a same-source two-factor ablation:
+neither terminal consumption nor function-actual hints, terminal consumption
+only, hints only, and both. No arm has been built or measured under this plan.
+The earlier four-arm diagnostic edited LLVM directly; the actual compiler pair
+measured both changes together. Neither attributes the current compiler's
+wide-value loss to an individual change or their interaction.
+
+The local variants disable only the call to `lower_terminal_consumption` or
+the three existing `is_function_actual`-guarded hint emissions. Checked
+function identities, source acceptance, library bodies and all native inputs
+stay fixed. Freeze each source diff, compiler binary, emitted LLVM and native
+input hashes before constructing the next variant. No variant switch enters
+the work branch. Scratch artifacts belong to this bounded experiment and are
+discardable after the reproducible result is published.
+
+First compare each hint pair after removing only emitted `inlinehint` tokens;
+other raw LLVM must agree. Inventory the terminal-lowering body changes and
+explain anything outside the selected regions before proceeding. Each timed
+and accounting image must pass the full existing behavior matrix and the
+checksum/cleanup fault controls; the complete accounting outputs must agree.
+These checks make no new claim about allocation exhaustion. Inspect the O3
+objects and linked paths before timing, including calls, owner transfers,
+frames, loop recurrence, empty-suffix guards, length stores and native-control
+placement. Equivalent text/data and layout justify deduplicating timing, not
+claiming a new measured result for an identical image.
+
+For distinct images that pass those screens, any later timing retains the
+complete `measure 1048576 7` matrix, both cohorts, the existing qualification
+rules and all six empty-suffix controls. Compare each single change with
+neither, and both with each single. A wide loss in either single-change arm
+falsifies an interaction-only explanation; a loss confined to both supports
+one only under these measured conditions. Preserve adverse unstable samples
+and native drift. An overlapping range is not equivalence, target counts
+alone select no policy, and this discriminator changes no pending amendment.
+
 ### Final-code attribution before optimization
 
-The O3 timed images, not just the emitted unoptimized LLVM, distinguish the
-following surviving work. Inspect the complete trace callers: a public helper
+The frozen baseline's O3 timed images, not just the emitted unoptimized LLVM,
+distinguish the following surviving work. These observations are not a claim
+about subsequent candidate images. Inspect the complete trace callers: a public helper
 definition may survive in an image even though every measured call was inlined.
 These observations identify discriminators, not percentages of elapsed time.
 

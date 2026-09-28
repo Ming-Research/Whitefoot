@@ -3868,134 +3868,199 @@ for disposition. Source restoration does not replace an already built
 compiler: preserve the identified Slots artifacts and rebuild the embedded
 compiler before the next source-only trial on original C lowering.
 
-### Zero-capacity `Slots` sentinel: complete pair and rejected candidate
+### Zero-capacity `Slots` sentinel: complete samples, selection unresolved
 
-The next lowering discriminator keeps `Box<Slots<T>>`, all source contracts,
-the allocator refusal protocol and positive-capacity layout unchanged. A
-runtime-capacity `Slots` constructed with capacity zero points at one private
-module global `{ i64, i64 }` whose two words are zero. `grow` checks the old
-capacity before freeing, and `free_empty` skips the global. `Ring` and every
-positive-capacity `Slots` allocation retain the ordinary `malloc`/`free` path.
-The exact source-independent compiler patch is
-[`zero-slots.patch`](zero-slots.patch); it is a candidate artifact, not a
-production change. The pre-registered acceptance criterion was: all 1,260
-configurations and 8,820 executions pass with unchanged checksums and refusal
-cleanup; the accounting must show no request for a zero-capacity construction,
-one fewer request/release at each such trace, and unchanged positive-capacity
-rows; optimized IR must contain the shared header and no allocator call on the
-zero branch; and every qualified useful cell must improve or remain qualified.
+The candidate [`zero-slots.patch`](zero-slots.patch) makes a runtime-capacity
+`Slots` constructed with capacity zero point at one private module global
+`{ i64, i64 }` whose two words are zero. `grow` checks the old capacity before
+freeing, and `free_empty` skips the global. `Ring` and positive-capacity
+`Slots` retain the ordinary `malloc`/`free` path. The historical acceptance
+criterion was: all 1,260 configurations and 8,820 executions pass with
+unchanged checksums and refusal cleanup; the accounting must show no request
+for a zero-capacity construction, one fewer request/release at each such
+trace, and unchanged positive-capacity rows; optimized IR must contain the
+shared header and no allocator call on the zero branch; and every qualified
+useful cell must improve or remain qualified.
 
-The unmodified current compiler and the candidate were rebuilt separately
-from the same branch and measured with `ECO_WORK=1048576`, seven samples and
-the same native inputs. Construction took 3.23 s for the baseline compiler,
-13.08 s for the candidate scratch compiler, 6.12 s for baseline correctness,
-3.14 s for candidate correctness, 82.01 s for the baseline matrix and 81.60 s
-for the candidate matrix. Both correctness images passed the full matrix,
-fault checksum, fault cleanup and accounting checks. The baseline and
-candidate sample files are
+The original run report states that the unmodified compiler and candidate
+were rebuilt separately from the same branch with the same native inputs,
+`ECO_WORK=1048576` and seven samples. It reported construction times of 3.23 s
+and 13.08 s, correctness times of 6.12 s and 3.14 s, and matrix times of
+82.01 s and 81.60 s, with both full matrices and checksum/cleanup faults
+passing. No frozen phase-time or exit-status logs for these last three trials
+were found in the subsequent audit. Those times and exits remain original
+reported observations; this audit reduced the saved CSVs and inspected
+existing code, without rebuilding or rerunning correctness or timing.
+
+The complete paired evidence remains in
 [`baseline samples`](ecosystem-zero-slots-baseline-samples.csv) and
-[`candidate samples`](ecosystem-zero-slots-candidate-samples.csv), with target
-reductions in the paired [`baseline targets`](ecosystem-zero-slots-baseline-targets.csv)
-and [`candidate targets`](ecosystem-zero-slots-candidate-targets.csv).
-The allocator ledgers are [`baseline account`](ecosystem-zero-slots-baseline-account.csv)
-and [`candidate account`](ecosystem-zero-slots-candidate-account.csv).
+[`candidate samples`](ecosystem-zero-slots-candidate-samples.csv), with
+[`baseline targets`](ecosystem-zero-slots-baseline-targets.csv),
+[`candidate targets`](ecosystem-zero-slots-candidate-targets.csv),
+[`baseline account`](ecosystem-zero-slots-baseline-account.csv) and
+[`candidate account`](ecosystem-zero-slots-candidate-account.csv).
+The ledgers record scalar reserved-16 falling from six requests/504 bytes to
+three requests/456 bytes per three-round trace, and scalar growth-16 from
+21 requests/1,848 bytes to 18/1,800. These are the expected removed empty
+header allocations; the positive reserve still allocates its backing.
 
-The accounting change is causal: for scalar reserved-16, Whitefoot falls from
-six requests/504 bytes to three requests/456 bytes per three-round trace; the
-positive reserve still allocates its new backing. Scalar growth-16 falls from
-21 requests/1,848 bytes to 18/1,800. The candidate target reduction is
-20 pass / 1 deficit / 15 inconclusive useful cells (six suffix-zero controls),
-versus the matched baseline's 14 / 5 / 17. The one qualified deficit is wide
-suffix-1 at 4096 (candidate 2.119/2.171 times the slower standard peer). The
-other useful cells either overlap or improve, but this strict loss rejects the
-candidate under the no-regression criterion. The IR confirms the sentinel is
-not an accounting-only artefact: the constructor returns the global on its
-zero branch, positive allocation remains in the other branch, and both growth
-and release contain the ownership test.
+The candidate target reduction is 20 pass / 1 deficit / 15 inconclusive
+useful cells, versus the baseline's 14 / 5 / 17; each has six unranked
+suffix-zero controls. The remaining peer deficit is wide suffix-1 at 4096:
+the candidate/slower-standard median ratios are `2.119030606` and
+`2.023018210`. The former report mixed a median ratio with an observed upper
+bound. A deficit against a native peer does not itself establish a regression
+against the paired Whitefoot baseline. In this cell the candidate/baseline
+median ratios are `1.223888297` and `1.236763787`, but the observed ranges
+overlap in both cohorts: baseline/candidate ranges are
+`24.699–33.846 / 22.355–36.121 ms` and
+`19.120–36.727 / 23.961–35.996 ms`. No useful cell has a candidate minimum
+above its baseline maximum in both cohorts. The previous rejection on a
+claimed strict paired loss is therefore withdrawn.
 
-The next discriminator is a source-equivalent lowering refinement: compare the
-old pointer directly with `@wf_zero_slots_header` in `grow` and `free_empty`,
-and specialize the zero-valued `box_slots_new` operation to return the global
-without a runtime zero test or phi. It is admitted only if the same complete
-matrix and accounting criterion passes and wide suffix-1 loses no qualified
-cell; otherwise the sentinel route is closed and Vector remains unresolved.
+The candidate remains unselected: the full peer target is incomplete. The
+report's claimed refusal coverage also was not established. The ecosystem driver's
+[`fail-checksum` and `fail-cleanup` commands](vector-costs.c) corrupt a checksum
+and leave an allocation unreleased; they do not inject allocation exhaustion
+or separately validate global-header sharing. The historical refusal wording
+is not evidence about resource-exhaustion behavior and does not establish
+that an optimization must preserve exact allocator request positions.
+The historical proposed refinement was a direct pointer comparison with
+`@wf_zero_slots_header` and specialization of a known-zero constructor. It
+was not measured here, and these results neither select it nor close the
+sentinel route.
 
-### Next discriminator: wide append boundary
+### Historical discriminator: wide append boundary, premise invalidated
 
-The optimized IR still retains a call from the wide `tail_work` loop to the
-monomorphized `grow_vector_append`; that call passes a 256-byte owner through a
-temporary. The next source-equivalent trial adds `alwaysinline` only to that
-wide append definition. Scalar code, the truncate body, source contracts,
-allocation policy, native inputs and all other function attributes remain
-unchanged. This is a diagnostic of the append boundary, not a blanket inline
-policy.
+The historical plan assumed that the timed wide `tail_work` loop retained a
+call to `grow_vector_append` carrying a 256-byte owner temporary. It proposed
+`alwaysinline` on the wide append definition, with scalar input, truncate,
+source contracts, allocation policy, native inputs and other attributes
+unchanged. Its code criterion required removal of that call without a new
+snapshot, spill or scalar body change, followed by matched correctness,
+accounting and timing with no qualified useful-cell regression.
 
-Before timing, the code criterion is that the wide `tail_work` body contains no
-append call or append helper body boundary, while its frame has no new
-256-byte snapshot or spill and scalar bodies are unchanged. If that criterion
-passes, both complete images must retain all checksums, refusal cleanup and
-the unchanged allocation ledger. A qualified useful-cell regression, or a
-failure to remove the boundary, rejects the trial without selecting a policy.
-The candidate is useful only if it removes the remaining wide `suffix-1`
-deficit without reintroducing the scalar losses recorded above.
+The actual O3 control-object inspection in the append-and-truncate trial
+below invalidates that append-call premise: append is already inlined in the
+wide tail. The earlier diagnostic IR and the absence of an append call in a
+candidate do not establish that the timed control had such a boundary. The
+historical criterion is retained as the plan, not as a passed discriminator.
 
-### Wide append `alwaysinline`: code win, timing rejected
+### Wide append `alwaysinline`: contaminated accounting lineage, selection invalid
 
-The raw candidate added `alwaysinline` only to the wide
-`grow_vector_append` instance. The optimized IR satisfies the code criterion:
-the wide `tail_work` loop has no append call or helper boundary and writes the
-constructed 256-byte value directly into the backing slot. Its frame gains no
-256-byte owner snapshot, and the scalar instance is unchanged. The exact
-frozen-IR edit is [`wide-append-inline.patch`](wide-append-inline.patch).
+The frozen [`wide-append-inline.patch`](wide-append-inline.patch) adds
+`alwaysinline` only to the wide `grow_vector_append` definition. The original
+report claimed matched timed/accounting correctness and identical ledgers,
+with matrix times of 82.01 s and 80.75 s. The retained artifacts do not
+establish that matched comparison. The original samples and ledgers remain
+unchanged so the contamination is visible:
 
-Both arms passed the 1,260-configuration/8,820-execution timed and accounting
-checks, with identical checksums, refusal cleanup and allocation ledgers. The
-control and candidate matrix runs took 82.01 s and 80.75 s. Raw samples and
-target reductions are preserved as [`control samples`](ecosystem-wide-append-inline-control-samples.csv),
-[`candidate samples`](ecosystem-wide-append-inline-candidate-samples.csv),
-[`control targets`](ecosystem-wide-append-inline-control-targets.csv) and
-[`candidate targets`](ecosystem-wide-append-inline-candidate-targets.csv);
-the two ledgers are byte-identical.
+| Published artifact | Byte-identical artifact | SHA-256 |
+| --- | --- | --- |
+| [Control samples](ecosystem-wide-append-inline-control-samples.csv) | [Zero-slots baseline samples](ecosystem-zero-slots-baseline-samples.csv) | `236dfb85f25c5e43e30aa53a61d5aecf0781d88c1662bae6cd32c2635781db1f` |
+| [Control targets](ecosystem-wide-append-inline-control-targets.csv) | [Zero-slots baseline targets](ecosystem-zero-slots-baseline-targets.csv) | `07d4f371932a396b3f16c5d30a962ad64089642a868de3645a6867eb54aee33d` |
+| [Control account](ecosystem-wide-append-inline-control-account.csv) and [candidate account](ecosystem-wide-append-inline-candidate-account.csv) | [Zero-slots candidate account](ecosystem-zero-slots-candidate-account.csv) | `61b5f6ead9d24608a8db781eab95a988f6f6f49c829f7be12cc95e68104e5b2b` |
 
-The target reduction moved only from 14 pass / 5 deficit / 17 inconclusive to
-17 / 5 / 14. Wide `suffix-1` remains a deficit at 256 (`2.157/2.177` times the
-slower peer); scalar growth at 16 and scalar `suffix-2` at 16, 256 and 4096
-also remain qualified deficits. The code change therefore removes a real
-boundary but does not supply its cost: it exposes `make_room` and its capacity
-path on every iteration, and the measured scalar regressions confirm that
-blindly inlining the wide append is not a production policy. The trial is
-rejected. The remaining Vector discriminator must change the movement/result
-contract or eliminate the repeated capacity and owner transfer together.
+The published control samples belong to the non-sentinel baseline; both
+published ledgers record the sentinel candidate's reduced allocations. For
+scalar reserved-16 they report three requests/456 bytes, whereas the
+[baseline ledger](ecosystem-zero-slots-baseline-account.csv) records
+six/504. The 2026-09-27 audit inspected the saved
+`/private/tmp/vector-wide-append-baseline.raw.ll`,
+SHA-256 `e396d7891d43ef1a8438628a9b4f40f86f8435eea6b1856d3587e1c5f63350f9`,
+which contained no `wf_zero_slots_header` and was byte-identical to the later
+append-and-truncate control raw module. The hash identifies the inspected
+bytes; the scratch path records their location at inspection, not a
+maintained artifact. Thus ledger equality is contamination,
+not evidence of allocation preservation for the timed pair. The claimed
+matched correctness/accounting lineage is withdrawn, and this trial is
+invalid for policy selection.
 
-### Tail and truncate `alwaysinline`: boundary removed, strict target still fails
+The [candidate samples](ecosystem-wide-append-inline-candidate-samples.csv)
+and [candidate targets](ecosystem-wide-append-inline-candidate-targets.csv)
+still describe the recorded timings. The target counts are 14 pass / 5
+deficit / 17 inconclusive for control and 17 / 5 / 14 for candidate. Wide
+suffix-1 at 256 has candidate/slower-peer median ratios `2.157323034` and
+`2.165020900`. The scalar peer deficits are growth at 16 and suffix-2 at
+16, 256 and 4096. They are not measured Whitefoot regressions: candidate
+Whitefoot medians are lower than control in both cohorts of all four cells,
+with candidate/control ratios from `0.939459459` to `0.998297389`. The claims
+of an append-boundary code win, unchanged owner snapshots and scalar
+regressions are withdrawn. These artifacts establish neither a causal cost
+of append inlining nor a need to change movement/result contracts.
 
-The previous append-only diagnostic left the wide `tail_work` to `truncate`
-boundary intact. This trial changed no Whitefoot source or compiler: from the
-same raw module, it marked only the 256-byte append instance and the 256-byte
-truncate instance `alwaysinline`. The frozen IR edit is
-[`tail-truncate-inline.patch`](tail-truncate-inline.patch). The scalar
-instances, contracts, allocation policy, native controls, seeds and the
-`ECO_WORK=1048576`, seven-sample harness were unchanged.
+### Append and truncate `alwaysinline`: truncate removed, paired scalar regression
 
-Both images passed all 1,260 configurations and 8,820 executions, the checksum
-and refusal-cleanup faults, and the complete allocation ledger. The control
-and candidate wall times were 81.08 s and 80.94 s. Their account CSVs are
-byte-identical. The complete raw samples and target reductions are preserved
-as [`control samples`](ecosystem-tail-truncate-inline-control-samples.csv),
-[`candidate samples`](ecosystem-tail-truncate-inline-candidate-samples.csv),
-[`control targets`](ecosystem-tail-truncate-inline-control-targets.csv) and
-[`candidate targets`](ecosystem-tail-truncate-inline-candidate-targets.csv),
-with the corresponding [`control account`](ecosystem-tail-truncate-inline-control-account.csv)
-and [`candidate account`](ecosystem-tail-truncate-inline-candidate-account.csv).
+This separate trial marked the 256-byte append and truncate definitions
+`alwaysinline` in the same raw module. The edit is
+[`append-truncate-inline.patch`](append-truncate-inline.patch), SHA-256
+`03d29b222bf7fb3c5eedc00666502a58211959a854493610e5c2564efd079207`.
+The patch leaves scalar input and allocation code unchanged; the recorded
+harness uses `ECO_WORK=1048576` and seven samples. Its artifacts now have
+distinct names because the original publication overwrote the earlier
+counted-consumer tail-and-truncate patch and samples. Those three historical
+files have been restored byte for byte from
+`e130362daec2520d89b553509527d3729de60ea9`; the latest bytes are preserved
+under the append-and-truncate names here.
 
-The code diagnostic did remove every optimized call to a `grow_vector_append`
-or `grow_vector_truncate` helper from the timed module. The wide
-`tail_work` body grew from 79 to 230 optimized IR lines; no new owner snapshot
-was introduced. The reduction moved from 17 pass / 4 deficit / 15 inconclusive
-useful cells in the control to 17 / 3 / 16 in the candidate. The remaining
-qualified deficits are wide `suffix-1` at 16 (1.867/1.963 times the slower
-standard peer), scalar `growth` at 16 (1.082/1.082), and scalar `suffix-2` at
-4096 (1.085/1.073). Since the target requires no qualified regression, the
-trial is rejected. Removing the call boundary alone is therefore insufficient;
-any selected change must reduce the repeated capacity/owner work without
-trading it for code expansion or scalar regressions.
+The original report states that both images passed all 1,260 configurations
+and 8,820 executions, checksum/cleanup faults and the allocation ledger, with
+matrix times of 81.08 s and 80.94 s. The audit found the two scratch fault
+message files, but no retained exit-status or phase-time logs to reverify
+those run reports. The faults have the limited checksum/cleanup meaning
+described above. The two saved 294-row account CSVs are byte-identical,
+SHA-256 `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+The complete evidence is preserved as
+[`control samples`](ecosystem-append-truncate-inline-control-samples.csv),
+[`candidate samples`](ecosystem-append-truncate-inline-candidate-samples.csv),
+[`control targets`](ecosystem-append-truncate-inline-control-targets.csv),
+[`candidate targets`](ecosystem-append-truncate-inline-candidate-targets.csv),
+[`control account`](ecosystem-append-truncate-inline-control-account.csv) and
+[`candidate account`](ecosystem-append-truncate-inline-candidate-account.csv).
+The sample SHA-256 values are
+`e7aaf8589d70162aaca7e14fc07df4ef53c80a83add0c6ec3445b3fbff854d46` and
+`2a2991a22dbfd2536190cc2267027a4d578a5a3bb5422591bb393686f72d445a`.
+
+The 2026-09-27 audit inspected the saved timed objects at
+`/private/tmp/whitefoot-vector-double-inline/{control,candidate}/ecosystem/whitefoot-timed.o`,
+with control/candidate SHA-256 values
+`c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235` and
+`643ddf139de86a741aeb21140e6be0ad872e97335edbbfc13bc502aefc923b92`.
+These hashes identify the inspected bytes. The scratch paths are inspection
+locations, not maintained artifacts; exact regeneration from frozen compiler
+and raw-input provenance is not established by this record.
+Their retained configuration records O3, matching the
+[`ecosystem` object rule](Makefile). Disassembly with
+`llvm-objdump --macho --disassemble --no-show-raw-insn` showed that the control
+wide tail calls only `grow_vector_grow_full` and `grow_vector_truncate`;
+the candidate calls only `grow_vector_grow_full`. Append was already
+inlined in the control. This establishes removal of the truncate call in
+that body, not removal of an append boundary. Both prologues reserve `0x120`
+stack bytes; that alone does not establish unchanged owner snapshots or
+spills. The separate `.opt.ll` files contain 79 and 230 wide-tail lines,
+but their generation flags were not retained. Those diagnostic line counts
+do not characterize the timed O3 object, and the previous code-expansion and
+no-new-snapshot inferences are withdrawn.
+
+The target reductions remain 17 pass / 4 deficit / 15 inconclusive for
+control and 17 / 3 / 16 for candidate. The candidate's three remaining peer
+deficits are wide suffix-1 at 16 (`1.866642810 / 1.963302752`), scalar growth
+at 16 (`1.081922675 / 1.082418157`) and scalar suffix-2 at 4096
+(`1.085015291 / 1.073067633`). They do not by themselves establish paired
+regressions. A distinct cell, scalar suffix-1 at 256, does have separated
+Whitefoot ranges in both cohorts:
+
+| Cohort | Control median (ms) | Control range (ms) | Candidate median (ms) | Candidate range (ms) | Candidate/control median |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 2.873 | 2.836–2.918 | 3.029 | 2.947–3.096 | 1.054298643 |
+| 1 | 2.880 | 2.844–2.919 | 2.955 | 2.931–3.033 | 1.026041667 |
+
+Both candidate minima exceed the paired control maxima. The contemporaneous
+Rust median ratios are `1.008877616 / 1.001937984`, and C++ ratios are
+`1.030149051 / 1.004728132`; the Whitefoot median increase exceeds both
+native median drifts in both cohorts. This is an observed collateral effect
+of the changed image with unchanged scalar input, not an attribution to new
+scalar capacity work, a particular spill or code placement. The paired
+regression and incomplete peer target prevent selecting this diagnostic. No
+production inline policy or movement/result contract change follows from
+these trials.

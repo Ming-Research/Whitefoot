@@ -1216,7 +1216,7 @@ candidate loads length and capacity once, captures the old back slot, writes
 the replacement front slot, and stores only the new head. The candidate reads
 the old value before the store, so the full-capacity same-slot case is covered.
 Both images passed 576 configurations and 2,592 executions, including the
-checksum and cleanup refusal controls; the 294 accounting rows have the same
+checksum and cleanup fault controls; the 120 accounting rows have the same
 request, byte, peak and release ledger as baseline.
 
 The matched O3 matrix used the same work (`1048576`), seeds, seven samples,
@@ -1256,7 +1256,7 @@ raw emitted `place_front` body: after the payload store only the length is
 loaded, exactly two descriptor stores remain, and the head store uses the
 payload GEP's physical index. The focused gate test passed. The unchanged
 source/accounting images each passed 576 configurations and 2,592 executions,
-including checksum and cleanup refusals; their 294 accounting rows are byte
+including checksum and cleanup fault controls; their 120 accounting rows are byte
 for byte identical. The retained source checks still passed 432
 configurations and 1,296 executions per image.
 
