@@ -703,6 +703,21 @@ rarely insert at the same place.
   `TargetLayout` stop with no rule, and the check time of the corpus
   programs before and after. Reopen when the owner rules or another writer
   meets a build-only target stop.
+- **A target stop inside a generic function names only the template's call.**
+  The allocation-fit record captures the call and count coordinates once,
+  from the checked template body (`allocation_fit_of_call` in
+  `compiler/src/semantic/check/expressions/calls/user.rs`), and lowering
+  copies them into every monomorphized instance, so an
+  `AllocationCountExceedsTarget` stop inside a generic function points at
+  the template's allocation and not at the call that instantiated it, while
+  a source rejection in a concrete instance names a requesting call
+  [MOD-8]. Impact: a writer whose generic container helper is instantiated
+  from several sites must find which instance carries the unbounded count.
+  Change: carry the instantiating call's coordinate with each
+  monomorphized instance's allocation record and print it as the
+  requesting call. Validate with a generic allocating helper instantiated
+  from two callers, one bounded and one not, whose stop names the unbounded
+  caller. Deferred because no writer has met it; reopen when one does.
 
 ## Parallel lowering and runtime
 
