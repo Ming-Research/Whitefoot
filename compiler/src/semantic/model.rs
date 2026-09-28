@@ -932,6 +932,12 @@ pub(crate) enum CheckedNominalKind {
     },
     /// An ordinary opaque nominal has no fields or constructor.
     Opaque,
+    /// [SHARE-1] a handle to a shared object whose state has type `state`.
+    /// Like `Opaque` it has no fields or constructor; unlike it, releasing
+    /// one releases a handle, and the last release releases the state.
+    Shared {
+        state: CheckedType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1023,7 +1029,7 @@ pub(crate) fn type_has_copy_capability(
                             .flat_map(|variant| variant.fields.iter().map(|field| field.ty)),
                     ),
                     CheckedNominalKind::Opaque => {}
-                    CheckedNominalKind::Box { .. } => {
+                    CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. } => {
                         return Some(false);
                     }
                 }
@@ -2603,6 +2609,26 @@ pub(crate) enum CheckedStatement {
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
+    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the block
+    /// runs with exclusive access to the state of the shared object the
+    /// target names, at a point where the guard holds [SHARE-3].
+    Atomic {
+        /// The complete `atomic_stmt`, which the waiting-call record names
+        /// [WAIT-1] and which is the statement's own site.
+        node_path: NodePath,
+        /// The reference the target place forms: a `&Shared<T>` whose handle
+        /// the statement reads when it begins.
+        target: Box<CheckedExpression>,
+        /// The binder, a reference variable naming the object's state.
+        binding: BindingId,
+        /// The state type `T`.
+        state: CheckedType,
+        /// The guard, an owned `Bool` whose footprint writes no path.
+        guard: Option<Box<CheckedExpression>>,
+        body: Vec<CheckedStatement>,
+        /// The releases the block's normal end carries for its own bindings.
+        fallthrough_drops: Vec<CheckedDrop>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3189,6 +3215,23 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Break { drops, .. } => {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
+                }
+                CheckedStatement::Atomic {
+                    target,
+                    state,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => {
+                    self.types.push(*state);
+                    self.expression(target);
+                    if let Some(guard) = guard {
+                        self.expression(guard);
+                    }
+                    self.types
+                        .extend(fallthrough_drops.iter().map(|drop| drop.ty));
+                    self.statements(body);
                 }
             }
         }

@@ -111,7 +111,10 @@ impl<'unit> TypeContext<'unit> {
                 .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
-            CheckedNominalKind::Opaque => Vec::new(),
+            // A handle owns a share of its object, whose state the runtime
+            // releases with the last handle [SHARE-1]; `T: drop` keeps the
+            // handle affine.
+            CheckedNominalKind::Opaque | CheckedNominalKind::Shared { .. } => Vec::new(),
         })
     }
     /// [PROV-6] the nodes of this type's release graph, each visited once.

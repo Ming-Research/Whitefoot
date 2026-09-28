@@ -166,6 +166,7 @@ fn is_block_bearing(record: &crate::syntax::parser::finalize::topology::NodeReco
                 | Production::Arm
                 | Production::IfStmt
                 | Production::ValueIf
+                | Production::AtomicStmt
         )
         || (record.production == Production::InvariantStmt && record.body_open.is_some())
 }

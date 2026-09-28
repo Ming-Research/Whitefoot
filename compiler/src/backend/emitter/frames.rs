@@ -119,7 +119,7 @@ pub(super) fn waiting_abi(
 }
 
 /// The labels one waiting call or join uses, unique by the value it defines.
-fn labels(prefix: &str, value: IrValueId) -> String {
+pub(super) fn labels(prefix: &str, value: IrValueId) -> String {
     format!("wf.{prefix}.v{}", value.ordinal())
 }
 
@@ -214,7 +214,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// A suspension the frame's own call parked for: resumed, it continues
     /// in `resumed`; destroyed, it leaves by the frame's release.
-    fn emit_suspension(
+    pub(super) fn emit_suspension(
         &mut self,
         saved: &str,
         prefix: &str,
@@ -429,7 +429,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Records the runtime entries and intrinsics a frame's lines name, so a
     /// link fragment that holds this definition declares them.
-    fn names(&mut self, symbols: &[&str]) {
+    pub(super) fn names(&mut self, symbols: &[&str]) {
         for symbol in symbols {
             self.output.symbol(*symbol);
         }

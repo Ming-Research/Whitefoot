@@ -265,7 +265,9 @@ impl ReturnLeaves {
             IrType::Nominal(id) => {
                 let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
                 match nominal.kind() {
-                    IrNominalKind::Box { .. } => self.integer(copies, 1),
+                    IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
+                        self.integer(copies, 1)
+                    }
                     // `{ i128, i128 }`: each `i128` takes two words.
                     IrNominalKind::Opaque => self.integer(copies, 4),
                     // `i1` or `i32`.

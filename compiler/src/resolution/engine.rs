@@ -1442,7 +1442,8 @@ fn declaration_classes(role: DeclarationRole) -> Vec<DeclarationClass> {
         DeclarationRole::Parameter
         | DeclarationRole::Let
         | DeclarationRole::MatchBinder
-        | DeclarationRole::CountedBinder => {
+        | DeclarationRole::CountedBinder
+        | DeclarationRole::AtomicBinder => {
             vec![DeclarationClass::Value]
         }
         DeclarationRole::LoopLabel => vec![DeclarationClass::Label],
@@ -1462,7 +1463,9 @@ fn declaration_scope(
                 .first()
                 .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?,
         ),
-        DeclarationRole::LoopLabel => scopes.declaration_scope(role.owner),
+        DeclarationRole::LoopLabel | DeclarationRole::AtomicBinder => {
+            scopes.declaration_scope(role.owner)
+        }
         _ => Ok(role.scope),
     }
 }

@@ -210,6 +210,28 @@ impl ScopeBuild {
                         body,
                     )?;
                 }
+                Production::AtomicStmt => {
+                    let binding = build.push_scope(
+                        Some(current_scope),
+                        ScopeKind::AtomicBinding,
+                        path.clone(),
+                    )?;
+                    let body =
+                        build.push_scope(Some(binding), ScopeKind::NestedBody, path.clone())?;
+                    // The binder is the statement's own direct IDENT. The target
+                    // place stays in the enclosing scope, so it cannot name the
+                    // binder; the guard sees the binder, and the block's
+                    // statements enter the body [SHARE-2].
+                    build.declaration_scopes[node_id.index()] = Some(binding);
+                    assign_atomic_scopes(
+                        topology,
+                        children,
+                        &mut child_scopes,
+                        current_scope,
+                        binding,
+                        body,
+                    )?;
+                }
                 Production::Arm => {
                     let arm =
                         build.push_scope(Some(current_scope), ScopeKind::Arm, path.clone())?;
@@ -390,6 +412,29 @@ fn assign_nested_body_scopes(
             Production::Stmt => body,
             Production::HeaderInvariant => introduced,
             _ => introduced,
+        };
+    }
+    Ok(())
+}
+
+fn assign_atomic_scopes(
+    topology: &FinalizedTopology,
+    children: &[NodeId],
+    child_scopes: &mut [ScopeId],
+    enclosing: ScopeId,
+    binding: ScopeId,
+    body: ScopeId,
+) -> Result<(), ResolutionCompilerFailure> {
+    for (index, child) in children.iter().enumerate() {
+        let production = topology
+            .node(*child)
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+            .production;
+        child_scopes[index] = match production {
+            Production::Place => enclosing,
+            Production::Expr => binding,
+            Production::Stmt => body,
+            _ => return Err(ResolutionCompilerFailure::InvalidCanonicalTree),
         };
     }
     Ok(())

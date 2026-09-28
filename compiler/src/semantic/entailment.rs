@@ -1603,6 +1603,18 @@ pub(super) fn collect_statement_calls(
                 collect_expression_calls(caller, upper, calls);
                 collect_statement_calls(caller, body, calls);
             }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                collect_expression_calls(caller, target, calls);
+                if let Some(guard) = guard {
+                    collect_expression_calls(caller, guard, calls);
+                }
+                collect_statement_calls(caller, body, calls);
+            }
             CheckedStatement::Break { .. } => {}
         }
     }

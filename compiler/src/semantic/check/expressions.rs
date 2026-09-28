@@ -1322,6 +1322,12 @@ impl<'unit> Checker<'_, 'unit> {
             // [SET-1] a reference does not make a counted binder writable.
             return Ok(local.live && !local.compiler_updated);
         }
+        // [SET-1, SHARE-2] an atomic statement's binding names the state of
+        // a shared object, which is writable whatever row the callable
+        // declares: the state belongs to no binding and no caller.
+        if self.types.declarations.is_atomic_binder(local.declaration) {
+            return Ok(true);
+        }
         let Some(target) = self.state_path(place, bindings)? else {
             return Ok(false);
         };

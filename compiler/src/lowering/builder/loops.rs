@@ -16,6 +16,9 @@ pub(super) struct LoopTarget {
     pub(super) id: CheckedLoopId,
     pub(super) block: IrBlockId,
     pub(super) carried_bindings: Vec<BindingId>,
+    /// How many atomic statements enclose the loop; a `break` leaves every
+    /// one deeper [SHARE-2].
+    pub(super) atomic_depth: usize,
 }
 
 impl IrBuilder<'_> {
@@ -55,6 +58,7 @@ impl IrBuilder<'_> {
             id,
             block: exit,
             carried_bindings: carried_bindings.clone(),
+            atomic_depth: self.atomic_depth(),
         });
         if backedge_drops.is_empty() {
             self.emit_probe_skip_if_recognized(id, body, header, &carried_bindings)?;
@@ -265,6 +269,7 @@ impl IrBuilder<'_> {
             id,
             block: exit,
             carried_bindings: carried_bindings.clone(),
+            atomic_depth: self.atomic_depth(),
         });
         self.lower_statements(body, give_target)?;
         let update = if self.current.is_some() {

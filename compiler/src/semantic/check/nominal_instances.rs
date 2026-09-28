@@ -756,6 +756,19 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
+                    if template.name == "Shared"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Shared {
+                        state: substitution
+                            .first_type_argument()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    }
+                }
+                DeclarationRole::Struct
                     if self
                         .types
                         .declarations
@@ -1134,7 +1147,8 @@ impl<'unit> Checker<'_, 'unit> {
             }
             CheckedNominalKind::Struct { .. }
             | CheckedNominalKind::Enum { .. }
-            | CheckedNominalKind::Opaque => Ok(CheckedType::Nominal(id)),
+            | CheckedNominalKind::Opaque
+            | CheckedNominalKind::Shared { .. } => Ok(CheckedType::Nominal(id)),
         }
     }
 
@@ -1205,6 +1219,18 @@ impl<'unit> DeclarationInventory<'unit> {
     /// written token decides it first. The prelude-file test stays beside it
     /// because the prelude's opaque declarations are read through a record
     /// reader that fixes the modifier by its phase rather than by a token.
+    /// Whether `node` is an opaque struct the prelude declares [PRE-1].
+    fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
+        let source = self.tree.coordinate(node)?.source();
+        Ok(self
+            .resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(source)
+            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
+    }
+
     fn is_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
         if self
             .tree

@@ -1255,6 +1255,11 @@ static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
 static _Thread_local wf_driver *wf_driver_self;
 static _Thread_local wf_context *wf_context_current;
+/* Set when the running context has parked where another driver may make it
+ * ready: waiting for its group or for a shared object.  Another driver may
+ * then resume, finish and release the context before its frame has returned
+ * here, so the driver that ran it reads nothing of it afterwards. */
+static _Thread_local int wf_context_parked_away;
 /* The context `wf__context_prepare` made and `wf__context_launch` starts. */
 static _Thread_local wf_context *wf_context_prepared;
 /* Started and not finished, on every driver; the root is not counted. */
@@ -1854,6 +1859,7 @@ int wf__context_join_wait(uint64_t *group, void *frame) {
         wf_bridge_fail("a join waited outside every context");
     }
     self->resume = frame;
+    wf_context_parked_away = 1;
     __atomic_store_n(&group[1], (uint64_t)(uintptr_t)self, __ATOMIC_SEQ_CST);
     for (;;) {
         count = __atomic_load_n(&group[0], __ATOMIC_SEQ_CST);
@@ -1867,6 +1873,7 @@ int wf__context_join_wait(uint64_t *group, void *frame) {
         if (__atomic_compare_exchange_n(
                 &group[1], &expected, 0u, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
             self->resume = NULL;
+            wf_context_parked_away = 0;
             return 0;
         }
         /* The last context took this waiter and wakes it. */
@@ -2037,6 +2044,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     self->resume = frame;
     self->shared_write = write;
     self->next = NULL;
+    wf_context_parked_away = 1;
     if (shared->waiting_tail != NULL) {
         shared->waiting_tail->next = self;
     } else {
@@ -2092,7 +2100,9 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
     }
     wf_spin_lock(&shared->lock);
     self->resume = frame;
+    self->shared_write = write;
     self->next = shared->watching;
+    wf_context_parked_away = 1;
     shared->watching = self;
     /* The guard wrote nothing, so no watcher has a change to see. */
     ready = wf_shared_end_hold_locked(shared, write, 0);
@@ -2117,8 +2127,12 @@ static void wf_context_drive(wf_driver *driver) {
             next->resume = NULL;
             next->driver = driver;
             wf_context_current = next;
+            wf_context_parked_away = 0;
             wf__coro_resume(frame);
             wf_context_current = NULL;
+            if (wf_context_parked_away) {
+                continue;
+            }
             if (wf__coro_done(next->root)) {
                 if (next == &wf_context_root) {
                     return;

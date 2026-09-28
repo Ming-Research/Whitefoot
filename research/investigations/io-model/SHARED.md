@@ -75,10 +75,12 @@ atomic_stmt := "atomic" IDENT "=" "&" place ("when" expr)? block
 - `when guard` makes the statement wait until the guard holds. The guard is a
   `Bool` expression that may read `s` and locals and writes nothing. This is
   a conditional critical region, as in Hoare's and Brinch Hansen's work or
-  Ada's protected entries.
-- Whether the statement reads or writes the object follows from its block's
-  footprint: a block that writes no path rooted at `s` is a read, and reads
-  of one object may run concurrently. Nothing marks it.
+  Ada's protected entries. Inside the block the guard is a proved fact, as an
+  `if` condition is in its true branch, so `when items^.len > 0_u64` is what
+  lets the block call `take_front`.
+- Nothing marks whether a statement only reads. This version acquires every
+  statement exclusively; running statements that only read at the same time
+  is a liberty the meaning leaves to the runtime (below).
 
 ### What the writer sees: a Redis subset
 
@@ -154,9 +156,10 @@ The rules this adds, as they would read in the specification:
    handle is released.
 2. **Form.**
    - An atomic statement's place resolves to a live handle.
-   - The statement reads that place when it begins and again when it ends,
-     so moving or writing the handle inside the block is a use of a dead or
-     changed place at the end.
+   - The statement reads that place when it begins. The object stays live
+     until the statement completes, whatever the block does with the place:
+     the statement holds a handle of its own, so a block may move or replace
+     the handle it was reached through.
    - The binding's validity ends with the block [REF-2].
    - An atomic statement is admitted only in the body of a waiting function
      and counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2].
@@ -200,10 +203,9 @@ multi-object transactions each needed another function. The owner judged it
 not general.
 
 The statement is the lexical scope of a lock guard, checked. It reaches locals
-directly, it infers read or write from the footprint the checker already
-computes, and the guard is one optional clause. Its cost is grammar and a
-footprint judgment for one block, the same union the checker already forms
-for the arms of an `if`.
+directly, and the guard is one optional clause. Its cost is grammar and one
+more block-bearing statement, whose binding the checker treats as it treats a
+reference parameter.
 
 Considered and refused:
 
@@ -255,15 +257,62 @@ For a Redis subset this is the Redis 6 I/O-thread shape without
 configuration. Parsing, encoding and all network I/O run in each connection's
 context, spread over the drivers. Only the block is serialized on the object.
 
+## The first version
+
+The owner accepted the statement form on 2026-09-28, and specification v0.79
+states it as [SHARE-1] to [SHARE-3], with [SET-1] admitting a write rooted in
+an object's state. The implementation:
+
+- **Checker.** The binding is a reference variable anchored at itself, as a
+  reference parameter is, so paths through it reach no effect row and no
+  caller [EFF-1]. A waiting call or an atomic statement inside the guard or
+  block is refused with SHARE-2, and an atomic statement outside a waiting
+  function with WAIT-1. The guard's footprint writes nothing when no call in
+  it has a row that writes or moves an argument. Permission [PAR-1] refuses
+  the statement as a waiting construct, so a started context is joined
+  before it.
+- **Proofs.** The binding names a state no earlier fact describes. The guard
+  enters the block as the true arm of a Bool condition does, and every fact
+  that names the binding ends with the block.
+- **Lowering.** The statement loads the handle, counts a handle of its own,
+  and acquires the object; a guard that reads false watches the object and
+  acquires it again. Every edge leaving the block (its end, `return`,
+  `break`, `give`, error propagation) unlocks the object, then releases the
+  statement's handle, before any join of the activation's contexts. The
+  handle's release drops the state and frees the object when it was the last.
+- **Runtime** (`completion/bridge.c`). An object is a header (handle count,
+  spin lock, holder count, a first-come queue of waiting contexts, the
+  contexts watching for a write) followed by the state. An uncontended
+  statement takes the lock word twice and parks nothing. A contended one
+  parks its context in the queue; the holder's unlock grants the object in
+  queue order and makes the granted context ready on its driver.
+- **A fix along the way.** A context parked where another driver can make it
+  ready (a group join, and now an object) could be resumed, finished and
+  released by another driver before the driver that ran it read its frame
+  again to ask whether it had finished. Such a park now tells the driver not
+  to read the context afterwards. The window was narrow for joins; objects
+  make it common.
+
+Evidence on this host (programs in the session scratchpad, not in the
+repository): 16 contexts each adding one 20,000 times to one `Shared<u64>`
+reach 320,000 on 1, 2, 4 and 8 drivers, three runs each; with the acquire
+made to succeed without the lock, every 8-driver run fails. Four producers
+and four consumers passing 20,000 values through a guarded
+`Shared<Ring<u64, 8>>` deliver every value once on 1 to 8 drivers, and the
+consumer without its guard is refused (FN-8, `take_front`'s requirement).
+
 ## Remaining questions
 
 1. Spelling: `atomic s = &h { }`. This reuses `&` in a position where `h` is
    a handle and `s` names the state behind it. The alternative is
    `atomic h as s { }`.
 2. Several objects in one statement, above.
-3. `nodrop` state and taking the value back (`shared_into`, which returns the
+3. Reader concurrency. Whether statements that only read should share the
+   object is a runtime choice to measure on a workload where readers
+   contend; the runtime's queue already grants readers together.
+4. `nodrop` state and taking the value back (`shared_into`, which returns the
    state when its caller holds the last handle).
-4. An invariant the object declares and every block preserves.
+5. An invariant the object declares and every block preserves.
 
 ## What would test it
 

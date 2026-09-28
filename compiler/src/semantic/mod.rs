@@ -79,6 +79,9 @@ pub enum SemanticRule {
     Mod6,
     /// `mustpar`: its position and the condition its form states.
     Par4,
+    /// Atomic statements: the target's type, and a guard or block free of
+    /// waiting calls, nested atomic statements and guard writes.
+    Share2,
     /// Exact mode/type agreement.
     Type5,
     /// Constructor/variant owner agreement.
@@ -262,6 +265,7 @@ impl SemanticRule {
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
             Self::Par4 => "PAR-4",
+            Self::Share2 => "SHARE-2",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
             Self::Eff2 => "EFF-2",
@@ -348,7 +352,8 @@ impl SemanticRule {
             Self::Err3 => Self::Mod5,
             Self::Mod5 => Self::Mod6,
             Self::Mod6 => Self::Par4,
-            Self::Par4 => Self::Ent2,
+            Self::Par4 => Self::Share2,
+            Self::Share2 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -423,11 +428,12 @@ impl SemanticRule {
             Self::Mod5 => 52,
             Self::Mod6 => 53,
             Self::Par4 => 54,
-            Self::Ent2 => 55,
-            Self::Msr3 => 56,
-            Self::Call6 => 57,
-            Self::Inv1 => 58,
-            Self::Prf1 => 59,
+            Self::Share2 => 55,
+            Self::Ent2 => 56,
+            Self::Msr3 => 57,
+            Self::Call6 => 58,
+            Self::Inv1 => 59,
+            Self::Prf1 => 60,
         }
     }
 }
@@ -1009,10 +1015,32 @@ pub enum SemanticIssueKind {
     ReturnMismatch,
     /// A waiting call outside the body of a waiting function [WAIT-1].
     WaitingCallOutsideWaitingFunction {
-        /// The waiting callee as written.
+        /// The waiting callee as written, or `an atomic statement`, which
+        /// counts as a waiting call [SHARE-2].
         callee: String,
         /// Where the call stands: the body of a function that does not wait.
         context: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An atomic statement's target is not a place of type `Shared<T>`
+    /// [SHARE-2].
+    AtomicTargetNotShared {
+        /// The target's value, as the reference `&place` forms it.
+        found: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A waiting call or an atomic statement inside an atomic statement's
+    /// guard or block [SHARE-2].
+    WaitInsideAtomic {
+        /// Which construct: a waiting call or an atomic statement.
+        construct: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An atomic statement's guard whose footprint writes a path [SHARE-2].
+    AtomicGuardWrites {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

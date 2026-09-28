@@ -2430,6 +2430,139 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // -------------------------------------------------------------------
+    // [SHARE-2] an atomic statement's target, block and guard. Each repair
+    // keeps the statement and moves what it refuses outside it.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "atomic-target-is-not-a-shared-handle.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: plain);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTargetNotShared\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = shared_new::<u8>(value: 0_u8);
+  let seen = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+    set seen = value^;
+  }
+  return std::process::exit_status(code: seen);
+}
+"#],
+    },
+    RepairPair {
+        name: "waiting-call-inside-an-atomic-statement.wf",
+        rejected: br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    pause(cell: move other);
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome\n",
+        ],
+        repaired: &[br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    set value^ = 1_u8;
+  }
+  pause(cell: move other);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-statement-inside-another.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  atomic outer = &first {
+    atomic inner = &second {
+      set inner^ = outer^;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  let carried = 0_u8;
+  atomic outer = &first {
+    set carried = outer^;
+  }
+  atomic inner = &second {
+    set inner^ = carried;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-guard-writes.wf",
+        rejected: br#"fn claim(value: &u8) -> result: Bool writes(value) {
+  set value^ = 1_u8;
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when claim(value: value) {
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicGuardWrites\n",
+            "\n  mechanical_fix: make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block\n",
+        ],
+        repaired: &[br#"fn unclaimed(value: &u8) -> result: Bool reads(value) {
+  let free = value^ == 0_u8;
+  return free;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when unclaimed(value: value) {
+    set value^ = 1_u8;
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
     RepairPair {
         name: "bound-function-exceeds-the-formal-row.wf",
         rejected: br#"interface Disposer {

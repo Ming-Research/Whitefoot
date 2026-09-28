@@ -1283,7 +1283,10 @@ impl<'types> LayoutComputer<'types> {
             self.nominal.insert(id, layout);
             return Ok(layout);
         }
-        let layout = if matches!(nominal.kind(), IrNominalKind::Box { .. }) {
+        let layout = if matches!(
+            nominal.kind(),
+            IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+        ) {
             POINTER_LAYOUT
         } else if nominal.is_tag_only_enum() {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
@@ -1315,7 +1318,9 @@ impl<'types> LayoutComputer<'types> {
                 // A box has its own pointer layout above, and an opaque
                 // nominal returned with its uniform representation
                 // before this match; none reaches the field walk.
-                IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+                IrNominalKind::Box { .. }
+                | IrNominalKind::Opaque
+                | IrNominalKind::Shared { .. } => {
                     return Err(TargetLayoutFailure::InvalidIr);
                 }
             }

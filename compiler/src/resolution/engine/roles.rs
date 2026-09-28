@@ -395,6 +395,17 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
+        // The binder is the statement's one direct IDENT; the target place and
+        // the guard are child productions that classify their own names
+        // [SHARE-2].
+        Production::AtomicStmt => add_single(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::Declaration(DeclarationRole::AtomicBinder),
+            roles,
+            complete_counts,
+        )?,
         Production::LoopStmt | Production::ForStmt => match names.as_slice() {
             [] => {}
             [label] if name_predicate(classified, *label) == Some(TerminalPredicate::Label) => {

@@ -698,8 +698,8 @@ variant_names! {
     LoopInvariantProofObligation { Base, Backedge }
     PostconditionProofDisposition { Refuted, Unproved }
     ReservedDeclarationRole {
-        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, MatchBinder,
-        PlainResultSelector, VariantResultSelector, Field, VariantField,
+        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, AtomicBinder,
+        MatchBinder, PlainResultSelector, VariantResultSelector, Field, VariantField,
     }
     ReservedNameClass { DotlessOperation, ModeWord }
     SourceIssueKind {
@@ -875,6 +875,9 @@ impl Report for SemanticIssueKind {
             UndischargedSourceProof { name, obligation, mechanical_fix };
             ReturnMismatch;
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
+            AtomicTargetNotShared { found, mechanical_fix };
+            WaitInsideAtomic { construct, mechanical_fix };
+            AtomicGuardWrites { mechanical_fix };
             InvalidMustpar { condition };
             InvalidMusttail { condition, subject };
             PolymorphicRecursion { cycle, mechanical_fix };

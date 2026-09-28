@@ -127,6 +127,24 @@ impl Input<'_, '_> {
                 }
                 reaches
             }
+            // [SHARE-2] the target and guard execute before the block, which
+            // falls through to the statement's successor.
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                let reaches =
+                    self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
+                if reaches {
+                    self.collect_loop_expression_kills(target, kills);
+                    if let Some(guard) = guard {
+                        self.collect_loop_expression_kills(guard, kills);
+                    }
+                }
+                reaches
+            }
         }
     }
 
@@ -339,6 +357,9 @@ pub(super) fn loop_statement_reaches(
             let body_reaches = loop_block_reaches(body, normal_reaches, reachability);
             reachability.breaks.pop();
             normal_reaches || body_reaches
+        }
+        CheckedStatement::Atomic { body, .. } => {
+            loop_block_reaches(body, normal_reaches, reachability)
         }
     }
 }

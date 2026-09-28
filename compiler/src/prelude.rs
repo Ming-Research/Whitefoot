@@ -66,6 +66,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    // [SHARE-1]'s handle: the state lives in the shared object, not in the
+    // handle, so the record declares no field; `T: drop` because the last
+    // handle's release drops the state.
+    (
+        "prelude/Shared.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Shared<T: drop> {
+}
+"#,
+    ),
     (
         "prelude/box_new.wf",
         PreludeSource::Function,
@@ -244,6 +254,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+"#,
+    ),
+    (
+        "prelude/shared_share.wf",
+        PreludeSource::Function,
+        r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+"#,
+    ),
+    (
         "prelude/free_empty.wf",
         PreludeSource::Function,
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
@@ -307,10 +329,11 @@ mod tests {
             .filter(|function| function.body.is_none())
             .count();
         // [PRE-1] keeps no host record: the host signatures are the standard
-        // library's [PRE-2], which this unit names none of. The twenty
+        // library's [PRE-2], which this unit names none of. The twenty-two
         // compiler-owned rows — the nine construction functions [OP-13], the
-        // nine window operations [OP-10], `swap` [OP-11] and `free_empty`
-        // [OP-14] — are every one of them generic, so [FN-2] gives them a
+        // nine window operations [OP-10], `swap` [OP-11], `free_empty`
+        // [OP-14], `shared_new` and `shared_share` [SHARE-1] — are every one
+        // of them generic, so [FN-2] gives them a
         // ordinary checked function only per concrete instance and this unit, which
         // calls none of them, has no instance of any.
         assert_eq!(signatures, 0);

@@ -21,6 +21,7 @@ mod parallel;
 pub(super) mod places;
 mod reinterpret;
 mod runs;
+mod shared;
 mod slice;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -482,6 +483,12 @@ pub(super) fn emit_llvm_with_window_address_facts(
             parameters.into_iter().map(Parameter::unnamed).collect(),
         ));
     }
+    // [SHARE-1] a module whose program holds no shared object names none of
+    // its entries.
+    if cleanup::program_uses_shared(program)? {
+        text.text("\n");
+        text.append(cleanup::shared_runtime_declarations());
+    }
     // [WAIT-1] a module with no waiting definition names no frame symbol.
     if frames::program_has_frames(program) {
         text.text("\n");
@@ -838,7 +845,7 @@ fn emit_nominal_declarations(
         if nominal.is_tag_only_enum()
             || matches!(
                 nominal.kind(),
-                IrNominalKind::Box { .. } | IrNominalKind::Opaque
+                IrNominalKind::Box { .. } | IrNominalKind::Opaque | IrNominalKind::Shared { .. }
             )
         {
             continue;
@@ -872,7 +879,7 @@ fn emit_nominal_declarations(
                     }
                 }
             }
-            IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+            IrNominalKind::Box { .. } | IrNominalKind::Opaque | IrNominalKind::Shared { .. } => {
                 return Err(BackendFailure::InvalidIr);
             }
         }
@@ -2225,6 +2232,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::BoxNew { nominal, value } => {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
+            IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::SharedState { nominal, object } => {
+                self.emit_shared_state(result, ty, *nominal, *object)
+            }
+            IrOperation::SharedRetain { nominal, object } => {
+                self.emit_shared_retain(result, ty, *nominal, *object)
+            }
+            IrOperation::SharedAcquire { object } => {
+                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
+            }
+            IrOperation::SharedWatch { object } => {
+                self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
+            }
+            IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }
@@ -2504,6 +2525,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
                     IrNominalKind::Opaque => false,
+                    IrNominalKind::Shared { .. } => true,
                     IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {
                         type_requires_cleanup(self.program, drop.ty())?
                     }
@@ -2754,7 +2776,10 @@ pub(super) fn llvm_type_with_references(
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Ok("ptr".to_owned()),
         IrType::Nominal(id) => {
             let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
-            if matches!(nominal.kind(), IrNominalKind::Box { .. }) {
+            if matches!(
+                nominal.kind(),
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+            ) {
                 return Ok("ptr".to_owned());
             }
             if matches!(nominal.kind(), IrNominalKind::Opaque) {

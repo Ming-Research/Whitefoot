@@ -1,7 +1,7 @@
 mod conversions;
 mod floating;
 mod reinterpret;
-mod user;
+pub(in crate::semantic::check) mod user;
 
 use crate::semantic::check::DeclarationInventory;
 use crate::semantic::check::FunctionContext;

@@ -1115,6 +1115,63 @@ impl Analyzer<'_, '_> {
                 }
                 false
             }
+            // [SHARE-2, SHARE-3] the target is read when the statement
+            // begins; the binder then names a state no earlier fact
+            // describes, since the state belongs to no binding and other
+            // contexts' statements change it between atomic statements. The
+            // block runs at the point the statement takes effect, where the
+            // guard is true, so the guard enters it as the true arm of a
+            // Bool condition does; an evaluation that read false left no
+            // fact behind, since the guard writes nothing and the state is
+            // described afresh. The block is an ordinary scope the binder
+            // leaves with it.
+            CheckedStatement::Atomic {
+                target,
+                binding,
+                guard,
+                body,
+                ..
+            } => {
+                let _ = self.expression_effects(target, state);
+                let outer_scope_depth = self.frames.scopes.len();
+                self.frames.scopes.push(vec![*binding]);
+                if let Some(guard) = guard {
+                    let judgment = self.expression_effects(guard, state);
+                    if judgment.reached {
+                        let facts = self.reasoning().arm_facts(
+                            guard,
+                            crate::semantic::CheckedEnumType::Bool,
+                            &state.facts,
+                        );
+                        let event =
+                            (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
+                                self.vocabulary
+                                    .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
+                            });
+                        let held = CheckedMatchArm {
+                            tag: 1,
+                            binders: Vec::new(),
+                            covered: Vec::new(),
+                            body: Vec::new(),
+                            fallthrough_drops: Vec::new(),
+                        };
+                        self.judging()
+                            .establish_arm_entry(&held, &facts, &mut state.facts, event);
+                    }
+                }
+                let mut continues = true;
+                for statement in body {
+                    if !continues {
+                        break;
+                    }
+                    continues = self.walk_statement(statement, state);
+                }
+                if continues {
+                    self.exit_scopes_to(state, outer_scope_depth);
+                }
+                self.frames.scopes.pop();
+                continues
+            }
             CheckedStatement::Break { target, drops: _ } => {
                 if let Some(position) = self
                     .frames

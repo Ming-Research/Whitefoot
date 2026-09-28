@@ -49,10 +49,105 @@ pub(super) fn emit_resource_drop_helpers(
         module.define(signature.define(output, "")?);
         module.text("\n");
     }
+    for ty in program_types(program)? {
+        let IrType::Nominal(id) = ty else {
+            continue;
+        };
+        let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
+        let IrNominalKind::Shared { state } = nominal.kind() else {
+            continue;
+        };
+        emit_shared_drop_helper(program, &mut module, nominal, *state)?;
+    }
     for ty in cleanup_run_types(program)? {
         emit_run_drop_helper(program, target, &mut module, ty)?;
     }
     Ok(module)
+}
+
+/// [SHARE-1] one handle's release: the runtime counts the handle out, and the
+/// release of the last one drops the state behind the object's header and
+/// returns the object to the runtime.
+fn emit_shared_drop_helper(
+    program: &IrProgram,
+    module: &mut Module,
+    nominal: &crate::IrNominal,
+    state: IrType,
+) -> Result<(), BackendFailure> {
+    let mut output = FunctionBody::default();
+    let symbol = drop_helper_symbol(nominal);
+    let mut signature = Signature::new(symbol, "void", vec![Parameter::named("ptr", "%value")]);
+    signature.linkage = Linkage::Private;
+    output.open_block("entry".to_owned());
+    output.instructions(
+        "  %last = call i32 @wf__shared_release(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done\n",
+        &["wf__shared_release"],
+    );
+    output.open_block("state".to_owned());
+    if type_requires_cleanup(program, state)? {
+        let state_ty = output.type_name(program, state)?;
+        writeln!(
+            output,
+            "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}\n  %state.value = load {state_ty}, ptr %state.address",
+            crate::backend::SHARED_STATE_OFFSET
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut temporary = 0_u32;
+        emit_cleanup_jobs(
+            program,
+            &mut output,
+            &mut temporary,
+            vec![CleanupJob::Value {
+                ty: state,
+                operand: "%state.value".to_owned(),
+            }],
+        )?;
+    }
+    output.instructions(
+        "  call void @wf__shared_free(ptr %value)\n  br label %done\n",
+        &["wf__shared_free"],
+    );
+    output.open_block("done".to_owned());
+    output.push_str("  ret void\n");
+    signature.references = output.references.clone();
+    module.define(signature.define(output, "")?);
+    module.text("\n");
+    Ok(())
+}
+
+/// Whether any type of this program is a shared-object handle [SHARE-1], and
+/// so names the runtime's shared-object entries.
+pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
+    Ok(program_types(program)?.into_iter().any(|ty| {
+        matches!(ty, IrType::Nominal(id) if program
+            .nominal(id)
+            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })))
+    }))
+}
+
+/// The runtime's shared-object entries (`completion/bridge.h`).
+pub(super) fn shared_runtime_declarations() -> Module {
+    let mut module = Module::default();
+    let declarations: [(&str, &str, &[&str]); 7] = [
+        ("wf__shared_new", "ptr", &["i64"]),
+        ("wf__shared_share", "void", &["ptr"]),
+        ("wf__shared_release", "i32", &["ptr"]),
+        ("wf__shared_free", "void", &["ptr"]),
+        ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
+        ("wf__shared_unlock", "void", &["ptr", "i32"]),
+        ("wf__shared_watch", "i32", &["ptr", "i32", "ptr"]),
+    ];
+    for (name, result, parameters) in declarations {
+        module.declare(Signature::new(
+            name,
+            result,
+            parameters
+                .iter()
+                .map(|ty| Parameter::unnamed(*ty))
+                .collect(),
+        ));
+    }
+    module
 }
 
 /// [PROV-6, WIN-1] one run's release: its window is visited, in ascending
@@ -349,6 +444,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
                         );
                     }
                     IrNominalKind::Box { referent, .. } => pending.push(*referent),
+                    IrNominalKind::Shared { state } => pending.push(*state),
                     IrNominalKind::Opaque => {}
                 }
             }
@@ -497,6 +593,14 @@ fn emit_cleanup_jobs(
                             }
                         }
                         IrNominalKind::Opaque => {}
+                        // [SHARE-1] release one handle; its helper releases
+                        // the state with the last one.
+                        IrNominalKind::Shared { .. } => {
+                            let symbol = drop_helper_symbol(nominal);
+                            output.symbol(symbol.clone());
+                            writeln!(output, "  call void @{symbol}(ptr {operand})")
+                                .map_err(|_| BackendFailure::TextEmission)?;
+                        }
                         // [PROV-6, STOR-3] release the referent first, then
                         // free the cell back to the one heap.
                         IrNominalKind::Box { referent, release } => {

@@ -72,6 +72,9 @@ pub enum ScopeKind {
     LoopLabel,
     /// One counted label and binder visible only to that counted body.
     CountedRange,
+    /// One atomic statement's binder, visible to its guard and block
+    /// [SHARE-2]; its target place stays in the enclosing scope.
+    AtomicBinding,
 }
 
 /// One resolver scope and its lexical parent.
@@ -295,6 +298,9 @@ pub enum DeclarationRole {
     MatchBinder,
     /// D15: counted-range binder.
     CountedBinder,
+    /// An atomic statement's binder, the reference to its object's state
+    /// [SHARE-2].
+    AtomicBinder,
     /// A named invariant fact visible after its checked declaration point.
     Invariant,
     /// A file-local alias from one source's alias header [MOD-4]. Every use
@@ -1010,6 +1016,8 @@ pub enum ReservedDeclarationRole {
     ContractDefinition,
     /// Counted-range binder.
     ForBinder,
+    /// Atomic-statement binder [SHARE-2].
+    AtomicBinder,
     /// Match binder.
     MatchBinder,
     /// Plain FN-9 result-selector candidate.

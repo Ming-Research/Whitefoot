@@ -749,7 +749,9 @@ impl Input<'_, '_> {
                 recursive |= self.collect_measured_paths(*referent, path, ancestors, found);
                 path.pop();
             }
-            CheckedNominalKind::Opaque => {}
+            // A shared object's state is reached only through an atomic
+            // statement's binder, never through a handle [SHARE-1].
+            CheckedNominalKind::Opaque | CheckedNominalKind::Shared { .. } => {}
         }
         ancestors.pop();
         recursive

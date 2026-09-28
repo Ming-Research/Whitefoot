@@ -194,6 +194,18 @@ impl Records<'_> {
                 self.statements(body);
             }
             CheckedStatement::Break { .. } => {}
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                self.expression(target);
+                if let Some(guard) = guard {
+                    self.expression(guard);
+                }
+                self.statements(body);
+            }
         }
     }
 

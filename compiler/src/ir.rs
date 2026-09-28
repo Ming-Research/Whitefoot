@@ -305,7 +305,9 @@ pub(crate) fn type_derives_release(
                             .map(IrField::ty),
                     );
                 }
-                IrNominalKind::Box { .. } => {
+                // A handle's release releases a share of its object, and the
+                // last one its state [SHARE-1].
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
                     return Some(true);
                 }
                 // Ordinary opaque values have empty release [PRE-1].
@@ -372,6 +374,11 @@ pub enum IrNominalKind {
     },
     /// An ordinary opaque nominal supplied by PRE-1.
     Opaque,
+    /// [SHARE-1] a handle to a shared object: one pointer to the object,
+    /// whose state of type `state` the runtime keeps behind its header.
+    Shared {
+        state: IrType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1032,6 +1039,38 @@ pub enum IrOperation {
     BoxDeref {
         nominal: IrNominalId,
         value: IrValueId,
+    },
+    /// [SHARE-1] a new shared object of `nominal`, holding one handle and a
+    /// state not yet stored. Defines the handle.
+    SharedNew {
+        nominal: IrNominalId,
+    },
+    /// The address of the state of the shared object `object` names. Defines
+    /// an address of the nominal's state type.
+    SharedState {
+        nominal: IrNominalId,
+        object: IrValueId,
+    },
+    /// [SHARE-1] one further handle to the object `object` names: `object`
+    /// itself, whose handle count rose by one. Defines the handle.
+    SharedRetain {
+        nominal: IrNominalId,
+        object: IrValueId,
+    },
+    /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
+    /// Defines `Unit`.
+    SharedAcquire {
+        object: IrValueId,
+    },
+    /// [SHARE-3] a guard read false: gives up the hold and waits until a
+    /// statement that writes the object ends. Defines `Unit`.
+    SharedWatch {
+        object: IrValueId,
+    },
+    /// [SHARE-3] gives up this context's hold, after a statement that may
+    /// have written the object. Defines `Unit`.
+    SharedUnlock {
+        object: IrValueId,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base

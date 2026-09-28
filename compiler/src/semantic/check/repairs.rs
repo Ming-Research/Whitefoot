@@ -407,6 +407,15 @@ fn collect_definitions(
                 definitions.push(Definition::of(*binder, &[lower, upper], editable));
                 collect_definitions(body, give, editable, definitions);
             }
+            CheckedStatement::Atomic {
+                binding,
+                target,
+                body,
+                ..
+            } => {
+                definitions.push(Definition::of(*binding, &[target], editable));
+                collect_definitions(body, give, editable, definitions);
+            }
             CheckedStatement::Evaluate { .. }
             | CheckedStatement::DropExpression { .. }
             | CheckedStatement::Proof(_)

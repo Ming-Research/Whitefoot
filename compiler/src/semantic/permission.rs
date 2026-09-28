@@ -991,6 +991,16 @@ impl<'check> Program<'check> {
             CheckedStatement::Loop { .. } => {
                 (None, None, None, "a loop", Err(Refusal::Form("a loop")))
             }
+            // [SHARE-2] an atomic statement counts as a waiting call, which
+            // `classify_waiting` refuses by its node; a started context is
+            // joined before it.
+            CheckedStatement::Atomic { node_path, .. } => (
+                Some(node_path),
+                None,
+                None,
+                "an atomic statement",
+                Err(Refusal::Form("an atomic statement")),
+            ),
             CheckedStatement::CountedRange { node_path, .. } => (
                 Some(node_path),
                 None,
@@ -1195,7 +1205,8 @@ fn waiting_call(waiting: &[NodePath], statement: &CheckedStatement) -> Option<No
         | CheckedStatement::Return { node_path, .. }
         | CheckedStatement::ValueMatchLet { node_path, .. }
         | CheckedStatement::Give { node_path, .. }
-        | CheckedStatement::CountedRange { node_path, .. } => below(node_path),
+        | CheckedStatement::CountedRange { node_path, .. }
+        | CheckedStatement::Atomic { node_path, .. } => below(node_path),
         CheckedStatement::Proof(proof) => below(&proof.node_path),
         CheckedStatement::Match {
             scrutinee, arms, ..
@@ -1689,9 +1700,9 @@ fn push_nested_blocks<'check>(
                 blocks.push(arm.body.as_slice());
             }
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            blocks.push(body.as_slice())
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => blocks.push(body.as_slice()),
         CheckedStatement::Let { .. }
         | CheckedStatement::DestructuringLet { .. }
         | CheckedStatement::PropagateLet { .. }

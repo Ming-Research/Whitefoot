@@ -111,6 +111,8 @@ const ENUM_ORDER: &[&str] = &[
     "entry_decl",
     "type_path",
     "callee_path",
+    // v0.79 [GRAM-4, SHARE-2]: the atomic statement.
+    "atomic_stmt",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.
