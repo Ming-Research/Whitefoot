@@ -85,7 +85,7 @@ Union sizes are the sizes of per-variant view types `{ i32, fields... }`
 written in the same LLVM module, rounded to the largest view alignment; both
 columns come from LLVM's own `getelementptr null, 1` size computation.
 
-**Corpus census.** [census.patch](census.patch) (applies to `85e2c89bf`)
+**Corpus census.** [census.patch](evidence/census.patch) (applies to `85e2c89bf`)
 adds, to a scratch dev build only:
 
 - a layout census: for every enum with at least two payload-carrying
