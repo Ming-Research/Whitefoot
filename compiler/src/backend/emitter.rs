@@ -660,9 +660,6 @@ fn emit_recursion_budget_entry(
     let mut signature = Signature::new(source_symbol(function.name()), result, parameters);
     signature.linkage = Linkage::Internal;
     signature.references = references;
-    if function.is_function_actual() {
-        signature.suffix.push_str(" inlinehint");
-    }
     let mut output = FunctionBody::default();
     output.open_block("entry".to_owned());
     let mut arguments = ordinary_call_arguments(program, function, &abi)?;
@@ -1551,12 +1548,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut signature = Signature::new(body_symbol.clone(), result, parameters);
         signature.references = references;
-        if !declaration && self.function.is_function_actual() {
-            // This is the ordinary inliner's preference, including for a
-            // destination-form body. It requests no early mandatory inlining
-            // and preserves the existing body/entry structure and pipeline.
-            signature.suffix.push_str(" inlinehint");
-        }
         if entry {
             signature.linkage = Linkage::Internal;
         }
@@ -1702,9 +1693,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
-        if self.function.is_function_actual() {
-            signature.suffix.push_str(" inlinehint");
-        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);

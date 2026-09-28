@@ -2279,7 +2279,7 @@ fn pinned(levels: u8) -> crate::RecursionBudget {
 }
 
 #[test]
-fn function_actual_hints_cover_recursive_budget_entries_and_worlds() {
+fn function_actuals_preserve_recursive_budget_entries_and_worlds() {
     let source = br#"fn fold(depth: u64, seed: &u64) -> result: u64 reads(seed) {
   if depth == 0_u64 {
     return seed^;
@@ -2315,13 +2315,6 @@ fn main() -> status: std::process::ExitStatus pure {
                 .filter(|line| line.starts_with("define ") && line.contains(&format!(" {symbol}(")))
                 .collect::<Vec<_>>();
             assert_eq!(definitions.len(), 1, "{symbol}: {definitions:?}");
-            let header = definitions[0];
-            assert!(
-                header.split_whitespace().any(|part| part == "inlinehint"),
-                "{header}"
-            );
-            assert!(!header.contains("alwaysinline"), "{header}");
-            assert!(!header.contains("noinline"), "{header}");
         }
         assert_eq!(
             module.contains("call i64 @wf__par_recursion_budget()"),

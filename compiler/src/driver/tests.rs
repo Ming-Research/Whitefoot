@@ -914,11 +914,10 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
-/// A binding-only edit changes the hint on the selected concrete definition,
-/// including its fragment key material, even though that definition's source
-/// stays fixed. An entry which never reaches the binding stays unhinted.
+/// A binding-only edit changes the selected call and invalidates that entry,
+/// while ordinary concrete definitions keep their unchanged fragment content.
 #[test]
-fn function_actual_hints_follow_imported_bindings_and_cached_entry_scope() {
+fn imported_function_actuals_preserve_cached_entry_scope_and_callee_fragments() {
     const GRAPH: &[u8] = b"pkg::lib: [];\npkg: [pkg::lib, std::fs, std::io, std::process, std::text];\n\nentry bound = pkg::bound;\n\nentry plain = pkg::plain;\n";
     const INTERFACE: &[u8] = br#"public interface Convert {
   fn convert(value: u8) -> result: u8 pure;
@@ -928,7 +927,7 @@ public fn apply<interface Convert>(value: u8) -> result: u8 pure doc "Applies th
 
 public fn first(value: u8) -> result: u8 pure doc "Preserves the first value.";
 
-public fn second(value: u8) -> result: u8 pure doc "Preserves the second value.";
+public fn second(value: u8) -> result: u8 pure doc "Advances the second value.";
 "#;
     const LIBRARY: &[u8] = br#"fn apply<interface Convert>(value: u8) -> result: u8 pure {
   return Convert::convert(value: value);
@@ -939,7 +938,7 @@ fn first(value: u8) -> result: u8 pure {
 }
 
 fn second(value: u8) -> result: u8 pure {
-  return value;
+  return value +wrap 1_u8;
 }
 "#;
     const ROOT_INTERFACE: &[u8] = br#"public fn bound() -> status: std::process::ExitStatus pure doc "Uses the supplied conversion.";
@@ -971,7 +970,7 @@ fn plain() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: two);
 }
 "#;
-    let directory = CacheDirectory::new("function-actual-hints");
+    let directory = CacheDirectory::new("function-actual-bindings");
     let cache = directory.open();
     let graph = crate::form_module_graph(
         SourceInput::new("modules.wfg", GRAPH),
@@ -1003,30 +1002,31 @@ fn plain() -> status: std::process::ExitStatus pure {
             OverlapLowering::Off,
         )
         .expect("the cold entry builds");
-        assert_eq!(cached.0, cold, "cached and cold hints agree");
+        assert_eq!(cached.0, cold, "cached and cold selected calls agree");
         cached
     };
-    let hinted = |module: &crate::LlvmModule, name: &str| {
-        module
+    let selected_call = |module: &crate::LlvmModule, name: &str| {
+        let body = module
             .lines()
-            .find(|line| line.starts_with("define ") && line.contains(&format!("@wf_{name}(")))
-            .expect("both direct functions are emitted")
-            .contains(" inlinehint ")
+            .skip_while(|line| {
+                !line.starts_with("define ") || !line.contains("@wf_lib.apply$instance$")
+            })
+            .take_while(|line| *line != "}")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains(&format!("call i8 @wf_{name}(")), "{body}");
     };
     let (bound, reused) = build(ROOT, "bound");
     assert!(!reused);
-    assert!(hinted(&bound, "lib.first"));
-    assert!(!hinted(&bound, "lib.second"));
+    selected_call(&bound, "lib.first");
     assert!(build(ROOT, "bound").1);
     let (plain, reused) = build(ROOT, "plain");
     assert!(!reused);
-    assert!(!hinted(&plain, "lib.first"));
-    assert!(!hinted(&plain, "lib.second"));
+    assert!(!plain.contains("@wf_lib.apply$instance$"));
     let edited = ROOT.replace("convert = pkg::lib::first;", "convert = pkg::lib::second;");
     let (changed, reused) = build(&edited, "bound");
     assert!(!reused, "the binding context invalidates the entry cache");
-    assert!(!hinted(&changed, "lib.first"));
-    assert!(hinted(&changed, "lib.second"));
+    selected_call(&changed, "lib.second");
     assert!(build(&edited, "bound").1);
     assert!(
         build(ROOT, "bound").1,
@@ -1039,10 +1039,10 @@ fn plain() -> status: std::process::ExitStatus pure {
             .find(|fragment| fragment.contains("define i8 @wf_lib.first("))
             .expect("the first definition has a fragment")
     };
-    assert_ne!(
+    assert_eq!(
         super::content_digest(fragment(&bound).as_bytes()),
         super::content_digest(fragment(&changed).as_bytes()),
-        "native fragment cache keys include the changed hint"
+        "a binding-only edit preserves an unchanged concrete function's fragment"
     );
 }
 

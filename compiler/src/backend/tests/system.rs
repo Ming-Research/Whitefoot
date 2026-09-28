@@ -245,20 +245,6 @@ fn behavior_actuals_preserve_ordinary_range_reference_calls_rows_and_contracts()
                 }
             }
             .expect("WF and linked actuals compile through the ordinary call path");
-            let header = llvm
-                .lines()
-                .find(|line| {
-                    (line.starts_with("define ") || line.starts_with("declare "))
-                        && line.contains(&format!(" @{symbol}("))
-                })
-                .expect("the selected actual has one callable header");
-            assert_eq!(
-                header.contains(" inlinehint "),
-                member == "copy_bytes",
-                "only a source definition receives the ordinary hint: {header}"
-            );
-            assert!(!header.contains("alwaysinline"), "{header}");
-            assert!(!header.contains("noinline"), "{header}");
             let body = emitted_function(&llvm, &forwarding_name);
             assert!(body.contains(&format!("call void @{symbol}(")), "{body}");
             let output = compile_and_run_with(&llvm, &[b"a\xffb"]);

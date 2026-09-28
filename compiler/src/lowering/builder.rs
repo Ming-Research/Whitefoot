@@ -187,7 +187,7 @@ pub(crate) fn lower_checked_from(
                 function_results: &function_results,
                 synthesis: &synthesis,
             };
-            let mut lowered = lower_function(
+            lower_function(
                 function,
                 &checked.data.functions,
                 index,
@@ -195,9 +195,7 @@ pub(crate) fn lower_checked_from(
                 context,
                 permission.and_then(|table| table.of(function.id)),
                 overlap,
-            )?;
-            lowered.function_actual = variant.function_actual;
-            Ok(lowered)
+            )
         })
         .collect::<Result<Vec<_>, LoweringFailure>>()?;
     #[cfg(test)]
@@ -787,7 +785,6 @@ impl<'program> IrBuilder<'program> {
             name,
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
-            function_actual: false,
             source_signature: None,
             source_calls: self.source_calls,
             result: self.result,

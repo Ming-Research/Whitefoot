@@ -473,18 +473,12 @@ rarely insert at the same place.
   existence neither settles that performance tradeoff nor justifies extending
   its equivalence domain.
 
-  The [function-actual hint proposal](../design/amendments/function-actual-inlining.md)
-  also needs an owner ruling on its changed empirical ground. The old callback
-  threshold effect belongs to a combined raw-LLVM artifact; current compiler
-  hint pairs produce byte-identical native objects with or without terminal
-  consumption. Keeping that historical effect as evidence of a current benefit
-  would misattribute the traversal improvement and retain a heuristic without
-  its stated payoff. Recommend withdrawing the hint-specific implementation
-  and proposal, preserving unrelated call behavior; alternatively keep it
-  explicitly experimental until a real consumer separates hinted and unhinted
-  code and passes matched performance checks. The independent review requires
-  the owner's direction before changing the pending design choice. Reopen after
-  that ruling, or with a new consumer and discriminating native evidence.
+  The owner withdrew uniform function-actual hints after their claimed current
+  benefit failed the [actual-compiler comparison](../research/investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions).
+  The old callback threshold effect belongs to a combined raw-LLVM artifact;
+  it is not evidence for the removed heuristic. Reopen only with a real
+  consumer that separates hinted and unhinted native code and passes matched
+  performance checks. Terminal traversal's separate costs remain open.
 
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)

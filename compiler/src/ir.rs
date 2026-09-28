@@ -1491,11 +1491,6 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
-    /// This concrete definition is supplied as a function-kind actual by an
-    /// emitted instance. It remains one definition when ordinary callers
-    /// also use it. The backend may prefer ordinary inlining; this fact is
-    /// neither a size/termination promise nor a different callable ABI.
-    pub(crate) function_actual: bool,
     /// Checked source modes, or `None` for a compiler-synthesized function.
     /// Internal transfer contracts must not be invented from representation.
     pub(crate) source_signature: Option<IrSourceSignature>,
@@ -1535,10 +1530,6 @@ impl IrFunction {
 
     pub(crate) const fn source_signature(&self) -> Option<&IrSourceSignature> {
         self.source_signature.as_ref()
-    }
-
-    pub(crate) const fn is_function_actual(&self) -> bool {
-        self.function_actual
     }
 
     pub(crate) fn source_calls(&self) -> &[IrSourceCall] {

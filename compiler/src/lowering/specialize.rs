@@ -17,7 +17,6 @@ use super::LoweringFailure;
 pub(super) struct PhysicalVariant {
     pub(super) source: FunctionId,
     pub(super) calls: Vec<(NodePath, u32)>,
-    pub(super) function_actual: bool,
 }
 
 #[derive(Debug)]
@@ -99,22 +98,6 @@ impl PhysicalFunctions {
         {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        // Binding groups and forwarding have already resolved to concrete
-        // identities. Only the selected executable inventory contributes:
-        // an unrelated checked instance must not change this build's hints.
-        // Repeated bindings select the same physical definition once, even
-        // when that definition also has ordinary direct callers.
-        let mut function_actuals = vec![false; program.functions.len()];
-        for source in program
-            .executable_functions
-            .iter()
-            .filter(|source| emitted[source.0 as usize])
-        {
-            for actual in &program.functions[source.0 as usize].function_actuals {
-                source_function(program, *actual)?;
-                function_actuals[actual.0 as usize] = true;
-            }
-        }
         let variants = program
             .executable_functions
             .iter()
@@ -138,7 +121,6 @@ impl PhysicalFunctions {
                 Ok(PhysicalVariant {
                     source: function.id,
                     calls,
-                    function_actual: function_actuals[index],
                 })
             })
             .collect::<Result<Vec<_>, LoweringFailure>>()?;

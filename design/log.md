@@ -5,6 +5,12 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Withdraw unsubstantiated function-actual inlining preference
+
+Nodes: compiler
+
+Summary: The owner accepted withdrawal of PR #108's uniform function-actual `inlinehint` proposal after the independent review. Its historical callback threshold effect belonged to a combined raw-LLVM artifact, while the actual-compiler factor comparison produces identical native objects with or without hints at its recorded Vector pin. Remove the pending amendment and its hint-specific inventory, IR flag and emission; retire the metadata assertions while retaining independent ordinary-call, specialization and cache coverage. The [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions) records the bounded evidence and reopening condition. The separate terminal-consumption proposal remains unresolved; this ruling changes no language rule or live-tree decision and authorizes no merge.
+
 ## 2026-09-27 Use postfix caret for explicit reference access
 
 Nodes: language/ownership/reference-validity, language/surface-form/borrow-lexicon, language/data-model, compiler/checker-facts, compiler/rejection-payloads, language/ownership, language/surface-form/result-propagation

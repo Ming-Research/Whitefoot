@@ -508,73 +508,42 @@ particular program would instantiate forever.
 
 ## Ordinary inlining hints for supplied functions
 
-The current compiler candidate gives ordinary LLVM `inlinehint` to a concrete
-function definition supplied as a function-kind actual by an emitted instance.
-This extends the [Vector callback investigation](../../experiments/container-representation/vector-library/RESULTS.md#ordinary-behavior-hints-combined-k-gains-without-useful-cell-regression)
-into the ordinary compiler path; the raw-artifact experiment motivates a
-candidate, not a selected policy for every family. FN-2 and FN-5 supply a
-general category with concrete direct targets, but imply neither small bodies,
-frequent calls, termination nor a performance benefit from inlining.
-In that artifact the wide callback's observed cost remains 450 while the
-ordinary-hint threshold changes from 375 to 487; original-source F is unchanged.
-The combined forward-consumption/hint arm gains useful cells but regresses the
-three wide empty-suffix controls. F+hint alone has identical native images to
-F; the callback threshold observation belongs to the combined K+hint artifact.
+The owner withdrew the uniform function-actual `inlinehint` candidate after
+independent review. A concrete supplied function no longer carries a
+hint-specific provenance flag through physical specialization and IR emission;
+ordinary LLVM inlining still applies to its definition and calls. Source
+acceptance, function binding, direct-call specialization, callable ABI and the
+separate terminal-consumption candidate are unchanged.
+
+The [original Vector artifact](../../experiments/container-representation/vector-library/RESULTS.md#ordinary-behavior-hints-combined-k-gains-without-useful-cell-regression)
+was a valid reason to investigate, but did not establish an independent hint
+benefit. F+hint alone produced identical native objects and images to F. In the
+combined K+hint artifact, the wide callback's cost 450 fit the hinted threshold
+487 instead of 375; that conditional observation belonged to K's changed raw
+LLVM shape, not to every concrete function actual.
+
 The subsequent [actual-compiler factor comparison](../../experiments/container-representation/vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration)
-finds no native effect from the hint with or without terminal consumption at
-its source and toolchain pin. The timed and accounting objects are
-byte-identical within each hint pair, and neither image retains an accept
-callback. That comparison establishes no current Vector benefit for the hint;
-the traversal gains cannot supply its separate selection ground.
+constructed four compiler arms at its recorded source and toolchain pin. Hint
+pairs produced byte-identical timed and accounting objects with or without
+terminal consumption; no accept callback survived either setting. The
+traversal gains therefore supply no separate selection ground for the hint.
+The earlier [five-family construction](../../experiments/container-representation/ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
+also found unchanged objects and linked sections for the other four families
+at that pin. These bounded observations establish no current benefit, not a
+universal claim that hints cannot help.
 
-The physical call inventory reads the checked instance's `function_actuals`
-identities after group expansion, imported resolution and forwarding. Only
-instances in the build's emitted inventory contribute. Repeated bindings name
-one physical definition; if ordinary calls also reach it, they see that same
-hint. Merely checking an unrelated instance does not affect a selected entry,
-and the hint does not make an otherwise uncalled definition reachable. Large,
-recursive and mixed-use actuals remain subject to the host inliner's ordinary
-cost and legality decisions. Bodyless linked source declarations receive no
-new hint; declarations synthesized into fragments from hinted definitions
-retain the definition's attribute.
+The withdrawal removes the hint inventory, IR flag and emission, and retires
+only assertions that require that rejected metadata. The existing test
+programs retain their independent obligations: physical definition sharing,
+group forwarding, structured fragments, recursive entry/world wrappers,
+imported binding and cache selection, and ordinary linked-call behavior.
+This is an explained retirement of an experimental expectation, not a change
+to source-language conformance.
 
-The provenance travels on the existing typed function into structured LLVM
-headers. One physical function identity can emit ordinary, destination-form,
-budgeted and sequential-world symbols; every such definition retains that
-identity's hint. A register-returned actual's entry and destination-form body
-both receive it. None is `alwaysinline`: the candidate preserves the existing
-body/entry structure and pipeline and requests no early mandatory inlining.
-Header checks alone do not establish LLVM's actual pass order or resulting
-body optimization; the production native audit must still inspect them.
-Source acceptance, bodies,
-call ABI, linkage, arithmetic and alias facts are unchanged. Structured
-fragment declarations retain the attribute, and serialized module headers and
-fragment bytes change with it. Entry-cache input already includes the selected
-composition's records and entry; a changed binding context must rebuild that
-module, while the fragment's changed bytes select a different native object.
-
-The discriminating checks are raw actuals, named groups, imported forwarding,
-repeated concrete bindings, mixed ordinary use, nonactual controls, selected
-entry scope, and cache reuse across a binding-only context change.
-
-All four `function_actual_hints` tests and the existing linked-native behavior-actual
-control passed. They cover the ordinary and `.body` headers, recursion-budget
-entry and sequential worlds, bodyless linked-declaration exclusion, mixed and
-forwarded bindings, physical deduplication, structured fragments and cache
-selection. These results establish the tested metadata and linked-call behavior;
-they do not establish LLVM optimization order or performance.
-
-The complete Vector comparison has now run. The earlier
-[five-family construction](../../experiments/container-representation/ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
-also passed the other families' functional checks and found their native
-objects and linked sections unchanged at that pin. These observations do not
-establish a general benefit or a cost ceiling for large or recursive actuals.
-The pending [compiler amendment](../../../design/amendments/function-actual-inlining.md)
-still records the provisional preference. Independent review found that its
-historical callback ground does not establish a benefit in the current Vector
-compiler; whether to withdraw it or retain it for a different measured consumer
-awaits the owner's ruling. The provisional implementation remains on the work
-branch pending that ruling.
-A global threshold, forced inlining,
-name-based selection and changed export visibility are separate alternatives,
-not part of this candidate.
+FN-2 and FN-5 define concrete function actuals but imply neither small bodies,
+frequent calls, termination nor an inlining benefit. Reopen a hint policy only
+when a real program supplies a discriminating native-code effect and matched
+performance evidence without the recorded regressions. The
+[owner ruling](../../../design/log.md#2026-09-28-withdraw-unsubstantiated-function-actual-inlining-preference)
+removes the pending amendment; it selects no global threshold, forced inlining,
+name-based rule or export-visibility change.

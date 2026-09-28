@@ -149,11 +149,41 @@ five families on one revision. Their supported conclusions are:
 
 | Family | Supported result and remaining question |
 |---|---|
-| Vector | The [current actual-compiler factor trial](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration) finds that function-actual hints change no native code. Terminal traversal yields 13 qualified useful-cell gains but adverse wide suffix-one medians and strict wide empty-control losses, so it selects no production policy. The historical append-only trial's mismatched accounting and false code premise are corrected in the [family report](vector-library/RESULTS.md). |
-| Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) removes duplicate descriptor work and improves scalar reverse churn in a matched pair. Scalar growth at 256 and 4096 remains below target. |
+| Vector | The [actual-compiler factor trial](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration) finds that function-actual hints change no native code. Terminal traversal lowers elapsed time 6.26–30.90% in eight qualified scalar cells and 4.02–10.65% in five wide cells. Adverse wide suffix-one medians and strict wide empty-control losses remain, so it selects no production policy. These are isolated factor results, not cumulative gains from every change. |
+| Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) lowers elapsed time 64.20–64.74% for scalar reverse churn at counts 16, 256 and 4096 in a matched pair. Other cells show no established improvement; scalar growth at 256 and 4096 remains below target. |
 | HashMap | The [occupancy series](map-library/RESULTS.md) has geometry and allocation observations, but no occupancy timing yet. Current lookup/find calls already inline; the fixed-eight result cannot attribute this map's remaining gap. |
 | PriorityQueue | The [four-ary trial](priority-library/RESULTS.md) does not remove the wide-value deficit. Movement and result handling remain hypotheses, not measured cost shares. |
 | OrderedMap | [Node occupancy and wide cleanup](ordered-library/RESULTS.md) provide concrete code leads; their independent time costs and a successful production change remain unestablished. |
+
+### Latest retained-image observations, 2026-09-28
+
+The following reductions use each family's latest retained implementation
+image, not rejected candidates. They are not one measurement of the current
+head: Vector and Deque have later observations; the other three retain the
+original comparison. P/D/I means qualified sample-range pass, deficit or
+inconclusive, with the same duration and cohort-stability screens described
+above. Each individual-peer column applies those screens to that peer alone.
+A pass against the slower standard peer need not beat both peers.
+
+| Family | Against Rust P/D/I | Against C++ P/D/I | Slower-standard target P/D/I | Retained raw samples |
+|---|---:|---:|---:|---|
+| Vector | 0 / 16 / 20 | 15 / 5 / 16 | 15 / 5 / 16 | [Unchanged control of the rejected reserved-append trial](vector-library/ecosystem-checked-append-reserved-control-samples.csv) |
+| Deque | 6 / 3 / 15 | 16 / 6 / 2 | 18 / 2 / 4 | [Front-slot reuse candidate](deque-library/ecosystem-boundary-reuse-candidate-samples.csv) |
+| HashMap | 12 / 49 / 23 | 6 / 48 / 30 | 17 / 35 / 32 | [Original replay](map-library/ecosystem-replay-samples.csv) |
+| PriorityQueue | 6 / 13 / 5 | 8 / 13 / 3 | 10 / 10 / 4 | [Original replay](priority-library/ecosystem-replay-samples.csv) |
+| OrderedMap | 6 / 18 / 6 | 3 / 21 / 6 | 7 / 17 / 6 | [Original replay](ordered-library/ecosystem-replay-samples.csv) |
+
+Vector reuses the frozen `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`
+both-factor image; the candidate from that later trial was rejected and its
+source restored. Deque's candidate is
+`5ae2cdd40793e617dbbe88d3fc38681db983166f`; the other three use
+`0c3203aa6111f14247aa950e3794e83082d4f29c`. The Vector factor trial's
+16/1/19 target count and the later unchanged control's 15/5/16 are separate
+observations, not an implementation regression or improvement. Vector and
+PriorityQueue each exclude six controls from the ranking. HashMap's 84 cells
+include 42 default-hash and 42 aligned-hash cells; capacity, layout and memory
+differences remain as stated in its report. No new timing or combined
+198-cell current-head result is claimed by this reduction.
 
 In the most recent Vector diagnostics, a remaining deficit against a native
 peer was incorrectly described as a regression from the candidate. Those are
@@ -215,6 +245,11 @@ the retained prefix; they are not untouched code. Full observations and
 reproduction are in the [Vector report](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration).
 This establishes a whole-build traversal effect, not separate costs for loop
 instructions and the changed code placement, and selects no production policy.
+
+The owner subsequently [withdrew the uniform hint preference](../../investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions).
+Its implementation and pending amendment are removed, while the factor data
+and terminal-consumption proposal retain their distinct conclusions. No new
+performance execution is implied by that withdrawal.
 
 ### Remaining-count induction: criterion and code-screen rejection
 
@@ -705,8 +740,9 @@ The combined compiler implementation at
 callers/library sources against preserved `.build/main-6bb-f` controls from
 `f945eceecb3aacac20e76864c73edf8b7c87902b`. It implements the provisional
 [terminal-consumption](../../../design/amendments/terminal-owned-consumption.md)
-and [function-actual hint](../../../design/amendments/function-actual-inlining.md)
-choices. This is actual compiler output, distinct from Vector's raw K+hint
+and [function-actual hint](../../investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions)
+choices at that pin; the latter was subsequently withdrawn by the owner.
+This is actual compiler output, distinct from Vector's raw K+hint
 intervention. The later `0ebbb8cec408bc37ac2d1a60fe9cb2b237a10ffa` revision only
 repairs a documentation link; it does not change compiler/lib/spec bytes.
 The frozen candidate/control CLI SHA-256 values are

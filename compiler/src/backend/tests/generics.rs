@@ -133,7 +133,7 @@ fn generic_instances_forward_across_ordered_source_records() {
 }
 
 #[test]
-fn function_actual_hints_follow_raw_bindings_and_mixed_ordinary_use() {
+fn function_actuals_and_ordinary_calls_share_definitions_and_execute() {
     let source = br#"fn apply<fn transform(value: u64) -> result: u64 pure>(value: u64) -> result: u64 pure {
   return transform(value: value);
 }
@@ -169,33 +169,13 @@ fn main() -> status: std::process::ExitStatus pure {
   let control = ordinary(value: direct);
   let sum = apply::<fn recursive>(value: control);
   let total = apply::<fn looping>(value: sum);
+  if total != 2071_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = compile(source);
-    let hinted = module
-        .lines()
-        .filter(|line| line.starts_with("define ") && line.contains(" inlinehint "))
-        .collect::<Vec<_>>();
-    assert_eq!(hinted.len(), 3, "{hinted:?}");
-    for name in ["supplied", "recursive", "looping"] {
-        assert!(
-            hinted
-                .iter()
-                .any(|line| line.contains(&format!("@wf_{name}("))),
-            "{name}: {hinted:?}"
-        );
-    }
-    assert!(
-        super::emitted_function(&module, "ordinary")
-            .lines()
-            .next()
-            .is_some_and(|header| !header.contains("inlinehint"))
-    );
-    for header in &hinted {
-        assert!(!header.contains("alwaysinline"), "{header}");
-        assert!(!header.contains("noinline"), "{header}");
-    }
     assert_eq!(
         module
             .lines()
@@ -204,10 +184,14 @@ fn main() -> status: std::process::ExitStatus pure {
         1,
         "ordinary and bound use share one definition"
     );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
-fn function_actual_hints_survive_group_forwarding_and_structured_fragments() {
+fn function_actuals_survive_group_forwarding_and_structured_fragments() {
     let source = br#"struct Packet {
   value: u64;
 }
@@ -239,6 +223,9 @@ fn forward<interface Builder>(value: u64) -> result: Packet pure {
 fn main() -> status: std::process::ExitStatus pure {
   let first = forward::<First>(value: 11_u64);
   let second = forward::<Second>(value: first.value);
+  if second.value != 11_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -255,12 +242,6 @@ fn main() -> status: std::process::ExitStatus pure {
             .filter(|line| line.starts_with("define ") && line.contains(symbol))
             .collect::<Vec<_>>();
         assert_eq!(definitions.len(), 1, "{symbol}: {definitions:?}");
-        assert!(
-            definitions[0].contains(" inlinehint #0 {"),
-            "{definitions:?}"
-        );
-        assert!(!definitions[0].contains("alwaysinline"));
-        assert!(!definitions[0].contains("noinline"));
     }
     for name in ["gather", "forward"] {
         let definitions = llvm
@@ -272,7 +253,6 @@ fn main() -> status: std::process::ExitStatus pure {
             1,
             "equivalent bindings share one {name}: {definitions:?}"
         );
-        assert!(!definitions[0].contains("inlinehint"));
     }
     let decoded = crate::LlvmModule::decode(&module.encode()).expect("structured module decodes");
     assert_eq!(decoded, module);
@@ -281,19 +261,24 @@ fn main() -> status: std::process::ExitStatus pure {
         crate::FragmentGranularity::Module,
     ] {
         let fragments = crate::split_module(&decoded, granularity).expect("module splits");
-        let hinted = fragments
+        let definitions = fragments
             .iter()
             .flat_map(|fragment| fragment.lines())
-            .filter(|line| line.starts_with("define ") && line.contains(" inlinehint "))
+            .filter(|line| {
+                line.starts_with("define ")
+                    && (line.contains("@wf_make_packet(") || line.contains("@wf_make_packet.body("))
+            })
             .collect::<Vec<_>>();
-        assert_eq!(hinted.len(), 2, "{hinted:?}");
+        assert_eq!(definitions.len(), 2, "{definitions:?}");
         assert!(
             fragments.iter().any(|fragment| fragment
                 .lines()
-                .any(|line| line.starts_with("declare ")
-                    && line.contains("@wf_make_packet(")
-                    && line.contains(" inlinehint #0"))),
-            "a caller's fragment retains the callee attribute"
+                .any(|line| line.starts_with("declare ") && line.contains("@wf_make_packet("))),
+            "a caller's fragment declares its concrete callee"
         );
     }
+    let output = compile_and_run(llvm);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }

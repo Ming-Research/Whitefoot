@@ -1,10 +1,11 @@
 # Growable vector library costs
 
 The current Vector library source retains [source discriminator F](#f-paired-timing-useful-improvements-without-a-separated-regression).
-The current compiler also includes provisional terminal-owned-consumption
-lowering and function-actual `inlinehint` emission; the
+The current compiler retains provisional terminal-owned-consumption lowering.
+The owner withdrew uniform function-actual `inlinehint` emission after the
 [latest factor-isolation result](#actual-compiler-factor-isolation-after-ownership-integration)
-records their attribution and selection limits. The
+found no independent native effect from it; the traversal choice retains its
+recorded attribution and selection limits. The
 [H1/H2 realloc probes](#h-realloc-for-runtime-slots-growth) remain rejected.
 Earlier sections retain historical evidence under their recorded conditions.
 
