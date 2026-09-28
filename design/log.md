@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Lay out multi-payload enums as unions of variant views
+
+Nodes: compiler/payload-enum-layout
+
+Owner-approved: 2026-09-28, the owner approved the payload-enum-layout amendment and its two representation choices in the session handoff
+
+Summary: Apply the reviewed amendment unchanged as the new node compiler/payload-enum-layout. An enum with at least two payload-carrying variants whose product representation does not fit the return registers of compiler/result-registers is laid out as a union of per-variant views, each the `i32` tag followed by that variant's fields, sized and aligned for the largest and most aligned view, because the specification fixes only the OP-9 ceiling and OWN-7 already treats different variants' payloads as one storage, while the product layout multiplies storage by the number of payload variants. The two representation choices the investigation left to the owner were decided as recommended: such an enum is a memory-only value in the backend (moved by memmove, passed by address, returned through a destination), and its release helper works from an address. Tag-only, single-payload and register-returned enums keep their representation; OP-9 and every checker rule are unchanged. The [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md) holds the grounds, measurements and validation criterion. Remove the accepted amendment and the amendment directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts
