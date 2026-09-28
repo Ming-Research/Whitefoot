@@ -716,6 +716,69 @@ runner's `--rounds 7 --workloads grow-vector hash-map`, native
 `--require-reuse`, and a separate `--compiler-only` sequence. The trial hash
 above and the recorded runtime-SHA control hashes identify these observations.
 
+### Grouped lowering-read trial
+
+The storage-only trial keeps the complete lowering key and typed fragment
+reader, grouping records into one checksummed module container. Each emitted
+function/overlap slot keeps its latest complete key and payload, replacing
+that slot's prior version instead of reading its entire edit history. The
+driver's indexed body container supplies the common storage operation; source
+inputs and lowering authority remain distinct. The
+[screen](../../investigations/modular-compilation/DESIGN.md#grouped-lowering-read-screen)
+was recorded before implementation and measurement. This tests storage
+grouping, not shared semantic input validation.
+
+The candidate executable SHA-256 is
+`ed924b8ff103286a99dbb1fb0ee2082b1775648021a7daafe8d3644b432e6e89`;
+the control is the qualified runtime-SHA candidate
+`17602078de46432740ef70e2f58e4f3abf6e399bd99ccd32bbe8bd317240cea0`.
+The native driver/cache suite passed 98 tests, including a new complete-key,
+slot replacement, module/compiler separation and damaged-container control.
+The existing damaged-product test targeted the new storage family with its
+original recomputation assertions preserved. Test execution took 4.55 s;
+compiler executable construction took 50.94 s and is excluded below.
+
+Three alternating pairs in each mode completed 96 samples with identical
+LLVM/runtime observations. Every candidate native entry edit imported the
+unchanged library bodies and lowerings without walking them. Median elapsed
+milliseconds, control / grouped trial:
+
+| Step | GrowVector native | HashMap native | GrowVector compiler-only | HashMap compiler-only |
+|---|---:|---:|---:|---:|
+| Cold | 1288.5 / 1245.2 | 1691.7 / 1728.9 | 350.4 / 343.8 | 696.7 / 676.9 |
+| Warm | 96.6 / 92.0 | 93.7 / 97.1 | 11.9 / 12.3 | 13.3 / 12.8 |
+| Second entry | 323.4 / 328.9 | 622.7 / 611.6 | 102.1 / 101.7 | 252.5 / 245.7 |
+| Entry edit | 212.0 / 196.5 (-7.3%) | 343.2 / 348.8 (+1.6%) | 121.8 / 121.0 (-0.7%) | 267.9 / 269.5 (+0.6%) |
+
+HashMap compiler-only paired changes were +0.6%, +1.2% and -5.8%; only one
+round improved, failing the required median gain and paired-direction screen.
+Entry-edit median compiler peak RSS changed by -0.2% for GrowVector and +1.1%
+for HashMap. Median compiler RSS growth stayed below 5% at each measured step,
+but the third cold pair rose 12.1% for GrowVector and 7.0% for HashMap.
+Native cold GrowVector median peak RSS rose 9.8% (53.05 / 58.27 MiB), so the
+compiler-only observation is not a claim that every process peak improved.
+Native entry-edit cache sizes changed from 5,021,135 to 5,020,899 bytes and
+16,740,022 to 16,739,273 bytes. Grouping removes record framing but retains
+nearly all key/payload bytes.
+
+The screen did not select this candidate. All six compiler/test file changes
+were removed, including the trial-only test and storage-family adjustment.
+There was no seven-pair qualification or repeated-edit history extension
+because the initial consumer criterion failed. This rejects the measured
+storage-only implementation, not every possible batching design. The shared
+identity/input catalogue remains unmeasured. Production source, specification
+and pending amendments remain unchanged.
+
+The raw `grouped-lowering-{native,compiler}.jsonl`, build/test log, saved
+executable and `grouped-lowering.patch` are in the same local audit directory
+as the other diagnostic trials. The patch SHA-256 is
+`6cc458072269560a80158620746fbb304795dd5ae2f3bf9aa43a01d5f2255511`;
+it applies to investigation revision
+`cb9442d5a6eec464bff2a43f3d7733248726b84b`. Repeat the screen with the paired
+runner's `--rounds 3 --workloads grow-vector hash-map`, native
+`--require-reuse`, and a separate `--compiler-only` invocation under the
+verification guard. Do not treat the omitted history qualification as passed.
+
 ## Limits
 
 - The original backend comparison above used two small runtime loops on one

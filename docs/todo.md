@@ -1381,10 +1381,13 @@ rarely insert at the same place.
   cost. Further typed-input memos, deferred reference indexes, dense maps and
   source-name memos failed their consumer criteria. A smaller
   relocated-input encoding also failed its extended paired/null comparison
-  and was removed. The next bounded comparison is a shared identity/input
-  catalogue and grouped lowering reads, including cache-history and memory
-  costs as well as unchanged results, invalidation and library-work controls,
-  as described in the investigation. Target approximately 5% overhead without
+  and was removed. A separate grouped lowering-read trial also failed:
+  HashMap compiler-only entry cost increased 0.6%, with a gain in only one of
+  three pairs; the trial was removed. The next representation question is a
+  shared identity/input catalogue, whose benefit remains unmeasured. Include
+  cache-history and memory costs as well as unchanged results, invalidation
+  and library-work controls, as described in the investigation. Target
+  approximately 5% overhead without
   losing library reuse or current-input validation. Compare same-source paired
   timings, compiler-only cost and memory with equally optimized main; do not
   count the general hashing benefit as a module-product gain.

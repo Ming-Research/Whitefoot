@@ -1845,7 +1845,9 @@ input comparisons, reconstruction or lowered-product lookup. The feature
 omissions establish that joint cost, while the local trials do not establish
 a profitable finer mechanism. A bounded next experiment would compare one
 shared identity/input catalogue and grouped lowering reads with the current
-adapters on these same two containers. It must retain complete per-consumer
+adapters on these same two containers. The grouped lowering-read screen below
+rejects the storage-only part; the shared semantic catalogue remains untested.
+It must retain complete per-consumer
 input equality, speculative rollback, current composition judgments and zero
 unchanged-library walks, and measure cold builds, edited builds, memory and
 cache history as well as the approximately 5% target. Sharing validity across
@@ -1861,6 +1863,52 @@ proof-derived allocation bounds, body disposition and permissions. The
 structural product is retained before call requirements and allocation bounds
 are installed, so reusing its identity alone as the final lowering key would
 skip current inputs. No such shortcut is selected by this investigation.
+
+### Grouped lowering-read screen
+
+Before changing the semantic import representation, isolate storage grouping
+for lowered products. Keep the complete per-function semantic, physical,
+permission and target key and the existing typed payload reader. Store one
+checksummed container per compiler/module, with one latest record per emitted
+function/overlap slot; compare its complete inner key before reuse. An edited
+slot replaces its prior version, so repeated edits of the same function do not
+make every later import read its whole history. A missing, incompatible or
+damaged container remains an ordinary miss. Do not combine this trial with
+canonical-input memos or a new body import representation.
+
+Reuse the driver's existing indexed product container for both body and
+lowering storage, keeping source dependency construction in `CheckProducts`
+and publication in the lowering adapter's lifetime. This tests whether fewer
+file reads and record validations justify holding a module's lowered bytes
+in memory. The costs are broader read granularity, a complete-container write
+when one slot changes, and loss of an older version of that slot. None changes
+reuse authority or source acceptance. Treat this as an unselected research
+candidate; a retained storage-policy change needs a current amendment.
+
+Screen three alternating native and compiler-only pairs against the saved
+qualified candidate on GrowVector and HashMap. Require identical outputs,
+zero unchanged-library walks, more than 2% lower HashMap compiler-only
+entry-edit time with the paired direction agreeing in at least two rounds,
+no greater than 2% entry-edit loss for GrowVector in either mode, and no
+greater than 5% compiler RSS growth on either workload. Report cold and warm
+costs separately. If it passes, extend to seven pairs with a same-image
+control and equally optimized main, and exercise repeated edits/reversions,
+different entries, corrupted records and complete-key changes before
+selecting it. Otherwise remove the trial code and retain its measurement.
+
+The screen completed 98 driver/cache tests and 96 comparison samples with
+identical paired results and unchanged library reuse. HashMap's compiler-only
+entry-edit median increased 0.6%, with a gain in only one of three rounds;
+its native median increased 1.6%. GrowVector improved 0.7% compiler-only and
+7.3% native, but cannot compensate for the failed HashMap criterion. Compiler
+RSS medians grew less than 5%, but individual cold pairs rose 12.1% for
+GrowVector and 7.0% for HashMap. The
+[complete result](../../experiments/modular-build-cost/RESULTS.md#grouped-lowering-read-trial)
+reports cold, warm and second-entry costs too. Remove the grouped storage
+candidate and its dedicated test. Fewer cache files with unchanged full keys
+did not establish the required gain; a shared semantic input catalogue is a
+different, still unmeasured representation question. No new compiler change
+or design selection survives this screen.
 
 ## Recursive dependencies and generic instances
 
