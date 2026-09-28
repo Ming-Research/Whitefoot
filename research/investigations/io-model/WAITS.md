@@ -464,7 +464,7 @@ The runtime keeps the first version's model and adds drivers:
   runs the root context. A program that starts no context runs no second
   driver.
 - A context is placed on a driver when it starts, round robin, and never
-  moves. Each driver has its own ready queue, parked contexts, readiness
+  moves (revised below, after the first measurement). Each driver has its own ready queue, parked contexts, readiness
   polls and, where the host has one, its own ring and wake runtime, so the
   operations of a context are submitted to and reaped from its driver's
   ring and wake it by its record's address on that thread, exactly as
@@ -495,6 +495,67 @@ references at their default of one thread per CPU:
 - Adding drivers costs a program that uses one nothing measurable if the
   one-driver build of the new runtime is within 0.05 of the current one at
   64 connections, interleaved.
+
+### The first placement, round robin
+
+The runtime above ran the protocol once on the development host (four CPUs,
+the load generator on the same four; `WF_DRIVERS` unset gives four drivers),
+medians of five recorded passes after one warm-up, round trips per second:
+
+| Case | uring | epoll | waiting | four drivers | one driver | previous build |
+|---|---|---|---|---|---|---|
+| 1 connection | 16,911 | 17,655 | 17,684 | 14,364 | 16,644 | 17,302 |
+| 64 connections | 234,935 | 227,390 | 229,297 | 116,582 | 112,105 | 110,321 |
+| 1024 connections | 263,478 | 226,326 | 221,039 | 157,002 | 82,308 | 87,965 |
+| 64 connections, 64 KiB | 49,337 | 61,018 | 56,274 | 57,476 | 29,229 | 31,961 |
+
+Against the criteria: four drivers gave 1.04 times one driver at 64
+connections and 1.91 at 1024, so the drivers did not scale at 64; they
+reached 0.50 and 0.60 of the best reference, short of 0.70 at both; the
+one-driver build held 1.02 of the previous one at 64 connections.
+
+Two defects surfaced beside the rates. A driver thread could run before the
+entry's thread counted it and take the empty scheduler for a deadlock, which
+the last pass hit once under load and a build that paused 1 ms between the
+two steps hit every time; only the entry's driver now draws that conclusion.
+And a start raised a group's count while the group's last finisher held it
+closing, which lost the start; a start now waits for the close.
+
+A program that starts short contexts showed what the fixed placement costs
+(`research/experiments/io-completion-bench/programs/context_starts.wf`, whose
+contexts return at once). A thousand batches of a thousand starts, each batch
+joined as its function returns, ran in 0.12 seconds at one driver and 9.95 at
+four; a million bound starts, each joined by the next statement, ran in 0.12
+and 35.8 seconds. Nearly all of it was system time: each start went to a
+parked driver and woke it, and each join woke the starter back.
+
+### Revised placement: start here, and let an idle driver take work
+
+The revision keeps a driver's ring, its parked contexts and the rule that an
+operation is reaped by the driver that submitted it, and changes where a
+ready context runs:
+
+- A started context is made ready on the starter's driver, so a start and an
+  immediate join stay on one thread.
+- A driver with nothing to run takes about half of another driver's ready
+  contexts before it parks. A ready context has no operation in flight, so
+  it can run anywhere; it submits its next operation to the ring of the
+  driver that runs it and parks there. The root context stays on the entry's
+  thread.
+- A driver whose queue holds more than it runs next wakes one parked driver,
+  and only one driver is woken to look at a time; a driver that finds work
+  wakes the next.
+- A record published on a driver for the context it is running wakes no
+  other driver. The first version counted it as a publication from another
+  thread and signalled every driver, a system call per parked driver per
+  operation. Records the shared helper pool completes still reach every
+  driver, whichever driver's progress publishes them.
+
+The echo criteria above judge the revision unchanged. For the short-context
+program the revision gave 0.15 and 1.47 seconds for the batches at one and
+four drivers and 0.18 and 0.22 for the bound starts; that was observed
+before any criterion was written for it, so it is a result, not a test of
+one.
 
 ## Design
 

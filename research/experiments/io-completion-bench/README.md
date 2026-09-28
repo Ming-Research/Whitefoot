@@ -240,6 +240,14 @@ time.
   same binary with `WF_DRIVERS=1`, which the C servers' `--threads 1` runs
   match.
 
+`programs/context_starts.wf` measures what a context start and its join cost
+apart from any I/O: a thousand batches of a thousand contexts that return at
+once, each batch joined as its function returns, then a million bound starts
+each joined by the next statement. It exits zero when the bound results add
+up. `WAITS.md`, Experiment 5, compares it at one and four drivers
+(`WF_DRIVERS`), timed with `/usr/bin/time`; it goes when no experiment
+compares start costs.
+
 What the io_uring reference does that a portable server cannot, which is what
 the ratio is against:
 

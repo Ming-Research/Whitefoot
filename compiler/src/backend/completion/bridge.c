@@ -1166,7 +1166,9 @@ struct wf_context {
     /* The starting activation's group: the count of its unfinished contexts
      * and the context waiting for it to reach zero. */
     uint64_t *group;
-    /* The driver the context was placed on when it started; it never moves. */
+    /* The driver that last ran the context, where it is made ready: a parked
+     * context waits on that driver's ring.  A ready context moves to a
+     * driver that takes it. */
     struct wf_driver *driver;
     /* With no ring: the descriptor and events a context polling for
      * readiness waits on, and zero events otherwise. */
@@ -1200,13 +1202,22 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 /* The most drivers a program runs, whatever WF_DRIVERS asks for. */
 #define WF_DRIVER_LIMIT 64u
 
-/* One driver: a thread that runs the contexts placed on it
- * (`research/investigations/io-model/WAITS.md`, Experiment 5).  Everything
- * here but the inbox is its own thread's alone. */
+/* One driver: a thread that runs ready contexts, each on the ring of the
+ * driver that runs it (`research/investigations/io-model/WAITS.md`,
+ * Experiment 5).  Everything here but the run queue and the two flags is its
+ * own thread's alone. */
 typedef struct wf_driver wf_driver;
 struct wf_driver {
-    wf_context *ready_head;
-    wf_context *ready_tail;
+    /* The contexts ready to run here, which a driver with none may take
+     * about half of, and their count, read without the lock as a hint. */
+    atomic_flag run_lock;
+    wf_context *run_head;
+    wf_context *run_tail;
+    _Atomic unsigned run_count;
+    /* Set while this driver is parked with nothing to run, and when a driver
+     * that made work ready woke it to look for some. */
+    _Atomic unsigned idle;
+    _Atomic unsigned searcher;
     wf_context *parked;
     /* Contexts waiting for a descriptor's readiness, with no ring to wait
      * in; only a program with one driver has any. */
@@ -1220,12 +1231,6 @@ struct wf_driver {
      * runs only after such a publication. */
     wf_context *by_record[WF_CONTEXT_RECORD_BUCKETS];
     uint64_t foreign_seen;
-    /* Contexts another driver made ready here: started on this one, or a
-     * waiter whose group's last context finished there. */
-    atomic_flag inbox_lock;
-    wf_context *inbox_head;
-    wf_context *inbox_tail;
-    _Atomic unsigned inbox_pending;
     /* The wake this driver parks on: the process's for driver 0, its own for
      * every other, whose ring's wake it is. */
     wf_completion_runtime *runtime;
@@ -1243,7 +1248,6 @@ static wf_context wf_context_root;
 static wf_driver wf_driver_root;
 static wf_driver *wf_drivers[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_count;
-static _Atomic unsigned wf_driver_next;
 static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
 static _Thread_local wf_driver *wf_driver_self;
@@ -1257,71 +1261,183 @@ static _Atomic uint64_t wf_context_live;
  * the count its last pass over its parked contexts saw. */
 static _Atomic uint64_t wf_context_foreign_publications;
 
-static void wf_context_ready(wf_driver *driver, wf_context *context) {
+/* Drivers parked with nothing to run, and whether one has been woken to
+ * look for work and has not looked yet: while one has, no other is woken. */
+static _Atomic unsigned wf_drivers_idle;
+static _Atomic unsigned wf_drivers_searching;
+
+/* Appends a ready context to a driver's run queue. */
+static void wf_run_push(wf_driver *driver, wf_context *context) {
+    wf_spin_lock(&driver->run_lock);
     context->next = NULL;
-    context->previous = driver->ready_tail;
-    if (driver->ready_tail != NULL) {
-        driver->ready_tail->next = context;
+    if (driver->run_tail != NULL) {
+        driver->run_tail->next = context;
     } else {
-        driver->ready_head = context;
+        driver->run_head = context;
     }
-    driver->ready_tail = context;
+    driver->run_tail = context;
+    atomic_store_explicit(
+        &driver->run_count,
+        atomic_load_explicit(&driver->run_count, memory_order_relaxed) + 1u,
+        memory_order_relaxed
+    );
+    wf_spin_unlock(&driver->run_lock);
 }
 
-static wf_context *wf_context_take_ready(wf_driver *driver) {
-    wf_context *context = driver->ready_head;
+static wf_context *wf_run_take(wf_driver *driver) {
+    wf_context *context;
+    if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u) {
+        return NULL;
+    }
+    wf_spin_lock(&driver->run_lock);
+    context = driver->run_head;
     if (context != NULL) {
-        driver->ready_head = context->next;
-        if (driver->ready_head == NULL) {
-            driver->ready_tail = NULL;
+        driver->run_head = context->next;
+        if (driver->run_head == NULL) {
+            driver->run_tail = NULL;
         }
         context->next = NULL;
+        atomic_store_explicit(
+            &driver->run_count,
+            atomic_load_explicit(&driver->run_count, memory_order_relaxed) - 1u,
+            memory_order_relaxed
+        );
     }
+    wf_spin_unlock(&driver->run_lock);
     return context;
 }
 
-/* Makes a context ready on its own driver: here at once, and on another
- * driver through that driver's inbox, waking it if it waits. */
-static void wf_context_wake(wf_context *context) {
-    wf_driver *target = context->driver;
-    if (target == wf_driver_self) {
-        wf_context_ready(target, context);
+/* Wakes one parked driver to look for work, when some driver is parked and
+ * none has been woken for that already. */
+static void wf_drivers_wake_one(void) {
+    unsigned count;
+    unsigned index;
+    unsigned expected = 0u;
+    if (atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst) == 0u
+        || atomic_load_explicit(&wf_drivers_searching, memory_order_relaxed) != 0u) {
         return;
     }
-    wf_spin_lock(&target->inbox_lock);
-    context->next = NULL;
-    if (target->inbox_tail != NULL) {
-        target->inbox_tail->next = context;
-    } else {
-        target->inbox_head = context;
+    if (!atomic_compare_exchange_strong_explicit(
+            &wf_drivers_searching, &expected, 1u,
+            memory_order_seq_cst, memory_order_relaxed)) {
+        return;
     }
-    target->inbox_tail = context;
-    atomic_store_explicit(&target->inbox_pending, 1u, memory_order_release);
-    wf_spin_unlock(&target->inbox_lock);
-    /* The epoch rises after the inbox holds the context, so a driver that
-     * sampled the epoch before this either sees the inbox or parks on a
-     * changed epoch, which returns at once. */
-    wf_completion_notify_target(target->runtime);
+    count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    for (index = 0; index < count; index++) {
+        wf_driver *driver = wf_drivers[index];
+        if (driver == NULL || driver == wf_driver_self) {
+            continue;
+        }
+        if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
+            atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
+            atomic_store_explicit(&driver->searcher, 1u, memory_order_relaxed);
+            wf_completion_notify_target(driver->runtime);
+            return;
+        }
+    }
+    atomic_store_explicit(&wf_drivers_searching, 0u, memory_order_seq_cst);
 }
 
-/* Moves what other drivers made ready here to the ready queue. */
-static int wf_driver_drain_inbox(wf_driver *driver) {
-    wf_context *list;
-    if (atomic_load_explicit(&driver->inbox_pending, memory_order_acquire) == 0u) {
-        return 0;
+/* Makes a context ready on the driver it last ran on, waking that driver
+ * when it is another; with more ready here than this driver runs next, a
+ * parked driver is woken to take some. */
+static void wf_context_ready(wf_context *context) {
+    wf_driver *target = context->driver;
+    wf_run_push(target, context);
+    if (target != wf_driver_self) {
+        /* The epoch rises after the queue holds the context, so a driver
+         * that sampled the epoch before this either sees the context or
+         * parks on a changed epoch, which returns at once. */
+        wf_completion_notify_target(target->runtime);
+    } else if (atomic_load_explicit(&target->run_count, memory_order_relaxed) > 1u) {
+        wf_drivers_wake_one();
     }
-    wf_spin_lock(&driver->inbox_lock);
-    list = driver->inbox_head;
-    driver->inbox_head = NULL;
-    driver->inbox_tail = NULL;
-    atomic_store_explicit(&driver->inbox_pending, 0u, memory_order_relaxed);
-    wf_spin_unlock(&driver->inbox_lock);
-    while (list != NULL) {
-        wf_context *next = list->next;
-        wf_context_ready(driver, list);
-        list = next;
+}
+
+/* Moves about half of another driver's ready contexts here, never the
+ * root's, which runs on the entry's thread.  A ready context has no
+ * operation in flight, so it can run on any driver; it submits its next
+ * operation to the ring of the driver that runs it.  Returns nonzero when it
+ * moved one. */
+static int wf_driver_steal(wf_driver *driver) {
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    unsigned offset;
+    unsigned self_index = 0;
+    for (offset = 0; offset < count; offset++) {
+        if (wf_drivers[offset] == driver) {
+            self_index = offset;
+        }
     }
-    return 1;
+    for (offset = 1; offset < count; offset++) {
+        wf_driver *victim = wf_drivers[(self_index + offset) % count];
+        wf_context *taken = NULL;
+        wf_context *taken_tail = NULL;
+        wf_context *previous = NULL;
+        wf_context *context;
+        unsigned available;
+        unsigned wanted;
+        unsigned moved = 0;
+        if (victim == NULL || victim == driver) {
+            continue;
+        }
+        available = atomic_load_explicit(&victim->run_count, memory_order_relaxed);
+        if (available == 0u) {
+            continue;
+        }
+        wf_spin_lock(&victim->run_lock);
+        available = atomic_load_explicit(&victim->run_count, memory_order_relaxed);
+        wanted = (available + 1u) / 2u;
+        context = victim->run_head;
+        while (context != NULL && moved < wanted) {
+            wf_context *next = context->next;
+            if (context == &wf_context_root) {
+                previous = context;
+            } else {
+                if (previous != NULL) {
+                    previous->next = next;
+                } else {
+                    victim->run_head = next;
+                }
+                if (victim->run_tail == context) {
+                    victim->run_tail = previous;
+                }
+                context->next = NULL;
+                if (taken_tail != NULL) {
+                    taken_tail->next = context;
+                } else {
+                    taken = context;
+                }
+                taken_tail = context;
+                moved += 1u;
+            }
+            context = next;
+        }
+        atomic_store_explicit(&victim->run_count, available - moved, memory_order_relaxed);
+        wf_spin_unlock(&victim->run_lock);
+        if (moved == 0u) {
+            continue;
+        }
+        while (taken != NULL) {
+            wf_context *next = taken->next;
+            taken->driver = driver;
+            wf_run_push(driver, taken);
+            taken = next;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* A driver woken to look for work has looked: another may be woken now,
+ * and is when this one found work, since more may be waiting. */
+static void wf_driver_end_search(wf_driver *driver, int found) {
+    if (atomic_exchange_explicit(&driver->searcher, 0u, memory_order_relaxed) == 0u) {
+        return;
+    }
+    atomic_store_explicit(&wf_drivers_searching, 0u, memory_order_seq_cst);
+    if (found) {
+        wf_drivers_wake_one();
+    }
 }
 
 static void wf_context_link(wf_context **list, wf_context *context) {
@@ -1424,7 +1540,7 @@ static int wf_context_poll(wf_driver *driver, int timeout_ms) {
             driver->polling_count -= 1u;
             ready->poll_events = 0;
             ready->record = NULL;
-            wf_context_ready(driver, ready);
+            wf_context_ready(ready);
             moved = 1;
         }
     }
@@ -1444,8 +1560,9 @@ static void wf_drivers_notify_others(void) {
 }
 
 /* Wakes the context parked on a record this thread just published: at once
- * when it is this driver's, and otherwise by counting a publication every
- * driver's next pass over its parked contexts looks for. */
+ * when it is this driver's, and otherwise, unless it is the running
+ * context's own, by counting a publication every driver's next pass over its
+ * parked contexts looks for. */
 static int wf_context_record_published(const wf_completion_record *record) {
     wf_driver *driver = wf_driver_self;
     wf_context *context = NULL;
@@ -1458,7 +1575,16 @@ static int wf_context_record_published(const wf_completion_record *record) {
     if (context != NULL) {
         wf_context_unpark(driver, context);
         context->record = NULL;
-        wf_context_ready(driver, context);
+        wf_context_ready(context);
+        return 1;
+    }
+    if (driver != NULL && wf_context_current != NULL
+        && (const void *)record == (const void *)wf_context_current->operation.bytes) {
+        /* The running context's own operation, answered before it waits:
+         * it reads its record before it parks, and nothing else waits on
+         * it.  Every other record, such as one the shared helper pool
+         * completed and this driver's progress published, may be parked on
+         * any driver. */
         return 1;
     }
     atomic_fetch_add_explicit(&wf_context_foreign_publications, 1, memory_order_release);
@@ -1486,7 +1612,7 @@ static int wf_context_harvest(wf_driver *driver) {
         if (wf_bridge_record_state(context->record) == WF_COMPLETION_DONE) {
             wf_context_unpark(driver, context);
             context->record = NULL;
-            wf_context_ready(driver, context);
+            wf_context_ready(context);
             moved = 1;
         }
         context = next;
@@ -1650,24 +1776,35 @@ void *wf__context_prepare(uint64_t bytes) {
 
 static void wf_drivers_begin(void);
 
-/* The driver a starting context is placed on: round robin over every
- * driver, and this one while the program runs one. */
-static wf_driver *wf_context_place(void) {
-    unsigned count;
-    wf__sched_once(&wf_drivers_once, wf_drivers_begin);
-    count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
-    if (count <= 1u) {
-        return wf_driver_self;
+/* A group's count while the last context to finish takes its waiter. The
+ * finisher touches the group only until it stores zero, because once the
+ * count reads zero the starting activation may leave and release the frame
+ * the group lives in. */
+#define WF_GROUP_CLOSING UINT64_MAX
+
+/* Counts one more context in the group, after the last of the ones before
+ * it has finished closing, whose store of zero would otherwise erase it. */
+static void wf_group_add(uint64_t *group) {
+    uint64_t count = __atomic_load_n(&group[0], __ATOMIC_ACQUIRE);
+    for (;;) {
+        if (count == WF_GROUP_CLOSING) {
+            wf_prim_spin_hint();
+            count = __atomic_load_n(&group[0], __ATOMIC_ACQUIRE);
+            continue;
+        }
+        if (__atomic_compare_exchange_n(
+                &group[0], &count, count + 1u, 0, __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE)) {
+            return;
+        }
     }
-    return wf_drivers[atomic_fetch_add_explicit(&wf_driver_next, 1u, memory_order_relaxed)
-                      % count];
 }
 
 /* Starts the prepared context: its outermost frame is made here, in the new
  * context, so its arena holds it; the context joins the starting
- * activation's group and is placed on a driver, where it waits its turn
- * behind the ready contexts, while the starter continues with its next
- * statement. */
+ * activation's group and is made ready on the starter's driver, where it
+ * waits its turn behind the ready contexts unless a parked driver takes it
+ * first, while the starter continues with its next statement.  The first
+ * start begins the other drivers. */
 void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *arguments)) {
     wf_context *context = wf_context_prepared;
     wf_context *starter = wf_context_current;
@@ -1686,17 +1823,13 @@ void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *a
     context->root = frame;
     context->resume = frame;
     context->group = group;
-    context->driver = wf_context_place();
-    __atomic_fetch_add(&group[0], 1u, __ATOMIC_SEQ_CST);
+    context->driver = wf_driver_self;
+    wf__sched_once(&wf_drivers_once, wf_drivers_begin);
+    wf_group_add(group);
     atomic_fetch_add_explicit(&wf_context_live, 1u, memory_order_relaxed);
-    wf_context_wake(context);
+    wf_context_ready(context);
 }
 
-/* A group's count while the last context to finish takes its waiter. The
- * finisher touches the group only until it stores zero, because once the
- * count reads zero the starting activation may leave and release the frame
- * the group lives in. */
-#define WF_GROUP_CLOSING UINT64_MAX
 
 /* Returns zero when every context the group counts has finished, and
  * otherwise records the running context as the group's waiter and returns
@@ -1762,7 +1895,7 @@ static void wf_group_finish(uint64_t *group) {
     waiter = __atomic_exchange_n(&group[1], 0u, __ATOMIC_SEQ_CST);
     __atomic_store_n(&group[0], 0u, __ATOMIC_SEQ_CST);
     if (waiter != 0u) {
-        wf_context_wake((wf_context *)(uintptr_t)waiter);
+        wf_context_ready((wf_context *)(uintptr_t)waiter);
     }
 }
 
@@ -1788,12 +1921,15 @@ static void wf_context_finish(wf_context *context) {
  * finished, and every other driver when the program stops them. */
 static void wf_context_drive(wf_driver *driver) {
     for (;;) {
-        wf_context *next;
-        (void)wf_driver_drain_inbox(driver);
-        next = wf_context_take_ready(driver);
+        wf_context *next = wf_run_take(driver);
         if (next != NULL) {
             void *frame = next->resume;
+            wf_driver_end_search(driver, 1);
+            if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
+                wf_drivers_wake_one();
+            }
             next->resume = NULL;
+            next->driver = driver;
             wf_context_current = next;
             wf__coro_resume(frame);
             wf_context_current = NULL;
@@ -1813,8 +1949,16 @@ static void wf_context_drive(wf_driver *driver) {
             continue;
         }
         {
+            int stole = wf_driver_steal(driver);
+            wf_driver_end_search(driver, stole);
+            if (stole) {
+                continue;
+            }
+        }
+        {
             uint64_t epoch = wf_completion_wake_epoch(driver->runtime);
-            if (wf_context_harvest(driver) || wf_driver_drain_inbox(driver)) {
+            if (wf_context_harvest(driver)
+                || atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
                 continue;
             }
             if (driver != &wf_driver_root
@@ -1827,13 +1971,27 @@ static void wf_context_drive(wf_driver *driver) {
                 (void)wf_context_poll(driver, driver->parked != NULL ? 1 : -1);
                 continue;
             }
-            if (driver->parked == NULL
+            /* Only the entry's driver, which starts every other, knows that
+             * it runs alone; a driver that has just started may run before
+             * the count includes it, and waits here for its first context. */
+            if (driver == &wf_driver_root && driver->parked == NULL
                 && atomic_load_explicit(&wf_driver_count, memory_order_acquire) <= 1u) {
                 wf_bridge_fail(
                     "every context waits for a context that is not waiting for the host"
                 );
             }
-            wf_bridge_park(epoch);
+            /* Announced before the last look, so a driver that makes a
+             * context ready after that look sees this one parked and wakes
+             * it. */
+            atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
+            atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
+            if (atomic_load_explicit(&driver->run_count, memory_order_seq_cst) == 0u
+                && !wf_driver_steal(driver)) {
+                wf_bridge_park(epoch);
+            }
+            if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
+                atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
+            }
         }
     }
 }
@@ -1884,7 +2042,7 @@ static void wf_drivers_begin(void) {
         wf_driver *driver = (wf_driver *)wf_pool_take(sizeof(*driver), &granted);
         memset(driver, 0, sizeof(*driver));
         driver->pool_bytes = granted;
-        atomic_flag_clear(&driver->inbox_lock);
+        atomic_flag_clear(&driver->run_lock);
         if (wf_completion_runtime_init(&driver->own_runtime) != 0) {
             wf_pool_give(driver, granted);
             break;
@@ -1928,27 +2086,27 @@ static void wf_drivers_begin(void) {
 }
 
 /* Stops every driver but the entry's once the root has finished, when no
- * context is left to run, and releases their rings. */
+ * context is left to run, and releases their rings only after every one has
+ * stopped, since a running driver looks through the others for work. */
 static void wf_drivers_end(void) {
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
     unsigned index;
     atomic_store_explicit(&wf_drivers_stopping, 1u, memory_order_release);
     for (index = 1u; index < count; index++) {
         wf_driver *driver = wf_drivers[index];
-        if (driver == NULL) {
-            continue;
-        }
-        wf_completion_notify_target(driver->runtime);
         while (atomic_load_explicit(&driver->exited, memory_order_acquire) == 0u) {
             wf_completion_notify_target(driver->runtime);
             wf_prim_yield();
         }
+    }
+    atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
+    for (index = 1u; index < count; index++) {
+        wf_driver *driver = wf_drivers[index];
         (void)wf_linux_io_uring_destroy(&driver->own_adapter);
         (void)wf_completion_runtime_destroy(&driver->own_runtime);
         wf_drivers[index] = NULL;
         wf_pool_give(driver, driver->pool_bytes);
     }
-    atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
 }
 
 #else
@@ -1964,7 +2122,7 @@ void wf__context_root_begin(void) {
         wf_bridge_fail("the root context was begun twice");
     }
     wf_bridge_require();
-    atomic_flag_clear(&wf_driver_root.inbox_lock);
+    atomic_flag_clear(&wf_driver_root.run_lock);
     wf_driver_root.runtime = &wf_bridge_runtime;
     wf_drivers[0] = &wf_driver_root;
     atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
@@ -1980,7 +2138,7 @@ void wf__context_root_run(void *frame) {
     }
     wf_context_root.root = frame;
     wf_context_root.resume = frame;
-    wf_context_ready(&wf_driver_root, &wf_context_root);
+    wf_context_ready(&wf_context_root);
     wf_context_drive(&wf_driver_root);
     if (atomic_load_explicit(&wf_context_live, memory_order_acquire) != 0u) {
         wf_bridge_fail("the entry finished while contexts it started were running");
