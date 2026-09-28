@@ -1,0 +1,2661 @@
+{
+  "schema": "Vector ordinary batch-helper trial; complete rejected pair",
+  "publication_scope": "Exact source patch, complete two-arm raw samples, all 42 paired cells and compact native/input/phase evidence. No production caller, public API, compiler or specification change.",
+  "portable_prefixes": {
+    "${BATCH_CONTROLLER_SCRATCH}": "Replay scratch root for this batch-helper trial; historical basename whitefoot-vector-batch-controller.",
+    "${SOURCE_CONTROLLER_SCRATCH}": "Retained 7abd snapshot, frozen compiler and rejected direct-composition trial; historical basename whitefoot-vector-source-controller.",
+    "${FROZEN_VECTOR_SCRATCH}": "Retained terminal/T1H0 native peer, runtime and control inputs; historical basename whitefoot-vector-actual-ablation.",
+    "${CHECKOUT}": "Publishing isolated checkout; its filesystem location is not an input identity."
+  },
+  "source_criterion": "# Unrun ordinary reference-taking batch controller\n\nThis is one scratch-only source discriminator, not a selected implementation.\nIt serves the remaining Vector controller question and is removed after its\nowning experiment retains reproducible evidence. No compiler, library, API,\naccepted verdict, production source or native adapter changes. No source check,\ncompilation, link, execution or timing has run for it.\n\nThe exact baseline, candidate and patch are in this directory; `inputs.json`\npins source/compiler 7abd. The complete original archive remains read-only in\nthe source-controller scratch directory. Before an authorized compilation,\nextract that archive to a separate snapshot and apply this one patch; never\nread moving worktree modules or overwrite the rejected candidate's snapshot.\n\n## Alias relation and scope of the proposal\n\nThe original tail call receives `&values` and `&digest`, two distinct local\nroots. Its exact write row reaches the vector's storage through the first\nreference and the digest through the second. EFF-5 checks their separation;\nreference escape is forbidden. The existing ordinary backend consequently\nmarks each reference parameter `noalias nonnull captures(none) dereferenceable(8)`.\nLLVM's inliner supplies the two dynamic helper scopes visible as !15/!17 in\ncontrol.opt.ll, in addition to the nested append/truncate scopes. The owner\npointer slot and the digest cell are separate, and backing payload accesses\nin the inlined body carry the corresponding !noalias lists. This is an\nobserved conversion of accepted parameter facts, not a new assertion that\narbitrary subfields or two entries of one parameter are disjoint.\n\nDirect source expansion eliminates the helper boundary. It retains each public\noperation's ordinary scopes, but no longer has that enclosing pair. The observed\nbacking-pointer/length outer PHIs become per-cycle loads plus an owner-slot\nstore. Code inspection has not isolated whether that metadata difference or\nother inlining/loop-promotion ordering caused the change.\n\nThe new helper moves the whole cycles loop across one ordinary reference\nboundary. `values` remains a checked reference parameter for the batch; digest\nstorage is constructed fresh inside each cycle and remains local. Thus this\nproposal does not claim to recreate both old scopes exactly. It asks whether\nordinary source decomposition recovers the useful promotion using existing\nfacts. It is not a compiler missing-fact repair, a per-access scope emitter,\nan inliner policy or a new alias promise. Batch operations over mutable generic\nstate routinely keep setup and repeated operations together under one call;\nthe same decomposition applies beyond this benchmark to preallocated batches\nand bounded repeated transformations. It branches on neither payload type nor\nselected count.\n\n## Exact work and prospective code criterion\n\nMove the already reviewed expanded cycles block into the private generic\n`vector_library_suffix_cycles`. Parameter substitution changes `values` to a\nreference formal; checksum enters by value and returns by value. Preserve all\nwrapping arithmetic, constructor/append/truncate/accept order, fresh per-cycle\ndigest, unconditional zero-removal truncate, prefix contents, final drain/free\nand zero-round result. Leave reserve/prefix/final drain and other trace branches\nat their original sites. Keep the old tail helper declaration initially. The\nsource patch has no production destination until a future selection.\n\nRequire independent source-equivalence inspection before compiling. With the\nsame frozen CLI and ordinary O3 consumer, require outer pointer/length promotion\n(or equivalent native register transport) without the rejected candidate's\nextra per-cycle owner-slot store/reloads. Wide constant preparation must remain\noutside the repeated cycle, one-record SIMD/direct backing stores must remain,\nand there must be no owner-sized snapshot, new per-cycle helper call or repeated\nwide tail frame/setup. A once-per-trace batch call is allowed and its setup,\nframes, spills and caller costs must be inventoried. Compare all emitted and\nlinked bodies and unchanged branches, not static instruction totals alone.\nFailure of those conditions stops before correctness or timing.\n\nThe earlier tail-only wide suffix-2/count-16 loss and the direct composition's\nthree scalar suffix-3 losses remain explicit falsifiers. Native structural\nsuccess alone selects nothing. Any separately authorized continuation retains\nall four full correctness images, faults and 294-row ledger equality, then all\n42 paired timing cells, duration/cohort qualifications, six unranked controls,\nnative drift and refusal of any qualified useful-cell loss. No rerun is part of\nthis preparation.\n\nIf separately authorized, the bounded native phase uses the frozen whitefootc\nfor --check and --emit-llvm, changes exactly one main name in timed LLVM, then\nuses the same /usr/bin/clang -O3 -Wno-override-module -x ir commands for optimized\nLLVM, assembly and an object. No compiler rebuild, flag sweep, link, correctness\nmatrix or timing is authorized by this file. Expected recovery of the outer\nstate is a prediction, not an established result.\n\n## Authorized minimal-input refinement before compilation\n\nRoot authorized a smaller input method after reviewing the complete source\npatch: use standalone frozen baseline/candidate files named vector-library.wf\nin separate directories with the existing frozen CLI, whose standard library\nis embedded. The first baseline --emit-llvm output must equal retained T1H0\nraw LLVM byte for byte. Only that equality qualifies the minimal input method;\nan unexpected difference stops the stage without normalization or changing\nsource/proof requirements. This replaces the proposed full-archive extraction\nfor this bounded screen. Both exact .wf files, compiler and control artifacts\nare hashed before and after. No moving worktree library or compiler is used.\n\nThe authorized queue is PQ build/screen, then Ordered correctness/accounting,\nthen one guarded Vector native screen. It includes baseline reproduction,\ncandidate --check/--emit-llvm, exactly-one main rename, ordinary O3 optimized\nLLVM/assembly/object, and read-only inventory. No linking, execution matrix or\ntiming is authorized. All direct statuses, full stdout/stderr and phase costs\nare retained under native/. Source failure or the stated native falsifier stops\nthe candidate.\n",
+  "timing_criterion": "# One registered ordinary batch-helper timing pair\n\nThis is an equivalent caller/source decomposition trial, not a change to\nGrowVector's public operations, a compiler optimization, or a promise that all\nclients improve. The baseline source/compiler pin remains 7abd6bb34746b7b983b83103c68ee429b24859bb;\nthe frozen compiler and exact repaired source/native identities remain those in\nthe completed screen. Default source and all retained prior results stay separate.\n\nRoot independently reviewed the repaired source, recovered scalar outer PHIs,\nwide preparation/save/reload structure and all native artifacts, then the four\nfull correctness images, 12 direct command statuses, fault diagnostics and\n294-row ledger equality. The source preserves the exact requested workload,\nownership and constructor/append/truncate/accept order, including zero-removal\ntruncate, fresh per-cycle digest, zero rounds and final drain/free. No input or\nsource change is part of this timing phase.\n\nThe native structural prediction passed, with costs retained: scalar suffix-three\nstill has 71 hot-cycle instructions versus baseline 69; wide constants and seven\nQ-pair saves move before the outer loop, but seven Q-pair reloads (224 bytes)\nremain per nonempty cycle. The batch adds one call per suffix trace, and combined\ntrace/helper frames increase. Code structure alone has not repaired a timing loss.\n\nRun exactly one control-then-candidate pair, sequentially under one shared guard:\n\n```\n${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed measure 1048576 7\n${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed measure 1048576 7\n```\n\nThe existing harness retains both cohorts, all warmups, seven samples, seven\nvariants and all 42 cells / 4116 rows per arm. No rebuild, new arm, rerun, altered\nflags, source edit, shortened duration or selective cell measurement is authorized.\nQueue after the short Map native, Deque correctness and PriorityQueue correctness\nphases. Verify all frozen inputs and both images immediately before and after.\n\nUse the unchanged retained paired reducer and maintained complete/target reducer.\nA qualified paired result requires disjoint observed WF ranges in the same\ndirection in both cohorts, every paired WF sample at least 1 ms, and at most 10%\nspread between the two candidate/control median ratios. Report all 36 useful\ncells, six unranked suffix-zero controls, duration/stability failures, standard\npeer target statuses and native drift. Do not remove outliers or rescale WF by\nnative movement. Overlap or instability does not establish target completion.\nAny qualified useful-cell loss rejects this candidate.\n\nExplicit falsifiers remain the earlier tail-only forced-inline wide\nsuffix-two/count-16 loss and the direct-composition scalar suffix-three losses\nat all three counts. Report those current cells even when overlap or unstable;\ndo not claim reversal from an unqualified comparison. Retain all gains and\nadverse data. Root must independently reduce the samples before any production\ncaller selection; this one pair does not authorize adoption or another trial.\n",
+  "initial_source_repair": {
+    "reason": "FN-8 at the new helper call: ENT-6 positive affine contract discharge handles <=, <, >=, >, not an invented == rewrite. Use the original tail helper\u2019s equivalent >= and <= entry clauses. Same predicate; body, ordering and runtime work unchanged.",
+    "failed_source_sha256": "53138b5bf17f9dad5383eedc8e337cb4174267760a4b600d589b7abf31b02e9f",
+    "repaired_source_sha256": "6724cfcefe503cd26cdf05734a28bb2365c366a5cab731aaed8ca7b1c5ae1a50",
+    "patch_sha256": "235c2612fe5b3d5ae21450f15742c5f29892cab4eafd17a9459e55d7d37c8adb",
+    "failed_logs": "../native/candidate-check.stdout and candidate-check.stderr",
+    "completed_baseline_phase_reused": "../native/baseline-reproduction.json",
+    "authorization": "Root authorized this equivalent contract spelling and immediate guarded native continuation; no link/execution/timing."
+  },
+  "native_screen": {
+    "status": "registered native structural conditions pass; not selected",
+    "source_repair": {
+      "reason": "FN-8 at the new helper call: ENT-6 positive affine contract discharge handles <=, <, >=, >, not an invented == rewrite. Use the original tail helper\u2019s equivalent >= and <= entry clauses. Same predicate; body, ordering and runtime work unchanged.",
+      "failed_source_sha256": "53138b5bf17f9dad5383eedc8e337cb4174267760a4b600d589b7abf31b02e9f",
+      "repaired_source_sha256": "6724cfcefe503cd26cdf05734a28bb2365c366a5cab731aaed8ca7b1c5ae1a50",
+      "patch_sha256": "235c2612fe5b3d5ae21450f15742c5f29892cab4eafd17a9459e55d7d37c8adb",
+      "failed_logs": "../native/candidate-check.stdout and candidate-check.stderr",
+      "completed_baseline_phase_reused": "../native/baseline-reproduction.json",
+      "authorization": "Root authorized this equivalent contract spelling and immediate guarded native continuation; no link/execution/timing."
+    },
+    "baseline_input_method": {
+      "byte_equal": true,
+      "sha256": "22e03e27bba9dd075d7d6f86a40e52b2f0caea746c36b50e60424aa11527a73d"
+    },
+    "all_repaired_commands_exit_zero": true,
+    "frozen_input_count": 22,
+    "frozen_inputs_before_after_equal": true,
+    "helper_ir": {
+      "8f6b633c945d12a3": {
+        "ir_start_line": 863,
+        "allocas": [],
+        "outer_pointer_phi": true,
+        "outer_length_phi": true
+      },
+      "c3abe4db44181f7a": {
+        "ir_start_line": 1509,
+        "allocas": [
+          "%v27 = alloca %wf.t.e6eb07c5ea5fbe16, align 8"
+        ],
+        "outer_pointer_phi": false,
+        "outer_length_phi": false
+      }
+    },
+    "scalar_mechanism": "Outer backing pointer and length PHIs recovered. Owner pointer store remains only on the growth path; the direct composition\u2019s unconditional per-cycle owner-pointer store and start-of-cycle owner/length reloads are absent. Backing/length still reload before truncate, as in the original control.",
+    "wide_mechanism": {
+      "literal_vectors_prepared_before_outer_loop": 14,
+      "q_pair_saves_before_outer_loop": 7,
+      "q_pair_reloads_after_each_nonempty_truncate": 7,
+      "q_pair_reload_bytes": 224,
+      "within_record_simd_adds": 14,
+      "owner_sized_snapshot": false,
+      "new_hot_call": false,
+      "batch_call_frequency": "one per suffix trace, including zero rounds"
+    },
+    "all_function_inventory": {
+      "control_total": 59,
+      "candidate_total": 59,
+      "unchanged_common": 55,
+      "changed_common": [
+        "_wf_vector_library_trace$instance$8f6b633c945d12a3",
+        "_wf_vector_library_trace$instance$c3abe4db44181f7a"
+      ],
+      "removed": [
+        "_wf_vector_library_tail_work$instance$8f6b633c945d12a3",
+        "_wf_vector_library_tail_work$instance$c3abe4db44181f7a"
+      ],
+      "added": [
+        "_wf_vector_library_suffix_cycles$instance$8f6b633c945d12a3",
+        "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a"
+      ],
+      "total_instructions": {
+        "control": 2635,
+        "candidate": 2670
+      }
+    },
+    "native_costs": {
+      "control_trace_frames_scalar_wide": [
+        160,
+        352
+      ],
+      "candidate_trace_frames_scalar_wide": [
+        112,
+        336
+      ],
+      "candidate_batch_frames_scalar_wide": [
+        144,
+        368
+      ],
+      "control_wide_tail_frame": 288,
+      "nonempty_scalar_hot_cycle_instructions": {
+        "control": "21 + 16 * removed",
+        "direct_composition": "23 + 16 * removed",
+        "batch_candidate": "23 + 16 * removed"
+      },
+      "sections_control_candidate": {
+        "text": [
+          10540,
+          10680
+        ],
+        "literal16": [
+          912,
+          912
+        ],
+        "const": [
+          20,
+          20
+        ],
+        "compact_unwind": [
+          1024,
+          1024
+        ],
+        "eh_frame": [
+          1248,
+          1256
+        ]
+      }
+    },
+    "limit": "The PHI prediction is observed, but other register spills keep scalar suffix-three at 71 hot-cycle instructions versus 69 in control. One extra batch call/frame occurs per trace. The earlier scalar loss is not shown repaired; code placement and performance are unmeasured.",
+    "seconds_by_category": {
+      "source-check": 0.14118620892986655,
+      "source-emission": 0.13490729196928442,
+      "identity": 0.019094666931778193,
+      "native-emission": 0.21366499993018806,
+      "native-compilation": 0.13491487503051758,
+      "native-inventory": 0.04891795921139419
+    },
+    "first_attempt_seconds": {
+      "baseline_emission": 0.14894616696983576,
+      "failed_source_check": 0.10151812504045665
+    },
+    "guard_seconds": {
+      "first_source_attempt": 0.32,
+      "repaired_native_phase": 0.76
+    },
+    "linking": false,
+    "program_execution": false,
+    "correctness_matrix": false,
+    "timing": false
+  },
+  "construction_correctness": {
+    "status": "all-four-images-and-faults-pass",
+    "image_checks": 4,
+    "configurations_per_image": 1260,
+    "executions_per_image": 8820,
+    "harness_commands": 12,
+    "checksum_faults": 4,
+    "cleanup_faults": 2,
+    "account_rows_per_arm": 294,
+    "instrumented_ledger_sha256": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "all_frozen_inputs_unchanged": true,
+    "image_hashes": {
+      "control-timed": "c8cbb79e5b8806f4d06029b9a23c58b4bc299f4b36c60c05b366ea1c3efa4090",
+      "control-account": "c3aa61ab51483143eec23fed3cd6b1a57f3faf6a25a09714351c8ac2427e4fde",
+      "candidate-timed": "36cd4bdf0e612e0214e36671dbac767d3ae528c34b270610ae767a0d49392315",
+      "candidate-account": "d0a4f2487fbe28460f1dbe62fad4303270c646ec061aff6b3deed7d0acf283ac"
+    },
+    "timing_executed": false,
+    "seconds_by_category": {
+      "instrumented-ledger": 0.07233400014229119,
+      "native-compilation": 0.15171770798042417,
+      "native-inventory": 0.7402928357478231,
+      "native-link": 0.1205588742159307,
+      "negative-control": 0.028878542128950357,
+      "positive-check": 2.7187692921143025
+    }
+  },
+  "timing_result": {
+    "disposition": "reject under registered no-qualified-useful-loss criterion; no production change",
+    "comparison": "equivalent ordinary caller/source decomposition; unchanged GrowVector public operations and native peers",
+    "source_sha256": "6724cfcefe503cd26cdf05734a28bb2365c366a5cab731aaed8ca7b1c5ae1a50",
+    "patch_sha256": "235c2612fe5b3d5ae21450f15742c5f29892cab4eafd17a9459e55d7d37c8adb",
+    "source_compiler_pin": "7abd6bb34746b7b983b83103c68ee429b24859bb",
+    "measurement": {
+      "pair_completed": true,
+      "phases": [
+        {
+          "arm": "control",
+          "argv": [
+            "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+          "started_utc": "2026-09-28T11:14:04.922587+00:00",
+          "exit_code": 0,
+          "wall_seconds": 80.88503391691484,
+          "ended_utc": "2026-09-28T11:15:25.809154+00:00"
+        },
+        {
+          "arm": "candidate",
+          "argv": [
+            "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+          "started_utc": "2026-09-28T11:15:25.810286+00:00",
+          "exit_code": 0,
+          "wall_seconds": 79.70243666693568,
+          "ended_utc": "2026-09-28T11:16:45.514160+00:00"
+        }
+      ],
+      "hashes_unchanged": true,
+      "samples": {
+        "control": "4ec8971a3dfe9d788cfebb98771e3f1e858706ad1d1efcd7c1fbb3306d2847ea",
+        "candidate": "2a8d5f1fde924cf77f1a65d3b9dfa435762d765fa138d58aee335b9d14944988"
+      }
+    },
+    "guard": {
+      "argv": [
+        "perl",
+        "${SOURCE_CONTROLLER_SCRATCH}/snapshot/.github/run-check.pl",
+        "vector-batch-controller-pair",
+        "python3",
+        "-B",
+        "${BATCH_CONTROLLER_SCRATCH}/timing/run.py"
+      ],
+      "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+      "exit_code": 0,
+      "seconds": 161.00118424999528,
+      "lock": "/tmp/whitefoot-check-502.lock",
+      "uid": 502
+    },
+    "raw_rows_per_arm": 4116,
+    "paired_cells": 42,
+    "frozen_input_count": 290,
+    "all_frozen_inputs_unchanged": true,
+    "useful": {
+      "count": 36,
+      "raw_results": {
+        "overlap": 29,
+        "gain": 6,
+        "loss": 1
+      },
+      "qualified_results": {
+        "overlap": 29,
+        "gain": 5,
+        "loss": 1,
+        "unstable": 1
+      },
+      "minimum_sample_ns": 1198000,
+      "maximum_cohort_spread_pct": 43.17672748322525,
+      "sub_1ms": [],
+      "unstable": [
+        [
+          256,
+          "suffix-1",
+          16
+        ]
+      ]
+    },
+    "unranked": {
+      "count": 6,
+      "raw_results": {
+        "overlap": 3,
+        "gain": 3
+      },
+      "qualified_results": {
+        "sub-1ms": 3,
+        "gain": 3
+      },
+      "minimum_sample_ns": 976000,
+      "maximum_cohort_spread_pct": 0.7132487141197963,
+      "sub_1ms": [
+        [
+          8,
+          "suffix-0",
+          16
+        ],
+        [
+          8,
+          "suffix-0",
+          256
+        ],
+        [
+          8,
+          "suffix-0",
+          4096
+        ]
+      ],
+      "unstable": []
+    },
+    "targets": {
+      "control": {
+        "inconclusive": 15,
+        "pass": 15,
+        "unranked": 6,
+        "deficit": 6
+      },
+      "candidate": {
+        "inconclusive": 12,
+        "pass": 23,
+        "unranked": 6,
+        "deficit": 1
+      }
+    },
+    "native_drift_useful": {
+      "reverse-c": {
+        "minimum_ratio": 0.9524340393905611,
+        "maximum_ratio": 1.0524229074889868
+      },
+      "direct-c": {
+        "minimum_ratio": 0.6608122941822173,
+        "maximum_ratio": 1.0876792698826596
+      },
+      "swap-take-c": {
+        "minimum_ratio": 0.9666227492314449,
+        "maximum_ratio": 1.0487228003784295
+      },
+      "take-swap-c": {
+        "minimum_ratio": 0.9659593280282935,
+        "maximum_ratio": 1.1195979899497488
+      },
+      "rust-vec": {
+        "minimum_ratio": 0.9615668883961567,
+        "maximum_ratio": 1.0713809206137426
+      },
+      "cpp-std-vector": {
+        "minimum_ratio": 0.966183574879227,
+        "maximum_ratio": 1.0283790283790284
+      }
+    },
+    "qualified_useful_gains": [
+      {
+        "element_bytes": 8,
+        "path": "suffix-2",
+        "count": 16,
+        "class": "useful",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.8434081750143926,
+          0.8448673587081892
+        ],
+        "cohort_spread_pct": 0.17301038062285112,
+        "pair_minimum_ns": 1462000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-2",
+        "count": 256,
+        "class": "useful",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.8498845265588915,
+          0.8660508083140878
+        ],
+        "cohort_spread_pct": 1.9021739130434812,
+        "pair_minimum_ns": 1462000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-2",
+        "count": 4096,
+        "class": "useful",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.8577188940092166,
+          0.846286701208981
+        ],
+        "cohort_spread_pct": 1.35086523088499,
+        "pair_minimum_ns": 1467000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-1",
+        "count": 256,
+        "class": "useful",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.4795311091073039,
+          0.4466166255881694
+        ],
+        "cohort_spread_pct": 7.369739869353942,
+        "pair_minimum_ns": 15833000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-1",
+        "count": 4096,
+        "class": "useful",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.4492773840745494,
+          0.4485337202488909
+        ],
+        "cohort_spread_pct": 0.16579886686018952,
+        "pair_minimum_ns": 16033000
+      }
+    ],
+    "qualified_useful_losses": [
+      {
+        "element_bytes": 8,
+        "path": "suffix-3",
+        "count": 16,
+        "class": "useful",
+        "raw_result": "loss",
+        "qualified_result": "loss",
+        "candidate_over_control": [
+          1.0397350993377483,
+          1.0359765051395007
+        ],
+        "cohort_spread_pct": 0.3628068956777586,
+        "pair_minimum_ns": 1358000,
+        "native_median_ratios": {
+          "reverse-c": [
+            1.0016161616161616,
+            0.9987893462469734
+          ],
+          "direct-c": [
+            0.9763837638376384,
+            0.9807121661721068
+          ],
+          "swap-take-c": [
+            0.9906375390102541,
+            0.9666227492314449
+          ],
+          "take-swap-c": [
+            1.0021997360316761,
+            0.9991254919108001
+          ],
+          "rust-vec": [
+            1.0023076923076923,
+            1.0
+          ],
+          "cpp-std-vector": [
+            1.0,
+            0.9994242947610823
+          ]
+        }
+      }
+    ],
+    "named_falsifier_cells": [
+      {
+        "element_bytes": 8,
+        "path": "suffix-3",
+        "count": 16,
+        "class": "useful",
+        "raw_result": "loss",
+        "qualified_result": "loss",
+        "candidate_over_control": [
+          1.0397350993377483,
+          1.0359765051395007
+        ],
+        "cohort_spread_pct": 0.3628068956777586,
+        "pair_minimum_ns": 1358000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-3",
+        "count": 256,
+        "class": "useful",
+        "raw_result": "overlap",
+        "qualified_result": "overlap",
+        "candidate_over_control": [
+          1.034457478005865,
+          1.003553660270078
+        ],
+        "cohort_spread_pct": 3.079438495343645,
+        "pair_minimum_ns": 1360000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-3",
+        "count": 4096,
+        "class": "useful",
+        "raw_result": "overlap",
+        "qualified_result": "overlap",
+        "candidate_over_control": [
+          1.0343316289262234,
+          1.0350620891161433
+        ],
+        "cohort_spread_pct": 0.07062146892657939,
+        "pair_minimum_ns": 1366000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-2",
+        "count": 16,
+        "class": "useful",
+        "raw_result": "overlap",
+        "qualified_result": "overlap",
+        "candidate_over_control": [
+          0.999722697231594,
+          0.9990275076410114
+        ],
+        "cohort_spread_pct": 0.06958663152569766,
+        "pair_minimum_ns": 21481000
+      }
+    ],
+    "unranked_controls": [
+      {
+        "element_bytes": 8,
+        "path": "suffix-0",
+        "count": 16,
+        "class": "unranked-control",
+        "raw_result": "overlap",
+        "qualified_result": "sub-1ms",
+        "candidate_over_control": [
+          0.9969481180061037,
+          0.9989858012170385
+        ],
+        "cohort_spread_pct": 0.20439210166824928,
+        "pair_minimum_ns": 976000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-0",
+        "count": 256,
+        "class": "unranked-control",
+        "raw_result": "overlap",
+        "qualified_result": "sub-1ms",
+        "candidate_over_control": [
+          1.0020408163265306,
+          0.9949443882709808
+        ],
+        "cohort_spread_pct": 0.7132487141197963,
+        "pair_minimum_ns": 977000
+      },
+      {
+        "element_bytes": 8,
+        "path": "suffix-0",
+        "count": 4096,
+        "class": "unranked-control",
+        "raw_result": "overlap",
+        "qualified_result": "sub-1ms",
+        "candidate_over_control": [
+          1.0061099796334012,
+          1.0
+        ],
+        "cohort_spread_pct": 0.6109979633401208,
+        "pair_minimum_ns": 981000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-0",
+        "count": 16,
+        "class": "unranked-control",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.5728709394205443,
+          0.5756910925844668
+        ],
+        "cohort_spread_pct": 0.4922842074647882,
+        "pair_minimum_ns": 1300000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-0",
+        "count": 256,
+        "class": "unranked-control",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.5719895287958116,
+          0.5697522816166884
+        ],
+        "cohort_spread_pct": 0.3926701570680535,
+        "pair_minimum_ns": 1308000
+      },
+      {
+        "element_bytes": 256,
+        "path": "suffix-0",
+        "count": 4096,
+        "class": "unranked-control",
+        "raw_result": "gain",
+        "qualified_result": "gain",
+        "candidate_over_control": [
+          0.5961140967341877,
+          0.5973487986743994
+        ],
+        "cohort_spread_pct": 0.20712510356255542,
+        "pair_minimum_ns": 1439000
+      }
+    ],
+    "native_observation": "Scalar outer pointer/length PHIs recover, but suffix-three still has 71 hot-cycle instructions versus baseline 69; this pair does not establish that the two instructions cause the measured loss. Wide once-per-batch constants/saves still require 224-byte per-nonempty-cycle reloads. No further trial or rewrite was run.",
+    "sample_sha256": {
+      "control": "4ec8971a3dfe9d788cfebb98771e3f1e858706ad1d1efcd7c1fbb3306d2847ea",
+      "candidate": "2a8d5f1fde924cf77f1a65d3b9dfa435762d765fa138d58aee335b9d14944988"
+    },
+    "paired_csv_sha256": "bbb34222f946cf58dc7789d60bc4ba4d0a968299f7e49effd73f7e114b0457b4",
+    "reducer_sha256": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+    "validation": "All four images pass 1260 configurations / 8820 executions each; four checksum and two cleanup controls reject; both 294-row instrumented ledgers equal frozen ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7. These are instrumented-image lifecycle observations, not optimized timed allocation traffic.",
+    "specification_revisions": "none",
+    "public_api_revisions": "none",
+    "production_caller_changed": false,
+    "repeated_timing": false
+  },
+  "linked_code": {
+    "control-timed": {
+      "object_sha256": "c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235",
+      "image_sha256": "c8cbb79e5b8806f4d06029b9a23c58b4bc299f4b36c60c05b366ea1c3efa4090",
+      "file_size": 1566512,
+      "sections": [
+        {
+          "name": "__TEXT,__text",
+          "address": 4294969400,
+          "size": 690244,
+          "sha256": "db3dd498be1e1f8247cb5e62d303472b650142c01be8c3d7c5810630de1a44c1"
+        },
+        {
+          "name": "__TEXT,__stubs",
+          "address": 4295659644,
+          "size": 2556,
+          "sha256": "7c10cd04a49b69791e1e87669dd9d43fb4b3c9b533d3251272feeec444939a7f"
+        },
+        {
+          "name": "__TEXT,__const",
+          "address": 4295662208,
+          "size": 79216,
+          "sha256": "e0ff0cdd2b8359e4474dcbb5fc9b3b4eb68c7fa383b006bb3a819d7745d4d9c5"
+        },
+        {
+          "name": "__TEXT,__cstring",
+          "address": 4295741424,
+          "size": 16110,
+          "sha256": "b4aff2952ac29afbaec09dc980d2e9ba4ab3ac406d21a3ea4cf35da70b20d4c2"
+        },
+        {
+          "name": "__TEXT,__gcc_except_tab",
+          "address": 4295757536,
+          "size": 13192,
+          "sha256": "80be08ceada879f6ad92bb56696333f907a99ce1e021746651561249b733041c"
+        },
+        {
+          "name": "__TEXT,__unwind_info",
+          "address": 4295770728,
+          "size": 18448,
+          "sha256": "f30721fedfc0f46ce65517c445a28091e0e1f8bfaaeae3933729f4042c8c79ed"
+        },
+        {
+          "name": "__TEXT,__eh_frame",
+          "address": 4295789176,
+          "size": 96136,
+          "sha256": "758e62e32d9e58a72ea6d0648c0939181fd1bf757ae4a619d8e479d0176c6b05"
+        },
+        {
+          "name": "__DATA_CONST,__const",
+          "address": 4295901184,
+          "size": 26920,
+          "sha256": "8f84af999fb858c1e32159188bf75500f331c8df8488d9c395bcec7700f5f8b8"
+        },
+        {
+          "name": "__DATA_CONST,__got",
+          "address": 4295928104,
+          "size": 1776,
+          "sha256": "6ebf39d27592fba43160c34876fb08b88366419193d556b521f8bd488ec85f05"
+        },
+        {
+          "name": "__DATA,__data",
+          "address": 4295933952,
+          "size": 2640,
+          "sha256": "9f86675509f1beea5e0f79fd4cf02f289ac4018798051a7b86be203f4b02fde7"
+        },
+        {
+          "name": "__DATA,__thread_vars",
+          "address": 4295936592,
+          "size": 360,
+          "sha256": "31d068ca28e55c74ace8a5ca49635ef869cc96a3a0a1fc97e9d7c3bb504313c8"
+        },
+        {
+          "name": "__DATA,__thread_data",
+          "address": 4295936952,
+          "size": 72,
+          "sha256": "f9094ef3ffd9fd01b1a81d4b21e342b9b09099114c822a01b88d17c175d10803"
+        },
+        {
+          "name": "__DATA,__thread_bss",
+          "address": 4295937024,
+          "size": 120,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__bss",
+          "address": 4295937152,
+          "size": 2361756,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__common",
+          "address": 4298298912,
+          "size": 80,
+          "sha256": null
+        }
+      ],
+      "stripped_local_addresses": {
+        "l_wf_resource_record_abort": 4295013996,
+        "l_wf_resource_abort": 4295014116
+      },
+      "strong_floor_sha256": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+      "strong_floor_unrelocated_instructions_identical": true,
+      "checked_branches": 56,
+      "checked_literal_loads": 57,
+      "verified_wf_function_count": 58,
+      "target_functions": {
+        "_wf_vector_library_trace$instance$8f6b633c945d12a3": {
+          "object_start": 1136,
+          "linked_start": 4295015132,
+          "instructions": 229,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_trace$instance$c3abe4db44181f7a": {
+          "object_start": 2052,
+          "linked_start": 4295016048,
+          "instructions": 190,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_tail_work$instance$8f6b633c945d12a3": {
+          "object_start": 3036,
+          "linked_start": 4295017032,
+          "instructions": 49,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_tail_work$instance$c3abe4db44181f7a": {
+          "object_start": 4464,
+          "linked_start": 4295018460,
+          "instructions": 108,
+          "unrelocated_instructions_identical": true
+        }
+      }
+    },
+    "control-account": {
+      "object_sha256": "414b22a0d3502f2236ef0a9d1b1e743d8130f84335b66d741e5b417fd0408c2b",
+      "image_sha256": "c3aa61ab51483143eec23fed3cd6b1a57f3faf6a25a09714351c8ac2427e4fde",
+      "file_size": 1568728,
+      "sections": [
+        {
+          "name": "__TEXT,__text",
+          "address": 4294969400,
+          "size": 690280,
+          "sha256": "423b601a3a4ea6911ba00d02c00ad5658a9cd3bbb5d30dac2511604353fda901"
+        },
+        {
+          "name": "__TEXT,__stubs",
+          "address": 4295659680,
+          "size": 2568,
+          "sha256": "4a2ecb7c59b0830c7d1d84f0a653cf0b509cc226cb9ba9ae4db76329b05bd195"
+        },
+        {
+          "name": "__TEXT,__const",
+          "address": 4295662256,
+          "size": 79200,
+          "sha256": "21a574fb162de6442be2856d1de629371b32c3706ef1163206a029b5cad35d85"
+        },
+        {
+          "name": "__TEXT,__cstring",
+          "address": 4295741456,
+          "size": 16366,
+          "sha256": "481f6029b8ae86dd5b683ee584bc33e613dad8e949027728f437037b42b03a34"
+        },
+        {
+          "name": "__TEXT,__gcc_except_tab",
+          "address": 4295757824,
+          "size": 13508,
+          "sha256": "c2bccc4f83c8e743348898ec588ce466c13eb9ef250f4cdab8a000b8f442126f"
+        },
+        {
+          "name": "__TEXT,__unwind_info",
+          "address": 4295771332,
+          "size": 18616,
+          "sha256": "5faa0aa4663409cd6772e6e7d53c4f70bcc12fd4fc4a5fff65904c9ead1e542b"
+        },
+        {
+          "name": "__TEXT,__eh_frame",
+          "address": 4295789952,
+          "size": 96280,
+          "sha256": "f406d4c137dcfd956f69d2d973daa379867ab2a024039a51450935ca0c1e8a7b"
+        },
+        {
+          "name": "__DATA_CONST,__const",
+          "address": 4295901184,
+          "size": 26920,
+          "sha256": "d2cf899526797f64edda1cec306a6d46676c97c4fc2d02963f5e0d69893115dd"
+        },
+        {
+          "name": "__DATA_CONST,__got",
+          "address": 4295928104,
+          "size": 1784,
+          "sha256": "05946f5c24a861ce9c1d407d36e264d75c42b6457ad75a2f433a7a8fc343d8e5"
+        },
+        {
+          "name": "__DATA,__data",
+          "address": 4295933952,
+          "size": 2640,
+          "sha256": "9f86675509f1beea5e0f79fd4cf02f289ac4018798051a7b86be203f4b02fde7"
+        },
+        {
+          "name": "__DATA,__thread_vars",
+          "address": 4295936592,
+          "size": 360,
+          "sha256": "e7b471c1a0b46476cb4ba988b5974691ec0c53105f128f0fa043d4cb003dd440"
+        },
+        {
+          "name": "__DATA,__thread_data",
+          "address": 4295936952,
+          "size": 72,
+          "sha256": "f9094ef3ffd9fd01b1a81d4b21e342b9b09099114c822a01b88d17c175d10803"
+        },
+        {
+          "name": "__DATA,__thread_bss",
+          "address": 4295937024,
+          "size": 120,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__bss",
+          "address": 4295937152,
+          "size": 2361756,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__common",
+          "address": 4298298912,
+          "size": 80,
+          "sha256": null
+        }
+      ],
+      "stripped_local_addresses": {},
+      "strong_floor_sha256": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+      "strong_floor_unrelocated_instructions_identical": true,
+      "checked_branches": 114,
+      "checked_literal_loads": 57,
+      "verified_wf_function_count": 56,
+      "target_functions": {
+        "_wf_vector_library_trace$instance$8f6b633c945d12a3": {
+          "object_start": 704,
+          "linked_start": 4295010852,
+          "instructions": 282,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_trace$instance$c3abe4db44181f7a": {
+          "object_start": 1832,
+          "linked_start": 4295011980,
+          "instructions": 277,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_tail_work$instance$8f6b633c945d12a3": {
+          "object_start": 3264,
+          "linked_start": 4295013412,
+          "instructions": 91,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_tail_work$instance$c3abe4db44181f7a": {
+          "object_start": 5220,
+          "linked_start": 4295015368,
+          "instructions": 143,
+          "unrelocated_instructions_identical": true
+        }
+      }
+    },
+    "candidate-timed": {
+      "object_sha256": "02e9f25398361164c03b36708369136db37a54d2463751c70fb7da96a2fa17ec",
+      "image_sha256": "36cd4bdf0e612e0214e36671dbac767d3ae528c34b270610ae767a0d49392315",
+      "file_size": 1566512,
+      "sections": [
+        {
+          "name": "__TEXT,__text",
+          "address": 4294969400,
+          "size": 690384,
+          "sha256": "748091d6c3188572430cdfad8de2b927f5e064847641aac5cc7e062106bce460"
+        },
+        {
+          "name": "__TEXT,__stubs",
+          "address": 4295659784,
+          "size": 2556,
+          "sha256": "7c10cd04a49b69791e1e87669dd9d43fb4b3c9b533d3251272feeec444939a7f"
+        },
+        {
+          "name": "__TEXT,__const",
+          "address": 4295662352,
+          "size": 79216,
+          "sha256": "e0ff0cdd2b8359e4474dcbb5fc9b3b4eb68c7fa383b006bb3a819d7745d4d9c5"
+        },
+        {
+          "name": "__TEXT,__cstring",
+          "address": 4295741568,
+          "size": 16110,
+          "sha256": "b4aff2952ac29afbaec09dc980d2e9ba4ab3ac406d21a3ea4cf35da70b20d4c2"
+        },
+        {
+          "name": "__TEXT,__gcc_except_tab",
+          "address": 4295757680,
+          "size": 13192,
+          "sha256": "80be08ceada879f6ad92bb56696333f907a99ce1e021746651561249b733041c"
+        },
+        {
+          "name": "__TEXT,__unwind_info",
+          "address": 4295770872,
+          "size": 18448,
+          "sha256": "dd300fbc701c546ce5867e050064263bfe860781ce8c953443b913557708d7e2"
+        },
+        {
+          "name": "__TEXT,__eh_frame",
+          "address": 4295789320,
+          "size": 96144,
+          "sha256": "1ec33d5722bb79f057842f41d8ecd11672b254b6d7fd0ca1cead71d5c9a0bbbf"
+        },
+        {
+          "name": "__DATA_CONST,__const",
+          "address": 4295901184,
+          "size": 26920,
+          "sha256": "5f8a175023762a08a7ce8c16dbffb7296c337e2fc6ae63ce6d5482fff0ae2256"
+        },
+        {
+          "name": "__DATA_CONST,__got",
+          "address": 4295928104,
+          "size": 1776,
+          "sha256": "da4f57ecef169d6b3db03d84c28d793c27baf6ffaa5528395bddebf89dae0ea3"
+        },
+        {
+          "name": "__DATA,__data",
+          "address": 4295933952,
+          "size": 2640,
+          "sha256": "9f86675509f1beea5e0f79fd4cf02f289ac4018798051a7b86be203f4b02fde7"
+        },
+        {
+          "name": "__DATA,__thread_vars",
+          "address": 4295936592,
+          "size": 360,
+          "sha256": "31d068ca28e55c74ace8a5ca49635ef869cc96a3a0a1fc97e9d7c3bb504313c8"
+        },
+        {
+          "name": "__DATA,__thread_data",
+          "address": 4295936952,
+          "size": 72,
+          "sha256": "f9094ef3ffd9fd01b1a81d4b21e342b9b09099114c822a01b88d17c175d10803"
+        },
+        {
+          "name": "__DATA,__thread_bss",
+          "address": 4295937024,
+          "size": 120,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__bss",
+          "address": 4295937152,
+          "size": 2361756,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__common",
+          "address": 4298298912,
+          "size": 80,
+          "sha256": null
+        }
+      ],
+      "stripped_local_addresses": {
+        "l_wf_resource_record_abort": 4295013996,
+        "l_wf_resource_abort": 4295014116
+      },
+      "strong_floor_sha256": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+      "strong_floor_unrelocated_instructions_identical": true,
+      "checked_branches": 58,
+      "checked_literal_loads": 57,
+      "verified_wf_function_count": 58,
+      "target_functions": {
+        "_wf_vector_library_trace$instance$8f6b633c945d12a3": {
+          "object_start": 1136,
+          "linked_start": 4295015132,
+          "instructions": 117,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_trace$instance$c3abe4db44181f7a": {
+          "object_start": 1604,
+          "linked_start": 4295015600,
+          "instructions": 181,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_suffix_cycles$instance$8f6b633c945d12a3": {
+          "object_start": 2552,
+          "linked_start": 4295016548,
+          "instructions": 130,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a": {
+          "object_start": 4304,
+          "linked_start": 4295018300,
+          "instructions": 183,
+          "unrelocated_instructions_identical": true
+        }
+      }
+    },
+    "candidate-account": {
+      "object_sha256": "9ede26c20a05a9c9e6e4454d5e4bb12505e4dc3ad9ff9cbd451612362dd001d9",
+      "image_sha256": "d0a4f2487fbe28460f1dbe62fad4303270c646ec061aff6b3deed7d0acf283ac",
+      "file_size": 1568728,
+      "sections": [
+        {
+          "name": "__TEXT,__text",
+          "address": 4294969400,
+          "size": 690208,
+          "sha256": "70263971f6fd384364da48745e3c6fb876a66f57e51c922bf0bbd0723442b176"
+        },
+        {
+          "name": "__TEXT,__stubs",
+          "address": 4295659608,
+          "size": 2568,
+          "sha256": "4a2ecb7c59b0830c7d1d84f0a653cf0b509cc226cb9ba9ae4db76329b05bd195"
+        },
+        {
+          "name": "__TEXT,__const",
+          "address": 4295662176,
+          "size": 79200,
+          "sha256": "21a574fb162de6442be2856d1de629371b32c3706ef1163206a029b5cad35d85"
+        },
+        {
+          "name": "__TEXT,__cstring",
+          "address": 4295741376,
+          "size": 16366,
+          "sha256": "481f6029b8ae86dd5b683ee584bc33e613dad8e949027728f437037b42b03a34"
+        },
+        {
+          "name": "__TEXT,__gcc_except_tab",
+          "address": 4295757744,
+          "size": 13508,
+          "sha256": "c2bccc4f83c8e743348898ec588ce466c13eb9ef250f4cdab8a000b8f442126f"
+        },
+        {
+          "name": "__TEXT,__unwind_info",
+          "address": 4295771252,
+          "size": 18616,
+          "sha256": "6e57c53133dabc038b55ed243a177b31e348ccf031ac6956f98f483169a64183"
+        },
+        {
+          "name": "__TEXT,__eh_frame",
+          "address": 4295789872,
+          "size": 96280,
+          "sha256": "6999319ba2610d4fa1ec7b398ba0aa2a0880f37a84a6976adee10393eb0d6496"
+        },
+        {
+          "name": "__DATA_CONST,__const",
+          "address": 4295901184,
+          "size": 26920,
+          "sha256": "b5152f4f91c07ba5862500e91ad5a8b3494f67bc51b2396db63e62da327601c9"
+        },
+        {
+          "name": "__DATA_CONST,__got",
+          "address": 4295928104,
+          "size": 1784,
+          "sha256": "23dfec744f081c26d742f0b7f8e50b43783927805db1bf003e69151490ff809e"
+        },
+        {
+          "name": "__DATA,__data",
+          "address": 4295933952,
+          "size": 2640,
+          "sha256": "9f86675509f1beea5e0f79fd4cf02f289ac4018798051a7b86be203f4b02fde7"
+        },
+        {
+          "name": "__DATA,__thread_vars",
+          "address": 4295936592,
+          "size": 360,
+          "sha256": "e7b471c1a0b46476cb4ba988b5974691ec0c53105f128f0fa043d4cb003dd440"
+        },
+        {
+          "name": "__DATA,__thread_data",
+          "address": 4295936952,
+          "size": 72,
+          "sha256": "f9094ef3ffd9fd01b1a81d4b21e342b9b09099114c822a01b88d17c175d10803"
+        },
+        {
+          "name": "__DATA,__thread_bss",
+          "address": 4295937024,
+          "size": 120,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__bss",
+          "address": 4295937152,
+          "size": 2361756,
+          "sha256": null
+        },
+        {
+          "name": "__DATA,__common",
+          "address": 4298298912,
+          "size": 80,
+          "sha256": null
+        }
+      ],
+      "stripped_local_addresses": {},
+      "strong_floor_sha256": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+      "strong_floor_unrelocated_instructions_identical": true,
+      "checked_branches": 114,
+      "checked_literal_loads": 57,
+      "verified_wf_function_count": 56,
+      "target_functions": {
+        "_wf_vector_library_trace$instance$8f6b633c945d12a3": {
+          "object_start": 704,
+          "linked_start": 4295010852,
+          "instructions": 203,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_trace$instance$c3abe4db44181f7a": {
+          "object_start": 1516,
+          "linked_start": 4295011664,
+          "instructions": 259,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_suffix_cycles$instance$8f6b633c945d12a3": {
+          "object_start": 2876,
+          "linked_start": 4295013024,
+          "instructions": 130,
+          "unrelocated_instructions_identical": true
+        },
+        "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a": {
+          "object_start": 4988,
+          "linked_start": 4295015136,
+          "instructions": 183,
+          "unrelocated_instructions_identical": true
+        }
+      }
+    }
+  },
+  "full_linked_record_sha256": "9f85c95648f17ae05fac7b1f6aa65da3bbf0d819261fc86f60c99840e9eee7ba",
+  "original_peer_inputs": {
+    "frozen_base_revision": "36e27e57f46ff4f5de3fc9da155ca33a2254fe7b",
+    "candidate_source_revision": "7abd6bb34746b7b983b83103c68ee429b24859bb",
+    "matching_source_sha256": {
+      "compiler/runtime.mk": "1126880f9e4589c525d26ad715666e275ef91f3a8f6a00cdf23215bd750eba5b",
+      "research/experiments/container-representation/ecosystem.mk": "c3db949403d8f84aa246936d3203ef24973cfd9b3c506ae536402adc69f3d53f",
+      "research/experiments/container-representation/ecosystem-allocator.rs": "67851a0282453273370df666d2c55853a888d6820ad0d233552df52e480e2ee1",
+      "research/experiments/container-representation/ecosystem-allocator.hpp": "254f00c7ee49cee8552abf4b718297495e30e568e0967448de9170ba0d85bfb6",
+      "research/experiments/container-representation/vector-library/Makefile": "b9523a2ec8f591bb3a6d3903f1d78d2bb49139126b0c58ce1cb4f78177a88a8d",
+      "research/experiments/container-representation/vector-library/vector-costs.c": "ff6e158d54c338a1e48f8bcbf5ec7f017bd0d53259eca4ff746a84f361b62e40",
+      "research/experiments/container-representation/vector-library/vector-ecosystem.rs": "84c0a342787d1fd9bb7822094aed3da1b27fa66b384bd7dccb9046b9a5702d91",
+      "research/experiments/container-representation/vector-library/vector-ecosystem.cpp": "147d45733657e3afb59d51e74ffdc99d99faedf425bddd61cfefc4f77716c05a",
+      "compiler/src/backend/completion/bridge.c": "03dbf225a762f3c97de4f8e6593ce675de1504d7feaafb1d6ea0496b14bf9979",
+      "compiler/src/backend/completion/bridge.h": "9a87c0963f60e8d742f5e6ff7fc56fc38a889fe0c8bc730c2ca80cff519c7a52",
+      "compiler/src/backend/completion/bridge_default_probe.c": "577de05be9ee4ca8fa612e80c0e6f1553fbc39377ec04051284c6213e99c5bb5",
+      "compiler/src/backend/completion/contract.h": "26bad567ddb450c2a6f5e2a4b506d3cde4202f2ab2930cd3c218f267a9fe9b56",
+      "compiler/src/backend/completion/core_read_probe.c": "2e8ace77e5047b04f34951ec7e7a880bbff7ef4719cc63e8a7faddee91f8c6be",
+      "compiler/src/backend/completion/file_adapter.c": "543afebc488df39671ddf66b60b2f7f1de85b67281aa5b243c42e57de5e9789e",
+      "compiler/src/backend/completion/file_adapter.h": "31a415e5e0c241fdb1fa54e6807325e5d88de91ba9a1a7c42406e180972bca6d",
+      "compiler/src/backend/completion/file_posix.c": "be44444becc76a4271ea6c7b11fd65da5f6c4f894ed6ebf92a3039a79b1e0803",
+      "compiler/src/backend/completion/file_posix.h": "d7ae05e556f67e00a61d0ae1d317150c5f7ecb41b56188349852447ba0c406fc",
+      "compiler/src/backend/completion/file_windows.c": "d6391bae113433b78500f24146eb391ec1c2256234309ca52384a17d6a9af4bc",
+      "compiler/src/backend/completion/harness.c": "c737c57d57990e686774b5fad5ffd424001f57340c443a183404e34b259e9f6b",
+      "compiler/src/backend/completion/linux_io_uring.c": "5ed8fe013bf3c891d3b5eb9bb48cb7d7f2713f092c286937df023df0435aea65",
+      "compiler/src/backend/completion/linux_io_uring.h": "2b43483481b2241255c8b7b69eda316447fd41a52047017bdb98530e51ebb52b",
+      "compiler/src/backend/completion/native_adapter_probe.c": "49a647bc09aff0497bc5d2d7dfcbceb3d53ab8ab7eb7356d5b9e06dfdd57d9ac",
+      "compiler/src/backend/completion/runtime.c": "93b730805ba5f6946660fbe3376db89e623acef686c8887bafe2f07ec1798c28",
+      "compiler/src/backend/completion/socket_address.h": "c604a81fa6f8c2dcfe6b65de2809420672337b926cb897deb4c300912a7cdc58",
+      "compiler/src/backend/completion/socket_test.h": "2171c9e79513f2c43991d2cbf3dba16117194110806c9784f08b6cb0d0a27494",
+      "compiler/src/backend/completion/wait_host.c": "fd49723d6b60810151f1a251b1a76d580868b74af251f4f428664fa2fb845a9f",
+      "compiler/src/backend/completion/wait_windows.c": "df71d25b1ef775a260e752d14db92a47a24fbc937daeb99f12d1e520d36ba121",
+      "compiler/src/backend/completion/windows_bridge_init_fail_stop_probe.c": "63c3b684fc477a582075fe780611b88fbc1a9a3a5bdada3530fee05c8a0550b1",
+      "compiler/src/backend/completion/windows_iocp.c": "b15e3266b3baa3f8774bdd58f11cd9d357acdc78cb6fcccbce12021ad7cc45c3",
+      "compiler/src/backend/completion/windows_iocp.h": "c23bfd090a8c58978a68a0c62b50125b5467227b590565ed92e73dea1901a976",
+      "compiler/src/backend/floor_probe.c": "9d2905d78d734003b066230cce479437e8234999cad6b858aac9c939d8644c7d",
+      "compiler/src/backend/ordinary_values.c": "391ca3c184b76066e48b68e8246f6774c82af3ad788b0465f4ba2093cdb8f3e0",
+      "compiler/src/backend/ordinary_values.h": "2f3fb24ba0b8e16bc3a918209ee862d87f28a36ebb5c0165b17936ccaf243413",
+      "compiler/src/backend/ordinary_values.ll": "efbabecf6f1b1c92c40e2421ac4d0958ffb0b67651c354f8191895af7fe9c1b7",
+      "compiler/src/backend/ordinary_values_probe.c": "d107cf814cd41af700094a9d136aba62e2665131d6fdc2ca74c071e73057012b",
+      "compiler/src/backend/ordinary_values_probe.ll": "fb6574899b94702b53ba99ee315084e82dcbf4e5c0981bdd917ecfdb159e9e66",
+      "compiler/src/backend/runtime_test_guard.h": "c39882b8b67b3f3fcd01cf40e83e772dd06d855b8dda1b214ec2a5ca1eed973a",
+      "compiler/src/backend/sched/core.c": "48f0080fd5c43e9e07691a05936c36e232b76d1bde309b6f53bc912176ac3285",
+      "compiler/src/backend/sched/core.h": "78894fb20b8b8ee4e77bdba3c56d0d51ab35b376971c411d70c94ccde9c7ed55",
+      "compiler/src/backend/sched/cpu_levels_probe.c": "25db36427d06402a7552b607865621e256ce3d17fdeecbc50f1c232bb789d330",
+      "compiler/src/backend/sched/deque_probe.c": "a30b0ab5195da0d26b440fb82d90c980d831504e419c51c24dde6a62afa79667",
+      "compiler/src/backend/sched/entry.c": "25ef25d07b118f46e592a6779afc3df70cb311008fc5b9ffaa2d0de94d8cf5d2",
+      "compiler/src/backend/sched/entry.h": "def1de29a93dc8a22d22bc56a440a47d73f654819e25df205279edb02d2e541e",
+      "compiler/src/backend/sched/grant_observer.c": "034b4ed00afad8e04de012e3dee8ed5416e9037e5d7227dfa4a2d2a5682567db",
+      "compiler/src/backend/sched/prim.h": "9f4ed2e6b7fb53dda4995a26398c35839b95902660a08a3952cbd1526864c21a",
+      "compiler/src/backend/sched/prim_host.c": "fcd531f908b0f88ebeb9601a7d953a6b99eb62ce5ed55caa4a58a26bf3874e8c",
+      "compiler/src/backend/sched/prim_windows.c": "4cfcb07dcc0ff7c90955d1d5c265a5cefc3a7b0002dc3a320923d485e16d781d",
+      "compiler/src/backend/sched/recursion_budget_probe.c": "f417e0040d342bce9c5c7156f89a7e39132b89ddd03731f44a97f96b97080c81",
+      "compiler/src/backend/sched/smoke.c": "1015e4e1932c378be1bd56f32817558991010e08d2da76bcfbacf93cb2af9fe6",
+      "compiler/src/backend/sched/wake_probe.c": "62bffa3087eef2895906183ffca00b11d370518afc5a435cbaf7788d15cf7cda",
+      "compiler/src/backend/tests/growth_observer.c": "3d01c7db4baccd79b49d0f0d097370be882f6ae9f1eb3a75b43ce48fc4cf1d61",
+      "compiler/src/backend/tests/owning_growth_observer.c": "1020362c7954c7b653a47c23a1bb23752099077925783b2c6547d78dd3dc6b54",
+      "compiler/src/backend/tests/owning_map_observer.c": "1dbe462a4e5a37c6b62ab890dbb086748c9ddc60f8e86df184e84fe83b610528",
+      "compiler/src/backend/tests/stack_boundary.c": "ce5c43a64813763d98ee3e90a2397c16ae111e71e40d7ee6b57381d1fd8f9f34",
+      "compiler/src/backend/tests/worker_schedule.c": "d95645b150fe786eab6ad03bdd0b11184d15a5d97ae76d4de94225c7d286b0e6",
+      "compiler/src/backend/wf_floor.c": "a50ccec0994ecdc8f5c5241e1a9f76dd4376fb84780013be15c1a5a189059cc9",
+      "compiler/src/backend/wf_floor_windows.c": "aa501ba08c0a6494934a39d3e0989ddc46a4438835df7370f07bc5b0865d2fff",
+      "compiler/src/backend/windows_runtime.c": "42650bdb2a34801bc610a300632a60efd5e760be114776f2d01e483b0a193cc0",
+      "compiler/src/backend/windows_runtime.h": "4db8d60e7a034658783b8b8b86139058cac04460da4d03695af2715be228cbf9"
+    },
+    "source_identity_result": "All relevant native sources, headers and build-rule bytes match the retained base source manifest exactly. The original link command and object order are retained; only the WF object and output image differ.",
+    "flags_source": "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal-native-build.stdout",
+    "configuration_sources": [
+      "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/configuration.txt",
+      "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/configuration.txt"
+    ]
+  },
+  "actual_candidate_links": {
+    "timed": {
+      "command": [
+        "/usr/bin/clang++",
+        "-O3",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o",
+        "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o",
+        "-pthread",
+        "-lm",
+        "-liconv",
+        "-lSystem",
+        "-lc",
+        "-lm",
+        "-o",
+        "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed"
+      ],
+      "unchanged_inputs": [
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o"
+      ],
+      "original_command": [
+        "/usr/bin/clang++",
+        "-O3",
+        ".build/actual-ablation/terminal/ecosystem/driver-timed.o",
+        ".build/actual-ablation/terminal/ecosystem/whitefoot-timed.o",
+        ".build/actual-ablation/terminal/ecosystem/cpp-timed.o",
+        ".build/actual-ablation/terminal/ecosystem/rust-timed.a",
+        ".build/actual-ablation/terminal/native/ordinary_values.o",
+        ".build/actual-ablation/terminal/native/sched/core.o",
+        ".build/actual-ablation/terminal/native/sched/entry.o",
+        ".build/actual-ablation/terminal/native/completion/runtime.o",
+        ".build/actual-ablation/terminal/native/completion/file_adapter.o",
+        ".build/actual-ablation/terminal/native/completion/bridge.o",
+        ".build/actual-ablation/terminal/native/wf_floor.o",
+        ".build/actual-ablation/terminal/native/sched/prim_host.o",
+        ".build/actual-ablation/terminal/native/completion/wait_host.o",
+        ".build/actual-ablation/terminal/native/completion/file_posix.o",
+        ".build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        ".build/actual-ablation/terminal/native/ordinary_values_ir.o",
+        "-pthread",
+        "-lm",
+        "-liconv",
+        "-lSystem",
+        "-lc",
+        "-lm",
+        "-o",
+        ".build/actual-ablation/terminal/ecosystem/vector-costs-timed"
+      ],
+      "original_cwd": "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library"
+    },
+    "account": {
+      "command": [
+        "/usr/bin/clang++",
+        "-O3",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-account.o",
+        "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-account.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-account.a",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o",
+        "-pthread",
+        "-lm",
+        "-liconv",
+        "-lSystem",
+        "-lc",
+        "-lm",
+        "-o",
+        "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account"
+      ],
+      "unchanged_inputs": [
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-account.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-account.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-account.a",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o"
+      ],
+      "original_command": [
+        "/usr/bin/clang++",
+        "-O3",
+        ".build/actual-ablation/terminal/ecosystem/driver-account.o",
+        ".build/actual-ablation/terminal/ecosystem/whitefoot-account.o",
+        ".build/actual-ablation/terminal/ecosystem/cpp-account.o",
+        ".build/actual-ablation/terminal/ecosystem/rust-account.a",
+        ".build/actual-ablation/terminal/native/ordinary_values.o",
+        ".build/actual-ablation/terminal/native/sched/core.o",
+        ".build/actual-ablation/terminal/native/sched/entry.o",
+        ".build/actual-ablation/terminal/native/completion/runtime.o",
+        ".build/actual-ablation/terminal/native/completion/file_adapter.o",
+        ".build/actual-ablation/terminal/native/completion/bridge.o",
+        ".build/actual-ablation/terminal/native/wf_floor.o",
+        ".build/actual-ablation/terminal/native/sched/prim_host.o",
+        ".build/actual-ablation/terminal/native/completion/wait_host.o",
+        ".build/actual-ablation/terminal/native/completion/file_posix.o",
+        ".build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+        ".build/actual-ablation/terminal/native/ordinary_values_ir.o",
+        "-pthread",
+        "-lm",
+        "-liconv",
+        "-lSystem",
+        "-lc",
+        "-lm",
+        "-o",
+        ".build/actual-ablation/terminal/ecosystem/vector-costs-account"
+      ],
+      "original_cwd": "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library"
+    }
+  },
+  "toolchain": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "phases": {
+    "initial_source": [
+      {
+        "stage": "baseline-emission",
+        "category": "source-emission",
+        "argv": [
+          "${SOURCE_CONTROLLER_SCRATCH}/frozen/whitefootc",
+          "--emit-llvm",
+          "baseline/vector-library.wf",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/native/baseline.raw.ll"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.14894616696983576
+      },
+      {
+        "stage": "candidate-check",
+        "category": "source-check",
+        "argv": [
+          "${SOURCE_CONTROLLER_SCRATCH}/frozen/whitefootc",
+          "--check",
+          "candidate/vector-library.wf"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 1,
+        "seconds": 0.10151812504045665
+      }
+    ],
+    "repaired_native": [
+      {
+        "stage": "candidate-check",
+        "category": "source-check",
+        "argv": [
+          "${SOURCE_CONTROLLER_SCRATCH}/frozen/whitefootc",
+          "--check",
+          "repair/vector-library.wf"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.14118620892986655
+      },
+      {
+        "stage": "candidate-emission",
+        "category": "source-emission",
+        "argv": [
+          "${SOURCE_CONTROLLER_SCRATCH}/frozen/whitefootc",
+          "--emit-llvm",
+          "repair/vector-library.wf",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.raw.ll"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.13490729196928442
+      },
+      {
+        "stage": "clang-version",
+        "category": "identity",
+        "argv": [
+          "/usr/bin/clang",
+          "--version"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.019094666931778193
+      },
+      {
+        "stage": "candidate-optimized-ir",
+        "category": "native-emission",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-S",
+          "-emit-llvm",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-timed.ll",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.opt.ll"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.07586449990049005
+      },
+      {
+        "stage": "candidate-assembly",
+        "category": "native-emission",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-S",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-timed.ll",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.s"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.13780050002969801
+      },
+      {
+        "stage": "candidate-object",
+        "category": "native-compilation",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-timed.ll",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.13491487503051758
+      },
+      {
+        "stage": "object-sections",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-l",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.015617459081113338
+      },
+      {
+        "stage": "object-symbols",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/nm",
+          "-n",
+          "-m",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.013682875083759427
+      },
+      {
+        "stage": "object-disassembly",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-tvV",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "exit_code": 0,
+        "seconds": 0.019617625046521425
+      }
+    ],
+    "construction": [
+      {
+        "stage": "candidate-account-object",
+        "category": "native-compilation",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.ll",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.o"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.15171770798042417,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-object.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-object.stderr"
+      },
+      {
+        "stage": "candidate-timed-link",
+        "category": "native-link",
+        "argv": [
+          "/usr/bin/clang++",
+          "-O3",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o",
+          "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o",
+          "-pthread",
+          "-lm",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.06533045810647309,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-link.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-link.stderr"
+      },
+      {
+        "stage": "candidate-account-link",
+        "category": "native-link",
+        "argv": [
+          "/usr/bin/clang++",
+          "-O3",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-account.o",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-account.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-account.a",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o",
+          "-pthread",
+          "-lm",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-o",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.05522841610945761,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-link.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-link.stderr"
+      },
+      {
+        "stage": "control-timed-sections",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-l",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.018184958025813103,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-sections.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-sections.stderr"
+      },
+      {
+        "stage": "control-timed-symbols",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/nm",
+          "-n",
+          "-m",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.028728292090818286,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-symbols.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-symbols.stderr"
+      },
+      {
+        "stage": "control-timed-disassembly",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-tvV",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.1517174590844661,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-disassembly.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-disassembly.stderr"
+      },
+      {
+        "stage": "control-account-sections",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-l",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.015606250148266554,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-sections.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-sections.stderr"
+      },
+      {
+        "stage": "control-account-symbols",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/nm",
+          "-n",
+          "-m",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.017547958064824343,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-symbols.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-symbols.stderr"
+      },
+      {
+        "stage": "control-account-disassembly",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-tvV",
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.1473035840317607,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-disassembly.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-disassembly.stderr"
+      },
+      {
+        "stage": "candidate-timed-sections",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-l",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.01547083305194974,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-sections.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-sections.stderr"
+      },
+      {
+        "stage": "candidate-timed-symbols",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/nm",
+          "-n",
+          "-m",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.017636124975979328,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-symbols.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-symbols.stderr"
+      },
+      {
+        "stage": "candidate-timed-disassembly",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-tvV",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.1467460000421852,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-disassembly.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-disassembly.stderr"
+      },
+      {
+        "stage": "candidate-account-sections",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-l",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.01700837491080165,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-sections.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-sections.stderr"
+      },
+      {
+        "stage": "candidate-account-symbols",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/nm",
+          "-n",
+          "-m",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.018210792215541005,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-symbols.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-symbols.stderr"
+      },
+      {
+        "stage": "candidate-account-disassembly",
+        "category": "native-inventory",
+        "argv": [
+          "/usr/bin/otool",
+          "-tvV",
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.14613220910541713,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-disassembly.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-disassembly.stderr"
+      }
+    ],
+    "correctness": [
+      {
+        "stage": "control-timed-check",
+        "category": "positive-check",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+          "check"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.49996566702611744,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-check.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-check.stderr"
+      },
+      {
+        "stage": "control-account-check",
+        "category": "positive-check",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account",
+          "check"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.49805741710588336,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-check.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-check.stderr"
+      },
+      {
+        "stage": "control-timed-fail-checksum",
+        "category": "negative-control",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+          "fail-checksum"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.0073264590464532375,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-fail-checksum.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-fail-checksum.stderr"
+      },
+      {
+        "stage": "control-account-fail-checksum",
+        "category": "negative-control",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account",
+          "fail-checksum"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.0039765420369803905,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-fail-checksum.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-fail-checksum.stderr"
+      },
+      {
+        "stage": "control-account",
+        "category": "instrumented-ledger",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account",
+          "account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.03634616709314287,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account.stderr"
+      },
+      {
+        "stage": "control-fail-cleanup",
+        "category": "negative-control",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account",
+          "fail-cleanup"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.004523040959611535,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-fail-cleanup.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-fail-cleanup.stderr"
+      },
+      {
+        "stage": "candidate-timed-check",
+        "category": "positive-check",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed",
+          "check"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.921296332962811,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-check.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-check.stderr"
+      },
+      {
+        "stage": "candidate-account-check",
+        "category": "positive-check",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account",
+          "check"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.7994498750194907,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-check.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-check.stderr"
+      },
+      {
+        "stage": "candidate-timed-fail-checksum",
+        "category": "negative-control",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed",
+          "fail-checksum"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.004766084020957351,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-fail-checksum.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-fail-checksum.stderr"
+      },
+      {
+        "stage": "candidate-account-fail-checksum",
+        "category": "negative-control",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account",
+          "fail-checksum"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.00410012505017221,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-fail-checksum.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-fail-checksum.stderr"
+      },
+      {
+        "stage": "candidate-account",
+        "category": "instrumented-ledger",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account",
+          "account"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.03598783304914832,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account.stderr"
+      },
+      {
+        "stage": "candidate-fail-cleanup",
+        "category": "negative-control",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account",
+          "fail-cleanup"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/continuation",
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.004186291014775634,
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-fail-cleanup.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-fail-cleanup.stderr"
+      }
+    ],
+    "timing": [
+      {
+        "arm": "control",
+        "argv": [
+          "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+          "measure",
+          "1048576",
+          "7"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "started_utc": "2026-09-28T11:14:04.922587+00:00",
+        "exit_code": 0,
+        "wall_seconds": 80.88503391691484,
+        "ended_utc": "2026-09-28T11:15:25.809154+00:00"
+      },
+      {
+        "arm": "candidate",
+        "argv": [
+          "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed",
+          "measure",
+          "1048576",
+          "7"
+        ],
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}",
+        "started_utc": "2026-09-28T11:15:25.810286+00:00",
+        "exit_code": 0,
+        "wall_seconds": 79.70243666693568,
+        "ended_utc": "2026-09-28T11:16:45.514160+00:00"
+      }
+    ],
+    "reduction": [
+      {
+        "name": "control-summary",
+        "argv": [
+          "perl",
+          "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=${BATCH_CONTROLLER_SCRATCH}/timing/control-samples.csv"
+        ],
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/timing/control-summary.csv",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/timing/control-summary.stderr",
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/timing",
+        "exit_code": 0,
+        "wall_seconds": 0.062051833840087056
+      },
+      {
+        "name": "control-targets",
+        "argv": [
+          "perl",
+          "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=${BATCH_CONTROLLER_SCRATCH}/timing/control-samples.csv"
+        ],
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/timing/control-targets.csv",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/timing/control-targets.stderr",
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/timing",
+        "exit_code": 0,
+        "wall_seconds": 0.06291700014844537
+      },
+      {
+        "name": "candidate-summary",
+        "argv": [
+          "perl",
+          "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=${BATCH_CONTROLLER_SCRATCH}/timing/candidate-samples.csv"
+        ],
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/timing/candidate-summary.csv",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/timing/candidate-summary.stderr",
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/timing",
+        "exit_code": 0,
+        "wall_seconds": 0.06113333394750953
+      },
+      {
+        "name": "candidate-targets",
+        "argv": [
+          "perl",
+          "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=${BATCH_CONTROLLER_SCRATCH}/timing/candidate-samples.csv"
+        ],
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/timing/candidate-targets.csv",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/timing/candidate-targets.stderr",
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/timing",
+        "exit_code": 0,
+        "wall_seconds": 0.061204792000353336
+      },
+      {
+        "name": "paired-analysis",
+        "argv": [
+          "python3",
+          "-B",
+          "${BATCH_CONTROLLER_SCRATCH}/timing/analyze.py"
+        ],
+        "stdout": "${BATCH_CONTROLLER_SCRATCH}/timing/paired-analysis.stdout",
+        "stderr": "${BATCH_CONTROLLER_SCRATCH}/timing/paired-analysis.stderr",
+        "cwd": "${BATCH_CONTROLLER_SCRATCH}/timing",
+        "exit_code": 0,
+        "wall_seconds": 0.07557437499053776
+      }
+    ]
+  },
+  "native_artifacts": {
+    "repair/native/artifacts.json": "c2d113b98829c06ccb3d34db386f39ba0b4f30b3e6dea3df82ba8c3ea388c3e0",
+    "repair/native/assembly-inventory.initial.json": "c1f41be37dda1f97de6c24eea85061e1f1ca26fc69dd91d7b3e7da59c4c79337",
+    "repair/native/assembly-inventory.json": "530bcf2f2c7bcd0ff2a30269bed23a46de14d8ce28b6aee26a98c422f1383fda",
+    "repair/native/candidate-assembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-assembly.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-check.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-emission.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-emission.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-object.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-object.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-optimized-ir.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-optimized-ir.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/candidate-timed.ll": "8a781ee9375943ede4c27634b1de8987121b656785cca1bfe40eafc73c20e6f6",
+    "repair/native/candidate.o": "02e9f25398361164c03b36708369136db37a54d2463751c70fb7da96a2fa17ec",
+    "repair/native/candidate.opt.ll": "e338627f45529f7138ee0cb7236802754b42007688933c789d4dc23d3567b2a0",
+    "repair/native/candidate.raw.ll": "dd568f72bc47b038658d0f205b095c34a21ddf069727da656a5bccfeac63240c",
+    "repair/native/candidate.s": "4685632a4e5fa25cd0acf78ba4955363d279043d3d52854af11d04d67a727f0b",
+    "repair/native/clang-version.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/clang-version.stdout": "f6a41663474c412322e565ec1a1aa27bcb42151b98d527dc401b7d744b9a4237",
+    "repair/native/construction-complete.json": "a2c13259cd08b20bc912d90bfee648dee826d0ad119ab90ad8c174adca70639a",
+    "repair/native/inputs-after.json": "a2025bd2cebb7613257919d6071e51d63aba15d72ddaa63b61d58919cb4a6199",
+    "repair/native/inputs-before.json": "a2025bd2cebb7613257919d6071e51d63aba15d72ddaa63b61d58919cb4a6199",
+    "repair/native/object-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/object-disassembly.stdout": "5d463d95a2f161908c3c5aa256546a8ef62f8a11463c6ee5f128a8e161bfc7da",
+    "repair/native/object-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/object-sections.stdout": "db76047883c3de656f9397409b761006c86392c1ff187ae56333027f8bcae828",
+    "repair/native/object-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repair/native/object-symbols.stdout": "26a62ae74e96dad1424efcddaa889338cf9ef6f971a7c91df0e5ac390dcac3cc",
+    "repair/native/phases.jsonl": "0a383e56599e058cbcab47adda792884bd1701d7274344825d3ff34625c03558",
+    "repair/native/result.json": "db9758e06327166d6897d596a712fead46ca4e0d984efcf6d1836951d2198d5d"
+  },
+  "continuation_artifacts": {
+    "PLAN.md": "ec5103a4c023906d99f58bc8d594ce3ce9c36f7b19184e2961fe19cd6e07da05",
+    "candidate/vector-costs-account": "d0a4f2487fbe28460f1dbe62fad4303270c646ec061aff6b3deed7d0acf283ac",
+    "candidate/vector-costs-timed": "36cd4bdf0e612e0214e36671dbac767d3ae528c34b270610ae767a0d49392315",
+    "candidate/whitefoot-account.ll": "2a848b3063ccfc37bfa9c115c70ed7f8dfafa90939a8d5e31519a4d160859540",
+    "candidate/whitefoot-account.o": "9ede26c20a05a9c9e6e4454d5e4bb12505e4dc3ad9ff9cbd451612362dd001d9",
+    "check/candidate-account-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/candidate-account-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "check/candidate-account-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "check/candidate-account-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/candidate-account.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/candidate-account.stdout": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "check/candidate-fail-cleanup.stderr": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+    "check/candidate-fail-cleanup.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/candidate-timed-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/candidate-timed-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "check/candidate-timed-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "check/candidate-timed-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-account-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-account-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "check/control-account-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "check/control-account-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-account.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-account.stdout": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "check/control-fail-cleanup.stderr": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+    "check/control-fail-cleanup.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-timed-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/control-timed-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "check/control-timed-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "check/control-timed-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "check/inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "check/inputs-before.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "check/phases.jsonl": "d0b0c5ec0161d780725e9d814e924f82b9fe3d12d768c888829907266e0e154c",
+    "construction/candidate-account-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-disassembly.stdout": "d7d40dc583db9b4e184ee274f8a090cbf017a6424cf6de08583594deb5700196",
+    "construction/candidate-account-link.stderr": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+    "construction/candidate-account-link.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-object.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-object.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-sections.stdout": "738fbd6ab9243b8cc4d111cb8da401b630d1da28f8a7dff53e343438c541e2fc",
+    "construction/candidate-account-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-account-symbols.stdout": "9ae280861c6f0e6a91665fa4f84fb43e233e230deb054cd8650ca5e932a1113b",
+    "construction/candidate-timed-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-timed-disassembly.stdout": "de6032eb7c2b97b22b2988801f1941e7947149652e918b205e370da5143ea0ff",
+    "construction/candidate-timed-link.stderr": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+    "construction/candidate-timed-link.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-timed-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-timed-sections.stdout": "b161be545063f38d6323bcdac4bb0a98322baaa688e21b9331338aa2e7588848",
+    "construction/candidate-timed-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/candidate-timed-symbols.stdout": "dc160895d9ca4022b5a077a6b47245c6c365c7db02d26dc68611dfc65332723a",
+    "construction/control-account-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-account-disassembly.stdout": "426049328f954a5c1b069179cd9b90b66d466b23d155535b987b6398c1bd2174",
+    "construction/control-account-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-account-sections.stdout": "dc987b1d249981ea0da949ad084f25a6220fe414a0945bae9454540571b9f7b8",
+    "construction/control-account-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-account-symbols.stdout": "99b55ce49c24612afce4576ea0ed7ec2c506b748268ed15a42de161bfe37a39f",
+    "construction/control-timed-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-timed-disassembly.stdout": "2fd69810222e7fb20b9f750fd72883d77f69491e873663583dcde23de177d5e9",
+    "construction/control-timed-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-timed-sections.stdout": "664f801fdf111724d09a2fbec49d638fd3a06f0455e04c79e858b206ed2d3f7d",
+    "construction/control-timed-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "construction/control-timed-symbols.stdout": "728211a2082b12a1dd313e6e5ff7e7e930385cd2decf7e4c73591daae93ab927",
+    "construction/images.json": "cb368342dd693a9fe0c63e69128fbc99490783ea605aa2c77399a09425b852a9",
+    "construction/inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "construction/inputs-before.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "construction/phases.jsonl": "351dd0377236d9fa6a4f943b835a04bb6480217a011d6ba363ddafb04bc335ab",
+    "inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "inputs.json": "9c93a630b44e4ce170d795df507c15226087a71ee375491103a60ea48876c722",
+    "link-commands.json": "303b9da72a291c0bf80af2d7eed05047d8212fadd2636a313b9ad38441e2a132",
+    "linked-package.json": "9f85c95648f17ae05fac7b1f6aa65da3bbf0d819261fc86f60c99840e9eee7ba",
+    "preparation-notes.txt": "e1178def7a4ec09e9d6e00cfffa81723c21b31c9753f89e2a8c0f10d4838b652",
+    "result.json": "64d5a24053f696b1f1bd8c34ce7ec73b028487c423deba05a496e7d7a42a2422",
+    "run.py": "ab8883ea886cd8e52f89ac06e2b8ee278500bc73c7105a1cc631a2a79fa677e8"
+  },
+  "timing_artifacts": {
+    "analyze.py": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+    "authorization.json": "3fdf9ab072159924e048d29339a5838d1454201a4ae29328e95bafa834c33b79",
+    "candidate-samples.csv": "2a8d5f1fde924cf77f1a65d3b9dfa435762d765fa138d58aee335b9d14944988",
+    "candidate-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate-summary.csv": "f3b27704bb99678ad8521343a42cecc1be92d08574bf36d1e8c6d15c8911548c",
+    "candidate-summary.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate-targets.csv": "a1045dbdd1388188e6d0dbcb4e86447b733adcdae06342d29623a68ef6f2abc9",
+    "candidate-targets.stderr": "54517b442a02c3ba141c047ec0cf74ae0ac0d5c6f952ac747352d50fd906fe90",
+    "control-samples.csv": "4ec8971a3dfe9d788cfebb98771e3f1e858706ad1d1efcd7c1fbb3306d2847ea",
+    "control-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "control-summary.csv": "6d0545ec179571cb4133a29e6069d15f9396b1558002a398d4f933ae853eb638",
+    "control-summary.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "control-targets.csv": "1ff91fd8d29c71c9e0860df362fc504664e3b64a6eabaecbbbe8dedb75a4bba8",
+    "control-targets.stderr": "a043379fcabe665c666985327c91a9ce2fb285fed020298d00daad93bcd0f01e",
+    "criterion.md": "90a51fb611c92d51198ad70dc506e6895899b1b1813540bb59900d6ec4fc2695",
+    "guard-result.json": "0716c9ec7e89beed78b47794f4b7872cadae05eaa825735a1d5b460a466f3afc",
+    "guard.stderr": "207491a6d6ddf4ae4b67f86993c632b7b222bf6871f338b3f6aadd3d22ffeaa6",
+    "guard.stdout": "51cce73c08174066e444ef9372567765011967edec247dbb4b413a8326f06be6",
+    "inputs-after.json": "8a6c7a9e08d17760d44d0ed0027423d0fbb6a4113b47ee8e0fc04f973580e7e1",
+    "inputs-before.json": "8a6c7a9e08d17760d44d0ed0027423d0fbb6a4113b47ee8e0fc04f973580e7e1",
+    "measurement-complete.json": "c3f51cfa0e56122cedd23b1d33802ebca1875763732aa6aae92817911298b6a2",
+    "paired-analysis.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "paired-analysis.stdout": "c715650fefda570bd9f3a9ab7e97d9910a1a3a3f5f1cf5fab9b4854b3248f87a",
+    "paired-cells.csv": "bbb34222f946cf58dc7789d60bc4ba4d0a968299f7e49effd73f7e114b0457b4",
+    "paired-summary.json": "59d8ea385cd70a2a33d832e6d21c360ae1eccd3f08bc77454ea20f757d20da6a",
+    "phases.jsonl": "e1ff336a938445d8b300455add360999e03b9c5b4b1830db5ba91bcb43ca05f6",
+    "reducer-commands.json": "55d6fa442a56ad69c7ee46a02fe68ef7f7db47e7626fc401ff1dce5dfac16c4b",
+    "reduction-phases.json": "1290a1ffcc9942a80c9be47b836d064679c334ff4f552d9d4d02f4845b810fae",
+    "result.json": "e072636f65c19b7c9c8297d9c823f9718645b69e73f8caa8100a22fefcc019b9",
+    "run.py": "77333ae277a2f929637f9545cf52a2790bf3a6e502f400ae370ee9d098bb8e9b"
+  },
+  "publication_sha256": {
+    "source-batch-controller.patch": "ae34915ba4ec7366d531135d0669468909aaa05ea473f3dc2c54ed0e38e705db",
+    "ecosystem-batch-controller-control-samples.csv": "4ec8971a3dfe9d788cfebb98771e3f1e858706ad1d1efcd7c1fbb3306d2847ea",
+    "ecosystem-batch-controller-candidate-samples.csv": "2a8d5f1fde924cf77f1a65d3b9dfa435762d765fa138d58aee335b9d14944988",
+    "ecosystem-batch-controller-paired.csv": "647a1451237a667a5c16f9f4a567f398a8b0589bb34bbb3f76bde2aca80ea95b"
+  },
+  "reproduction": "At source/compiler pin 7abd6bb34746b7b983b83103c68ee429b24859bb, apply the zero-context publication patch with git apply --unidiff-zero source-batch-controller.patch. Use frozen embedded-library whitefootc; standalone baseline emission must exactly match retained T1H0 raw LLVM before using minimal source input. Check/emit candidate, rename exactly one main for timed LLVM, use Makefile allocator substitutions for account LLVM, ordinary clang O3 commands and exact recorded peer/runtime link order. Replay the complete correctness/fault/account product. CSV-only reproduction uses maintained summarize-ecosystem.pl --complete and --targets per raw arm, then the recorded paired rule. Further execution requires separate authorization.",
+  "complete_raw_identity_sha256": "0f766b0bc6e3e787c32d3b4237d42a2ca9a631ed22d5462172405f3d39f36c24",
+  "compact_record_policy": "Identical input maps are stored once. Full function/relocation/symbol inventories and stdout/stderr remain in the frozen artifacts identified here; linked target bodies and package sections are retained below. Every paired cell and native ratio is in the published CSV.",
+  "frozen_inputs_sha256": {
+    "${SOURCE_CONTROLLER_SCRATCH}/frozen/whitefootc": "5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b",
+    "${SOURCE_CONTROLLER_SCRATCH}/control/vector-library.raw.ll": "22e03e27bba9dd075d7d6f86a40e52b2f0caea746c36b50e60424aa11527a73d",
+    "${SOURCE_CONTROLLER_SCRATCH}/control/whitefoot-timed.ll": "188290b879e5464bb5cf5f04dff34a242e6db92a354d4e3eb3b6b001cb30f5ef",
+    "${SOURCE_CONTROLLER_SCRATCH}/control/whitefoot-timed.o": "c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235",
+    "${SOURCE_CONTROLLER_SCRATCH}/screen/control.opt.ll": "51a860d45d62a4fb8193f2d5b3809872aab43d5a7f35aa49d5e2d2a38ead8a41",
+    "${SOURCE_CONTROLLER_SCRATCH}/screen/control.s": "35cdb3befd7e7f731003cbb4d099e96060006fbe71a251e9b3e10487882a356e",
+    "${SOURCE_CONTROLLER_SCRATCH}/screen/candidate.opt.ll": "3fd3b15bc49e481fb4aae5fb055ab5e8cd68c27413510b4f8f6d2f69488af55c",
+    "${SOURCE_CONTROLLER_SCRATCH}/screen/candidate.s": "66ec0eb3b3e69f5c2a78bd09d061d62fef7d61dc4971f2fce00bf2a11f1c15e1",
+    "${BATCH_CONTROLLER_SCRATCH}/vector-library.baseline.wf": "7feb508efa973f65b4fac5c044ec4eeacad78382d157bbfe1e10ba20d1ad8b7a",
+    "${BATCH_CONTROLLER_SCRATCH}/vector-library.wf": "53138b5bf17f9dad5383eedc8e337cb4174267760a4b600d589b7abf31b02e9f",
+    "${BATCH_CONTROLLER_SCRATCH}/batch-controller.patch": "370aec4456e886f542724a219f3b96df3fa8468728d40d1ace46a8ab23fce0a3",
+    "${BATCH_CONTROLLER_SCRATCH}/CRITERION.md": "00967685019267437d91af31679b93098ba128e9c802f78580dbbc48b01ffa8b",
+    "${BATCH_CONTROLLER_SCRATCH}/baseline/vector-library.wf": "7feb508efa973f65b4fac5c044ec4eeacad78382d157bbfe1e10ba20d1ad8b7a",
+    "${BATCH_CONTROLLER_SCRATCH}/candidate/vector-library.wf": "53138b5bf17f9dad5383eedc8e337cb4174267760a4b600d589b7abf31b02e9f",
+    "${SOURCE_CONTROLLER_SCRATCH}/screen/clang-version.log": "f6a41663474c412322e565ec1a1aa27bcb42151b98d527dc401b7d744b9a4237",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/.github/run-check.pl": "f57f7447e55a447aeac2bac8d02d021e8fc13b3d3ff07330fd5780d07d48e247",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/vector-library.wf": "6724cfcefe503cd26cdf05734a28bb2365c366a5cab731aaed8ca7b1c5ae1a50",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/batch-controller.patch": "235c2612fe5b3d5ae21450f15742c5f29892cab4eafd17a9459e55d7d37c8adb",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/repair.json": "960c83825058651e21e39af0cfb001c008e7115524ebb83f881b5df063abcacc",
+    "${BATCH_CONTROLLER_SCRATCH}/native/baseline.raw.ll": "22e03e27bba9dd075d7d6f86a40e52b2f0caea746c36b50e60424aa11527a73d",
+    "${BATCH_CONTROLLER_SCRATCH}/native/baseline-reproduction.json": "adb85efbf658cb46631732ba111c427be6ec2482ff3fe03617e4645094bba306",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/screen.py": "95ff48255a82ef7af9958b67e834afb6c7d81f5f5a2a40bdb18bb5784ad86154",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/artifacts.json": "c2d113b98829c06ccb3d34db386f39ba0b4f30b3e6dea3df82ba8c3ea388c3e0",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/assembly-inventory.initial.json": "c1f41be37dda1f97de6c24eea85061e1f1ca26fc69dd91d7b3e7da59c4c79337",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/assembly-inventory.json": "530bcf2f2c7bcd0ff2a30269bed23a46de14d8ce28b6aee26a98c422f1383fda",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-assembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-assembly.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-check.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-emission.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-emission.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-object.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-object.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-optimized-ir.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-optimized-ir.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate-timed.ll": "8a781ee9375943ede4c27634b1de8987121b656785cca1bfe40eafc73c20e6f6",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.o": "02e9f25398361164c03b36708369136db37a54d2463751c70fb7da96a2fa17ec",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.opt.ll": "e338627f45529f7138ee0cb7236802754b42007688933c789d4dc23d3567b2a0",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.raw.ll": "dd568f72bc47b038658d0f205b095c34a21ddf069727da656a5bccfeac63240c",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/candidate.s": "4685632a4e5fa25cd0acf78ba4955363d279043d3d52854af11d04d67a727f0b",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/clang-version.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/clang-version.stdout": "f6a41663474c412322e565ec1a1aa27bcb42151b98d527dc401b7d744b9a4237",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/construction-complete.json": "a2c13259cd08b20bc912d90bfee648dee826d0ad119ab90ad8c174adca70639a",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/inputs-after.json": "a2025bd2cebb7613257919d6071e51d63aba15d72ddaa63b61d58919cb4a6199",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/inputs-before.json": "a2025bd2cebb7613257919d6071e51d63aba15d72ddaa63b61d58919cb4a6199",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-disassembly.stdout": "5d463d95a2f161908c3c5aa256546a8ef62f8a11463c6ee5f128a8e161bfc7da",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-sections.stdout": "db76047883c3de656f9397409b761006c86392c1ff187ae56333027f8bcae828",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/object-symbols.stdout": "26a62ae74e96dad1424efcddaa889338cf9ef6f971a7c91df0e5ac390dcac3cc",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/phases.jsonl": "0a383e56599e058cbcab47adda792884bd1701d7274344825d3ff34625c03558",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/result.json": "db9758e06327166d6897d596a712fead46ca4e0d984efcf6d1836951d2198d5d",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o": "2bd0ff0962381a90f486bd8682196efea3214b7d9c0969bf58ec2380f3e9f77d",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/whitefoot-timed.o": "c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o": "d3c51cf441054e8ba6bc337ccf64f90ecce78df770f1333453e7c3fa107ebc7f",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a": "7fffbc66201cd03866f7540451c551c417bf04f2ecb1467699adfac05260ced6",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o": "b0b82798cd758c54023ae7f3670f4625b0f82f6a9aee1ec656fca2ff33295eac",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o": "fb4ee3f397da5bcee9188332d56fb3c854b931b4c1f07b4c8350a9c941891937",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o": "af91032f29dc1b1c22dcf43099d933303ff3b1e4741a93122f987bdbdb70c4ec",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o": "d95b24c2367aa6dcf60a9d9e4e36acf79fa502d4ded856f244c6f4afcf28aa10",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o": "1d1fe1c3033038fc69cd031e32b5eff6e85571da89176f85e442f52f0fb1b940",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o": "d5509f631fb4a388fbd380444b24bd1dfa3420082bc678ceec106058d4122932",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-account.o": "75a7dcbe11086b29f352c4d194736cf8eba4a2b154c19bbb85731514e2805b32",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/whitefoot-account.o": "414b22a0d3502f2236ef0a9d1b1e743d8130f84335b66d741e5b417fd0408c2b",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-account.o": "94a69e9f50a1ba182bdc130aca291bdc2d2f1525dc713874e47361acd64c6bfb",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-account.a": "f661e352339ea993b53870dae435602c0c39f466480b3d3f10e46ab8a94e28c5",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed": "c8cbb79e5b8806f4d06029b9a23c58b4bc299f4b36c60c05b366ea1c3efa4090",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-account": "c3aa61ab51483143eec23fed3cd6b1a57f3faf6a25a09714351c8ac2427e4fde",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/accounting.csv": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/configuration.txt": "0bcb9f95e871ec2f7284369b93d066da52d88e76b4c6a9a6a7e221375ae834e8",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/configuration.txt": "c345f2e714901e2ec1abd96121380a62ea32f1d729793f1d04aabf749b88f936",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/whitefoot-account.ll": "e1d4b21db5fe5c7df286c55868e35410c73de64704761ab40c41fb3f9f4adef0",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/runtime.mk": "1126880f9e4589c525d26ad715666e275ef91f3a8f6a00cdf23215bd750eba5b",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/runtime.mk": "1126880f9e4589c525d26ad715666e275ef91f3a8f6a00cdf23215bd750eba5b",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/ecosystem.mk": "c3db949403d8f84aa246936d3203ef24973cfd9b3c506ae536402adc69f3d53f",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/ecosystem.mk": "c3db949403d8f84aa246936d3203ef24973cfd9b3c506ae536402adc69f3d53f",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/ecosystem-allocator.rs": "67851a0282453273370df666d2c55853a888d6820ad0d233552df52e480e2ee1",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/ecosystem-allocator.rs": "67851a0282453273370df666d2c55853a888d6820ad0d233552df52e480e2ee1",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/ecosystem-allocator.hpp": "254f00c7ee49cee8552abf4b718297495e30e568e0967448de9170ba0d85bfb6",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/ecosystem-allocator.hpp": "254f00c7ee49cee8552abf4b718297495e30e568e0967448de9170ba0d85bfb6",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/Makefile": "b9523a2ec8f591bb3a6d3903f1d78d2bb49139126b0c58ce1cb4f78177a88a8d",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/Makefile": "b9523a2ec8f591bb3a6d3903f1d78d2bb49139126b0c58ce1cb4f78177a88a8d",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/vector-costs.c": "ff6e158d54c338a1e48f8bcbf5ec7f017bd0d53259eca4ff746a84f361b62e40",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/vector-costs.c": "ff6e158d54c338a1e48f8bcbf5ec7f017bd0d53259eca4ff746a84f361b62e40",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/vector-ecosystem.rs": "84c0a342787d1fd9bb7822094aed3da1b27fa66b384bd7dccb9046b9a5702d91",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/vector-ecosystem.rs": "84c0a342787d1fd9bb7822094aed3da1b27fa66b384bd7dccb9046b9a5702d91",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/vector-ecosystem.cpp": "147d45733657e3afb59d51e74ffdc99d99faedf425bddd61cfefc4f77716c05a",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/vector-ecosystem.cpp": "147d45733657e3afb59d51e74ffdc99d99faedf425bddd61cfefc4f77716c05a",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/bridge.c": "03dbf225a762f3c97de4f8e6593ce675de1504d7feaafb1d6ea0496b14bf9979",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/bridge.c": "03dbf225a762f3c97de4f8e6593ce675de1504d7feaafb1d6ea0496b14bf9979",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/bridge.h": "9a87c0963f60e8d742f5e6ff7fc56fc38a889fe0c8bc730c2ca80cff519c7a52",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/bridge.h": "9a87c0963f60e8d742f5e6ff7fc56fc38a889fe0c8bc730c2ca80cff519c7a52",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/bridge_default_probe.c": "577de05be9ee4ca8fa612e80c0e6f1553fbc39377ec04051284c6213e99c5bb5",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/bridge_default_probe.c": "577de05be9ee4ca8fa612e80c0e6f1553fbc39377ec04051284c6213e99c5bb5",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/contract.h": "26bad567ddb450c2a6f5e2a4b506d3cde4202f2ab2930cd3c218f267a9fe9b56",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/contract.h": "26bad567ddb450c2a6f5e2a4b506d3cde4202f2ab2930cd3c218f267a9fe9b56",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/core_read_probe.c": "2e8ace77e5047b04f34951ec7e7a880bbff7ef4719cc63e8a7faddee91f8c6be",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/core_read_probe.c": "2e8ace77e5047b04f34951ec7e7a880bbff7ef4719cc63e8a7faddee91f8c6be",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/file_adapter.c": "543afebc488df39671ddf66b60b2f7f1de85b67281aa5b243c42e57de5e9789e",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/file_adapter.c": "543afebc488df39671ddf66b60b2f7f1de85b67281aa5b243c42e57de5e9789e",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/file_adapter.h": "31a415e5e0c241fdb1fa54e6807325e5d88de91ba9a1a7c42406e180972bca6d",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/file_adapter.h": "31a415e5e0c241fdb1fa54e6807325e5d88de91ba9a1a7c42406e180972bca6d",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/file_posix.c": "be44444becc76a4271ea6c7b11fd65da5f6c4f894ed6ebf92a3039a79b1e0803",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/file_posix.c": "be44444becc76a4271ea6c7b11fd65da5f6c4f894ed6ebf92a3039a79b1e0803",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/file_posix.h": "d7ae05e556f67e00a61d0ae1d317150c5f7ecb41b56188349852447ba0c406fc",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/file_posix.h": "d7ae05e556f67e00a61d0ae1d317150c5f7ecb41b56188349852447ba0c406fc",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/file_windows.c": "d6391bae113433b78500f24146eb391ec1c2256234309ca52384a17d6a9af4bc",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/file_windows.c": "d6391bae113433b78500f24146eb391ec1c2256234309ca52384a17d6a9af4bc",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/harness.c": "c737c57d57990e686774b5fad5ffd424001f57340c443a183404e34b259e9f6b",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/harness.c": "c737c57d57990e686774b5fad5ffd424001f57340c443a183404e34b259e9f6b",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/linux_io_uring.c": "5ed8fe013bf3c891d3b5eb9bb48cb7d7f2713f092c286937df023df0435aea65",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/linux_io_uring.c": "5ed8fe013bf3c891d3b5eb9bb48cb7d7f2713f092c286937df023df0435aea65",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/linux_io_uring.h": "2b43483481b2241255c8b7b69eda316447fd41a52047017bdb98530e51ebb52b",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/linux_io_uring.h": "2b43483481b2241255c8b7b69eda316447fd41a52047017bdb98530e51ebb52b",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/native_adapter_probe.c": "49a647bc09aff0497bc5d2d7dfcbceb3d53ab8ab7eb7356d5b9e06dfdd57d9ac",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/native_adapter_probe.c": "49a647bc09aff0497bc5d2d7dfcbceb3d53ab8ab7eb7356d5b9e06dfdd57d9ac",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/runtime.c": "93b730805ba5f6946660fbe3376db89e623acef686c8887bafe2f07ec1798c28",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/runtime.c": "93b730805ba5f6946660fbe3376db89e623acef686c8887bafe2f07ec1798c28",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/socket_address.h": "c604a81fa6f8c2dcfe6b65de2809420672337b926cb897deb4c300912a7cdc58",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/socket_address.h": "c604a81fa6f8c2dcfe6b65de2809420672337b926cb897deb4c300912a7cdc58",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/socket_test.h": "2171c9e79513f2c43991d2cbf3dba16117194110806c9784f08b6cb0d0a27494",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/socket_test.h": "2171c9e79513f2c43991d2cbf3dba16117194110806c9784f08b6cb0d0a27494",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/wait_host.c": "fd49723d6b60810151f1a251b1a76d580868b74af251f4f428664fa2fb845a9f",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/wait_host.c": "fd49723d6b60810151f1a251b1a76d580868b74af251f4f428664fa2fb845a9f",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/wait_windows.c": "df71d25b1ef775a260e752d14db92a47a24fbc937daeb99f12d1e520d36ba121",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/wait_windows.c": "df71d25b1ef775a260e752d14db92a47a24fbc937daeb99f12d1e520d36ba121",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/windows_bridge_init_fail_stop_probe.c": "63c3b684fc477a582075fe780611b88fbc1a9a3a5bdada3530fee05c8a0550b1",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/windows_bridge_init_fail_stop_probe.c": "63c3b684fc477a582075fe780611b88fbc1a9a3a5bdada3530fee05c8a0550b1",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/windows_iocp.c": "b15e3266b3baa3f8774bdd58f11cd9d357acdc78cb6fcccbce12021ad7cc45c3",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/windows_iocp.c": "b15e3266b3baa3f8774bdd58f11cd9d357acdc78cb6fcccbce12021ad7cc45c3",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/completion/windows_iocp.h": "c23bfd090a8c58978a68a0c62b50125b5467227b590565ed92e73dea1901a976",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/completion/windows_iocp.h": "c23bfd090a8c58978a68a0c62b50125b5467227b590565ed92e73dea1901a976",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/floor_probe.c": "9d2905d78d734003b066230cce479437e8234999cad6b858aac9c939d8644c7d",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/floor_probe.c": "9d2905d78d734003b066230cce479437e8234999cad6b858aac9c939d8644c7d",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/ordinary_values.c": "391ca3c184b76066e48b68e8246f6774c82af3ad788b0465f4ba2093cdb8f3e0",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/ordinary_values.c": "391ca3c184b76066e48b68e8246f6774c82af3ad788b0465f4ba2093cdb8f3e0",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/ordinary_values.h": "2f3fb24ba0b8e16bc3a918209ee862d87f28a36ebb5c0165b17936ccaf243413",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/ordinary_values.h": "2f3fb24ba0b8e16bc3a918209ee862d87f28a36ebb5c0165b17936ccaf243413",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/ordinary_values.ll": "efbabecf6f1b1c92c40e2421ac4d0958ffb0b67651c354f8191895af7fe9c1b7",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/ordinary_values.ll": "efbabecf6f1b1c92c40e2421ac4d0958ffb0b67651c354f8191895af7fe9c1b7",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/ordinary_values_probe.c": "d107cf814cd41af700094a9d136aba62e2665131d6fdc2ca74c071e73057012b",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/ordinary_values_probe.c": "d107cf814cd41af700094a9d136aba62e2665131d6fdc2ca74c071e73057012b",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/ordinary_values_probe.ll": "fb6574899b94702b53ba99ee315084e82dcbf4e5c0981bdd917ecfdb159e9e66",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/ordinary_values_probe.ll": "fb6574899b94702b53ba99ee315084e82dcbf4e5c0981bdd917ecfdb159e9e66",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/runtime_test_guard.h": "c39882b8b67b3f3fcd01cf40e83e772dd06d855b8dda1b214ec2a5ca1eed973a",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/runtime_test_guard.h": "c39882b8b67b3f3fcd01cf40e83e772dd06d855b8dda1b214ec2a5ca1eed973a",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/core.c": "48f0080fd5c43e9e07691a05936c36e232b76d1bde309b6f53bc912176ac3285",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/core.c": "48f0080fd5c43e9e07691a05936c36e232b76d1bde309b6f53bc912176ac3285",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/core.h": "78894fb20b8b8ee4e77bdba3c56d0d51ab35b376971c411d70c94ccde9c7ed55",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/core.h": "78894fb20b8b8ee4e77bdba3c56d0d51ab35b376971c411d70c94ccde9c7ed55",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/cpu_levels_probe.c": "25db36427d06402a7552b607865621e256ce3d17fdeecbc50f1c232bb789d330",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/cpu_levels_probe.c": "25db36427d06402a7552b607865621e256ce3d17fdeecbc50f1c232bb789d330",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/deque_probe.c": "a30b0ab5195da0d26b440fb82d90c980d831504e419c51c24dde6a62afa79667",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/deque_probe.c": "a30b0ab5195da0d26b440fb82d90c980d831504e419c51c24dde6a62afa79667",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/entry.c": "25ef25d07b118f46e592a6779afc3df70cb311008fc5b9ffaa2d0de94d8cf5d2",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/entry.c": "25ef25d07b118f46e592a6779afc3df70cb311008fc5b9ffaa2d0de94d8cf5d2",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/entry.h": "def1de29a93dc8a22d22bc56a440a47d73f654819e25df205279edb02d2e541e",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/entry.h": "def1de29a93dc8a22d22bc56a440a47d73f654819e25df205279edb02d2e541e",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/grant_observer.c": "034b4ed00afad8e04de012e3dee8ed5416e9037e5d7227dfa4a2d2a5682567db",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/grant_observer.c": "034b4ed00afad8e04de012e3dee8ed5416e9037e5d7227dfa4a2d2a5682567db",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/prim.h": "9f4ed2e6b7fb53dda4995a26398c35839b95902660a08a3952cbd1526864c21a",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/prim.h": "9f4ed2e6b7fb53dda4995a26398c35839b95902660a08a3952cbd1526864c21a",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/prim_host.c": "fcd531f908b0f88ebeb9601a7d953a6b99eb62ce5ed55caa4a58a26bf3874e8c",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/prim_host.c": "fcd531f908b0f88ebeb9601a7d953a6b99eb62ce5ed55caa4a58a26bf3874e8c",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/prim_windows.c": "4cfcb07dcc0ff7c90955d1d5c265a5cefc3a7b0002dc3a320923d485e16d781d",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/prim_windows.c": "4cfcb07dcc0ff7c90955d1d5c265a5cefc3a7b0002dc3a320923d485e16d781d",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/recursion_budget_probe.c": "f417e0040d342bce9c5c7156f89a7e39132b89ddd03731f44a97f96b97080c81",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/recursion_budget_probe.c": "f417e0040d342bce9c5c7156f89a7e39132b89ddd03731f44a97f96b97080c81",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/smoke.c": "1015e4e1932c378be1bd56f32817558991010e08d2da76bcfbacf93cb2af9fe6",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/smoke.c": "1015e4e1932c378be1bd56f32817558991010e08d2da76bcfbacf93cb2af9fe6",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/sched/wake_probe.c": "62bffa3087eef2895906183ffca00b11d370518afc5a435cbaf7788d15cf7cda",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/sched/wake_probe.c": "62bffa3087eef2895906183ffca00b11d370518afc5a435cbaf7788d15cf7cda",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/tests/growth_observer.c": "3d01c7db4baccd79b49d0f0d097370be882f6ae9f1eb3a75b43ce48fc4cf1d61",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/tests/growth_observer.c": "3d01c7db4baccd79b49d0f0d097370be882f6ae9f1eb3a75b43ce48fc4cf1d61",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/tests/owning_growth_observer.c": "1020362c7954c7b653a47c23a1bb23752099077925783b2c6547d78dd3dc6b54",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/tests/owning_growth_observer.c": "1020362c7954c7b653a47c23a1bb23752099077925783b2c6547d78dd3dc6b54",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/tests/owning_map_observer.c": "1dbe462a4e5a37c6b62ab890dbb086748c9ddc60f8e86df184e84fe83b610528",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/tests/owning_map_observer.c": "1dbe462a4e5a37c6b62ab890dbb086748c9ddc60f8e86df184e84fe83b610528",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/tests/stack_boundary.c": "ce5c43a64813763d98ee3e90a2397c16ae111e71e40d7ee6b57381d1fd8f9f34",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/tests/stack_boundary.c": "ce5c43a64813763d98ee3e90a2397c16ae111e71e40d7ee6b57381d1fd8f9f34",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/tests/worker_schedule.c": "d95645b150fe786eab6ad03bdd0b11184d15a5d97ae76d4de94225c7d286b0e6",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/tests/worker_schedule.c": "d95645b150fe786eab6ad03bdd0b11184d15a5d97ae76d4de94225c7d286b0e6",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/wf_floor.c": "a50ccec0994ecdc8f5c5241e1a9f76dd4376fb84780013be15c1a5a189059cc9",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/wf_floor.c": "a50ccec0994ecdc8f5c5241e1a9f76dd4376fb84780013be15c1a5a189059cc9",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/wf_floor_windows.c": "aa501ba08c0a6494934a39d3e0989ddc46a4438835df7370f07bc5b0865d2fff",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/wf_floor_windows.c": "aa501ba08c0a6494934a39d3e0989ddc46a4438835df7370f07bc5b0865d2fff",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/windows_runtime.c": "42650bdb2a34801bc610a300632a60efd5e760be114776f2d01e483b0a193cc0",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/windows_runtime.c": "42650bdb2a34801bc610a300632a60efd5e760be114776f2d01e483b0a193cc0",
+    "${FROZEN_VECTOR_SCRATCH}/compiler/src/backend/windows_runtime.h": "4db8d60e7a034658783b8b8b86139058cac04460da4d03695af2715be228cbf9",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/compiler/src/backend/windows_runtime.h": "4db8d60e7a034658783b8b8b86139058cac04460da4d03695af2715be228cbf9",
+    "${BATCH_CONTROLLER_SCRATCH}/repair/native/final-artifacts.json": "dd708e79fe96ec86f33a8c6c9dcafa798b441925d5cf219afeccc73a3f15238d",
+    "${SOURCE_CONTROLLER_SCRATCH}/continuation/native-inputs.json": "31c5c7181a9f1c103498b6196a8056f8fade3189b846573d5425c61abc8c9090",
+    "${SOURCE_CONTROLLER_SCRATCH}/continuation/linked-package.json": "eb9ddacfd4740b358b4d0ad6ce8f97cf0328c669418a04230f008db281ccb9d3",
+    "${SOURCE_CONTROLLER_SCRATCH}/continuation/PLAN.md": "b242402c2ab7e2389a8320fa09f3f33946744829566a718ce8571fef985de9da",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal-native-build.stdout": "0148efddc1ad16b8d406e501560a88c71a0f2ef3169eb38735b30bca2d8737f3",
+    "${FROZEN_VECTOR_SCRATCH}/research/experiments/container-representation/vector-library/.build/constructor-save-edge/run.py": "2edd3be988711d56fb11a04af9c0494d6868f83cf37134c1289942bcf30f4f68",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/inputs.json": "9c93a630b44e4ce170d795df507c15226087a71ee375491103a60ea48876c722",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/link-commands.json": "303b9da72a291c0bf80af2d7eed05047d8212fadd2636a313b9ad38441e2a132",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/PLAN.md": "ec5103a4c023906d99f58bc8d594ce3ce9c36f7b19184e2961fe19cd6e07da05",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/run.py": "ab8883ea886cd8e52f89ac06e2b8ee278500bc73c7105a1cc631a2a79fa677e8",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-account": "d0a4f2487fbe28460f1dbe62fad4303270c646ec061aff6b3deed7d0acf283ac",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/vector-costs-timed": "36cd4bdf0e612e0214e36671dbac767d3ae528c34b270610ae767a0d49392315",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.ll": "2a848b3063ccfc37bfa9c115c70ed7f8dfafa90939a8d5e31519a4d160859540",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/candidate/whitefoot-account.o": "9ede26c20a05a9c9e6e4454d5e4bb12505e4dc3ad9ff9cbd451612362dd001d9",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-account.stdout": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-fail-cleanup.stderr": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-fail-cleanup.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/candidate-timed-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-account.stdout": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-fail-cleanup.stderr": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-fail-cleanup.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-check.stdout": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-fail-checksum.stderr": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/control-timed-fail-checksum.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/inputs-before.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/check/phases.jsonl": "d0b0c5ec0161d780725e9d814e924f82b9fe3d12d768c888829907266e0e154c",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-disassembly.stdout": "d7d40dc583db9b4e184ee274f8a090cbf017a6424cf6de08583594deb5700196",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-link.stderr": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-link.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-object.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-object.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-sections.stdout": "738fbd6ab9243b8cc4d111cb8da401b630d1da28f8a7dff53e343438c541e2fc",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-account-symbols.stdout": "9ae280861c6f0e6a91665fa4f84fb43e233e230deb054cd8650ca5e932a1113b",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-disassembly.stdout": "de6032eb7c2b97b22b2988801f1941e7947149652e918b205e370da5143ea0ff",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-link.stderr": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-link.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-sections.stdout": "b161be545063f38d6323bcdac4bb0a98322baaa688e21b9331338aa2e7588848",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/candidate-timed-symbols.stdout": "dc160895d9ca4022b5a077a6b47245c6c365c7db02d26dc68611dfc65332723a",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-disassembly.stdout": "426049328f954a5c1b069179cd9b90b66d466b23d155535b987b6398c1bd2174",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-sections.stdout": "dc987b1d249981ea0da949ad084f25a6220fe414a0945bae9454540571b9f7b8",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-account-symbols.stdout": "99b55ce49c24612afce4576ea0ed7ec2c506b748268ed15a42de161bfe37a39f",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-disassembly.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-disassembly.stdout": "2fd69810222e7fb20b9f750fd72883d77f69491e873663583dcde23de177d5e9",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-sections.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-sections.stdout": "664f801fdf111724d09a2fbec49d638fd3a06f0455e04c79e858b206ed2d3f7d",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-symbols.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/control-timed-symbols.stdout": "728211a2082b12a1dd313e6e5ff7e7e930385cd2decf7e4c73591daae93ab927",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/images.json": "cb368342dd693a9fe0c63e69128fbc99490783ea605aa2c77399a09425b852a9",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/inputs-before.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/construction/phases.jsonl": "351dd0377236d9fa6a4f943b835a04bb6480217a011d6ba363ddafb04bc335ab",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/inputs-after.json": "22c1b8d3ae0524bd97fa80ff3b199ccd5d285908e5c83a906ebb68fc4417e7cd",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/linked-package.json": "9f85c95648f17ae05fac7b1f6aa65da3bbf0d819261fc86f60c99840e9eee7ba",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/preparation-notes.txt": "e1178def7a4ec09e9d6e00cfffa81723c21b31c9753f89e2a8c0f10d4838b652",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/result.json": "64d5a24053f696b1f1bd8c34ce7ec73b028487c423deba05a496e7d7a42a2422",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/artifacts.json": "b2da0ca292f86c001f875305c5abaf8f84791c524f1f2d8c7df43a94e0cf71b7",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/guard.stdout": "8bdc2060499a47fc706ef787f63941b28c132df654e244f893008527f1391e13",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/guard.stderr": "400b28478a864792c4517caa4de5ae3ac80684a4cf57dac89dc0a44193051b29",
+    "${BATCH_CONTROLLER_SCRATCH}/continuation/guard-result.json": "ee1768720fe0a0fa8469d6c000c2613031c8a9c4e16152b39763e4bb415c9ed7",
+    "${BATCH_CONTROLLER_SCRATCH}/timing/criterion.md": "90a51fb611c92d51198ad70dc506e6895899b1b1813540bb59900d6ec4fc2695",
+    "${BATCH_CONTROLLER_SCRATCH}/timing/run.py": "77333ae277a2f929637f9545cf52a2790bf3a6e502f400ae370ee9d098bb8e9b",
+    "${BATCH_CONTROLLER_SCRATCH}/timing/analyze.py": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/summarize-ecosystem.pl": "f9669548af494ccd27285c78b04fcc0e0ddffaa88a574e5733e593dbd70dfd59",
+    "${SOURCE_CONTROLLER_SCRATCH}/timing/criterion.md": "68b994eb458ee35943ab1f27331bdc0142748e6070a59d6306b0647ede3d58ae",
+    "${SOURCE_CONTROLLER_SCRATCH}/timing/control-samples.csv": "aa48856083d8d0c22b7962b29c96f34367c669c1522f16a0db9263b2a40ea30e",
+    "${SOURCE_CONTROLLER_SCRATCH}/timing/candidate-samples.csv": "b87fd68400d83011ef5d06b448808fc831c152df77b659b1a34b02fd4d60b2f8",
+    "${SOURCE_CONTROLLER_SCRATCH}/timing/paired-cells.csv": "1f5aad91e1134c5da68569bafee88af8400a180ad1c643026c65caf89944435e",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/ecosystem-tail-alwaysinline-control-samples.csv": "fd868bfe9e489dd013c9d4151e933c2065d1dffeaa919646a1b456fe08217ce1",
+    "${SOURCE_CONTROLLER_SCRATCH}/snapshot/research/experiments/container-representation/vector-library/ecosystem-tail-alwaysinline-candidate-samples.csv": "7e8d233832d9101c5147e8470ac6e0670b9dae2fc615fd2d881260dafab758b1"
+  },
+  "frozen_inputs_before_after_equal": true,
+  "native_peer_trace_placement": {
+    "timed": {
+      "_record_reverse_trace": {
+        "control_address": 4294986884,
+        "candidate_address": 4294986884,
+        "delta_bytes": 0
+      },
+      "_word_reverse_trace": {
+        "control_address": 4294989340,
+        "candidate_address": 4294989340,
+        "delta_bytes": 0
+      },
+      "_record_direct_trace": {
+        "control_address": 4294990784,
+        "candidate_address": 4294990784,
+        "delta_bytes": 0
+      },
+      "_word_direct_trace": {
+        "control_address": 4294992776,
+        "candidate_address": 4294992776,
+        "delta_bytes": 0
+      },
+      "_record_interleaved_trace": {
+        "control_address": 4294993844,
+        "candidate_address": 4294993844,
+        "delta_bytes": 0
+      },
+      "_word_interleaved_trace": {
+        "control_address": 4294996776,
+        "candidate_address": 4294996776,
+        "delta_bytes": 0
+      },
+      "_record_take_swap_trace": {
+        "control_address": 4294997924,
+        "candidate_address": 4294997924,
+        "delta_bytes": 0
+      },
+      "_word_take_swap_trace": {
+        "control_address": 4295000684,
+        "candidate_address": 4295000684,
+        "delta_bytes": 0
+      },
+      "_cpp_vector_record_trace": {
+        "control_address": 4295025704,
+        "candidate_address": 4295025844,
+        "delta_bytes": 140
+      },
+      "_cpp_vector_word_trace": {
+        "control_address": 4295024532,
+        "candidate_address": 4295024672,
+        "delta_bytes": 140
+      },
+      "_rust_vector_record_trace": {
+        "control_address": 4295034768,
+        "candidate_address": 4295034908,
+        "delta_bytes": 140
+      },
+      "_rust_vector_word_trace": {
+        "control_address": 4295036836,
+        "candidate_address": 4295036976,
+        "delta_bytes": 140
+      }
+    },
+    "account": {
+      "_record_reverse_trace": {
+        "control_address": 4294982592,
+        "candidate_address": 4294982592,
+        "delta_bytes": 0
+      },
+      "_word_reverse_trace": {
+        "control_address": 4294985100,
+        "candidate_address": 4294985100,
+        "delta_bytes": 0
+      },
+      "_record_direct_trace": {
+        "control_address": 4294986592,
+        "candidate_address": 4294986592,
+        "delta_bytes": 0
+      },
+      "_word_direct_trace": {
+        "control_address": 4294988656,
+        "candidate_address": 4294988656,
+        "delta_bytes": 0
+      },
+      "_record_interleaved_trace": {
+        "control_address": 4294989752,
+        "candidate_address": 4294989752,
+        "delta_bytes": 0
+      },
+      "_word_interleaved_trace": {
+        "control_address": 4294992724,
+        "candidate_address": 4294992724,
+        "delta_bytes": 0
+      },
+      "_record_take_swap_trace": {
+        "control_address": 4294993928,
+        "candidate_address": 4294993928,
+        "delta_bytes": 0
+      },
+      "_word_take_swap_trace": {
+        "control_address": 4294996732,
+        "candidate_address": 4294996732,
+        "delta_bytes": 0
+      },
+      "_cpp_vector_record_trace": {
+        "control_address": 4295023968,
+        "candidate_address": 4295023896,
+        "delta_bytes": -72
+      },
+      "_cpp_vector_word_trace": {
+        "control_address": 4295022388,
+        "candidate_address": 4295022316,
+        "delta_bytes": -72
+      },
+      "_rust_vector_record_trace": {
+        "control_address": 4295034556,
+        "candidate_address": 4295034484,
+        "delta_bytes": -72
+      },
+      "_rust_vector_word_trace": {
+        "control_address": 4295036680,
+        "candidate_address": 4295036608,
+        "delta_bytes": -72
+      }
+    }
+  },
+  "derived_paired_csv_publication": {
+    "file": "ecosystem-batch-controller-paired.csv",
+    "sha256": "647a1451237a667a5c16f9f4a567f398a8b0589bb34bbb3f76bde2aca80ea95b",
+    "line_endings": "LF",
+    "parsed_header_and_all_42_data_rows_unchanged": true,
+    "scratch_path": "${BATCH_CONTROLLER_SCRATCH}/timing/paired-cells.csv",
+    "scratch_sha256": "bbb34222f946cf58dc7789d60bc4ba4d0a968299f7e49effd73f7e114b0457b4",
+    "scratch_line_endings": "CRLF",
+    "note": "Only the derived publication copy was normalized. Scratch reducer output and both raw sample CSVs remain byte-for-byte unchanged."
+  },
+  "source_patch_publication": {
+    "file": "source-batch-controller.patch",
+    "sha256": "ae34915ba4ec7366d531135d0669468909aaa05ea473f3dc2c54ed0e38e705db",
+    "context_lines": 0,
+    "apply_command": "git apply --unidiff-zero source-batch-controller.patch",
+    "replay_matches_measured_candidate_sha256": "6724cfcefe503cd26cdf05734a28bb2365c366a5cab731aaed8ca7b1c5ae1a50",
+    "scratch_original_patch": "${BATCH_CONTROLLER_SCRATCH}/repair/batch-controller.patch",
+    "scratch_original_patch_sha256": "235c2612fe5b3d5ae21450f15742c5f29892cab4eafd17a9459e55d7d37c8adb",
+    "note": "Zero-context publication avoids whitespace-only context lines. Original measured patch bytes and source remain unchanged; replay reproduced the exact measured source."
+  }
+}

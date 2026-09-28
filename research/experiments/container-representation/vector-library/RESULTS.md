@@ -4848,15 +4848,183 @@ defect. It supplies no basis for reviving per-access alias metadata, whose
 provenance/lifetime obligations remain refused by
 [backend-facts](../../../../design/compiler/backend-facts.md).
 
-One unrun source discriminator is a normal generic helper containing the whole
-cycles loop, taking the existing vector by reference and returning the checksum
-by value. Keep ordinary append/truncate, zero removal, source work and ownership
-order; leave reserve/prefix/final drain outside. This is ordinary batch-operation
-decomposition: one reference boundary per batch keeps loop setup in the same
+The subsequent source discriminator uses a normal generic helper containing
+the whole cycles loop, taking the existing vector by reference and returning
+the checksum by value. It keeps ordinary append/truncate, zero removal, source
+work and ownership order, leaving reserve/prefix/final drain outside. This is
+ordinary batch-operation decomposition: one reference boundary per batch keeps loop setup in the same
 callee and supplies existing reference facts, with no API, hint, metadata or
-payload-specific branch. It is not a compiler scope-fact repair. A future code
-screen must recover outer pointer/length promotion while keeping wide preparation
-outside the repeated cycle and adding no hot call or snapshot; failure rejects
-the idea before timing. The same complete correctness, target and useful-cell
-no-loss requirements would still apply. No such candidate has been compiled or
-measured.
+payload-specific branch. It is not a compiler scope-fact repair. The registered
+code screen required outer pointer/length promotion while keeping wide preparation
+outside the repeated cycle and adding no hot call or snapshot; failure would
+have stopped the idea before timing. The same complete correctness, target and
+useful-cell no-loss requirements apply. The completed comparison below retains those
+requirements and rejects the candidate after its single timing pair.
+
+### Ordinary batch helper: scalar suffix-three/count-16 loss prevents selection
+
+The ordinary reference-taking batch helper is rejected under the registered
+no-qualified-useful-loss rule. Scalar suffix-3/count-16 regresses by 3.6–4.0%
+with separated sample ranges in both cohorts. Five useful cells improve, but
+they cannot compensate for that loss. This is an equivalent caller/source
+decomposition comparison, not a change to GrowVector's public operations or a
+promise that all clients improve. The production caller, compiler, library,
+native adapters and specification remain unchanged.
+
+The [exact source patch](source-batch-controller.patch) applies to
+`7abd6bb34746b7b983b83103c68ee429b24859bb`. It moves the already inspected
+suffix cycles into one private generic helper taking the vector by reference
+and checksum by value, returning the checksum. Reserve, prefix construction,
+final drain/free and other branches remain outside. Ordinary append and
+unconditional truncate, zero removal, zero rounds, fresh per-cycle digest,
+wrapping arithmetic and construction/consumption order remain unchanged.
+The old tail declaration remains in source. No type/count threshold, new API,
+attribute, LLVM mutation or compiler switch is introduced.
+
+The [identity and phase record](ecosystem-batch-controller-identities.json)
+retains the prospective source/native and timing criteria, exact compiler,
+source, patch, peer/runtime inputs, commands, direct statuses and artifact
+hashes. The frozen compiler remains SHA-256
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+No compiler rebuild or archive extraction is part of this trial. Standalone
+baseline emission exactly reproduces retained terminal/T1H0 raw LLVM,
+`22e03e27bba9dd075d7d6f86a40e52b2f0caea746c36b50e60424aa11527a73d`,
+qualifying the minimal input method with the compiler's embedded library.
+
+The initial source check rejects an equality-form helper entry requirement
+under FN-8: ENT-6's positive affine route handles ordered comparisons without
+inventing an equality rewrite. The retained failed source and diagnostic are
+followed by the original tail helper's equivalent `>=` and `<=` requirements.
+This authoring correction changes neither predicate nor runtime body, weakens
+no obligation and changes no language rule. The repaired source admits and
+emits using the unchanged compiler.
+
+The native structural prediction passes. Scalar backing pointer and length
+again cross the outer latch as PHIs. The rejected direct expansion's
+unconditional owner-slot store and start-of-cycle owner/length reloads vanish;
+backing/length reloads before truncate remain, as in baseline. There are no
+scalar helper allocas. Wide constructor constants and seven Q-pair stores
+occur before the outer loop, while seven Q-pair reloads still transfer 224
+bytes after every nonempty cycle's truncate. The only wide helper alloca is
+the eight-byte digest. Direct backing stores and one-record SIMD remain;
+there is no owner-sized snapshot, two-record ZIP loop or new per-cycle call.
+Wide truncate remains out of line. One batch call occurs per suffix trace,
+including zero rounds.
+
+| Native timed body | Baseline instructions / frame | Candidate instructions / frame |
+|---|---:|---:|
+| Scalar trace | 229 / 160 B | 117 / 112 B |
+| Wide trace | 190 / 352 B | 181 / 336 B |
+| Scalar batch helper | Absent | 130 / 144 B |
+| Wide batch helper | Absent | 183 / 368 B |
+| Scalar tail definition | 49 / 64 B | Removed |
+| Wide tail definition | 108 / 288 B | Removed |
+
+The baseline scalar tail was already inlined into trace. Peak suffix frames
+are therefore at least 160→256 bytes for scalar and 640→704 bytes for wide,
+excluding truncate. The nonempty scalar hot cycle remains
+`21 + 16 × removed` instructions in baseline versus `23 + 16 × removed` in
+candidate: 69→71 for suffix-three. Recovered PHIs do not by themselves repair
+the earlier loss. Fifty-five other common global/local function bodies,
+including work, round and truncate, retain their normalized instruction
+streams and literal values. Total timed object instructions grow 2,635→2,670;
+text grows 10,540→10,680 bytes, with literal storage unchanged at 912 bytes.
+
+Each candidate link reuses the exact fifteen frozen non-WF inputs, with all
+59 relevant native source/header/build-rule files matching both retained
+source trees. The qualified baseline images are reused byte for byte. Linked
+WF instructions, local/global branch destinations and 57 literal loads per
+image are checked against their objects; the known weak floor function resolves
+to the frozen strong runtime body. No timed image contains observer hooks.
+Linked timed/account text changes by +140/−72 bytes. C trace addresses remain
+fixed; Rust/C++ trace addresses shift by +140/−72 bytes respectively. Code
+placement and runtime ASLR remain possible contributors; this is not an
+isolated two-instruction cost measurement.
+
+All four images pass the full 1,260-configuration / 8,820-execution matrix,
+including zero removal and zero rounds. Four checksum and two cleanup controls
+exit 1 with the exact expected diagnostics. Both 294-row ledgers match the
+retained [factor accounting](ecosystem-compiler-factor-accounting.csv), SHA-256
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+These are instrumented-image lifecycle observations, not optimized timed
+allocation traffic. All 290 frozen inputs match before and after timing.
+
+The complete [control](ecosystem-batch-controller-control-samples.csv),
+[candidate](ecosystem-batch-controller-candidate-samples.csv) and
+[paired cells](ecosystem-batch-controller-paired.csv) retain one
+control→candidate `measure 1048576 7` pair: 42 cells, both cohorts, all seven
+samples and native variants, 4,116 rows per arm. Non-time fields match exactly;
+no sample or outlier is removed or native-scaled. Both direct timing exits and
+the guard exit are 0, with empty measurement stderr.
+
+| Useful-cell outcome | Count | Cells |
+|---|---:|---|
+| Qualified gain | 5 | Scalar suffix-2 at 16/256/4096; wide suffix-1 at 256/4096 |
+| Qualified loss | 1 | Scalar suffix-3 at 16 |
+| Overlap | 29 | All other useful cells except the unstable cell |
+| Unstable | 1 | Wide suffix-1 at 16 |
+| Sub-1-ms | 0 | Minimum useful paired WF sample is 1.198 ms |
+
+| Separated useful cell | Candidate/control medians, cohorts 0 / 1 | Qualification |
+|---|---|---|
+| Scalar suffix-2, 16 | 0.843408 / 0.844867 | Gain |
+| Scalar suffix-2, 256 | 0.849885 / 0.866051 | Gain |
+| Scalar suffix-2, 4096 | 0.857719 / 0.846287 | Gain |
+| Scalar suffix-3, 16 | 1.039735 / 1.035977 | Loss |
+| Wide suffix-1, 16 | 0.631024 / 0.440731 | Unstable; 43.18% cohort spread |
+| Wide suffix-1, 256 | 0.479531 / 0.446617 | Gain |
+| Wide suffix-1, 4096 | 0.449277 / 0.448534 | Gain |
+
+At the qualified loss, baseline ranges are 1.358–1.368 / 1.361–1.369 ms;
+candidate ranges are 1.409–1.471 / 1.408–1.426 ms. The median-ratio cohort
+spread is 0.363%. Rust ratios are 1.002308 / 1.000000, and C++ ratios are
+1.000000 / 0.999424. Scalar suffix-three at 256/4096 remains overlap, with
+ratios 1.034457 / 1.003554 and 1.034332 / 1.035062. Those are not qualified
+reversals of the preceding trial's three losses. The historical tail-only
+wide suffix-two/count-16 falsifier also remains explicit: this pair overlaps
+at 0.999723 / 0.999028, without overturning the earlier qualified refusal.
+
+| Unranked suffix-zero control | Candidate/control medians, cohorts 0 / 1 | Paired observation; remains unranked |
+|---|---|---|
+| Scalar, 16 | 0.996948 / 0.998986 | Short; ranges overlap |
+| Scalar, 256 | 1.002041 / 0.994944 | Short; ranges overlap |
+| Scalar, 4096 | 1.006110 / 1.000000 | Short; ranges overlap |
+| Wide, 16 | 0.572871 / 0.575691 | Separated gain |
+| Wide, 256 | 0.571990 / 0.569752 | Separated gain |
+| Wide, 4096 | 0.596114 / 0.597349 | Separated gain |
+
+Useful native median drift spans reverse-C 0.952–1.052, direct-C 0.661–1.088,
+swap-take-C 0.967–1.049, take-swap-C 0.966–1.120, Rust 0.962–1.071 and C++
+0.966–1.028. Every per-cell ratio is retained. Useful standard-peer target
+pass/deficit/inconclusive counts change 15/6/15→23/1/12, plus six unranked
+controls each. Scalar growth/count-16 remains a qualified target deficit;
+the candidate neither completes the target nor meets the no-loss criterion.
+
+The failed source check costs 0.101518 s; qualified baseline emission costs
+0.148946 s. Repaired source check/emission cost 0.141186/0.134907 s, timed
+optimized-IR/assembly emission 0.213665 s and timed object compilation
+0.134915 s. Account object compilation and two links cost 0.151718/0.120559 s.
+Positive matrices, negative controls and ledger executions cost
+2.718769/0.028879/0.072334 s. The control/candidate timing arms take
+80.885034/79.702437 s; the guard takes 161.001184 s. Four maintained reductions
+cost 0.247307 s and the unchanged paired reducer 0.075574 s. Whole-arm and
+check costs are not cell performance results.
+
+Reproduction uses the source/compiler pin and zero-context publication patch
+above, applied with `git apply --unidiff-zero source-batch-controller.patch`.
+An isolated replay reproduces the measured candidate source byte for byte;
+the identity record distinguishes this publication patch from the unchanged
+original measured patch retained in scratch. Require
+standalone baseline LLVM byte equality before relying on the embedded-library
+input method. Emit candidate raw LLVM with ordinary `--check`/`--emit-llvm`;
+change exactly one main symbol for timed LLVM and apply the existing Makefile
+observer substitutions for account LLVM. Use ordinary
+`/usr/bin/clang -O3 -Wno-override-module -x ir` and the exact retained link
+arguments/order. The full immutable raw logs, source rejection/repair and
+native artifacts remain under `/private/tmp/whitefoot-vector-batch-controller/`;
+the public identity record documents portable prefixes for those locations.
+CSV-only reproduction uses `../summarize-ecosystem.pl --complete` and
+`--targets` per arm, then the unchanged paired rule: disjoint ranges in both
+cohorts, every paired WF sample at least 1 ms, and at most 10% cohort
+median-ratio spread. No source repair, additional timing pair or production
+caller change follows this rejection.
