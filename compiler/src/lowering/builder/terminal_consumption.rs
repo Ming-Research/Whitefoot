@@ -326,7 +326,12 @@ fn recognize<'a>(
     function: &'a CheckedFunction,
     functions: &[CheckedFunction],
 ) -> Option<Consumption<'a>> {
-    if function.result != CheckedType::Unit || function.result_mode != CheckedMode::Own {
+    // A marked waiting callback is a context start, not an ordinary call.
+    // Keep statement lowering's argument capture and activation-exit join.
+    if !function.waiting.context_starts.is_empty()
+        || function.result != CheckedType::Unit
+        || function.result_mode != CheckedMode::Own
+    {
         return None;
     }
     let body = runtime(function.body.as_deref()?);
