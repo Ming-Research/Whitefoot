@@ -1,0 +1,21 @@
+--- a/research/experiments/container-representation/vector-library/vector-library.wf
++++ b/research/experiments/container-representation/vector-library/vector-library.wf
+@@ -165,7 +165,17 @@
+     ) {
+       let next = seed +wrap round;
+       let digest = VectorDigest(value: next);
+-      vector_library_tail_work::<VectorElement<T>>(values: &values, retained: retained, removed: removed, seed: next, digest: &digest);
++      for @suffix (
++        suffix_index in 0_u64..removed,
++        invariant suffix_length_lo: values.storage.inner.len >= retained + suffix_index,
++        invariant suffix_length_hi: values.storage.inner.len <= retained + suffix_index
++      ) {
++        let suffix_base = next +wrap retained;
++        let suffix_seed = suffix_base +wrap suffix_index;
++        let suffix_value = VectorElement::make(seed: suffix_seed);
++        let suffix_length = grow_vector_append::<T, 8193>(values: &values, value: move suffix_value);
++      }
++      grow_vector_truncate::<T, VectorDigest, fn VectorElement::accept, 8193>(values: &values, retained: retained, env: &digest);
+       let prefix = checksum *wrap 257_u64;
+       set checksum = prefix +wrap digest.value;
+     }

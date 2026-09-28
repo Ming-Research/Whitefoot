@@ -265,6 +265,14 @@ report records the completed sweep, including memory pairs selected from
 fresh geometry before timing. No load-policy, layout or indexing change
 entered that sweep; it does not replace the practical matrix above.
 
+The [complete Vector source pair](vector-library/RESULTS.md#ordinary-controller-composition-scalar-suffix-three-losses-prevent-selection)
+now refuses this candidate: four useful cells improve, three scalar suffix-3
+cells regress, 27 overlap and two are unstable. All correctness and release
+observations pass, but the three qualified losses prevent selection. The
+source remains unchanged. Both raw sample sets and the original screen's
+qualification remain available; neither this trial nor the occupancy sweep
+is a fresh five-family current-head result.
+
 ### Actual compiler factor isolation: criterion and result
 
 The criterion recorded before construction was to integrate main's
@@ -984,10 +992,11 @@ The result supports the following bounded follow-ups, recorded with the
 existing questions in [docs/todo.md](../../../docs/todo.md). It selects no
 representation, source rewrite, ABI change or compiler optimization.
 
-- **Hash misses and table policy:** compare the same source at lower occupancy,
-  recording native capacity geometry. The large aligned-hash miss gap persists
-  while WF takes 0.76–0.79× direct C across both payloads. Probe behavior and
-  occupancy need a discriminator before assigning this gap to WF lowering.
+- **Hash misses and table policy:** the completed same-source occupancy sweep
+  establishes sensitivity but retains native deficits at preselected matched
+  requested memory. Next compare an ordinary-library probing/layout candidate,
+  preserving capacity, complete ownership outcomes and memory accounting;
+  retain the separate wide argument/result-transfer question.
 - **Wide returned values and short vector cycles:** inspect optimized transfers,
   initialization, cleanup and callback boundaries, then test an unchanged-source
   compiler variant with the same controls. Vector suffix-1 remains substantially

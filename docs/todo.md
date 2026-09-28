@@ -469,6 +469,12 @@ rarely insert at the same place.
   remaining traversal/controller and code-placement costs. The remaining-count
   spelling was rejected by its native-code screen; open constructor-constant
   setup and digest-handoff leads are recorded under short Vector cycles below.
+  The subsequent [ordinary controller composition](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-controller-composition-scalar-suffix-three-losses-prevent-selection)
+  passes complete correctness and release checks but regresses scalar suffix-3
+  at all three populations, so its four useful gains do not select that
+  source rewrite. Inspect the changed outer-cycle dataflow before another
+  candidate; the baseline scalar tail already inlines, and this result does
+  not justify restoring a uniform hint.
   The recognizer's
   existence neither settles that performance tradeoff nor justifies extending
   its equivalence domain.

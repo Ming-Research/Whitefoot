@@ -4673,3 +4673,190 @@ their respective complete-release, duplicate-release and foreign-address
 diagnostics. Acceptance and the reversed-order fixture are also compiled by
 ordinary whitefootc (its O2 default), with exits 0 and 4 respectively. This
 separates the checked callable witness from the O3 timing harness.
+
+### Ordinary controller composition: scalar suffix-three losses prevent selection
+
+The [registered source comparison](../ECOSYSTEM.md#ordinary-vector-controller-composition-criterion)
+is rejected after its single complete timing pair. Three qualified useful cells
+regress: scalar suffix-3 at every count. Four other useful cells improve, but
+the criterion refuses any qualified useful-cell loss. The production fixture,
+compiler, library and native adapters are unchanged; this result selects no
+source rewrite or compiler policy.
+
+The exact [source patch](source-controller-composition.patch) applies to
+`7abd6bb34746b7b983b83103c68ee429b24859bb`. It substitutes the private tail
+helper's body into the suffix cycle, renaming locals and retaining ordinary
+append, unconditional truncate (including zero removal), ownership order and
+the original helper declaration. All other source bytes match. Independent
+source review reconstructed that substitution and matched the complete file
+and patch. The whole source archive and frozen compiler are identified in the
+[identity and phase record](ecosystem-source-controller-identities.json).
+The compiler SHA-256 is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`;
+it reproduces retained terminal/T1H0 raw LLVM and timed object bytes before
+the source change. No compiler rebuild was part of this experiment.
+
+The original code-screen recommendation was to stop under the phrase
+"comparable hot spills": seven Q-pair reloads still transfer 224 bytes after
+each nonempty cycle's truncate. That recommendation remains preserved. Before
+linking, correctness execution or timing, root and independent review recorded
+the ambiguity and the prospective continuation in
+`22096b01dbd508d47643a1211a8feb950b26a3f1`. The candidate removes each cycle's
+14 ADRP instructions, 14 Q literal loads, seven Q-pair stores and wide tail
+call/frame, while retaining those seven reloads. Comparing the complete
+repeated setup admitted the bounded continuation; it did not establish a
+performance gain or relax correctness, target, stability or no-loss criteria.
+
+Ordinary Clang O3 changes the two trace bodies. The baseline scalar trace
+already inlines its tail call; direct source composition changes its CFG and
+register use, with 229→223 static instructions and the same 160-byte frame.
+The wide trace loses its tail call, grows 190→345 instructions and uses a
+400-byte frame instead of 352 bytes; the separate 288-byte tail frame
+disappears. Within-record SIMD and direct backing stores remain. There is no
+two-record ZIP loop or owner-sized snapshot. Two unused tail definitions
+disappear; the other 55 common global/local bodies retain their instruction
+streams after local numbering normalization, with literal values checked
+separately. Work, round and truncate bodies are among those unchanged bodies.
+
+Timed object text shrinks 10,540→10,508 bytes and literal storage 912→688
+bytes. Linked timed/account text shrinks 32/336 bytes. The C trace addresses
+stay fixed; Rust/C++ trace addresses move by −32 bytes in the timed image and
+−336 bytes in the accounting image. This is a source composition comparison
+with changed code placement, not an isolated instruction-cost measurement;
+runtime ASLR and data placement are uncontrolled. Each link reuses the exact
+fifteen frozen non-WF inputs, whose source/flag identities were checked.
+Linked inspection checks every unrelocated WF instruction byte and every
+WF/local branch relocation against the screened objects. The sole weak
+`floor_run` resolves to the same frozen strong runtime definition. Neither
+timed image contains allocation-observer hooks.
+
+All four timed/accounting images pass 1,260 configurations / 8,820 executions
+each. Four checksum faults and two cleanup faults exit 1 with the exact
+expected diagnostic; all other six harness commands exit 0. Both complete
+294-row ledgers equal the retained
+[factor accounting](ecosystem-compiler-factor-accounting.csv), SHA-256
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`.
+These describe instrumented-image lifecycle counts, not timed allocation
+traffic. All 48 frozen source/compiler/code/input/image identities match
+before and after timing.
+
+The [control samples](ecosystem-source-controller-control-samples.csv),
+[candidate samples](ecosystem-source-controller-candidate-samples.csv) and
+[all paired cells](ecosystem-source-controller-paired.csv) retain exactly one
+control→candidate `measure 1048576 7` pair: both cohorts, all seven samples,
+42 cells and 4,116 rows per arm. Paired non-time fields match exactly. No
+sample or outlier was removed. Both direct measurement exits and the guard
+exit are 0; both measurement stderr files are empty.
+
+| Useful-cell outcome | Count | Cells |
+|---|---:|---|
+| Qualified gain | 4 | Scalar suffix-2 at 16/256; wide suffix-1 at 256/4096 |
+| Qualified loss | 3 | Scalar suffix-3 at 16/256/4096 |
+| Overlap | 27 | All 18 reserved/growth/reuse cells; remaining qualified suffix cells |
+| Unstable | 2 | Wide suffix-1 and suffix-3 at 16 |
+| Sub-1-ms | 0 | Minimum useful paired WF sample is 1.202 ms |
+
+| Useful separated cell | Candidate/control medians, cohorts 0 / 1 | Qualification |
+|---|---|---|
+| Scalar suffix-2, 16 | 0.847438 / 0.858209 | Gain |
+| Scalar suffix-2, 256 | 0.846774 / 0.850746 | Gain |
+| Wide suffix-1, 16 | 0.727289 / 0.641560 | Unstable; 13.36% cohort spread |
+| Wide suffix-1, 256 | 0.639763 / 0.658220 | Gain |
+| Wide suffix-1, 4096 | 0.558696 / 0.523950 | Gain |
+| Scalar suffix-3, 16 | 1.064140 / 1.067301 | Loss |
+| Scalar suffix-3, 256 | 1.174453 / 1.188459 | Loss |
+| Scalar suffix-3, 4096 | 1.188501 / 1.178649 | Loss |
+
+For all three scalar suffix-three losses, each candidate minimum exceeds the
+corresponding control maximum in both cohorts. Their median-ratio cohort
+spreads are 0.30%, 1.19% and 0.84%. The wide suffix-three/count-16 cell has
+22.94% spread and remains unstable, not a qualified direction.
+
+| Unranked suffix-zero control | Candidate/control medians, cohorts 0 / 1 | Paired observation; remains unranked |
+|---|---|---|
+| Scalar, 16 | 0.990918 / 1.016260 | Short; ranges overlap |
+| Scalar, 256 | 1.005086 / 1.031282 | Short; ranges overlap |
+| Scalar, 4096 | 1.013131 / 1.011022 | Short; ranges overlap |
+| Wide, 16 | 0.582180 / 0.569130 | Separated gain |
+| Wide, 256 | 0.571738 / 0.563567 | Separated gain |
+| Wide, 4096 | 0.588930 / 0.583367 | Ranges overlap |
+
+The historical tail-only `alwaysinline` falsifier remains explicit: it lost
+wide suffix-2/count-16 with ratios 1.034870 / 1.027378. The new ordinary-source
+pair gives 1.029621 / 1.025312 at that cell. Cohort 0 loses with disjoint
+ranges; cohort 1 overlaps, so the complete new pair is overlap, not a new
+qualified loss or a reversal of the historical refusal.
+
+Native useful-cell candidate/control median drift spans reverse-C
+0.958–1.178, direct-C 0.732–1.142, swap-take-C 0.974–1.121, take-swap-C
+0.866–1.139, Rust 0.894–1.163 and C++ 0.953–1.140. The complete per-cell
+ratios remain in the paired CSV; they are not used to rescale WF times.
+At the three scalar suffix-three losses specifically, Rust ratios span
+0.989–1.035 and C++ 0.994–1.036. Useful target pass/deficit/inconclusive counts
+are 10/2/24 for control and 9/0/27 for candidate, plus six unranked controls
+each. The disappearance of two descriptive deficits does not complete the
+target: 27 candidate useful cells remain inconclusive.
+
+Source check/emission cost 0.650245/0.152705 s. Timed inspection emission,
+timed object compilation, accounting object compilation and two links cost
+0.525740/0.149678/0.154984/0.116855 s respectively. Positive matrix checks,
+fault controls and ledger runs cost 2.760299/0.029313/0.073424 s. The two
+timing arms cost 82.613026/84.462512 s; the guard reports 167.30 s total.
+Four maintained reductions cost 0.248318 s and the unchanged paired reducer
+0.075543 s. These phase costs are separate from cell performance results.
+
+Reproduction starts from a complete archive of the source revision above,
+applies the exact patch with `patch -p1 -F 0`, then uses ordinary `--check`
+and `--emit-llvm` with the frozen compiler. The identity record contains exact
+historical commands and statuses. Timed LLVM changes only the main symbol;
+account LLVM uses the existing Makefile's observer substitutions. The native
+commands use `/usr/bin/clang -O3 -Wno-override-module -x ir` and the recorded
+native peer/runtime object order. The original screen, continuation, linked
+inspection and full logs remain at
+`/private/tmp/whitefoot-vector-source-controller/`; the rejected candidate's
+source and binary inputs remain frozen there. CSV-only reproduction uses
+`../summarize-ecosystem.pl --complete` and `--targets` per arm and the same
+recorded paired rule: disjoint observed ranges in both cohorts, every paired
+WF sample at least 1 ms, and at most 10% cohort median-ratio spread. No further
+native execution, source repair or timing pair was run after this refusal.
+
+#### Read-only scalar suffix-three attribution
+
+The preserved scalar IR and assembly exclude a vectorizer/remainder explanation:
+neither trace contains vector-typed IR or loop-vectorization metadata. Both
+no-growth append loops have a three-instruction capacity test and a
+seven-instruction append step; both digest loops have six instructions per
+element. The raw trace attributes are identical and the baseline tail call was
+already inlined. In the retained scratch, `screen/control.opt.ll:562` carries
+backing pointer and length across the outer latch as PHIs, whereas
+`screen/candidate.opt.ll:490` reloads both each cycle and line 603 writes the
+owner pointer after every inner append loop. This appears directly at
+`control.s:625` and `candidate.s:623,706`. Counting the complete no-growth
+cycle gives `21 + 16 × removed` versus `23 + 16 × removed` instructions,
+excluding prefix construction and final drain. That is 69→71 for suffix-three,
+not a claim that two instructions explain the 6–19% loss: suffix-two gains
+despite the same extra two instructions, and placement, dependencies and branch
+behavior remain possible contributors.
+
+Baseline inlining adds the helper's ordinary parameter `noalias` scopes
+(`!15` for values, `!17` for digest) across append/truncate. The call's two
+write-capable reference roots are checked disjoint, and neither reference
+escapes. Direct composition removes that call boundary and its enclosing
+scopes; the independent append/truncate scopes remain. This accompanies the
+changed promotion but does not isolate its cause or establish a compiler
+defect. It supplies no basis for reviving per-access alias metadata, whose
+provenance/lifetime obligations remain refused by
+[backend-facts](../../../../design/compiler/backend-facts.md).
+
+One unrun source discriminator is a normal generic helper containing the whole
+cycles loop, taking the existing vector by reference and returning the checksum
+by value. Keep ordinary append/truncate, zero removal, source work and ownership
+order; leave reserve/prefix/final drain outside. This is ordinary batch-operation
+decomposition: one reference boundary per batch keeps loop setup in the same
+callee and supplies existing reference facts, with no API, hint, metadata or
+payload-specific branch. It is not a compiler scope-fact repair. A future code
+screen must recover outer pointer/length promotion while keeping wide preparation
+outside the repeated cycle and adding no hot call or snapshot; failure rejects
+the idea before timing. The same complete correctness, target and useful-cell
+no-loss requirements would still apply. No such candidate has been compiled or
+measured.
