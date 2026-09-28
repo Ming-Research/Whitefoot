@@ -21,7 +21,7 @@ fn complete_inventory_is_pinned() {
     // v0.77 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
     // the optional `mustpar` of `for_stmt`, and the alternation of the
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
-    // v0.78 adds a STRING arm to the existing `cvalue` alternation
+    // v0.79 adds a STRING arm to the existing `cvalue` alternation
     // [CONST-2]: no decision, and nine rows for its continuations.
     assert_eq!(DECISIONS.len(), 161);
     assert_eq!(SELECT_ROWS.len(), 6_971);

@@ -150,10 +150,10 @@ impl FunctionEmitter<'_, '_> {
              {HANDLE} = call ptr @llvm.coro.begin(token %wf.coro.id, ptr %wf.coro.selected)"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        if super::contexts::keeps_context_group(self.function) {
-            self.output
-                .push_str(&super::contexts::context_group_initialization());
-        }
+        self.output
+            .push_str(&super::contexts::context_group_initialization(
+                self.function,
+            ));
         writeln!(
             self.output,
             "  br label %{}",
@@ -231,7 +231,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Where a waiting call constructs its result, and whether the value is
     /// then read back as an SSA value.
-    fn waiting_destination(
+    pub(super) fn waiting_destination(
         &mut self,
         result: IrValueId,
         abi: ResultAbi,
@@ -396,6 +396,16 @@ impl FunctionEmitter<'_, '_> {
     /// [PAR-4] the join before an exit: a suspension until every context
     /// this activation started has finished, when any has not.
     pub(super) fn emit_frame_join(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
+        self.emit_group_join(result, super::contexts::GROUP)
+    }
+
+    /// Suspends this frame until every context counted in `group` has
+    /// finished.
+    pub(super) fn emit_group_join(
+        &mut self,
+        result: IrValueId,
+        group: &str,
+    ) -> Result<(), BackendFailure> {
         let prefix = labels("join", result);
         self.names(&["wf__context_join_wait", "llvm.coro.save"]);
         writeln!(
@@ -405,7 +415,7 @@ impl FunctionEmitter<'_, '_> {
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
-            super::contexts::GROUP
+            group
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_suspension(

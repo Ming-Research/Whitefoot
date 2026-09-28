@@ -75,7 +75,7 @@ same rule although its value is never used.
 
 ## Lexing
 
-Before v0.78 a `'` began no token and was a raw FORM-1 defect, the REGIONID
+Before v0.79 a `'` began no token and was a raw FORM-1 defect, the REGIONID
 form having retired at v0.60; no token, label or operator uses it, and inside
 a STRING it stays an ordinary raw byte. A character form ends at the first
 unescaped `'` and then takes the maximal `[A-Za-z0-9_]*` suffix, as a numeric

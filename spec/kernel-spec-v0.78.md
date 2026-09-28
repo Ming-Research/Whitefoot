@@ -108,11 +108,8 @@ For one finite bit pattern of TYPE, consider every matching decimal that rounds 
 Its canonical spelling is the candidate with the fewest ASCII bytes before `_TYPE`; a tie is resolved by lexicographically least unsigned ASCII bytes.
 This selection is total, host-independent, and unique; in particular `0.0` and `-0.0` remain distinct.
 Other examples are `1.5_f64` and `6.022e23_f64`.
-`unit`.
-A text item is one raw ASCII-printable byte in U+0020..U+007E other than `\` and the quote that delimits its literal, or one escape: `\\`, that quote preceded by `\`, `\n`, `\t`, `\r`, or `\u{H}` with H one or more lowercase hexadecimal digits `[0-9a-f]`; no other byte is legal.
-A raw byte denotes its own scalar value, `\\` U+005C, the quote escape its quote, `\n` U+000A, `\t` U+0009, `\r` U+000D, and `\u{H}` the value of H read in base 16; [FORM-7] gives each value its one spelling.
-A character literal `'C'_TYPE` is exactly one text item C delimited by `'` with a mandatory suffix TYPE, `u8` or `u32`; it is an integer literal of TYPE, spelled as a character rather than in decimal, whose value is C's scalar value, e.g. `'a'_u8`, `'\n'_u8`, `'\''_u8`, and `'\u{e9}'_u32`.
-STRING `"..."` is a sequence of zero or more text items delimited by `"`, denoting the sequence of their scalar values; it is written in a `doc` entry [GRAM-2] and as a `cvalue` [CONST-2] and is not a member of `literal`, so no expression contains one.
+`unit`; STRING `"..."` whose interior is a sequence of items, each one raw ASCII-printable byte in U+0020..U+007E other than `"` and `\`, or one of exactly three escapes `\\ \" \n`; no other byte is legal, and each character has exactly one spelling (the escape where one is defined, the raw byte otherwise).
+STRING appears only in `doc` entries.
 There are no boolean literals: `Bool` is a prelude enum (§14).
 Generic-numeric literals `0_T` and `1_T` are legal where `T` is a gparam bound by a numeric contract (`Int` or `Float`, §14), denoting T's additive and multiplicative identity; a concrete type uses `0_i32` and the like, so there is no dual spelling.
 NaN and the infinities are not literals; they are the nullary ops `fnan` and `finf` [OP-1].
@@ -120,12 +117,10 @@ NaN and the infinities are not literals; they are the nullary ops `fnan` and `fi
 [FORM-6] The token `unit` names the unit type in type position and the unit value in expression position; the grammar positions are disjoint productions, so resolution is production-local, not contextual.
 The lowercase spelling follows the primitive-type convention (TYPE-1: primitives are lowercase keywords, not TYPEIDs); the single-token value spelling follows the one-spelling convention [FORM-1] for the type's sole inhabitant.
 
-[FORM-7] Literal well-formedness.
-A decimal integer literal `-?d_T` is legal where its signed value lies in the closed range of T (signed `[-2^(K-1), 2^(K-1)-1]`, unsigned `[0, 2^K-1]`) and it has no leading zeros: the single digit `0` is its own form, a leading `-` is legal for signed T, and `-0` is written `0`.
+[FORM-7] Numeric-literal well-formedness.
+An integer literal `-?d_T` is legal where its signed value lies in the closed range of T (signed `[-2^(K-1), 2^(K-1)-1]`, unsigned `[0, 2^K-1]`) and it has no leading zeros: the single digit `0` is its own form, a leading `-` is legal for signed T, and `-0` is written `0`.
 A float literal is legal only when it has the unique canonical spelling selected by [FORM-5] and denotes a finite value of its stated TYPE.
-A text item [FORM-5] is legal only when it denotes a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF, in that value's one spelling: the raw byte for U+0020..U+007E other than `\` and the delimiting quote; `\\`, the quote escape, `\n`, `\t`, and `\r` for U+005C, the quote, U+000A, U+0009, and U+000D; and `\u{H}` with no leading zeros, the single digit `0` being its own form, for every other value.
-A character literal of TYPE `u8` is legal only when its value is at most 0x7F, so a `u8` character is always ASCII; TYPE `u32` admits every Unicode scalar value.
-An out-of-range integer, a leading-zero integer, a noncanonical float spelling, a float decimal that rounds to a non-finite value, a text item that is noncanonical or denotes no scalar value, or a `u8` character literal above 0x7F is a hard error at check time [SCOPE-2], and each text-literal rejection carries a repair where its value has a legal spelling [DIAG-1]; a literal never denotes a wrapped, truncated, saturated, or undefined value.
+An out-of-range integer, a leading-zero integer, a noncanonical float spelling, or a float decimal that rounds to a non-finite value is a hard error at check time [SCOPE-2]; a literal never denotes a wrapped, truncated, saturated, or undefined value.
 
 ## 3. Grammar
 
@@ -143,11 +138,11 @@ Otherwise the lower word ends before the dot.
 - A numeric form starts with a decimal digit, or with `-` immediately followed by a decimal digit.
 It then consumes the maximal sequence of ASCII letters, ASCII digits, `_`, and `.`, plus a `+` or `-` only when that sign byte immediately follows `e` or `E`, except that when the next two bytes are `..` the numeric form ends immediately before the first dot.
 A single dot and every other numeric candidate retain the preceding maximal rule unchanged.
-Raw formation deliberately retains broad candidates such as `1e+`, `1.00_f64`, `1.0E2_f64`, `'ab'_i32`, and `'\u{41}'_u8`; [FORM-5] and [FORM-7] decide membership and canonicality without rescanning or splitting them.
+Raw formation deliberately retains broad candidates such as `1e+`, `1.00_f64`, and `1.0E2_f64`; [FORM-5] and [FORM-7] decide membership and canonicality without rescanning or splitting them.
 - An operator form starts with `+`, `*`, `/`, or `%`, or with a `-` that is immediately followed by neither a decimal digit (numeric form, unchanged) nor `>` (the `->` compound, unchanged), and continues through the maximal `[a-z]*` suffix; the suffix must be empty or one of `wrap`, `defined`, `checked`, `sat` per the closed `infix_op` list, and any other suffix is a terminal-membership rejection.
-- A character form starts with `'` and a STRING form with `"`; each ends at the first unescaped occurrence of its own opening quote, after which a character form continues through the maximal `[A-Za-z0-9_]*` suffix.
-The interior of either consists only of raw bytes `0x20` through `0x7e` other than `\` and the form's own quote, or two-byte escapes: `\` followed by `\`, `n`, `t`, `r`, `u`, or the form's own quote.
-An escape consumes its backslash and follower together; the bytes that complete a `\u{H}` escape are ordinary interior bytes whose shape [FORM-5] decides.
+- A STRING form starts with `"` and ends at the first unescaped `"`.
+Its interior consists only of raw bytes `0x20` through `0x7e` other than `"` and `\`, or the two-byte escapes `\\`, `\"`, and `\n`.
+An escape consumes its backslash and follower together.
 - `->`, `=>`, `..`, `==`, `!=`, `<=`, `>=`, and `::` are the eight compound punctuation tokens; each is formed exactly when its two bytes are adjacent, by the same maximal rule that forms `=>` from `=` and `>`.
 The byte `!` occurs in no other token: a `!` not immediately followed by `=` is a raw lexical defect.
 Otherwise each byte in `(`, `)`, `{`, `}`, `[`, `]`, `<`, `>`, `,`, `:`, `;`, `.`, `=`, `&`, and `^` is one exact punctuation token.
@@ -159,7 +154,7 @@ The quoted `"[0-9]+"` occurrences in the `const` production and the optional mul
 An external terminal denotes one predicate over one formed token.
 
 Anything that cannot take one of those forms is a raw lexical defect with the attribution and exact span in [DIAG-1].
-Raw formation gives every token exactly one context-free shape kind: lower word, upper word, label form, operation-name form, operator form, numeric form, character form, STRING form, or one exact punctuation form.
+Raw formation gives every token exactly one context-free shape kind: lower word, upper word, label form, operation-name form, operator form, numeric form, STRING form, or one exact punctuation form.
 Terminal membership then visits every formed token in source-ordinal and token order.
 For each token independently, and without consulting grammar position, name lookup, the operation table, or another token, it evaluates the complete set of exact fixed-terminal predicates and external-terminal predicates in this specification and retains every matching predicate.
 It rejects the token exactly when that retained set is empty; it never selects one preferred predicate and never tests only the predicates expected at a parser position.
@@ -595,12 +590,12 @@ This keeps the const-generic forwarding path closed under the one operation: `co
 [CONST-2] A `const IDENT: type = cvalue;` item declares an immutable, program-lifetime, read-only static value, with the `cvalue` production of the fence below.
 
 ```wf-ebnf CONST-2
-cvalue := literal | STRING | IDENT | "[" cvalue ("," cvalue)* "]"
+cvalue := literal | IDENT | "[" cvalue ("," cvalue)* "]"
         | (TYPEID | type_path) targs? ("::" TYPEID)? "(" (IDENT ":" cvalue ("," IDENT ":" cvalue)*)? ")"
 ```
 
 `type` must be const-eligible: a primitive [TYPE-1], `Array<T, N>` of const-eligible T, or a source non-opaque `struct` whose every field type is const-eligible; `enum`, `Box`, `Slots`, and `Ring` are not const-eligible (a const is pure static rodata: no allocation, no drop).
-The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, or, where T is `u8`, a STRING [FORM-5] whose value is the UTF-8 encoding of its scalar values in order, one entry per byte, and whose byte length must equal N, a STRING of any other length being a hard error citing CONST-2 at that `cvalue` with a repair stating its byte length [DIAG-1]; and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
+The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
 The const-dependency graph is acyclic: consts are visible throughout their module [MOD-3], and a const whose value depends on itself through any chain of consts is a hard error citing CONST-2 at the first const in item order on that cycle. Evaluation follows the dependencies and is substitution and layout only.
 A const item is never `move`d or `set`, and no declared row may write a path rooted at one [EFF-1, EFF-5].
 It is read via a subscript, a measure member [OP-15], a field suffix, or a `&` reference [REF-1], so a const table may be passed to a consumer.
@@ -1669,20 +1664,20 @@ Within one grammar decision, production definitions rank by their first appearan
 Numbered rules rank by their first appearance in this specification.
 
 Raw lexical scanning is quote-aware and reports the first defect at its cursor.
-If the actual byte sequence beginning at the cursor does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, the first byte always cites [FORM-2] and spans that one byte, including when the cursor is inside a quoted candidate, the character or STRING form [GRAM-1] being scanned.
-Outside a quoted candidate, a byte in `0x00..0x1f` other than LF, or byte `0x7f`, cites [FORM-2] and spans that byte.
-An exact `//` or `/*` prefix outside a quoted candidate cites [FORM-4] and spans those two bytes.
+If the actual byte sequence beginning at the cursor does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, the first byte always cites [FORM-2] and spans that one byte, including when the cursor is inside a STRING candidate.
+Outside a STRING candidate, a byte in `0x00..0x1f` other than LF, or byte `0x7f`, cites [FORM-2] and spans that byte.
+An exact `//` or `/*` prefix outside a STRING candidate cites [FORM-4] and spans those two bytes.
 A `@` not followed by `[a-z]` cites [FORM-3] and spans only the sigil.
 Any other ASCII byte that cannot begin a specified token cites [FORM-1] and spans that byte.
-Any valid non-ASCII scalar outside a quoted candidate cites [FORM-1] and spans its complete UTF-8 encoding.
+Any valid non-ASCII scalar outside a STRING candidate cites [FORM-1] and spans its complete UTF-8 encoding.
 
-After an opening quote, `//` and `/*` are ordinary raw interior bytes and never comment prefixes.
+After an opening `"`, `//` and `/*` are ordinary raw STRING bytes and never comment prefixes.
 A final backslash cites [FORM-5] and spans only that backslash.
-A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the candidate's own quote cites [FORM-5] and spans both bytes.
+A backslash followed by an ASCII byte other than `\`, `"`, or `n` cites [FORM-5] and spans both bytes.
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
-A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
-At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
-If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of source.
+A raw ASCII byte outside the permitted STRING interior set cites [FORM-5] and spans that byte.
+At any other STRING cursor, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
+If no unescaped closing quote occurs and no earlier defect applies, the unterminated STRING cites [FORM-5] and spans from its opening quote through end of source.
 Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
 Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width end-of-source interval defined above.
 
@@ -2058,7 +2053,7 @@ An implementation may report unavailable resources, trusted-computing-base failu
 ## 13. Execution overlap
 
 [CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
-The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
+The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
 Read/read overlap is admitted.
@@ -2131,7 +2126,7 @@ A program that needs two host operations ordered passes both through one owner w
 
 1. On a `for_stmt`, [PAR-2]'s permission holds for that loop.
 2. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee does not wait [WAIT-1], a next statement of the same block follows the marked statement and [PAR-1]'s permission holds for the two.
-3. On the `call` of an `expr_stmt` whose callee waits, [WAIT-2]'s permission holds for that statement.
+3. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee waits, [WAIT-2]'s permission holds for that statement.
 
 A `mustpar` in any other position, and a marked construct whose stated condition does not hold, is a hard error citing PAR-4 at the marked `for_stmt` or `call`, carrying the failed condition or the denied permission [DIAG-1].
 In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, and whether an implementation overlaps the marked construct remains its choice [PAR-1, PAR-2, WAIT-2].
@@ -2139,7 +2134,8 @@ In every form the atom is proof syntax: it adds no permission, changes neither s
 [WAIT-2] The meaning of an execution is its sequential execution: one control flow that executes every construct in the order it defines, starting with the entry [PROG-3].
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1] alongside the statements that follow it in its activation exactly when every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1]; the call then completes and releases its result before the activation leaves by any edge [FN-1, ERR-3].
-Such a call's footprint is the storage its arguments moved or copied into it [EFF-5], so no later statement of the activation overlaps it, and its host effects follow [HOST-1].
+An implementation may execute the `call` of the `ordinary_let_rhs` of a `let_stmt` whose callee waits alongside the statements that follow that `let_stmt` in its block exactly when every parameter of the callee is a value parameter; the call then completes, and the binding holds its result, before the binding is next read, written or released [OWN-1] and before the activation leaves by any edge.
+Such a call's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, its binding, so no statement it executes alongside overlaps it, and its host effects follow [HOST-1].
 A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, and how the host effects of different contexts interleave, is an input of the execution: two executions that receive the same outcomes in the same order execute every context identically.
 Which calls execute as contexts, where a context executes, and whether one context proceeds while another waits for the host are not observable, and no rule of this specification is stated in terms of them; an implementation that executes every call in order conforms.
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.

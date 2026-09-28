@@ -51,6 +51,11 @@ impl ProgramChild {
         })
     }
 
+    /// The operating system's identifier of the running process.
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         let status = self.child.try_wait()?;
         if status.is_none() && Instant::now() >= self.deadline {
