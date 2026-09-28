@@ -1488,6 +1488,7 @@ mod tests {
             counted_ranges: Vec::new(),
             overlaps: Vec::new(),
             synthesis: Some(IrSynthesis::Chunk),
+            waits: false,
             blocks: vec![
                 IrBlock {
                     parameters: Vec::new(),

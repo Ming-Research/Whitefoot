@@ -15,6 +15,9 @@
 #                                  another build already put in $OUT
 #   sh linux-net-bench.sh measure  the correctness pass and the protocol over
 #                                  binaries another build already put in $OUT
+#   sh linux-net-bench.sh memory   the resident memory and mapping count each
+#                                  idle connection adds to every Whitefoot line
+#                                  in $OUT (WAITS.md, Experiment 3)
 #
 # The bar this measures against is the one
 # research/investigations/io-model/NETWORK.md section 6 sets: the reference is
@@ -47,7 +50,9 @@ k64 64 2000 64
 k1024 1024 200 64
 k64.64k 64 200 65536"
 
-# The server lines to run, out of "uring epoll wf waiting", space separated. The
+# The server lines to run, out of "uring epoll wf wfbase waiting", space
+# separated. `wfbase` is a second Whitefoot build of the same source, from an
+# earlier compiler, put in $OUT as wf_echo_base by whoever compares the two. The
 # default is every line whose binary is in $OUT, which is every line the build
 # above produced. Naming a subset is for the case where one server cannot
 # complete a run yet and the others still owe a table; the table says which
@@ -223,11 +228,12 @@ if [ ! -x "$OUT/netload" ]; then
 fi
 
 LINES=""
-for name in ${NET_LINES:-uring epoll wf waiting}; do
+for name in ${NET_LINES:-uring epoll wf wfbase waiting}; do
     case $name in
         uring) binary=$OUT/uring_echo ;;
         epoll) binary=$OUT/epoll_echo ;;
         wf) binary=$OUT/wf_echo ;;
+        wfbase) binary=$OUT/wf_echo_base ;;
         waiting) binary=$OUT/waiting_echo ;;
         *) echo "linux-net-bench: there is no $name line" >&2; exit 2 ;;
     esac
@@ -237,10 +243,44 @@ for name in ${NET_LINES:-uring epoll wf waiting}; do
     elif [ -n "$NET_LINES" ]; then
         echo "linux-net-bench: $binary is not built" >&2
         exit 1
-    else
+    elif [ "$name" != wfbase ]; then
         echo "note: $binary was not built, so the table is without the $name line."
     fi
 done
+
+# --- idle-connection memory -----------------------------------------------
+#
+# Each Whitefoot line is started for N connections, `idleload` opens them and
+# sends nothing, and reads what they added to the server's resident set and
+# mapping count once the server has accepted every one; closing them lets the
+# server exit, which it must do with status zero. N is bounded by the host's
+# descriptor limit, which `idleload` and the server each need N of.
+
+if [ "$MODE" = memory ]; then
+    if [ ! -x "$OUT/idleload" ]; then
+        echo "linux-net-bench: $OUT/idleload is not built" >&2
+        exit 1
+    fi
+    for count in ${MEMORY_COUNTS:-1000 5000 19000}; do
+        echo "$LINES" | while read -r name binary; do
+            case $name in wf|wfbase) ;; *) continue ;; esac
+            port=$(free_port)
+            "$binary" "$port" "$count" >"$OUT/server.out" 2>"$OUT/server.err" &
+            server=$!
+            wait_for_listener "$port" "$server" "$name.memory"
+            line=$("$OUT/idleload" "$port" "$count" "$server")
+            status=0
+            wait "$server" || status=$?
+            if [ "$status" != 0 ]; then
+                echo "$name.memory: the server exited with status $status" >&2
+                cat "$OUT/server.err" >&2
+                exit 1
+            fi
+            printf '%s\t%s\n' "$name" "$line"
+        done
+    done
+    exit 0
+fi
 
 # --- the correctness pass -------------------------------------------------
 #

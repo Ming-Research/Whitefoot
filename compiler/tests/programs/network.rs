@@ -166,13 +166,25 @@ fn tcp_calls_use_ordinary_linked_declarations() {
         "close_receive",
         "close_send",
     ] {
+        // A waiting host function is linked as its start and its finish, the
+        // two halves a waiting frame suspends between
+        // (design/amendments/compiler-waiting-contexts.md); nothing calls a
+        // blocking whole.
         assert!(
-            llvm.contains(&format!("call void @wf_std.net.{name}(")),
-            "missing ordinary call {name}"
+            llvm.contains(&format!("call i1 @wf_std.net.{name}.start(")),
+            "missing ordinary start {name}"
         );
         assert!(
-            llvm.contains(&format!("declare void @wf_std.net.{name}(")),
+            llvm.contains(&format!("call void @wf_std.net.{name}.finish(")),
+            "missing ordinary finish {name}"
+        );
+        assert!(
+            llvm.contains(&format!("declare i1 @wf_std.net.{name}.start(")),
             "missing ordinary declaration {name}"
+        );
+        assert!(
+            !llvm.contains(&format!("@wf_std.net.{name}(")),
+            "a blocking call of {name}"
         );
     }
     assert!(!llvm.contains("@wf__completion_"));

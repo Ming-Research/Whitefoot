@@ -3,19 +3,21 @@
 //!
 //! A `mustpar` statement whose callee waits reaches the target as
 //! [`IrOperation::ContextStart`] over a synthesized wrapper that takes the
-//! call's arguments by value, makes the call and drops its result. Here the
-//! start becomes: reserve a context whose stack holds a frame of those
-//! arguments, store them, and launch it on a thunk that reads them back and
-//! calls the wrapper, exactly as a handed-out compute call's thunk does. The
-//! starting activation keeps a two-word group in its own frame, zeroed at
-//! entry: the runtime counts the activation's unfinished contexts there, and
-//! [`IrOperation::ContextJoin`], which the lowering places before every exit,
-//! waits on it.
+//! call's arguments by value, makes the call and drops its result. The
+//! wrapper waits, so it is a resumable frame like every waiting function
+//! ([`super::frames`]). Here the start becomes: make a context whose arena
+//! holds a block of those arguments, store them, and launch it on a thunk
+//! that reads them back and calls the wrapper's ramp inside the new context,
+//! which makes the context's outermost frame. The starting activation keeps a
+//! two-word group in its own frame: the runtime counts the activation's
+//! unfinished contexts there, and [`IrOperation::ContextJoin`], which the
+//! lowering places before every exit, suspends the activation until they
+//! have finished.
 //!
-//! Nothing here can be refused. A context start is what the program means,
-//! not an offer [PAR-4], so there is no fallback that runs the call inline:
-//! running it inline would wait for it, which the starting context may not.
-//! The runtime symbols are the completion bridge's, which every program
+//! Nothing here can be refused. Every marked waiting call runs as a context
+//! of its own (design/amendments/compiler-waiting-contexts.md), so there is
+//! no fallback that runs the call inline: running it inline would wait for
+//! it. The runtime symbols are the completion bridge's, which every program
 //! links, and they begin `wf__` so no source name can reach them.
 //!
 //! [`IrOperation::ContextStart`]: crate::IrOperation::ContextStart
@@ -23,39 +25,14 @@
 
 use std::fmt::Write;
 
-use super::parallel::{ThunkFrame, thunk_definition};
+use super::parallel::{ThunkFrame, thunk_arguments};
 use super::{BackendFailure, FunctionEmitter};
 use crate::backend::abi::FunctionAbi;
-use crate::backend::emission::{Module, Parameter, References, Signature};
+use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
 use crate::{IrConstant, IrFunction, IrInstruction, IrOperation, IrType, IrValueId};
 
-/// The bridge's three context entry points.
-pub(super) fn context_runtime_declarations() -> Module {
-    let mut module = Module::default();
-    module.declare(Signature::new(
-        "wf__context_prepare",
-        "ptr",
-        vec![Parameter::unnamed("i64")],
-    ));
-    module.declare(Signature::new(
-        "wf__context_launch",
-        "void",
-        vec![
-            Parameter::unnamed("ptr"),
-            Parameter::unnamed("ptr"),
-            Parameter::unnamed("ptr"),
-        ],
-    ));
-    module.declare(Signature::new(
-        "wf__context_join",
-        "void",
-        vec![Parameter::unnamed("ptr")],
-    ));
-    module
-}
-
 /// The group one starting activation keeps, named in its entry prelude.
-const GROUP: &str = "%wf.ctx.group";
+pub(super) const GROUP: &str = "%wf.ctx.group";
 
 /// Whether a function starts or joins contexts, and so keeps a group.
 pub(super) fn keeps_context_group(function: &IrFunction) -> bool {
@@ -72,11 +49,15 @@ pub(super) fn keeps_context_group(function: &IrFunction) -> bool {
     })
 }
 
-/// The entry-block lines that reserve and zero the group.
+/// The entry-block line that reserves the group.
 pub(super) fn context_group_prelude() -> String {
-    format!(
-        "  {GROUP} = alloca [2 x i64], align 8\n  store [2 x i64] zeroinitializer, ptr {GROUP}\n"
-    )
+    format!("  {GROUP} = alloca [2 x i64], align 8\n")
+}
+
+/// The group's zeroing, which the frame's making emits once the frame exists,
+/// so the zeroed words are the frame's own.
+pub(super) fn context_group_initialization() -> String {
+    format!("  store [2 x i64] zeroinitializer, ptr {GROUP}\n")
 }
 
 impl FunctionEmitter<'_, '_> {
@@ -92,6 +73,9 @@ impl FunctionEmitter<'_, '_> {
             .functions()
             .get(function as usize)
             .ok_or(BackendFailure::InvalidIr)?;
+        if !target.waits() {
+            return Err(BackendFailure::InvalidIr);
+        }
         let abi = FunctionAbi::build(self.program, target)?;
         if abi.parameters().len() != arguments.len() {
             return Err(BackendFailure::InvalidIr);
@@ -118,7 +102,7 @@ impl FunctionEmitter<'_, '_> {
             &mut frame_references.types,
         )?;
         let result_field = field_types.len();
-        field_types.push(result_type.clone());
+        field_types.push(result_type);
         let frame_type = format!("{{ {} }}", field_types.join(", "));
         // A wrapper is reached only through a start, never by a call inside a
         // budgeted component, so it has no budget-carrying variant.
@@ -130,7 +114,7 @@ impl FunctionEmitter<'_, '_> {
         let thunk = self
             .parallel
             .register_context(self.function.name(), |symbol| {
-                thunk_definition(
+                context_thunk(
                     symbol,
                     &ThunkFrame {
                         ty: &frame_type,
@@ -141,7 +125,6 @@ impl FunctionEmitter<'_, '_> {
                     },
                     &abi,
                     &callee,
-                    &result_type,
                 )
             })?;
         self.output.symbol(thunk.trim_start_matches('@'));
@@ -173,9 +156,48 @@ impl FunctionEmitter<'_, '_> {
 
     /// Waits for every context this activation started.
     pub(super) fn emit_context_join(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
-        self.output.symbol("wf__context_join");
-        writeln!(self.output, "  call void @wf__context_join(ptr {GROUP})")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_frame_join(result)?;
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
+}
+
+/// A started context's thunk: reads the call's arguments out of the block the
+/// start stored them in and makes the wrapper's frame, whose parent is the
+/// no-op coroutine, because a context's outermost frame transfers back to
+/// the driver. The wrapper's unit result lands in the block's last field.
+fn context_thunk(
+    symbol: &str,
+    frame: &ThunkFrame<'_>,
+    abi: &FunctionAbi,
+    callee: &str,
+) -> Result<Module, BackendFailure> {
+    let mut signature = Signature::new(
+        symbol.trim_start_matches('@'),
+        "ptr",
+        vec![Parameter::named("ptr", "%frame")],
+    );
+    signature.linkage = Linkage::Internal;
+    let mut body = FunctionBody::default();
+    body.references.extend(frame.references);
+    body.symbol(callee);
+    body.symbol("llvm.coro.noop");
+    body.open_block("entry".to_owned());
+    let mut rendered = thunk_arguments(&mut body, frame.ty, frame.field_types, abi);
+    rendered.insert(0, "ptr %parent".to_owned());
+    rendered.insert(0, "ptr %slot".to_owned());
+    write!(
+        body,
+        "  %slot = getelementptr inbounds {}, ptr %frame, i32 0, i32 {}\n  \
+         %parent = call ptr @llvm.coro.noop()\n  \
+         %handle = call ptr @{callee}({})\n  \
+         ret ptr %handle\n",
+        frame.ty,
+        frame.result,
+        rendered.join(", ")
+    )
+    .map_err(|_| BackendFailure::TextEmission)?;
+    let mut module = Module::default();
+    module.define(signature.define(body, "")?);
+    module.text("\n");
+    Ok(module)
 }

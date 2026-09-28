@@ -277,10 +277,12 @@ protocol, run twice.
 
 Memory is measured on the same program with idle connections: a client opens
 N connections, sends nothing, and the server's resident set and mapping count
-are read from `/proc` once every connection has been accepted, for N of 1,000
-and 10,000 and for the largest N each server holds up to 100,000, with the
-client spread across loopback addresses so the host's ephemeral ports do not
-bound N.
+are read from `/proc` once every connection has been accepted. The
+development host's descriptor limit is 20,000 and cannot be raised inside its
+container, which bounds N below both servers' ceilings, so N is 1,000, 5,000
+and 19,000, and the ceiling is judged by what produces it: the number of
+mappings each connection adds. Revised before any measurement, when the limit
+was found; the earlier text asked for N up to 100,000.
 
 ### What would distinguish the hypotheses, stated before measuring
 
@@ -291,10 +293,13 @@ bound N.
   and with 64 KiB messages (0.80 to 1.10), where the reference itself moved
   13 and 22 percent between runs. Below that, the cost is attributed before
   any later revision is built on it.
-- The frame removes the stackful ceiling if the frame server holds 100,000
-  idle connections where the stackful server stops near the mapping limit,
-  and its resident memory per idle connection, measured in the same run, is
-  below the stackful server's.
+- The frame removes the stackful ceiling if the frame server's mapping count
+  does not grow with N while the stackful server's grows by two per
+  connection, the growth that stops it near 32,000 connections under the
+  default mapping limit, and the frame server's resident memory per idle
+  connection, measured in the same run, is below the stackful server's.
+  Holding 100,000 connections is left to a host whose descriptor limit
+  allows it.
 - One connection is reported but not judged, as in Experiments 1 and 2.
 
 ## Design

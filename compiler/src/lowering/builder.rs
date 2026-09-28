@@ -513,6 +513,7 @@ fn lower_function<'program>(
     }
     let overlaps = builder.overlaps();
     let mut lowered = builder.finish(symbol.to_owned(), overlaps, None)?;
+    lowered.waits = function.waiting.waits;
     lowered.source_signature = Some(IrSourceSignature {
         parameters: function
             .parameters
@@ -809,6 +810,7 @@ impl<'program> IrBuilder<'program> {
             overlaps,
             counted_ranges: self.counted_ranges,
             synthesis,
+            waits: false,
         })
     }
 

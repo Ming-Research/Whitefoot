@@ -529,7 +529,7 @@ chain: $(BUILD)/chain $(BUILD)/gen
 # the pieces and hand it this repository's paths, so the container, this host
 # and the runner all execute the same bytes.
 #
-#   make net-tools    build the four C tools
+#   make net-tools    build the five C tools
 #   make uring-check  the io_uring reference's own deterministic traces
 #   make net-verify   every server against netload at 4 connections
 #   make linux-net    the protocol, here
@@ -540,7 +540,8 @@ NET_WARMUP ?= 1
 # connection [PAR-4]; the bundle's earlier echo program is kept as evidence.
 WF_ECHO_SOURCE := $(ROOT)/tests/programs/tcp_contexts.wf
 
-net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload $(BUILD)/waiting_echo
+net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload $(BUILD)/waiting_echo \
+	$(BUILD)/idleload
 
 $(BUILD)/uring_echo: uring_echo.c | prepare
 	$(CLANG) $(CFLAGS) -pthread $< -o $@
@@ -573,6 +574,9 @@ $(BUILD)/netload: netload.c | prepare
 
 $(BUILD)/waiting_echo: waiting_echo.c | prepare
 	$(CLANG) $(CFLAGS) -pthread $< -o $@
+
+$(BUILD)/idleload: idleload.c | prepare
+	$(CLANG) $(CFLAGS) $< -o $@
 
 $(BUILD)/wf_echo: $(WF_ECHO_SOURCE) $(WFC) Makefile | prepare
 	$(WFC) -o $@ $<

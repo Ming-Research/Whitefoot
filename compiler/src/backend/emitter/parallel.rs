@@ -1098,6 +1098,44 @@ pub(super) struct ThunkFrame<'site> {
     pub(super) references: &'site References,
 }
 
+/// A thunk's reads of its call's arguments out of the frame, in the callee's
+/// ABI: a pointer to the field for an argument passed indirectly, the pair's
+/// two words for a range reference, and the loaded value otherwise. A started
+/// context's thunk reads its frame the same way [PAR-4].
+pub(super) fn thunk_arguments(
+    body: &mut FunctionBody,
+    frame_type: &str,
+    field_types: &[String],
+    abi: &FunctionAbi,
+) -> Vec<String> {
+    let mut rendered = Vec::with_capacity(field_types.len().saturating_sub(1));
+    for (index, (field_type, parameter)) in field_types.iter().zip(abi.parameters()).enumerate() {
+        let _ = writeln!(
+            body,
+            "  %p{index} = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {index}"
+        );
+        if parameter.is_indirect() {
+            // The field still owns the complete argument payload. The callee
+            // snapshots this content into its own activation before mutation.
+            rendered.push(format!("ptr %p{index}"));
+        } else if parameter.is_range() {
+            // A range reference's pair crosses the call as its element
+            // pointer and count, the same split every call route passes.
+            let _ = writeln!(
+                body,
+                "  %a{index} = load {field_type}, ptr %p{index}\n  \
+                 %a{index}.data = extractvalue {field_type} %a{index}, 0\n  \
+                 %a{index}.len = extractvalue {field_type} %a{index}, 1"
+            );
+            rendered.push(format!("ptr %a{index}.data, i64 %a{index}.len"));
+        } else {
+            let _ = writeln!(body, "  %a{index} = load {field_type}, ptr %p{index}");
+            rendered.push(format!("{field_type} %a{index}"));
+        }
+    }
+    rendered
+}
+
 /// One outlined call over its frame.
 pub(super) fn thunk_definition(
     symbol: &str,
@@ -1123,31 +1161,7 @@ pub(super) fn thunk_definition(
     body.references.extend(references);
     body.symbol(callee);
     body.open_block("entry".to_owned());
-    let mut rendered = Vec::with_capacity(field_types.len() - 1);
-    for (index, (field_type, parameter)) in field_types.iter().zip(abi.parameters()).enumerate() {
-        let _ = writeln!(
-            body,
-            "  %p{index} = getelementptr inbounds {frame_type}, ptr %frame, i32 0, i32 {index}"
-        );
-        if parameter.is_indirect() {
-            // The field still owns the complete argument payload. The callee
-            // snapshots this content into its own activation before mutation.
-            rendered.push(format!("ptr %p{index}"));
-        } else if parameter.is_range() {
-            // A range reference's pair crosses the call as its element
-            // pointer and count, the same split every call route passes.
-            let _ = writeln!(
-                body,
-                "  %a{index} = load {field_type}, ptr %p{index}\n  \
-                 %a{index}.data = extractvalue {field_type} %a{index}, 0\n  \
-                 %a{index}.len = extractvalue {field_type} %a{index}, 1"
-            );
-            rendered.push(format!("ptr %a{index}.data, i64 %a{index}.len"));
-        } else {
-            let _ = writeln!(body, "  %a{index} = load {field_type}, ptr %p{index}");
-            rendered.push(format!("{field_type} %a{index}"));
-        }
-    }
+    let mut rendered = thunk_arguments(&mut body, frame_type, field_types, abi);
     // The budget the offering activation had left, where this callback lands
     // in a budget-carrying variant: an ordinary trailing argument, read out of
     // the frame like every other one.

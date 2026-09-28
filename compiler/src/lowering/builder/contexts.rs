@@ -93,6 +93,9 @@ impl IrBuilder<'_> {
         let (ordinal, name) = self.synthesis.borrow_mut().reserve(self.function_name)?;
         let mut function = wrapper.finish(context_symbol(&name), Vec::new(), None)?;
         function.name = context_symbol(&name);
+        // The wrapper makes the waiting call, so it is a waiting function
+        // itself [WAIT-1] and lowers to a resumable frame like its callee.
+        function.waits = true;
         self.synthesis.borrow_mut().file(ordinal, function)?;
 
         self.define(

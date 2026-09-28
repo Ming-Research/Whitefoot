@@ -1121,19 +1121,12 @@ rarely insert at the same place.
   many-context measurement on the helper or no-ring route attributes time to
   either pass.
 
-- **A context's stack reservation is fixed.** A started context gets 64 MiB of
-  reserved stack with a guard page, and the root keeps the entry's 1 GiB; the
-  stack ledger reports neither for contexts, and `WF_STACKS` is still not
-  read. A program whose started call recurses deeper than the reservation
-  ends in the stack record. Reopen when a program needs a larger context stack
-  or the ledger is asked to bound one.
-
-- **Windows contexts are fibers that no local run has exercised.** The
-  Windows floor implements the context contract with `CreateFiberEx` and
-  `SwitchToFiber`, arming the emergency stack guarantee on each fiber. The
-  Windows host job (`io-hosts.yml`) compiles it, but no test starts a context
-  on Windows. Add a context program to that job's runs; until then treat a
-  Windows context server as unvalidated.
+- **Windows contexts have not been run.** Waiting functions lower to
+  resumable frames on every target and the context driver is shared C, but
+  the Windows host job (`io-hosts.yml`) compiles it without starting a
+  context, so neither the completion port route nor the readiness route has
+  run a context there. Add a context program to that job's runs; until then
+  treat a Windows context server as unvalidated.
 
 - **The compiled context server trails the hand-written shape by 12 percent
   at 64 connections.** At one driver thread each, `tcp_contexts.wf` holds

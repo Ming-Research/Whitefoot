@@ -30,22 +30,28 @@ fn payload() -> Vec<u8> {
 fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
     let llvm = compile_program("stdin_echo.wf");
     // The source calls ordinary PRE-2 signatures. Native submission and join
-    // belong to their linked bodies and cannot select a compiler call path.
+    // belong to their linked bodies and cannot select a compiler call path. A
+    // waiting host function is linked as its start and its finish, which the
+    // calling frame suspends between (design/amendments/compiler-waiting-contexts.md).
     for (caller, callee) in [("main", "read_next"), ("publish_all", "write_once")] {
         let body = emitted_function(&llvm, caller);
-        assert_eq!(
-            body.matches(&format!("call void @wf_std.io.{callee}("))
-                .count(),
-            1
-        );
-        assert_eq!(
-            llvm.lines()
-                .filter(|line| line.starts_with(&format!("declare void @wf_std.io.{callee}(")))
-                .count(),
-            1
-        );
+        for (result, half) in [("i1", "start"), ("void", "finish")] {
+            assert_eq!(
+                body.matches(&format!("call {result} @wf_std.io.{callee}.{half}("))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                llvm.lines()
+                    .filter(|line| line
+                        .starts_with(&format!("declare {result} @wf_std.io.{callee}.{half}(")))
+                    .count(),
+                1
+            );
+        }
+        assert!(!llvm.contains(&format!("@wf_std.io.{callee}(")));
     }
-    assert!(!llvm.contains("call void @wf_std.fs.read_at("));
+    assert!(!llvm.contains("@wf_std.fs.read_at"));
     assert!(!llvm.contains("@wf__completion_"));
     // Build initialization supplies one ordinary Inputs owner, then receives
     // the ordinary opaque ExitStatus through its result destination. The
@@ -54,7 +60,10 @@ fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
     // argument beside the inputs.
     let entry = emitted_function(&llvm, "_main_body");
     assert!(entry.contains("call i32 @wf__ordinary_inputs(ptr %inputs, i32 %argc, ptr %argv)"));
-    assert!(entry.contains("call void @\"wf_main\"(ptr %status, ptr %inputs)"));
+    // The entry waits, so the launcher makes its frame in the root context,
+    // with the no-op coroutine as its parent, and runs the root context.
+    assert!(entry.contains("call ptr @\"wf_main\"(ptr %status, ptr %wf.parent, ptr %inputs)"));
+    assert!(entry.contains("call void @wf__context_root_run(ptr %wf.root)"));
     assert!(!entry.contains("@open"));
 }
 

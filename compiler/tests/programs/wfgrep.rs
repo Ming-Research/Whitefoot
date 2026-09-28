@@ -636,8 +636,9 @@ fn the_search_uses_ordinary_file_and_directory_calls() {
         "open_directory",
         "read_at",
     ] {
+        // A waiting host function is linked as its start and its finish.
         assert!(
-            llvm.contains(&format!("call void @wf_std.fs.{name}(")),
+            llvm.contains(&format!("call i1 @wf_std.fs.{name}.start(")),
             "the search must call the ordinary {name} declaration"
         );
     }

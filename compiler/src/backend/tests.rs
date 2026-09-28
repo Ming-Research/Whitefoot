@@ -26,6 +26,7 @@ mod enumeration_records;
 mod exhaustion;
 mod float_conversion;
 mod floating;
+mod frames;
 mod generics;
 mod heap_programs;
 mod integer_absolute;

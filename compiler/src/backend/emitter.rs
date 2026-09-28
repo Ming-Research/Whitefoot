@@ -13,6 +13,7 @@ mod contexts;
 mod conversion;
 mod floating;
 mod floor;
+mod frames;
 mod frontier;
 mod integer;
 mod operations;
@@ -481,10 +482,14 @@ pub(super) fn emit_llvm_with_window_address_facts(
             parameters.into_iter().map(Parameter::unnamed).collect(),
         ));
     }
-    // [PAR-4] a module that starts no context names no context symbol.
+    // [WAIT-1] a module with no waiting definition names no frame symbol.
+    if frames::program_has_frames(program) {
+        text.text("\n");
+        text.append(frames::frame_runtime_declarations());
+    }
+    // [PAR-4] a module that starts no context names no context thunk.
     if thunks.starts_contexts() {
         text.text("\n");
-        text.append(contexts::context_runtime_declarations());
         text.append(thunks.take_context_definitions());
     }
     // Emitted only where a permitted overlap group is actually handed out, so
@@ -928,6 +933,9 @@ enum FunctionSlot {
     /// The slot a register-returned definition's public entry gives its
     /// body to construct the result in.
     Result,
+    /// The slot a waiting call constructs a result that has no planned
+    /// storage in, read back once the callee has transferred back [WAIT-1].
+    WaitingResult(IrValueId),
 }
 
 /// Where a body constructs its stored result: its destination parameter,
@@ -1019,6 +1027,25 @@ impl FunctionFramePlan {
                         let storage = TargetStorageType::source(referent.ty());
                         let key = FunctionSlot::Address(*result);
                         push_function_slot(&mut specifications, &mut ordered, key, storage, None)?;
+                    }
+                    IrOperation::Call {
+                        function: callee, ..
+                    } if storage.slot(*result).is_none()
+                        && program
+                            .functions()
+                            .get(*callee as usize)
+                            .is_some_and(IrFunction::waits) =>
+                    {
+                        let IrInstruction::Define { ty, .. } = instruction else {
+                            continue;
+                        };
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            FunctionSlot::WaitingResult(*result),
+                            TargetStorageType::source(*ty),
+                            None,
+                        )?;
                     }
                     _ => {}
                 }
@@ -1394,6 +1421,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrType::Range { .. } => (crate::IrSourceMode::Range, None),
             _ => return Ok(String::new()),
         };
+        // A waiting function's ramp keeps every reference it is handed in its
+        // frame and uses it after it returns, and a waiting host operation's
+        // start leaves the reference with the host until its finish, so
+        // neither is `nocapture`. A caller that saw one would keep its
+        // referent only until the ramp or start returned, where the frame
+        // needs it until the callee finishes (`frames`); the other facts
+        // describe the ramp alone, so none is stated.
+        if self.function.waits() {
+            return Ok(String::new());
+        }
         // A synthesized function has no source signature, and a fact whose
         // derivation is missing is simply not emitted.
         if self
@@ -1536,8 +1573,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // destination-form body under an internal symbol, followed by the
         // public entry that returns the value.
         let public = FunctionAbi::build(self.program, self.function)?;
-        let entry = !declaration && matches!(public.result(), ResultAbi::StoredValue(_));
-        let abi = if entry { public.body() } else { public.clone() };
+        // A waiting function is a resumable frame [WAIT-1]: its result is
+        // always constructed through a destination and it has no public
+        // entry (`frames`). A budgeted variant has no frame form.
+        let waiting = self.function.waits();
+        if waiting && self.grain.is_some() {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let entry =
+            !waiting && !declaration && matches!(public.result(), ResultAbi::StoredValue(_));
+        let abi = if waiting {
+            public.waiting()
+        } else if entry {
+            public.body()
+        } else {
+            public.clone()
+        };
         let symbol = match (self.sequential_clones, self.grain) {
             (Some(_), _) => sequential_clone_symbol(self.function.name()),
             (None, Some(_)) => recursion_budget_symbol(self.function.name()),
@@ -1554,15 +1605,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             llvm_type_with_references(self.program, abi.result().ty(), &mut references.types)?
         };
-        if abi.result().uses_destination() {
+        if abi.result().uses_destination() && !(waiting && !declaration) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
-        let mut signature = Signature::new(body_symbol.clone(), result, parameters);
+        let mut module = Module::default();
+        if waiting && declaration {
+            // A waiting host function is linked as its `.start` and `.finish`.
+            module.append(frames::host_declarations(&body_symbol, &parameters));
+            module.text("\n");
+            return Ok(module);
+        }
+        let mut signature = if waiting {
+            frames::waiting_signature(body_symbol.clone(), parameters)
+        } else {
+            Signature::new(body_symbol.clone(), result, parameters)
+        };
         signature.references = references;
         if entry {
             signature.linkage = Linkage::Internal;
         }
-        let mut module = Module::default();
         if declaration {
             // Linked declarations retain their parameter names in whole-module
             // output; cross-fragment declarations are name-free.
@@ -1597,6 +1658,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .push(Parameter::named("i64", "%wf.budget"));
         }
         self.emit_grain_entry(&public)?;
+        if waiting {
+            self.emit_frame_entry()?;
+        }
         for (index, block) in self.function.blocks().iter().enumerate() {
             if !reachable[index] {
                 continue;
@@ -1630,12 +1694,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         )?;
                     }
                 }
+                if waiting {
+                    self.emit_frame_start()?;
+                }
             }
             for (instruction_index, instruction) in block.instructions().iter().enumerate() {
                 self.emit_instruction(block_id, instruction_index, instruction)?;
             }
             self.emit_terminator(block_id, block.terminator())?;
             self.output.finish_ir_block(block_id)?;
+        }
+        if waiting {
+            self.emit_frame_exit()?;
         }
         if entry {
             let public_entry = self.public_entry(&symbol, &body_symbol, &public, &abi)?;
@@ -2228,6 +2298,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_place_edge(*target, arguments, drops)?;
                 writeln!(self.output, "  br label %{}", block_label(*target))
                     .map_err(|_| BackendFailure::TextEmission)
+            }
+            IrTerminator::Return { value, drops } if self.function.waits() => {
+                let abi = frames::waiting_abi(self.program, self.function)?;
+                if self.value_type(*value) != Some(abi.result().ty()) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                self.store_value_at(*value, RESULT_POINTER)?;
+                self.emit_drops(drops)?;
+                self.emit_frame_return()
             }
             IrTerminator::Return { value, drops } => {
                 // A register-returned result's body constructs it through
