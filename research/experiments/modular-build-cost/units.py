@@ -136,12 +136,25 @@ def instrument(tree):
     source += '''
 // Temporary experiment-only observation; never an acceptance input.
 pub(crate) struct ExperimentStage(&'static str, std::time::Instant);
+std::thread_local! {
+    static EXPERIMENT_STAGES: std::cell::RefCell<std::collections::BTreeMap<&'static str, u128>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
 impl ExperimentStage {
     pub(crate) fn new(name: &'static str) -> Self { Self(name, std::time::Instant::now()) }
 }
 impl Drop for ExperimentStage {
     fn drop(&mut self) {
-        eprintln!("WF-STAGE {} {}", self.0, self.1.elapsed().as_nanos());
+        let elapsed = self.1.elapsed().as_nanos();
+        EXPERIMENT_STAGES.with(|stages| {
+            let mut stages = stages.borrow_mut();
+            *stages.entry(self.0).or_default() += elapsed;
+            if self.0 == "emission" {
+                for (name, elapsed) in std::mem::take(&mut *stages) {
+                    eprintln!("WF-STAGE {name} {elapsed}");
+                }
+            }
+        });
     }
 }
 '''
@@ -171,6 +184,53 @@ impl Drop for ExperimentStage {
                 raise ValueError(f"product stage boundary is not unique: {marker}")
             begin = source.index("{", source.index(marker)) + 1
             source = source[:begin] + f'\n        let _stage = crate::driver::ExperimentStage::new("{stage}");' + source[begin:]
+        path.write_text(source)
+
+    path = tree / "compiler/src/semantic/check/products.rs"
+    if path.exists():
+        source = path.read_text()
+        for old, new in [
+            (
+                "        let entries = Vec::<RetainedIdentity>::read(&mut reader)?;",
+                '        let _record = crate::driver::ExperimentStage::new("body_record_decode");\n        let entries = Vec::<RetainedIdentity>::read(&mut reader)?;',
+            ),
+            (
+                "        let mapping = self.map_retained_identities(&entries, identities)?;",
+                '        drop(_record);\n        let _mapping = crate::driver::ExperimentStage::new("body_identity_mapping");\n        let mapping = self.map_retained_identities(&entries, identities)?;\n        drop(_mapping);',
+            ),
+            (
+                "        let mut staged_types = self.types.clone();",
+                '        let _staging = crate::driver::ExperimentStage::new("body_staging_clone");\n        let mut staged_types = self.types.clone();',
+            ),
+            (
+                "        let staged_identities = identities.staged();",
+                "        let staged_identities = identities.staged();\n        drop(_staging);",
+            ),
+            (
+                "            let current = (entry.old.0, *mapping.get(&entry.old)?);",
+                '''            let current = (entry.old.0, *mapping.get(&entry.old)?);
+            let _kind = crate::driver::ExperimentStage::new(match current.0 {
+                IdentityKind::Function => "body_function_inputs",
+                IdentityKind::Nominal => "body_nominal_inputs",
+                IdentityKind::FunctionReference => "body_reference_inputs",
+                _ => "body_other_inputs",
+            });''',
+            ),
+            (
+                "            return Some(imported.body);\n        }\n        *self.types = prior;",
+                '            let _retirement = crate::driver::ExperimentStage::new("body_prior_retirement");\n            drop(prior);\n            drop(_retirement);\n            return Some(imported.body);\n        }\n        *self.types = prior;',
+            ),
+        ]:
+            if source.count(old) != 1:
+                raise ValueError(f"body import boundary is not unique: {old}")
+            source = source.replace(old, new)
+        marker = "fn decode_body_product("
+        begin = source.index("{", source.index(marker)) + 1
+        source = source[:begin] + '\n        let _inputs = crate::driver::ExperimentStage::new("body_input_validation");' + source[begin:]
+        old = "        let sources = &identities.sources;\n        let origin ="
+        if source.count(old) != 1:
+            raise ValueError("body payload boundary is not unique")
+        source = source.replace(old, '        drop(_inputs);\n        let _payload = crate::driver::ExperimentStage::new("body_payload_import");\n' + old)
         path.write_text(source)
 
     path = tree / "compiler/src/driver/cache.rs"

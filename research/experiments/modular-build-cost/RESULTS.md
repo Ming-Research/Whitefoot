@@ -231,7 +231,11 @@ reject executables containing the stage probe; only `--stages` admits them.
 The probe also reports dependency discovery, source-identity setup, body
 container setup, cache addressing, file reads and record validation, so a
 source-input or lowering-stage difference alone cannot be mistaken for its
-cause.
+cause. Timers accumulate by label and flush when the emission timer ends, so
+per-identity instrumentation does not write to stderr inside the measured loop.
+The retained-body probe separates decoding, identity mapping, input validation,
+staging clone/retirement and payload import; its callable/nominal input buckets
+are subsets of validation, not additional work.
 
 A first profiling setup shared one Cargo target directory between exported
 trees. Cargo reused its preceding binary; the two executable hashes exposed
@@ -427,6 +431,129 @@ callable-input reuse. The 97 driver/cache tests passed. Three alternating
 native pairs completed 48 samples with matching outputs and unchanged library
 work; GrowVector measured 198.4 versus 202.0 ms, and HashMap 337.4 versus
 339.3 ms. This did not support a build-time gain, so both memos were removed.
+
+### Remaining import attribution
+
+Six entry-edit observations per container using one instrumented runtime-hash
+candidate give these medians in milliseconds. This version accumulates timers
+before emitting observations; the earlier per-call logging probes have a
+different observer cost and are not a timing comparison with this table.
+
+| Stage | GrowVector | HashMap |
+|---|---:|---:|
+| Complete body import | 10.98 | 36.28 |
+| Record decoding | 0.37 | 1.61 |
+| Identity mapping | 2.07 | 8.36 |
+| Current-input validation | 3.60 | 13.34 |
+| Callable inputs, inside validation | 2.87 | 9.34 |
+| Nominal inputs, inside validation | 0.27 | 1.62 |
+| Staging clone | 1.25 | 3.08 |
+| Retiring previous metadata | 0.73 | 2.07 |
+| Typed payload import | 1.81 | 5.00 |
+
+The observations do not justify replacing the staging ownership model for this
+cost target. They select a smaller identity-lookup trial, preserving the
+ordered discovery/serialization structures and complete input checks.
+
+The runtime digest regression also passed a native test-control exercise using
+its unchanged test body and digest wrapper. Returning an incorrect digest for
+the short published vector, million-byte vector, a padding-boundary input or
+the actual specification made each corresponding assertion fail (exit 101);
+the original implementation passed (exit 0).
+
+The identity-lookup trial passed 97 driver/cache tests and all 48 native
+causal-comparison samples, including independent process seeds and unchanged
+library-work assertions. GrowVector measured 195.9 versus 197.9 ms and
+HashMap 345.3 versus 344.3 ms. That is not evidence of a useful gain; the
+lookup-map changes were removed. The final candidate retains only the runtime
+hashing optimization from these cost trials.
+
+### Final current-main qualification
+
+The final candidate is `52d584d37146ed47bd80011cbe7f10b01eb0a596`, built
+with Cargo's `gate` profile. The matched baseline is main
+`c84c4dd7ab46848f6a5b816fcf57fce32b98158e` plus only the candidate's
+`Cargo.toml`/`Cargo.lock` dependency changes and the runtime `digest` wrapper
+in `driver/cache.rs`. It has no module-product changes. This control separates
+module-product overhead from a general hashing improvement that main can also
+use. Its executable and the candidate match the hashes recorded in the runtime
+SHA-256 trial above. A second control uses the unchanged main executable
+identified at the start of this audit, measuring the complete PR's effect.
+
+Conditions: macOS 26.6.2 AArch64, Rust 1.98.1 (LLVM 22.1.8), Apple clang
+21.0.0 (`clang-2100.3.34.2`), Python 3.14.7. All binaries are uninstrumented.
+Seven alternating pairs ran all seven workloads against matched main, then a
+same-candidate-path null comparison; both ran in native and compiler-only
+modes. The unchanged-main comparison ran both containers in both modes.
+Together these completed 1,792 compiler samples (896 native builds and 896
+compiler-only invocations). Every paired LLVM and native-result observation
+matched; every candidate entry-edit library-work assertion passed. Builds of
+compiler executables were outside invocation timing.
+
+The following native medians are matched-main / candidate milliseconds, with
+the candidate's relative difference. They include native construction and
+linking; they do not measure generated-program execution time.
+
+| Workload | Cold | Unchanged warm | Second entry | Entry edit |
+|---|---:|---:|---:|---:|
+| queue | 856.2 / 849.5 (-0.8%) | 90.7 / 89.4 (-1.4%) | 173.3 / 168.6 (-2.7%) | 129.8 / 134.4 (+3.5%) |
+| sha256 | 838.1 / 846.7 (+1.0%) | 87.8 / 88.2 (+0.4%) | 141.5 / 146.5 (+3.5%) | 123.3 / 127.3 (+3.3%) |
+| grow-vector | 1146.7 / 1169.2 (+2.0%) | 88.9 / 87.7 (-1.2%) | 294.2 / 308.2 (+4.8%) | 185.3 / 193.8 (+4.6%) |
+| wfgrep | 2095.8 / 2065.8 (-1.4%) | 89.7 / 89.3 (-0.4%) | 397.1 / 397.8 (+0.2%) | 211.7 / 206.2 (-2.6%) |
+| hash-map | 1595.0 / 1675.6 (+5.1%) | 86.6 / 87.5 (+1.1%) | 571.2 / 616.7 (+8.0%) | 299.1 / 343.2 (+14.7%) |
+| chain-8 | 965.6 / 977.7 (+1.3%) | 85.9 / 86.7 (+0.9%) | 145.9 / 159.5 (+9.3%) | 157.7 / 162.7 (+3.1%) |
+| chain-32 | 2322.6 / 2100.2 (-9.6%) | 81.7 / 82.7 (+1.2%) | 267.1 / 303.4 (+13.6%) | 339.3 / 348.0 (+2.6%) |
+
+Entry-edit compiler-only time and peak RSS separate the compiler from native
+child tools. Cache size comes from the native sequence after the edit; all
+pairs below are matched-main / candidate. MiB means 1,048,576 bytes.
+
+| Workload | Compiler-only ms | Compiler peak RSS MiB | Native cache MiB |
+|---|---:|---:|---:|
+| queue | 53.0 / 55.6 (+5.0%) | 21.41 / 23.50 | 0.62 / 0.93 |
+| sha256 | 45.6 / 48.1 (+5.4%) | 20.83 / 22.84 | 0.51 / 0.71 |
+| grow-vector | 103.6 / 116.3 (+12.2%) | 29.44 / 35.33 | 2.40 / 4.79 |
+| wfgrep | 129.6 / 127.1 (-1.9%) | 34.33 / 38.25 | 3.54 / 5.61 |
+| hash-map | 221.3 / 258.1 (+16.6%) | 48.33 / 62.48 | 6.20 / 15.96 |
+| chain-8 | 78.4 / 83.6 (+6.6%) | 25.09 / 28.14 | 0.90 / 1.60 |
+| chain-32 | 258.3 / 269.8 (+4.4%) | 39.81 / 48.27 | 3.22 / 6.03 |
+
+The null comparison's entry-edit differences range from -3.8% to +0.6% for
+native builds and -0.5% to +1.4% for compiler-only invocations. Across all
+steps its largest absolute differences are 5.1% native and 3.6% compiler-only.
+These observed differences describe this run's variability, not a statistical
+confidence bound. GrowVector's native +4.6% is near the owner's approximate
+5% target, but the compiler alone remains +12.2%; HashMap's +14.7% native
+and +16.6% compiler-only loss remains material. Second-entry cost also grows
+for both dependency chains. These losses must not be averaged away against
+chain-32's faster cold construction.
+
+The actual unchanged-main comparison answers the different, user-visible
+question of whether this PR currently slows an edit build:
+
+| Workload | Native entry-edit ms | Compiler-only entry-edit ms |
+|---|---:|---:|
+| grow-vector | 227.5 / 193.8 (-14.8%) | 157.1 / 117.1 (-25.5%) |
+| hash-map | 363.4 / 336.3 (-7.5%) | 291.3 / 260.2 (-10.7%) |
+
+The complete PR is faster than unchanged main on these two workloads, but
+the matched control shows that the general hashing gain does not establish
+the module-import amendment's condition that importing costs less than the
+work saved. Keep that design finding open for the owner; do not infer approval
+or revise its condition from the overall speedup.
+
+Cold compiler-only wfgrep peak RSS is 364.61 / 377.62 MiB. Most of that
+memory already exists in the baseline; this experiment does not attribute it
+or establish a new memory defect. The maintained TODO records profiling it
+when larger consumers or concurrent compilation make that footprint limiting.
+
+Reproduce the matched and null sequences with the qualification command above,
+`--rounds 7 --require-reuse`, and repeat with `--compiler-only` instead of
+`--require-reuse`. For the unchanged-main pair add
+`--workloads grow-vector hash-map`. Run them serially under the
+shared verification guard. The raw local observations are named
+`final-{matched,null,actual-main}-{native,compiler}.jsonl`; the protocol and
+compiler/source hashes, rather than those temporary paths, identify the runs.
 
 ## Limits
 

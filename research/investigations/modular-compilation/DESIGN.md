@@ -1649,6 +1649,42 @@ mapping, complete-input validation and typed payload import. Select any further
 change from that observed cost, retain the same cache guards, and compare it
 against the saved runtime-hash-only candidate before final qualification.
 
+Aggregated stage observations put HashMap identity mapping at 8.4 ms, callable
+input construction at 9.3 ms, and staging clone/retirement at 5.2 ms. The last
+number does not justify changing the checker's ownership model to solve this
+loss. The next trial compared hash lookup tables for private identity rebinding
+with the existing ordered maps. It preserved the ordered vectors and sets that
+select discovery, serialization and diagnostic order; only point-lookup
+catalogues and the reader's old-to-current identity map changed. Their iteration
+had no ordering consumer: the reader map was only searched or queried for
+membership. This kept the same product owner, identities, private format and
+equality guards. The criterion required identical LLVM across fresh processes
+with independently seeded maps and the existing cached/fresh and library-work
+controls, with native pairs beating the saved runtime-hash-only candidate.
+
+The lookup trial passed the 97 driver/cache tests and all native output and
+library-work controls, but did not show a meaningful consumer gain: GrowVector
+was 1.0% slower and HashMap 0.3% faster in three alternating pairs. The maps
+were restored. Final qualification therefore measures the runtime-hash change,
+with the matched main control to expose module-product overhead and the
+unchanged main compiler to report the PR's actual effect on the two container
+workloads. Keep those two questions distinct in the owner handoff.
+
+The [final seven-pair qualification](../../experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+preserves paired LLVM/native results and entry-edit library reuse across all
+seven workloads. Against equally optimized main, GrowVector's native edit
+build is 4.6% slower and HashMap's is 14.7% slower; compiler-only costs are
+12.2% and 16.6% higher. HashMap's compiler peak memory rises from 48.33 to
+62.48 MiB and its native cache from 6.20 to 15.96 MiB. The complete PR is
+faster than unchanged main on both containers, but the general hashing gain
+does not discharge the import amendment's cost condition. The small local
+trials above did not remove that remaining loss. Keep the amendment pending
+and present the cost finding for the owner's direction; avoid replacing its
+criterion with a count of avoided walks or with the unrelated hashing gain.
+Any further representation trial must identify the import work it removes,
+preserve complete current-input validation and rollback, and use the matched
+main comparison and independent output/work controls again.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

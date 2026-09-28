@@ -411,6 +411,18 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **Attribute cold wfgrep compiler memory before changing its representation.**
+  The [module-product qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  observes compiler-only peak RSS of 364.61 MiB on matched main and 377.62 MiB
+  on the candidate. Most of this footprint predates retained module products;
+  its allocation sources and reducible share are unverified. Profile live
+  allocations by checking phase, then require a same-source reduction with
+  unchanged verdicts and LLVM before selecting a representation change.
+  Defer from entry-edit latency work because these are cold-build observations
+  without causal attribution. Reopen when larger inputs or concurrent
+  compilation make the footprint limiting; remove after attribution and an
+  implemented or explicitly declined response.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -1354,12 +1366,19 @@ rarely insert at the same place.
   edit-build measurements show the composition's rerun to limit a current
   experiment or a consumer needs them. The retained-product candidate imports
   unchanged library structural bodies and lowerings after entry edits while
-  retaining current composition judgments. Its recorded qualification remains
-  slower than the baseline, so the pending import amendment's cost condition
-  is unresolved. Audit current-main correctness and attribute the extra work,
-  then target approximately 5% entry-edit overhead for HashMap and GrowVector
-  without losing library reuse or input validation; compare the same sources,
-  paired timings and compiler memory before selecting the representation.
+  retaining current composition judgments. The current-main audit found no
+  demonstrated correctness defect within scope and selected faster runtime
+  hashing. The [final qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  makes the complete PR faster than unchanged main, but against main with the
+  same hashing optimization its entry-edit native cost is +4.6% for GrowVector
+  and +14.7% for HashMap, with greater compiler memory and cache size. Thus the
+  import amendment's cost condition remains unresolved. The compact-name,
+  invocation-memo and identity-lookup trials gave no useful gain and were
+  removed. Reassess the remaining import representation with the owner before
+  selecting broader changes, targeting approximately 5% overhead without
+  losing library reuse or current-input validation. Compare same-source paired
+  timings, compiler-only cost and memory with equally optimized main; do not
+  count the general hashing benefit as a module-product gain.
   Finer invalidation within an edited module remains deferred; a cold build without
   a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
