@@ -646,9 +646,12 @@ delivery that keeps the proof and check-time cost within the recorded bounds
 is a compiler choice awaiting the owner's ruling in
 `design/amendments/checker-facts-delivery-roots.md`, and the real-program
 proof-size guard's ceilings rise with that attribution. Shape 4 lands together
-with PR #169; its two approved revisions remain in
-`design/amendments/automatic-facts-option-route.md` and
-`design/amendments/requires-entry-contract-some-route.md` until then.
+with PR #169's implementation, which applies its two approved revisions
+(the `Some` route on `language/checks-and-proofs/automatic-facts` and
+`language/checks-and-proofs/requires-entry-contract`, as this branch's
+history at `d06683c4f` holds them) to the tree with the specification text;
+they are not pending amendments here, so they do not block this change's
+design readiness.
 `docs/todo.md` records the `Some` route with its validation criteria and the
 two diagnostics without a repair.
 
