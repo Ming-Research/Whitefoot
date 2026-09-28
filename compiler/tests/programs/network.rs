@@ -4,9 +4,10 @@
 //! These private choices preserve bytes and outcomes. C2 removed PAR-3, so
 //! the previous reverse-peer scheduling assertion and staged-lane shape
 //! assertion are retired; the source fanout loop now serves peers in order.
-//! Windows selects the existing hosted echo/refusal scope. The remaining
-//! POSIX scenarios keep their existing collection; porting a harness does not
-//! silently add another host matrix for every historical case.
+//! Windows selects the existing hosted echo/refusal scope and the context
+//! cases. The remaining POSIX scenarios keep their existing collection;
+//! porting a harness does not silently add another host matrix for every
+//! historical case.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -70,7 +71,6 @@ fn bounded_stream(stream: TcpStream) -> TcpStream {
     stream
 }
 
-#[cfg(unix)]
 fn accept_when_ready(listener: &TcpListener) -> TcpStream {
     listener
         .set_nonblocking(true)
@@ -413,7 +413,10 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// There are more peers than the helper pool has threads, so a runtime that
 /// sent those waits to blocking helpers would hold only as many silent peers
 /// as it has helpers and fail here too (`WAITS.md`, the readiness route).
-#[cfg(unix)]
+/// Windows has no readiness wait, so there a context's socket wait without
+/// the completion port is exactly such a helper wait, and only the port's
+/// route runs (`docs/todo.md`, "Only Linux with a ring runs several
+/// drivers").
 #[test]
 fn every_connection_is_served_in_its_own_context_on_both_routes() {
     const PEERS: u8 = 12;
@@ -423,7 +426,12 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
         "the accept loop starts contexts"
     );
     let program = build_program(&llvm);
-    for native_ring in [true, false] {
+    let routes: &[bool] = if cfg!(windows) {
+        &[true]
+    } else {
+        &[true, false]
+    };
+    for &native_ring in routes {
         let port = free_port();
         let text = port.to_string();
         let count = PEERS.to_string();
@@ -519,7 +527,6 @@ fn contexts_on_four_drivers_serve_every_peer_and_finish_before_the_entry() {
 /// answers only once the second has received its request, which a program
 /// that waited for the first fetch's byte before sending the second request
 /// never sends. Each result is joined where it is first used, the sum.
-#[cfg(unix)]
 #[test]
 fn two_bound_fetches_proceed_together_on_both_routes() {
     let llvm = compile_program("tcp_gather.wf");
