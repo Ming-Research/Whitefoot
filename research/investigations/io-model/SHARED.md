@@ -345,6 +345,74 @@ each measured twice:
 A criterion that fails is attributed with a profile of the subset before any
 conclusion is drawn from it.
 
+### The first run
+
+`redis-bench.sh` at `c40b738f5`, requests per second, two passes:
+
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 105,219 / 105,164 | 105,230 / 124,938 | 665,779 / 665,779 | 666,223 / 666,223 |
+| subset, 2 drivers | 142,796 / 166,611 | 142,694 / 148,104 | 443,656 / 443,656 | 332,668 / 307,409 |
+| subset, 1 driver | 99,980 / 108,085 | 102,533 / 102,543 | 665,779 / 665,779 | 499,750 / 443,656 |
+
+(`redis-benchmark` computes a rate from whole milliseconds, so one million
+requests in 1,502 ms prints 665,779 for any line that takes that long.)
+
+- **Correct: met.** Every line passed the correctness pass: 100,000
+  increments from 50 clients read back 100,000, and `SET`, `GET`, `INCR` and
+  `DEL` answered as Redis does.
+- **The object does not serialize the server: met.** Without pipelining the
+  subset on two drivers reached 1.36 and 1.58 times the reference for `SET`
+  and 1.36 and 1.19 times for `GET`.
+- **The drivers are used: met.** Without pipelining two drivers reached 1.43
+  and 1.54 times one driver for `SET` and 1.39 and 1.44 times for `GET`.
+- **A command costs no more than twice the reference's: not met for `GET`.**
+  With 16 per pipeline two drivers reached 0.67 of the reference for `SET`
+  but 0.50 and 0.46 for `GET`. One driver did better than two: it matched
+  the reference for `SET` and reached 0.75 and 0.67 for `GET`.
+
+### Attribution
+
+No profiler is installed on this host, so the attribution is by two
+comparisons, each run on the same pinning.
+
+**Two drivers lose to one because of the object.** With 16 per pipeline,
+`PING`, which takes no atomic statement, ran at the client's ceiling of about
+two million requests per second on one driver and on two, while `SET` fell
+from 799,361 and 726,744 on one driver to 469,704 and 469,814 on two. A build
+of the same subset whose runtime counts acquires (not kept) found that on one
+driver no acquire parks, as the design says, and on two drivers 786,734 of a
+million `SET` acquires parked without pipelining and 964,457 with 16 per
+pipeline. The first-come queue hands the object straight to the context at
+its head, which is parked: the object is then held by a context no driver is
+running until one resumes it, and every statement that arrives meanwhile
+parks behind it. A block cannot wait, so a holder is always running and holds
+the object for the block's compute alone; parking is the wrong answer to a
+held object whose holder will finish in a fraction of a microsecond. This is
+the lock convoy the queue's fairness produces, a property of the runtime and
+not of the statement.
+
+**`GET` costs more than `SET` because of the program.** `run_get` copies a
+value into the reply by walking all 1,024 positions of its buffer, whatever
+the value's length, where `SET` copies the value's own 16 bytes.
+
+### The acquire without a convoy, stated before measuring
+
+The runtime is changed so that a statement that finds its object held spins
+for a bounded time before it parks, and an unlock wakes the first parked
+statement to try again instead of handing it the object; a woken statement
+that loses again keeps its place at the queue's head. The emitted acquire
+therefore retries after it resumes. The program is changed so that `GET`
+copies only the value's own bytes. Each change is judged on its own, against
+the first run's build with only that change undone:
+
+- **The convoy is gone** if, with 16 per pipeline, two drivers reach at
+  least one driver's `SET` rate and fewer than one in ten of their acquires
+  park.
+- **The copy was the `GET` gap** if, with 16 per pipeline on one driver,
+  `GET` reaches at least 0.9 of `SET`.
+
+
 ## Remaining questions
 
 1. Spelling: `atomic s = &h { }`. This reuses `&` in a position where `h` is
