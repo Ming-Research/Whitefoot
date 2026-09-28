@@ -1113,3 +1113,164 @@ cohort median-ratio spread at most 10%; overlap remains inconclusive. Selection
 requires a qualified useful-cell gain and no strict qualified useful-cell loss.
 The separate [standard-peer target](../ECOSYSTEM.md#optimization-criterion)
 still applies per cell; a cleanup gain alone does not complete that target.
+
+#### Native and correctness screen
+
+The criterion was published at `262c662a46ffb06e7dc62a482ff02bfbb214e2e1`
+before this screen. The frozen compiler reproduced both old cleanup copies.
+Fresh std and pkg-baseline objects have identical bytes, addresses and sizes
+in all five sections; all 29 functions, symbols and relocations match after
+only the `std.collections` to `collections` prefix substitution. Between the
+two pkg arms, only the scalar and wide cleanup helpers change; the other 27
+function bodies and their relocations match after relative-address comparison.
+
+| Cleanup specialization | Drained-node copy, before → after | Frame, before → after |
+|---|---:|---:|
+| Scalar | 504 → 0 bytes | 624 → 128 bytes |
+| Wide | 4,224 → 0 bytes | 4,336 → 144 bytes |
+
+The wide cleanup stack probe disappears. A conditional copy of the zero-or-one
+leading pointer remains (at most 8 bytes), followed by parent release and then
+leading recursion. Inspection of the subsequently linked `-O3` images confirms
+the same code change. All 48 reused native-peer/runtime artifacts retained
+their verified hashes; their 59 source/header/IR/build inputs match the frozen
+source and recorded construction settings.
+
+Both arms pass the maintained owner program and exact 103-allocation observer
+in sequential and parallel lowering. A separate 16-key chronology fixture and
+combined payload/node release observer pass in both modes. The callback-order
+mutation fails both ordinary and observed executions. The release-order
+mutation preserves the ordinary callback result but fails the release observer,
+demonstrating the additional observation. The selected rewrite below retains
+this fixture and observer in formal program tests.
+
+Each arm's timed and accounting ecosystem images pass 330 configurations,
+2,310 executions, six C tree audits and three native audits; checksum and
+cleanup faults produce their expected failures. Normal and retained checks
+each pass 330 configurations, 1,320 executions and six native audits. All ten
+required structural paths are nonzero; the unchanged successor-only source
+algorithm reports predecessor count zero. Paired structural records and all
+210 allocation rows (30 cells, seven variants) are byte-identical. The complete
+correctness execution took 13.43 seconds, separate from construction.
+
+Sources, commands, phase logs, raw native code, identities and the two distinct
+chronology faults are retained under
+`/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5`; the entry records are
+`IDENTITIES.json`, `native-screen.json` and `correctness-results.json`.
+The linked timed-image SHA-256 values are baseline
+`d380670480fc374d99c5a82551374e6cd1c55c36c09c828300466f49822ea1be`
+and candidate
+`f6e060ebb289d9a7484a5d95106c6e4333d6b0d860cce3982b2f1855ad27de99`.
+This native/correctness screen preceded the separately authorized timing
+pair below; it established no runtime benefit on its own.
+
+
+#### Paired timing selects the cleanup rewrite
+
+The single preregistered pair uses the frozen images above at `ECO_SCALE=64`
+in B0/C0/C1/B1 order. The [baseline](ecosystem-drained-cleanup-baseline-samples.csv)
+and [candidate](ecosystem-drained-cleanup-candidate-samples.csv) each retain all
+2,520 rows: 30 cells, seven implementations, two cohorts, warmup sample 0 and
+five measured samples. No rebuilding occurred. Cohort execution took
+77.547 / 77.248 / 77.258 / 77.296 seconds (309.349 seconds total); the complete
+guarded command took 309.68 seconds. All four direct statuses are zero, and
+all 121 recorded correctness/reuse/compiler artifact hashes match afterward.
+The clocks report and observe a 1,000 ns quantum in both arms.
+
+Two cells have qualified gains, none has a qualified loss, and 28 overlap.
+Wide build/cleanup at 8 entries improves 7.85% / 6.91%; at 256 entries it
+improves 4.49% / 6.35%. All 30 paired comparisons qualify: the shortest WF
+sample is 1.819 ms and the largest cohort-ratio spread is 4.9013%. This meets
+the recorded source-change selection rule. The exact measured library patch
+is selected and integrated with the independent owning-value chronology
+fixture and release observer in the maintained container program tests.
+The maintained `programs::containers::ordered_map_` filter subsequently passes
+both the existing owner/oracle test and the new callback/parent-release-order
+test: two executed, none failed or ignored, 5.206596 seconds. The integrated
+source hashes were unchanged across the combined compiler construction and
+execution. That integration check used CLI SHA-256
+`123e00bd26a82c05493657b6a2c61317354a190ca430a9c0ad6af0c8c51761be`;
+it is separate from the frozen compiler and images used for the timing pair.
+Direct statuses and test names are retained in
+`/private/tmp/whitefoot-consumed-projection-verification/ordered-map-execution.json`
+and its companion `.stdout`.
+
+The table retains every cell. C/B divides complete-trace medians, candidate
+by baseline; G is a qualified separated-range gain and I is overlapping,
+inconclusive evidence. The final columns classify the candidate against Rust,
+C++, and the median-slower standard target: P pass, D deficit, I inconclusive.
+No mean across cells or pure-operation latency is inferred.
+
+| Pair bytes | Trace | Count | C/B, cohorts 0 / 1 | Pair | Rust | C++ | Target |
+|---:|---|---:|---:|:---:|:---:|:---:|:---:|
+| 16 | build/cleanup | 8 | 0.958027 / 0.953580 | I | D | P | P |
+| 16 | build/cleanup | 256 | 0.998861 / 1.015372 | I | D | P | P |
+| 16 | build/cleanup | 4096 | 0.984217 / 0.995554 | I | D | D | D |
+| 16 | hit/miss | 8 | 0.999817 / 0.982485 | I | D | D | D |
+| 16 | hit/miss | 256 | 0.998030 / 1.025489 | I | D | D | D |
+| 16 | hit/miss | 4096 | 0.994887 / 0.993855 | I | P | I | P |
+| 16 | churn | 8 | 1.000229 / 1.001983 | I | P | P | P |
+| 16 | churn | 256 | 1.001078 / 1.000712 | I | D | D | D |
+| 16 | churn | 4096 | 0.992433 / 1.000719 | I | P | D | P |
+| 16 | range-16 | 8 | 1.003154 / 0.977706 | I | P | D | P |
+| 16 | range-16 | 256 | 0.970454 / 1.018018 | I | D | D | D |
+| 16 | range-16 | 4096 | 0.988873 / 0.997029 | I | P | I | P |
+| 16 | replace-only | 8 | 1.000000 / 0.998902 | I | P | P | P |
+| 16 | replace-only | 256 | 0.983336 / 0.987582 | I | D | D | D |
+| 16 | replace-only | 4096 | 1.003437 / 0.995309 | I | I | I | I |
+| 264 | build/cleanup | 8 | 0.921456 / 0.930860 | G | D | D | D |
+| 264 | build/cleanup | 256 | 0.955050 / 0.936522 | G | D | D | D |
+| 264 | build/cleanup | 4096 | 0.981144 / 0.974009 | I | D | D | D |
+| 264 | hit/miss | 8 | 1.026813 / 1.006088 | I | I | D | I |
+| 264 | hit/miss | 256 | 0.982536 / 1.014797 | I | D | D | D |
+| 264 | hit/miss | 4096 | 0.984719 / 0.986021 | I | D | D | D |
+| 264 | churn | 8 | 1.003183 / 1.000967 | I | D | D | D |
+| 264 | churn | 256 | 0.998394 / 0.996758 | I | D | D | D |
+| 264 | churn | 4096 | 0.983441 / 0.987096 | I | D | D | D |
+| 264 | range-16 | 8 | 0.996717 / 0.996882 | I | I | D | I |
+| 264 | range-16 | 256 | 0.991594 / 0.982827 | I | D | D | D |
+| 264 | range-16 | 4096 | 0.973370 / 1.001603 | I | D | D | D |
+| 264 | replace-only | 8 | 0.996129 / 1.001229 | I | D | D | D |
+| 264 | replace-only | 256 | 0.989364 / 0.991324 | I | D | D | D |
+| 264 | replace-only | 4096 | 0.968718 / 0.983795 | I | D | D | D |
+
+Four cells have adverse medians in both cohorts while their ranges overlap:
+scalar churn at 8 and 256 entries, wide hit/miss at 8, and wide churn at 8.
+The largest is wide hit/miss at 8 (2.68% / 0.61% higher medians). Across all
+30 cells, 16 have lower medians in both cohorts, four have higher medians in
+both, and ten have mixed directions or a tie. These descriptive directions do
+not replace the registered range discriminator.
+
+| Comparison | Baseline P / D / I | Candidate P / D / I |
+|---|---:|---:|
+| Rust `BTreeMap` | 6 / 21 / 3 | 6 / 21 / 3 |
+| C++ `std::map` | 5 / 22 / 3 | 4 / 23 / 3 |
+| Slower-standard target | 8 / 19 / 3 | 8 / 19 / 3 |
+| Abseil `btree_map` reference | 3 / 20 / 7 | 4 / 22 / 4 |
+
+The target total is unchanged: scalar range-16 at 8 changes I to P, while
+scalar replace-only at 4,096 changes P to I. Candidate wide churn at 4,096
+still takes 1.5324 / 1.5246 times Rust and 2.1874 / 2.1839 times C++; removing
+the cleanup copy does not complete the 30-cell standard-peer target.
+Every ranked implementation sample exceeds 1 ms (minimum 1.645 ms). All
+standard-peer comparisons qualify; baseline scalar range-16 at 256 against
+Abseil is unqualified at 17.9113% cohort spread and remains I. Candidate versus
+baseline Rust/C++ median drift reaches 7.1484%; all 180 unchanged native/control
+pair comparisons remain inconclusive. Raw variation and the C++ pass-count decrease are
+retained rather than interpreted as additional source-change gains or losses.
+
+The raw baseline/candidate SHA-256 values are
+`3534e2e92b7b1cfeef71983e21036df6eedc01ac9a9e2731ecc0acc92546e236`
+and `2afa940dd05abac9156d3bb7c7fdaa872f4861dd929353a073820339d100454b`.
+In the same scratch evidence directory, `timing-plan.json` freezes runner and
+reducer hashes before timing; `timing/execution.json` records commands,
+statuses, durations and pre/post identities. `timing/pair-comparisons.csv`
+retains both cohort bounds for all seven paired implementations, and
+`timing/peer-comparisons.csv` retains every per-peer classification. Replay
+native summaries and the target from either committed raw file with the
+maintained reducer:
+
+```sh
+perl ../summarize-ecosystem.pl --complete ordered=ecosystem-drained-cleanup-candidate-samples.csv
+perl ../summarize-ecosystem.pl --targets ordered=ecosystem-drained-cleanup-candidate-samples.csv
+```

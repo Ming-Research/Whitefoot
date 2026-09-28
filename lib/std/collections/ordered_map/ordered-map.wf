@@ -488,7 +488,10 @@ fn ordered_map_free_node<K, V, F, fn consume(env: &F, key: K, value: V) -> resul
     consume(env: env, key: move key, value: move value);
     ordered_map_free_link::<K, V, F, fn consume>(link: move after, env: env);
   }
-  let OrderedNode(leading: leading, entries: empty_entries) = move node.inner;
+  let leading = slots_new::<Box<OrderedNode<K, V>>, 1>();
+  append(destination: &leading, source: &node.inner.leading);
+  let OrderedNode(leading: empty_leading, entries: empty_entries) = move node.inner;
+  free_empty(window: move empty_leading);
   free_empty(window: move empty_entries);
   ordered_map_free_link::<K, V, F, fn consume>(link: move leading, env: env);
   return unit;

@@ -295,3 +295,56 @@ fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lo
     // original 64-allocation public mutation and traversal chain.
     execute_container_program("ordered-map", &sources, 103, false);
 }
+
+#[test]
+fn ordered_map_cleanup_preserves_callback_and_parent_release_order_in_both_lowering_modes() {
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/ordered-map-cleanup-order.wf",
+        include_bytes!("../../../tests/programs/containers/ordered-map-cleanup-order.wf"),
+    )];
+    let modes = [
+        ("sequential", compile_sources(&sources)),
+        (
+            "parallel",
+            compile_sources_with_cli_parallel_defaults(&sources),
+        ),
+    ];
+    for (mode, llvm) in modes {
+        // The source checks owning-value callbacks independently. The native
+        // observer additionally requires parent release before the leading
+        // child callbacks, which an unordered allocation ledger cannot see.
+        let output = build_program(&llvm).run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+
+        assert!(llvm.contains("@malloc("), "{mode}: missing allocator calls");
+        assert!(llvm.contains("@free("), "{mode}: missing release calls");
+        assert_eq!(llvm.matches("define i32 @main(").count(), 1, "{mode}");
+        let observed = llvm
+            .replace("@malloc(", "@wf_observe_allocate(")
+            .replace("@free(", "@wf_observe_release(")
+            .replace("@main(", "@wf_fixture_main(");
+        let observer =
+            include_str!("../../../tests/programs/containers/ordered-map-cleanup-observer.c");
+        let program = build_program_with_driver_arguments(
+            &observed,
+            Some(observer),
+            &[
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wno-override-module",
+            ],
+        );
+        let output = program.run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+        assert_eq!(
+            output.stdout,
+            b"ordered cleanup observer: 16 callbacks and 3 node releases preserve order\n",
+            "{mode}: {output:?}"
+        );
+    }
+}
