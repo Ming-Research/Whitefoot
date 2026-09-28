@@ -1194,6 +1194,12 @@ it is separate from the frozen compiler and images used for the timing pair.
 Direct statuses and test names are retained in
 `/private/tmp/whitefoot-consumed-projection-verification/ordered-map-execution.json`
 and its companion `.stdout`.
+The maintained TODO's stale claim that exhausted-node cleanup still needs
+copy removal is corrected; unresolved node construction/materialization remains
+tracked separately. This is a routine current-guidance fix under the same
+selected cleanup behavior. The ecosystem overview's current summary and latest-image
+row now name this selected result; its frozen baseline and pre-optimization
+attribution remain historical.
 
 The table retains every cell. C/B divides complete-trace medians, candidate
 by baseline; G is a qualified separated-range gain and I is overlapping,
@@ -1274,3 +1280,362 @@ maintained reducer:
 perl ../summarize-ecosystem.pl --complete ordered=ecosystem-drained-cleanup-candidate-samples.csv
 perl ../summarize-ecosystem.pl --targets ordered=ecosystem-drained-cleanup-candidate-samples.csv
 ```
+
+
+### Prospective aggregate-opening-only Slots trial
+
+This is a new isolated compiler factor, not selection of the
+[refused blanket Slots trial](../vector-library/RESULTS.md#slots-final-code-and-paired-timing-regression-prevents-selection).
+That trial changed both shift directions for every Slots element and lost
+13.9–14.5% on small scalar reuse. It also added wide removal spills. The new
+candidate selects only `open && Slots && is_stored_aggregate`, using the
+backend's existing representation predicate: scalar and Box-pointer elements,
+all closing/removal shifts and all Ring shifts keep their present walk.
+This addresses those two exposure paths without assuming that aggregate
+insertion's call setup is free. No size threshold or container-name dispatch
+is introduced. The proposal remains in the
+[pending amendment](../../../../design/amendments/contiguous-slots-shifts.md).
+
+Freeze the isolated compiler at `7abd6bb34746b7b983b83103c68ee429b24859bb`
+plus this factor; both arms use the exact selected cleanup source from
+`846275596c74e1df011ab8f99b1ed61d9576e359`, SHA-256
+`1f70037928f71fbf69475ec596b56cb52904540482b823e9d2bdd549c6b51493`.
+The baseline CLI is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+That CLI embeds the older std cleanup: use the same explicit ordinary pkg
+carrier and import graph for both Ordered arms. First reproduce the complete
+selected-cleanup pkg module and native bodies from the preceding trial;
+record compiler/source/flags/object hashes before changing the lowering.
+Vector keeps its unchanged current source. Other pending compiler factors
+are excluded. Scratch preparation is under
+`/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0`; no construction,
+execution or timing result is asserted here.
+
+For eligible insertion, predict one overlap-safe move of `[index, len)` by
+one target stride, replacing the final per-entry 280-byte copies in wide
+Ordered insertion. Keep the insertion placement, one length increment,
+callback order, allocations, owner outcomes and selected cleanup unchanged.
+Zero-byte elements normalize address/extent operands only, retaining logical
+indices and lengths. The existing byte-transfer helper carries target padding
+without typed padding loads. Split-node materialization is a separate factor.
+The scratch prototype also corrects the stale IR comment claiming that every
+Slots shift is one memmove; OP-10 is not a native-call performance guarantee.
+
+Before execution, require the predicted change in final optimized bodies,
+including the ordinary timed caller; raw IR alone is insufficient. Compare
+unaltered scalar Vector bodies and all closed/removal/Ring controls in raw IR
+and native instructions/relocations, normalizing only stable symbol spelling
+and function-relative addresses. A changed unaffected body, surviving eligible
+per-entry transfer, or changed cleanup body refuses this factor's code screen.
+Pass fixed/runtime shape checks, padded owning records, empty endpoint shifts,
+huge zero-stride logical counts with address facts emitted and withheld, and
+independent omitted-transfer/omitted-length faults. Then pass the maintained
+[container owner and chronology tests](../../../../compiler/tests/programs/containers.rs),
+normal/retained/structural Ordered checks, both families' complete ecosystem
+oracles and checksum/cleanup faults, and byte-equal allocation accounting.
+Reuse verified peer/runtime objects; record build and execution time separately.
+
+Only after these screens, run one full paired Vector 42-cell and Ordered
+30-cell comparison with unchanged peers and inputs. Vector runs baseline then
+candidate, each `measure 1048576 7` invocation emitting both internal cohorts;
+Ordered uses B0/C0/C1/B1 at `ECO_SCALE=64`. Preserve their retained warmups and
+all samples; the six Vector suffix-zero controls stay unranked. Use the
+existing paired range discriminator: disjoint ranges in the same direction
+in both cohorts, samples at least 1 ms and cohort median-ratio spread at most
+10%. Selection needs a qualified useful-cell gain and no strict qualified
+useful-cell loss across either matrix. Overlap remains inconclusive; retain
+all adverse medians and native-peer drift. Evaluate the separate
+[slower-standard target](../ECOSYSTEM.md#optimization-criterion) for every
+meaningful cell. No source-language rule or live-tree decision changes here.
+
+
+#### Aggregate-opening native screen
+
+The native screen passes. The subsequent correctness screen is recorded below.
+The frozen CLI admits all 17 authored fixtures, the unchanged Vector fixture,
+and the selected Ordered pkg graph. The first attempt rejected the twelve
+shape fixtures' one-line Record declaration with FORM-2; only canonical
+newlines were repaired, with original sources and failed logs retained.
+Before candidate construction, fresh selected-cleanup Ordered raw LLVM,
+timed LLVM and the complete O3 object reproduce the preceding trial's hashes
+exactly (`e46d6598…`, `098af692…`, `a531a253…` respectively).
+
+The isolated candidate CLI SHA-256 is
+`ff7def76e016e25082e9bd73561fa1422f1eeab05ec27bf48a5be0a9ac985312`;
+the 2,394-file source-freeze manifest is
+`c077f73ad571c8c505a4c53398a201f7437120756b858241029e4cd468442f9a`.
+One gate/jobs2 CLI build takes 61.290 seconds; tool identity, emission and
+native construction take 10.905 seconds separately. The outer guarded stage
+is 72.91 seconds, exit zero. All direct construction statuses are zero; no
+unit harness, native peers or runtime were rebuilt, and no generated program
+was executed. Source and fixture hashes remain unchanged across construction.
+
+Across 19 paired modules, nine raw function bodies change (eight distinct
+`insert_at` symbols, with one specialization used in two fixtures). Each has
+one stride-range move and no opening loop. All 28 closing-body occurrences
+are byte-equal in raw IR; all eighteen retained native closing kernels match
+in instruction/relocation records. Eight generated aggregate-body helpers
+are absorbed into those unchanged wrappers; two Ordered closing instances
+inline into callers that also perform eligible opening shifts. Twelve
+complete scalar, Box-pointer and Ring control modules have
+byte-identical raw LLVM and native objects. Vector's thirty-function scalar
+call closure and both selected Ordered cleanup helpers remain unchanged.
+The zero-stride candidate also has an identical final object.
+
+| Native body | Instructions, baseline → candidate | Frame bytes, baseline → candidate |
+|---|---:|---:|
+| Ordered wide insert-item | 1,476 → 1,418 | 9,056 → 9,056 |
+| Vector wide insert-at | 68 → 52 | 272 → 304 |
+| Vector wide grow-vector-insert | 78 → 58 | 304 → 304 |
+| Vector wide ordinary work | 441 → 407 | 688 → 720 |
+
+Ordered's nonfull wide insertion now performs one `memmove` of
+`280 * (len - index)`, then the same length increment and 280-byte incoming
+placement. Vector's wide opening uses `256 * (len - index)`. The extra 32
+frame bytes in its ordinary caller and standalone insert remain a competing
+cost; no runtime benefit follows from the instruction counts alone.
+
+Nine Ordered native bodies change: wide insert-item, scalar insert-link,
+both remove-link, both repair-child, both repair-separator, and scalar take-min.
+The rebalance/remove helpers contain opening insertions through borrow-left,
+separator reinstallation or finish-remove; their actual closing kernels stay
+unchanged. Scalar remove-link's frame also rises from 160 to 176 bytes. The
+other twenty Ordered native bodies and fifty-six Vector bodies are unchanged.
+Actual Mach-O instruction words and per-instruction relocation targets agree
+with the separate assembly inventory; constant/literal bytes match in every
+module. Only unrelocated direct branch destinations are normalized to their
+function and offset in the object comparison.
+
+The scratch evidence directory above retains `native-screen.json`,
+`baseline-reproduction.json`, `function-inventory.json`,
+`object-function-inventory.json`, all raw/optimized LLVM, assembly, objects,
+and direct stage logs. The complete changed-body inventory includes each
+rebalance helper's source-call path to its eligible opening. The registered
+owner/chronology/fault/accounting checks remain prerequisites to any full
+Vector/Ordered timing pair.
+
+
+#### Aggregate-opening correctness screen
+
+The frozen candidate passes all six focused tests: the three new opening-shift
+checks, maintained Vector ownership, and Ordered ownership and cleanup order.
+One gate/jobs2 lib/corpus construction takes 103.359 seconds; focused execution
+takes 15.226 seconds. All 2,394 frozen source files remain unchanged.
+
+The full paired continuation reuses native peers/runtime whose 63 source
+identities match the chosen revision. Its baseline Vector raw LLVM, timed LLVM
+and object reproduce the retained image; both families' accounting transforms
+and Ordered's normal/retained LLVM also reproduce the previous baselines.
+There is no compiler or peer rebuild in this continuation: construction takes
+15.776 seconds and execution 14.793 seconds, with guarded exit zero in 31.52
+seconds. All 52 construction commands pass; the 63 execution commands have 41
+expected successes and 22 expected fault failures.
+
+| Contract, per image in each arm | Vector configurations / executions | Ordered configurations / executions |
+|---|---:|---:|
+| Ecosystem timed and accounting | 1,260 / 8,820 | 330 / 2,310 |
+| Normal and retained O2 | 1,260 / 6,300 | 330 / 1,320 |
+
+Both allocation ledgers are byte-equal across arms and to their retained
+baselines: Vector has 294 rows and Ordered has 210. Retained WF/C call audits
+pass; all ten required C structural paths remain observed. The 32 paired
+owner/chronology commands preserve 103 allocations and the 16-callback/three-node
+release sequence in ordinary and parallel lowering. Callback-order faults
+fail both source and native observers; release-order faults preserve the
+ordinary source result and fail the independent native release observer.
+The formal chronology observer differs from the earlier scratch observer only
+in its opening three comment lines; all following bytes are identical.
+
+`correctness-tests/{build,execution,summary}.json` and
+`continuation/{stages,result,images,native-audits,artifacts}.json` retain direct
+statuses, outputs and identities in the existing scratch evidence directory.
+The continuation preserves 316 artifact hashes and 48 image hashes; all frozen
+inputs remain unchanged. The extra Vector 32-byte frames and Ordered scalar
+16-byte frame remain competing costs in the following complete pair;
+correctness alone does not select the compiler factor.
+
+
+The exact timing continuation was frozen before execution in `timing/plan.json`
+and `timing/inputs.json`: Vector baseline then candidate, each
+`measure 1048576 7`; then Ordered baseline cohort 0, candidate cohort 0,
+candidate cohort 1, baseline cohort 1, each `measure <cohort> 64`. Vector's
+existing warmup is unrecorded and all sample IDs 0–6 remain ranked; Ordered's
+recorded sample 0 alone is excluded from ranking. The six commands retain
+4,116 rows per Vector arm and 2,520 per Ordered arm. The estimate was 470–540
+seconds with zero construction and a 130-second per-command investigation
+limit. All six commands pass without an overrun: Vector takes 80.654/80.357
+seconds and Ordered B0/C0/C1/B1 takes 77.220/77.349/77.716/77.320 seconds.
+Total timing execution is 470.617 seconds; its stage performs no construction.
+The selection criterion and all 72 cells above remain unchanged.
+
+
+#### Aggregate-opening full pair refuses selection
+
+The factor is refused: three qualified useful gains and two qualified useful
+losses fail the prospective no-loss criterion. Ordered scalar count-8
+construction/cleanup regresses 2.92% / 8.99%, and its churn trace regresses
+5.04% / 5.49%. Wide construction at 256/4096 and wide count-8 range qualify as
+gains. These are complete traces including construction and cleanup.
+No production compiler change or timing rerun follows this result.
+
+All 13,272 raw rows are retained byte-for-byte: Vector
+[baseline](../vector-library/ecosystem-aggregate-opening-baseline-samples.csv) /
+[candidate](../vector-library/ecosystem-aggregate-opening-candidate-samples.csv),
+Ordered [baseline](ecosystem-aggregate-opening-baseline-samples.csv) /
+[candidate](ecosystem-aggregate-opening-candidate-samples.csv).
+The [72-cell comparison](ecosystem-aggregate-opening-paired.csv) retains both
+arms' medians and ranges, qualification failures and adverse medians.
+The [replay patch](aggregate-opening-candidate.patch) and
+[identities/commands](aggregate-opening-identities.json) pin compiler, source,
+ordinary pkg carrier, peers/runtime, images, direct statuses and reduction.
+The measured patch `413b5f92...` remains unchanged in retained scratch. The
+public replay `bdc1e426...` uses zero-context diff formatting to remove
+whitespace-only context lines; `git apply --unidiff-zero` reproduces all
+four measured compiler files exactly and reverses to the pinned revision.
+The independent root reduction agrees on every paired classification and all
+288 standard-peer and 432 native-control comparisons.
+
+Every cell below reports candidate/baseline median ratios for cohorts 0 / 1.
+G/L are qualified separated gain/loss; O has overlapping ranges and remains
+inconclusive for a stable gain; I fails qualification; U remains an unranked
+suffix-zero control. Vector has 34 useful overlaps and two unstable useful
+cells: wide suffix-1 at 16/4096 has 18.43%/34.05% cohort-ratio spread. Its three
+scalar U cells include sub-millisecond samples. Ordered has three gains, two
+losses and 25 overlaps; every cell meets duration and stability requirements.
+
+Vector element widths:
+
+| Bytes | Path | Count 16 | Count 256 | Count 4096 |
+|---:|---|---:|---:|---:|
+| 8 | reserved | 0.999 / 1.001 O | 0.967 / 0.996 O | 1.011 / 1.012 O |
+| 8 | growth | 1.003 / 1.011 O | 0.998 / 0.995 O | 0.982 / 1.002 O |
+| 8 | reuse | 1.012 / 0.997 O | 1.000 / 1.040 O | 1.010 / 0.999 O |
+| 8 | suffix-0 | 0.995 / 0.994 U | 1.003 / 1.043 U | 0.999 / 1.032 U |
+| 8 | suffix-1 | 0.988 / 1.014 O | 0.996 / 0.997 O | 0.991 / 1.001 O |
+| 8 | suffix-2 | 1.000 / 1.001 O | 1.010 / 1.003 O | 0.977 / 0.999 O |
+| 8 | suffix-3 | 1.001 / 0.993 O | 0.999 / 0.996 O | 1.000 / 0.967 O |
+| 256 | reserved | 0.974 / 1.004 O | 1.000 / 1.001 O | 1.002 / 0.999 O |
+| 256 | growth | 1.004 / 1.008 O | 0.997 / 1.008 O | 0.990 / 0.993 O |
+| 256 | reuse | 1.003 / 0.999 O | 0.999 / 0.997 O | 0.999 / 1.001 O |
+| 256 | suffix-0 | 1.000 / 1.004 U | 1.003 / 1.000 U | 0.998 / 0.991 U |
+| 256 | suffix-1 | 0.843 / 0.998 I | 0.882 / 0.928 O | 1.143 / 0.852 I |
+| 256 | suffix-2 | 1.002 / 0.999 O | 1.008 / 1.003 O | 1.003 / 1.001 O |
+| 256 | suffix-3 | 0.998 / 1.002 O | 1.000 / 1.003 O | 1.002 / 0.998 O |
+
+Ordered pair widths:
+
+| Bytes | Path | Count 8 | Count 256 | Count 4096 |
+|---:|---|---:|---:|---:|
+| 16 | build-cleanup | 1.029 / 1.090 L | 1.026 / 1.058 O | 1.020 / 1.028 O |
+| 16 | hit-miss | 1.059 / 1.011 O | 0.964 / 1.026 O | 1.016 / 1.018 O |
+| 16 | range-16 | 1.005 / 1.038 O | 0.993 / 0.999 O | 1.003 / 1.007 O |
+| 16 | replace-only | 0.999 / 1.006 O | 1.004 / 1.042 O | 1.014 / 1.014 O |
+| 16 | replace-edit-remove-insert | 1.050 / 1.055 L | 1.008 / 0.991 O | 1.032 / 1.035 O |
+| 264 | build-cleanup | 1.002 / 0.993 O | 0.950 / 0.939 G | 0.943 / 0.953 G |
+| 264 | hit-miss | 1.008 / 0.991 O | 0.994 / 1.005 O | 0.959 / 0.972 O |
+| 264 | range-16 | 0.979 / 0.991 G | 1.003 / 0.995 O | 0.983 / 0.985 O |
+| 264 | replace-only | 1.012 / 1.003 O | 0.992 / 0.994 O | 0.979 / 0.968 O |
+| 264 | replace-edit-remove-insert | 0.991 / 0.997 O | 1.023 / 1.016 O | 0.986 / 0.998 O |
+
+Useful standard-peer and slower-standard target counts are pass/deficit/
+inconclusive; Vector's six unranked controls are additional in each arm.
+
+| Family / arm | Against Rust | Against C++ | Slower-standard target |
+|---|---:|---:|---:|
+| Vector baseline | 0/17/19 | 16/4/16 | 16/4/16 |
+| Vector candidate | 0/16/20 | 16/3/17 | 16/3/17 |
+| Ordered baseline | 7/22/1 | 6/22/2 | 9/19/2 |
+| Ordered candidate | 6/22/2 | 3/24/3 | 7/20/3 |
+
+The identity record retains every native control's cohort-median drift range
+and qualification counts; the raw files support the unchanged complete reducer.
+Five useful native comparisons also separate: C++ Vector scalar growth/4096
+and C++ Ordered scalar churn/256 and /4096 improve, while C++ Ordered wide
+churn/256 and Rust Ordered wide replacement/256 worsen. All six native peers
+overlap in each of the two scalar WF loss cells. No causal timing share is
+assigned to fewer transfer instructions or changed frames. The latest retained
+production image remains the selected cleanup; fresh baseline peer counts here
+do not identify an implementation change.
+
+Reproduce standard comparisons with `../summarize-ecosystem.pl --complete`
+and `--targets`, passing `vector=<raw-path> ordered=<raw-path>` for each arm.
+The paired formula is recorded above and in the identity record. Native replay
+starts from the pinned source revision plus the selected cleanup/test files and
+published compiler patch applied with `git apply --unidiff-zero`; use the
+recorded ordinary pkg graph, unchanged
+fixture, O3 flags and exact peer/runtime link order. Require the published
+baseline raw/timed/object hashes to reproduce before attributing another image.
+The detailed 288-row peer and 432-row drift tables, failed authoring attempt,
+all native artifacts and direct logs remain in the retained scratch directory.
+
+#### Empty-suffix calls exposed by the refused pair
+
+The scalar pair is 16 bytes, but its shifted `OrderedEntry` is 32 bytes after
+adding the child-link window; the wide entry is 280 bytes. The baseline scalar
+opening uses an inline `ldp`/`stp` register-copy loop behind `len > index`.
+The candidate calls `memmove(32 * (len - index))` unconditionally. At count 8,
+`(index * 73) % 8 == index`, so initial construction appends all keys: seven
+zero-byte shift calls follow root creation, with no split or removal.
+Its insert-link frame actually shrinks 1,136→1,120 bytes; the remove frame
+cannot explain this build-path loss.
+
+Count-8 churn stays in one leaf. Each round reinserts at positions 0–7, moving
+224, 192, …, 0 bytes. At 1,024 rounds and 64 traces, a measured sample has
+65,984 zero-byte opening calls, 458,752 positive-span opening calls and 524,288
+leaf remove-link entries. These are source/native path counts, not sampled
+call counts or elapsed-cost attribution. The closing loop stays unchanged,
+but the function's new child-replacement opening path alters register allocation:
+its leaf path gains two stores and one reload, and its frame grows 160→176
+bytes. A guard may alter that allocation; neither disappearance nor a runtime
+benefit is assumed. Small positive-span calls remain a separate competing cost.
+
+#### Prospective guarded aggregate-opening trial
+
+The next isolated factor addresses the empty-transfer mechanism above. It
+keeps exactly `open && Slots && is_stored_aggregate`, adds the original
+`len > index` zero-trip guard around the stride-span move, and statically
+omits RunShift's address/extent/copy emission when the existing selected-target
+layout helper establishes zero stride. Both paths join before the unchanged
+single length increment. Incoming-value capture and RunInsert placement,
+including their existing zero-sized copies, stay unchanged. No byte threshold,
+container/count dispatch, public representation or language rule changes.
+
+Freeze the same `7abd6bb34746b7b983b83103c68ee429b24859bb` compiler plus
+selected cleanup, with a separate guarded patch over the retained unguarded
+factor. The ordinary Ordered pkg carrier and all 23 fixture/carrier input files
+are byte-identical to the preceding screen. Preserve its adverse raw samples
+and candidate image. Scratch preparation is under
+`/private/tmp/whitefoot-slots-guarded-opening-8ac7bw5m`; `IDENTITIES.json`,
+`source-freeze.json` and both the full candidate and incremental delta patches
+pin the proposal before construction. No native or execution result is asserted.
+
+Before execution, require the selected-cleanup baseline module/object to
+reproduce. Empty-suffix paths in fixed/runtime wrappers and both Ordered leaf
+insertions must bypass shift transfers in optimized native control flow.
+Zero-stride raw shift blocks must contain no transfer or shift address/extent,
+while the final bodies preserve logical length. Positive wide openings must
+retain one overlap-safe `stride * (len - index)` move with no per-entry loop.
+Compare all prior scalar/Box-pointer/Ring controls, true closing kernels and
+selected cleanup bodies; inventory every changed caller, including executed
+scalar insert/remove frames and spills. The previous +32-byte Vector frames
+and +16-byte Ordered frame remain competing costs, not promised removals.
+Any surviving empty shift call, restored wide per-entry copy, changed owner or
+length outcome, or altered unaffected body refuses this code screen.
+
+Then require the existing padded owning, endpoint and huge zero-stride tests
+with both address-fact choices, alongside normal/parallel lowering. A native
+shift observer must reject an independent guard-bypass fault that calls it for
+zero bytes; omitted positive transfer and omitted length-update faults must
+still fail their existing observers. Preserve maintained Vector/Ordered owner
+and chronology tests, both complete ecosystem oracles, normal/retained/structural
+checks, checksum/cleanup faults and byte-equal allocation accounting. Reuse
+verified native peers/runtime; record construction and execution separately.
+
+Only after those screens, use the original full Vector 42-cell and Ordered
+30-cell pair, cohort order, warmup handling, duration/stability qualifications
+and disjoint-range rule. Selection still requires at least one qualified useful
+gain and zero qualified useful losses across both matrices. Report every prior
+gain/loss cell, all adverse medians and both peer/target results. Overlap remains
+inconclusive. A remaining churn loss may expose small positive-transfer or
+caller-layout cost; it does not authorize a tuned size threshold or another
+timing run. This proposal remains pending in the existing amendment.

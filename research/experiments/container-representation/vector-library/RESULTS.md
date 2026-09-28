@@ -5028,3 +5028,143 @@ CSV-only reproduction uses `../summarize-ecosystem.pl --complete` and
 cohorts, every paired WF sample at least 1 ms, and at most 10% cohort
 median-ratio spread. No source repair, additional timing pair or production
 caller change follows this rejection.
+
+### Aggregate-only opening shifts: full paired refusal
+
+The separate compiler trial keeps scalar, Box-pointer, closing and Ring shifts
+unchanged, while replacing stored-aggregate Slots openings with one span move.
+Its [complete Vector/Ordered result](../ordered-library/RESULTS.md#aggregate-opening-full-pair-refuses-selection)
+rejects the factor: Vector has no qualified useful gain or loss, and Ordered
+has three gains and two scalar losses. The unchanged-source Vector
+[baseline](ecosystem-aggregate-opening-baseline-samples.csv) and
+[candidate](ecosystem-aggregate-opening-candidate-samples.csv) retain all
+4,116 rows per arm, including the six unranked suffix-zero controls. The
+linked record publishes every cell, peer drift, construction/correctness
+evidence and replay identities; the compiler factor remains unintegrated.
+
+### Branch-first swap removal: local native savings fail the full pair
+
+The ordinary library source factor is rejected: the complete pair has no
+qualified useful gain, three qualified losses, 30 overlaps and three unstable
+cells. No library, compiler, caller, API or specification change is selected.
+The [two-file patch](swap-remove-branch-first.patch) applies to
+`7abd6bb34746b7b983b83103c68ee429b24859bb`; its replay reproduces the measured
+candidate bytes. It branches before `take_back`: a non-last selection takes,
+swaps with the selected slot and returns; a last selection takes and returns
+directly. Signatures, contracts, effects, ownership and callers are unchanged.
+
+The earlier take-before-branch candidate remains refused: its standalone wide
+non-last path retains four 256-byte transfers, despite an inlined improvement.
+The distinct branch-first source removes the overwritten initial snapshot
+without a new operation, alias promise or compiler change. Frozen CLI575 is
+reused, not rebuilt. Both arms carry the selected library under `pkg::vector`
+with eleven caller alias-prefix substitutions. Complete baseline assembly
+matches the frozen terminal/T1H0 assembly after only that namespace change.
+The [identity record](ecosystem-swap-remove-branch-first-identities.json)
+retains both criteria, the first refusal, exact sources, commands, compiler,
+peer/runtime inputs, direct statuses, hashes and reproduction instructions.
+
+The native gate passes. Standalone wide non-last removal falls from four to
+three transfers; last/singleton falls from four to one and needs no frame.
+Inlined wide removal plus its complete digest reduces payload/temporary
+traffic from 1,792 to 896 bytes, with 64 bytes of spills and 64 bytes of reloads
+remaining. One additional eight-byte environment-pointer reload remains.
+The frozen preliminary record and timing criterion also called its store
+additional; inspection corrects that wording: both arms already store the
+pointer at entry. The original records remain preserved with this correction.
+
+| Changed native body | Instructions, baseline → candidate | Maximum frame |
+|---|---:|---:|
+| Scalar work | 157 → 161 | 64 → 64 B |
+| Wide work | 441 → 451 | 688 → 432 B |
+| Scalar standalone swap removal | 13 → 13 | 0 → 0 B |
+| Wide standalone swap removal | 78 → 78 | 272 → 272 B; candidate last path 0 B |
+
+The other 55 bodies and constants match; timed text grows 10,540→10,596 bytes
+and literal storage remains 912 bytes. Fifteen frozen non-WF inputs per link
+are reused. Linked body instructions, destinations and literals are checked
+against each object, including the established strong runtime floor body;
+timed images contain no observer hooks. All 113 direct correctness commands
+match their expected statuses: four 1,260-configuration / 8,820-execution
+matrices, checksum/cleanup faults, two equal 294-row ledgers, sequential and
+parallel scalar/wide/owning/zero-size fixtures, full returned/surviving values,
+last/singleton cases and empty-domain FN-8 rejections. Wrong return,
+replacement and order controls fail in ordinary and observed execution.
+The unchanged allocation observer checks exact release identities; its 25/8
+allocation counts are instrumented-image observations. Two fixture FORM-2
+spacing rejections are preserved; the repairs change no tokens or obligations.
+
+The complete [control samples](ecosystem-swap-remove-branch-first-control-samples.csv),
+[candidate samples](ecosystem-swap-remove-branch-first-candidate-samples.csv)
+and [paired cells](ecosystem-swap-remove-branch-first-paired.csv) retain one
+control→candidate `measure 1048576 7` pair, all 42 cells, both cohorts, seven
+samples and seven variants: 4,116 rows per arm. All non-time fields match;
+no sample is removed or native-scaled. Both direct exits are 0, stderr is
+empty, and all 184 pinned inputs remain unchanged. The arms take
+80.564833/80.483466 s; the guard takes 161.365254 s. Source admission costs
+0.659381 s, fixture/native construction 16.512595 s, linked inspection
+0.707969 s and correctness/accounting/fault execution 7.789442 s, separately
+from performance measurements.
+
+| Qualified useful loss | Candidate/control medians, cohorts 0 / 1 |
+|---|---:|
+| Scalar reuse, 16 | 1.037903 / 1.103226 |
+| Scalar suffix-3, 16 | 1.045488 / 1.044820 |
+| Wide reserved, 16 | 1.016408 / 1.019519 |
+
+Every useful paired WF sample is at least 1.205 ms. Wide suffix-one at all
+three counts is unstable, including a 93.96% cohort-ratio spread at count 16.
+All six unranked suffix-zero controls overlap; the three scalar controls are
+short, down to 0.975 ms. Standard-peer target pass/deficit/inconclusive counts
+change 17/3/16→17/4/15, plus six unranked cells. Candidate scalar growth/16
+remains a target deficit at 1.075688/1.069434 times the slower standard peer.
+The earlier scalar suffix-three loss is repeated at count 16; counts 256/4096
+overlap. Historical wide suffix-two/16 remains an overlap at
+1.003527/0.996301, not a qualified reversal of its earlier refusal.
+
+Useful native median drift spans reverse-C 0.948–1.110, direct-C 0.649–1.012,
+swap-take-C 0.964–1.030, take-swap-C 0.961–1.058, Rust 0.956–1.060 and C++
+0.958–1.073. The full per-cell drift is retained. At scalar suffix-three/16,
+Rust is 1.000000/1.003072 and C++ 0.997701/1.000000; the WF loss is not removed
+by those observations. The pair rejects the candidate under the original
+criterion without identifying a hardware cause for every difference.
+
+The subsequent read-only reachability check limits what the native gate
+established. In `vector_library_work`, one swap removal follows the complete
+fill and marker insertion/removal. Each round constructs and digests `N+1`
+values and performs two middle shifts. The harness uses `1048576/N` rounds
+for all three mixed paths. It does not call the standalone removal bodies.
+
+| Measured paths | Inlined swap removals per trace at N=16 / 256 / 4096 |
+|---|---:|
+| Reserved, growth, reuse, each | 65,536 / 4,096 / 256 |
+| Suffix-0, suffix-1, suffix-2, suffix-3 | 0 / 0 / 0 |
+
+Every timed removal selects index zero with `N≥16`; last/singleton savings
+are correctness coverage, not timed work. The wide saving is 896 bytes per
+mixed round, or 56/3.5/0.21875 MiB of native memory-access bytes per sample.
+Those are instruction-level byte counts, not cache or DRAM traffic. They
+decrease relative to filling, shifting and digesting the whole vector as N
+grows. The gate established a local improvement without establishing that
+removal dominated the timed trace; that missing weighting weakens the original
+expectation of an observable full-trace gain.
+
+The three loss cells have different exposure. Scalar reuse/16 reaches the
+changed scalar work body every round: its entry address stays fixed, but the
+removal block moves 60 bytes, a singleton guard appears, and the surrounding
+branch layout changes despite the removal/digest slice shrinking 13→11
+instructions. Wide reserved/16 reaches the changed wide work body, shifted
+16 bytes, with the smaller frame, extra conditional/join branches and residual
+spills. Neither local byte saving proves a reduction in elapsed time.
+
+Scalar suffix-three/16 reaches none of the changed removal/work bodies.
+Its scalar trace has the same 229 instructions and unslid address
+`0x10000badc`; all 37 instruction sites of the no-growth repeated cycle are
+byte-identical at the same addresses, executing 69 instructions for three
+elements. Its twelve changed machine words are relocated calls, outside that
+repeated path or on untaken growth/other-path edges. C trace addresses remain
+fixed while Rust/C++ bodies shift 56 bytes. Placement, runtime state and
+interleaved execution remain unisolated conditions, not demonstrated causes
+of the loss. The exact source/native lines and every differing word are in
+the identity record. No new source variant or timing pair follows this result;
+another optimization needs evidence about costs on the dominant repeated path.

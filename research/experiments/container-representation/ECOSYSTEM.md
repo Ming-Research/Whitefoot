@@ -153,14 +153,14 @@ five families on one revision. Their supported conclusions are:
 | Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) lowers elapsed time 64.20–64.74% for scalar reverse churn at counts 16, 256 and 4096 in a matched pair. Other cells show no established improvement; scalar growth at 256 and 4096 remains below target. |
 | HashMap | The [fixed-population occupancy sweep](map-library/RESULTS.md#frozen-source-occupancy-continuation) reduces missing-lookup complete-trace time by about 64% for scalar payloads and 72–74% for wide payloads when WF slots increase from 4096 to 8192. The preselected requested-memory comparisons retain substantial native deficits; wide replacement remains about 2.2 times direct C at 8192 slots. This establishes capacity sensitivity, not an adopted policy or an isolated probing cost. |
 | PriorityQueue | The [four-ary trial](priority-library/RESULTS.md) does not remove the wide-value deficit. Movement and result handling remain hypotheses, not measured cost shares. |
-| OrderedMap | [Node occupancy and wide cleanup](ordered-library/RESULTS.md) provide concrete code leads; their independent time costs and a successful production change remain unestablished. |
+| OrderedMap | The [selected drained-node cleanup rewrite](ordered-library/RESULTS.md#paired-timing-selects-the-cleanup-rewrite) removes the scalar/wide node copies and improves two wide build/cleanup cells, with no qualified loss in the 30-cell pair. The standard-peer target remains 8 passes, 19 deficits and 3 inconclusive cells; node occupancy and entry movement remain open cost leads. |
 
 ### Latest retained-image observations, 2026-09-28
 
 The following reductions use each family's latest retained implementation
 image, not rejected candidates. They are not one measurement of the current
-head: Vector and Deque have later observations; the other three retain the
-original comparison. P/D/I means qualified sample-range pass, deficit or
+head: Vector, Deque and OrderedMap have later observations; HashMap and
+PriorityQueue retain the original comparison. P/D/I means qualified sample-range pass, deficit or
 inconclusive, with the same duration and cohort-stability screens described
 above. Each individual-peer column applies those screens to that peer alone.
 A pass against the slower standard peer need not beat both peers.
@@ -171,13 +171,17 @@ A pass against the slower standard peer need not beat both peers.
 | Deque | 6 / 3 / 15 | 16 / 6 / 2 | 18 / 2 / 4 | [Front-slot reuse candidate](deque-library/ecosystem-boundary-reuse-candidate-samples.csv) |
 | HashMap | 12 / 49 / 23 | 6 / 48 / 30 | 17 / 35 / 32 | [Original replay](map-library/ecosystem-replay-samples.csv) |
 | PriorityQueue | 6 / 13 / 5 | 8 / 13 / 3 | 10 / 10 / 4 | [Original replay](priority-library/ecosystem-replay-samples.csv) |
-| OrderedMap | 6 / 18 / 6 | 3 / 21 / 6 | 7 / 17 / 6 | [Original replay](ordered-library/ecosystem-replay-samples.csv) |
+| OrderedMap | 6 / 21 / 3 | 4 / 23 / 3 | 8 / 19 / 3 | [Selected drained-node cleanup candidate](ordered-library/ecosystem-drained-cleanup-candidate-samples.csv) |
 
 Vector reuses the frozen `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`
 both-factor image; the candidate from that later trial was rejected and its
 source restored. Deque's candidate is
-`5ae2cdd40793e617dbbe88d3fc38681db983166f`; the other three use
-`0c3203aa6111f14247aa950e3794e83082d4f29c`. The Vector factor trial's
+`5ae2cdd40793e617dbbe88d3fc38681db983166f`; HashMap and PriorityQueue use
+`0c3203aa6111f14247aa950e3794e83082d4f29c`. OrderedMap uses the frozen
+`7abd6bb34746b7b983b83103c68ee429b24859bb` compiler with the selected source
+cleanup integrated in `846275596c74e1df011ab8f99b1ed61d9576e359`; its paired
+C++ pass count falls from 5 to 4 within otherwise inconclusive changes, as
+retained in the family report. The Vector factor trial's
 16/1/19 target count and the later unchanged control's 15/5/16 are separate
 observations, not an implementation regression or improvement. Vector and
 PriorityQueue each exclude six controls from the ranking. HashMap's 84 cells

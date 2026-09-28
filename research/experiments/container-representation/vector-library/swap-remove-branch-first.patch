@@ -1,0 +1,21 @@
+--- a/lib/std/collections/vector/grow-vector.wf
++++ b/lib/std/collections/vector/grow-vector.wf
+@@ -102 +102 @@
+-  doc "Returns the selected value and fills its position with the last value, without preserving order. OP-11 admits exchanging a slot with itself, so selecting the last element needs no separate branch. The operation moves a constant number of elements.";
++  doc "Returns the selected value and fills its position with the last value, without preserving order. A non-last selection takes the last owner and exchanges it with the selected slot before returning it; a last selection takes and returns that owner directly. The operation moves a constant number of elements.";
+@@ -105,3 +105,7 @@
+-  swap(first: &values^.storage.inner[index], second: &values^.storage.inner[last]);
+-  let removed = take_back(window: &values^.storage.inner);
+-  return move removed;
++  if index < last {
++    let removed = take_back(window: &values^.storage.inner);
++    swap(first: &values^.storage.inner[index], second: &removed);
++    return move removed;
++  }
++  let tail = take_back(window: &values^.storage.inner);
++  return move tail;
+--- a/lib/std/collections/vector/module.wfm
++++ b/lib/std/collections/vector/module.wfm
+@@ -44 +44 @@
+-} doc "Returns the selected value and fills its position with the last value, without preserving order. OP-11 admits exchanging a slot with itself, so selecting the last element needs no separate branch. The operation moves a constant number of elements.";
++} doc "Returns the selected value and fills its position with the last value, without preserving order. A non-last selection takes the last owner and exchanges it with the selected slot before returning it; a last selection takes and returns that owner directly. The operation moves a constant number of elements.";
