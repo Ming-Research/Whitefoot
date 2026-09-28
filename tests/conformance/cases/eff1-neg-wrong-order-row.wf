@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn f(y: &Slots<i32, 4>, x: &Slots<i32, 4>) -> result: i32 writes(y), reads(x) contract {
-  requires deref(y).len < deref(y).cap;
-  requires deref(x).len > 0_u64;
+  requires y^.len < y^.cap;
+  requires x^.len > 0_u64;
 } {
   doc "Row order violates EFF-1's canonical order: every reads entry must precede every writes entry.";
   place_back(window: y, value: 1_i32);
-  return deref(x)[0_u64];
+  return x^[0_u64];
 }
 
 fn main() -> status: ExitStatus pure {

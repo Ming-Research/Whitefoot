@@ -2,14 +2,14 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn first_of(part: &[u8]) -> value: u8 reads(part) contract {
-  requires 0_u64 < deref(part).len;
+  requires 0_u64 < part^.len;
 } {
-  return deref(part)[0_u64];
+  return part^[0_u64];
 }
 
 fn choose_first(take_left: Bool, left: &[u8], right: &[u8]) -> value: u8 reads(left), reads(right) contract {
-  requires 0_u64 < deref(left).len;
-  requires 0_u64 < deref(right).len;
+  requires 0_u64 < left^.len;
+  requires 0_u64 < right^.len;
 } {
   doc "A two-supplier function selects inside its own frame instead of handing a reference back [REF-3]: both range references arrive as arguments and the selected one is read here.";
   if take_left {

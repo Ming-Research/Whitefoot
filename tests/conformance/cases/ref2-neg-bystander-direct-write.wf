@@ -13,7 +13,7 @@ fn inspect_direct_write(values: &Array<BystanderRecord, 4>, i: u64, j: u64) -> r
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[i].value;
-  set deref(values)[j] = BystanderRecord(value: 9_u8);
-  return deref(selected);
+  let selected = &values^[i].value;
+  set values^[j] = BystanderRecord(value: 9_u8);
+  return selected^;
 }

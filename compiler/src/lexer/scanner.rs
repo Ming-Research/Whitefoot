@@ -103,6 +103,7 @@ impl<'bytes> Scanner<'bytes> {
             b'.' => self.fixed(start, 1, RawKind::Token(TokenKind::Dot)),
             b'=' => self.fixed(start, 1, RawKind::Token(TokenKind::Equal)),
             b'&' => self.fixed(start, 1, RawKind::Token(TokenKind::Ampersand)),
+            b'^' => self.fixed(start, 1, RawKind::Token(TokenKind::Caret)),
             _ if !byte.is_ascii() => {
                 let (end, kind) = match utf8_scalar_len(&self.bytes[start..]) {
                     Some(length) => (start + length, SourceIssueKind::UnexpectedByte),

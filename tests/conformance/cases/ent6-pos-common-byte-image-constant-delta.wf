@@ -2,17 +2,17 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn checked_sum(weights: &[u8]) -> result: u64 reads(weights) contract {
-  define bound = deref(weights).len;
+  define bound = weights^.len;
   requires bound <= 100_u64;
 } {
   doc "Both branches carry the same nonconstant image and differ by a constant. ENT-6 joins that shared vector with a bounded constant delta, so the header target survives at the backedge [INV-1, ENT-5]; this contrasts with the one-arm variable-addend rejection.";
-  let count = deref(weights).len;
+  let count = weights^.len;
   let sum = 0_u64;
   for (
     i in 0_u64..count,
     invariant per_step: sum <= 510_u64 * i
   ) {
-    let w = deref(weights)[i];
+    let w = weights^[i];
     let wide = cvt::<u8, u64>(w);
     let parity = iand(i, 1_u64);
     let is_even = parity == 0_u64;

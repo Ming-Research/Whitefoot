@@ -1,0 +1,88 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy struct Token {
+  number: u8;
+}
+
+fn forward<T: drop>(outcome: Result<T, unit>) -> result: Result<T, unit> pure {
+  let accepted = propagate move outcome;
+  return Ok<T, unit>(value: move accepted);
+}
+
+fn copy_payload(outcome: Result<u8, unit>) -> result: Result<u8, unit> pure {
+  let accepted = propagate outcome;
+  match outcome {
+    Ok(value: kept) => {
+      if kept == accepted {
+        return Ok<u8, unit>(value: kept);
+      } else {
+        return Err<u8, unit>(error: unit);
+      }
+    }
+    Err(error: failure) => {
+      return Err<u8, unit>(error: failure);
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let original = Ok<u8, unit>(value: 42_u8);
+  let copied = forward::<u8>(outcome: original);
+  let first = copy_payload(outcome: copied);
+  match copied {
+    Ok(value: second) => {
+      match first {
+        Ok(value: accepted) => {
+          if accepted == second {
+          } else {
+            return exit_status(code: 1_u8);
+          }
+        }
+        Err(error: failure) => {
+          return exit_status(code: 1_u8);
+        }
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 2_u8);
+    }
+  }
+  match original {
+    Ok(value: saved) => {
+      if saved == 42_u8 {
+      } else {
+        return exit_status(code: 3_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 4_u8);
+    }
+  }
+  let token = Token(number: 42_u8);
+  let incoming = Ok<Token, unit>(value: move token);
+  let forwarded = forward::<Token>(outcome: move incoming);
+  match move forwarded {
+    Ok(value: kept) => {
+      if kept.number == 42_u8 {
+      } else {
+        return exit_status(code: 5_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 6_u8);
+    }
+  }
+  match forward::<u8>(outcome: original) {
+    Ok(value: last) => {
+      if last == 42_u8 {
+      } else {
+        return exit_status(code: 7_u8);
+      }
+    }
+    Err(error: failure) => {
+      return exit_status(code: 8_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

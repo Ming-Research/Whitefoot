@@ -28,8 +28,8 @@ struct MembershipStore {
 }
 
 fn membership_visit(env: &MembershipReads, value: &Box<MembershipValue>) -> result: u64 reads(value.inner.id), writes(env.calls) {
-  set deref(env).calls = deref(env).calls +wrap 1_u64;
-  return deref(value).inner.id;
+  set env^.calls = env^.calls +wrap 1_u64;
+  return value^.inner.id;
 }
 
 binding MembershipVisit : SlabVisit<Box<MembershipValue>, MembershipReads, u64> {
@@ -37,8 +37,8 @@ binding MembershipVisit : SlabVisit<Box<MembershipValue>, MembershipReads, u64> 
 }
 
 fn membership_consume(env: &MembershipCleanup, value: Box<MembershipValue>) -> result: unit writes(env.count), writes(env.total) {
-  set deref(env).count = deref(env).count +wrap 1_u64;
-  set deref(env).total = deref(env).total +wrap value.inner.id;
+  set env^.count = env^.count +wrap 1_u64;
+  set env^.total = env^.total +wrap value.inner.id;
   return unit;
 }
 
@@ -68,21 +68,21 @@ fn membership_read(slab: &Slab<Box<MembershipValue>, 1, 1>, handle: SlabHandle) 
 
 fn membership_try_delete(store: &MembershipStore, handle: SlabHandle) -> outcome: Result<Option<Box<MembershipValue>>, unit> reads(store.first), reads(store.second), writes(store.objects) {
   doc "This one-object composite owns both indexes and refuses deletion while either membership remains. Its ordinary fields and constructors are not unforgeable; the fixture verifies this protocol, not every separately authored mutation of MembershipStore.";
-  match deref(store).first {
+  match store^.first {
     Some(value: held) => {
       return Err<Option<Box<MembershipValue>>, unit>(error: unit);
     }
     None() => {
     }
   }
-  match deref(store).second {
+  match store^.second {
     Some(value: held) => {
       return Err<Option<Box<MembershipValue>>, unit>(error: unit);
     }
     None() => {
     }
   }
-  let removed = slab_remove::<Box<MembershipValue>, 1, 1>(slab: &deref(store).objects, handle: handle);
+  let removed = slab_remove::<Box<MembershipValue>, 1, 1>(slab: &store^.objects, handle: handle);
   return Ok<Option<Box<MembershipValue>>, unit>(value: move removed);
 }
 

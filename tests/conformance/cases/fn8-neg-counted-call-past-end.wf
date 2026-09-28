@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn get_bounded<const n: u64>(b: &Slots<u8, n>, i: u64) -> value: u8 reads(b) contract {
-  define spare = deref(b).len;
+  define spare = b^.len;
   requires i < spare;
 } {
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

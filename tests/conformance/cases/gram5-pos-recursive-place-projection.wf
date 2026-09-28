@@ -11,7 +11,7 @@ struct OuterProjection {
 
 fn read_projection(outer: &OuterProjection) -> return_value: i32 reads(outer.inner.value) {
   doc "A place rooted at a reference parameter resolves to the path that reference names, and the field suffixes follow it [REF-1].";
-  return deref(outer).inner.value;
+  return outer^.inner.value;
 }
 
 fn main() -> return_value: ExitStatus pure {

@@ -2,17 +2,17 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn reverse(bytes: &[u8]) -> result: unit writes(bytes) contract {
-  requires deref(bytes).len >= 1_u64;
+  requires bytes^.len >= 1_u64;
 } {
-  let count = deref(bytes).len;
+  let count = bytes^.len;
   let last = count - 1_u64;
   for (i in 0_u64..count) {
     let mirror = last - i;
     if i < mirror {
-      let front = deref(bytes)[i];
-      let back = deref(bytes)[mirror];
-      set deref(bytes)[i] = back;
-      set deref(bytes)[mirror] = front;
+      let front = bytes^[i];
+      let back = bytes^[mirror];
+      set bytes^[i] = back;
+      set bytes^[mirror] = front;
     }
   }
   return unit;

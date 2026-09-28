@@ -4,9 +4,9 @@ alias exit_status = std::process::exit_status;
 fn selected(data: &[u8], table: Array<u8, 255>) -> result: u8 reads(data) {
   doc "The byte type interval includes 255, which is not an index into a 255-element array; widening must not lose that endpoint.";
   let peak = 0_u8;
-  let length = deref(data).len;
+  let length = data^.len;
   for (i in 0_u64..length) {
-    let byte = deref(data)[i];
+    let byte = data^[i];
     set peak = imax(peak, byte);
   }
   let index = cvt::<u8, u64>(peak);

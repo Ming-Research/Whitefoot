@@ -35,7 +35,7 @@ public interface OrderedKey<K, E> {
 public fn ordered_map_new<K, V, const ceiling: u64>() -> result: OrderedMap<K, V, ceiling> pure doc "Creates an empty map that allocates no node.";
 
 public fn ordered_map_len<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> length: u64 reads(map) contract {
-  ensures length == deref(map).length;
+  ensures length == map^.length;
 } doc "Reports the number of pairs the map holds.";
 
 public fn ordered_map_put<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: OrderedPut<K, V> reads(env), writes(map) doc "Inserts an owned pair in key order: OrderedInserted, or OrderedReturned with OrderedReplaced and the old pair, or OrderedFull and the offered pair at the logical ceiling, where replacement stays available.";

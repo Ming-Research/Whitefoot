@@ -743,15 +743,14 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }
         // TYPE-7 precedes the endpoint's TYPE-5 exact-value judgment. Use the
-        // consuming-position atom path so a box or borrow holder reaches
-        // that exclusive judgment instead of stopping first at OWN-1's bare
-        // affine spelling rule.
-        let endpoint = self.check_consuming_atom(context, node, bindings, loop_depth)?;
+        // referent-inspection path so a reference holder reaches that
+        // exclusive judgment. Owned operands retain OWN-1's spelling rule.
+        let endpoint = self.check_inspected_atom(context, node, bindings, loop_depth)?;
         if self.types.reads_implicitly_through_holder(
             endpoint.reference_value,
             endpoint.expression.ty(),
@@ -761,7 +760,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }
@@ -1271,14 +1270,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 return Ok(false);
             }
         }
-        let pbase = self
-            .tree
-            .first_child_with(place, Production::Pbase)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let Some(inner) = self.tree.dereferenced_place(pbase)? else {
-            return Ok(true);
-        };
-        self.counted_endpoint_place_is_term(inner)
+        Ok(true)
     }
 }
 
@@ -1287,7 +1279,7 @@ impl<'unit> TypeContext<'unit> {
     /// u64` are a literal or a place. ENT-2 admits the literal, a measure
     /// [MSR-1] or other readonly field whose subscripts, if any, all carry an
     /// offset that is itself a tracked place or a constant, and a tracked
-    /// place with field/deref wrappers but no subscript at any depth.
+    /// place with field or reference suffixes but no subscript.
     fn counted_endpoint_is_term_or_constant(
         &self,
         node: NodeId,
@@ -1341,7 +1333,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// TYPE-7 is definitionally earlier than both OWN-1's holder spelling and
     /// OWN-11's outer-affine move check. Inspect a live direct holder before
-    /// those generic place checks so an endpoint that plainly needs `deref`
+    /// those generic place checks so an endpoint that plainly needs `^`
     /// keeps the rule's exclusive attribution even inside another loop.
     fn direct_counted_endpoint_holder_requires_deref(
         &self,

@@ -373,7 +373,7 @@ impl Vocabulary {
     ) -> Option<TermId> {
         let fragment = fragment_type(ty)?;
         // [REF-1] a reference root is resolved to the path it names rather
-        // than spelled with a synthesized `deref`, so the term carries the
+        // than spelled with a synthesized `Deref` step, so the term carries the
         // written path and nothing else.
         let kind = TermKind::Place(
             ResolvedPlace::spelled(PlaceRoot::Binding(binding), false, fields.to_vec()),

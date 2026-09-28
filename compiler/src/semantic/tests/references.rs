@@ -43,9 +43,9 @@ fn rebound_parameter_summaries_preserve_every_entry_root() {
   } else {
     give other;
   }
-  set first = &deref(second);
-  set second = &deref(saved);
-  set selected = &deref(first);
+  set first = &second^;
+  set second = &saved^;
+  set selected = &first^;
   return unit;
 }
 
@@ -126,13 +126,13 @@ struct Parent {
 
 fn inspect(first: &Parent, second: &Parent, flag: Bool) -> result: unit reads(first.left.value.inner.payload), reads(second.right.value.inner.payload) {
   let selected = if flag {
-    give &deref(first).left;
+    give &first^.left;
   } else {
-    give &deref(second).right;
+    give &second^.right;
   }
-  match deref(selected).value.inner.payload {
+  match selected^.value.inner.payload {
     Child(value: child) => {
-      match deref(child).inner {
+      match child^.inner {
         Pair(left: left_value, right: right_value) => {
         }
         Single(value: single) => {
@@ -238,9 +238,9 @@ fn straight_line_recursive_reference_descent_has_finite_origins() {
 
 fn descend(root: &Node) -> result: unit reads(root.next) {
   let cursor = root;
-  match deref(cursor).next {
+  match cursor^.next {
     Some(value: child) => {
-      set cursor = &deref(child).inner;
+      set cursor = &child^.inner;
     }
     None() => {
     }
@@ -306,7 +306,7 @@ fn long_parameter_rebindings_keep_captured_entry_targets() {
     }
     source.push_str(") -> result: unit pure {\n");
     for index in 0..39 {
-        writeln!(source, "  set p{index} = &deref(p{});", index + 1).unwrap();
+        writeln!(source, "  set p{index} = &p{}^;", index + 1).unwrap();
     }
     source.push_str("  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n");
     with_semantics(source.as_bytes(), |outcome| {
@@ -390,7 +390,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let index = 0_u64;
   let p = &table[index].value;
   set table[index] = Record(value: 9_u8);
-  return std::process::exit_status(code: deref(p));
+  return std::process::exit_status(code: p^);
 }
 "#;
     assert_rule_kind(
@@ -411,7 +411,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let record = Record(value: 7_u8);
   let p = &record;
   let moved = move record;
-  return std::process::exit_status(code: deref(p).value);
+  return std::process::exit_status(code: p^.value);
 }
 "#;
     assert_rule_kind(
@@ -434,7 +434,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let boxed = box_new::<Record>(value: move record);
   let p = &boxed;
   let extracted = move boxed.inner;
-  return std::process::exit_status(code: deref(p).inner.value);
+  return std::process::exit_status(code: p^.inner.value);
 }
 "#;
     assert_rule_kind(source, SemanticRule::Ref2, |kind| {
@@ -470,7 +470,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let p = &table[0_u64].value;
   set table[0_u64].value = 9_u8;
   set table[1_u64] = Record(value: 4_u8);
-  return std::process::exit_status(code: deref(p));
+  return std::process::exit_status(code: p^);
 }
 "#,
     );
@@ -534,7 +534,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// covers it, and no call is left to meet the pair [EFF-5].
 #[test]
 fn an_entry_another_entry_covers_is_refused_at_the_row() {
-    let body = "let old = deref(pair).first;\n  set deref(pair).second = old;";
+    let body = "let old = pair^.first;\n  set pair^.second = old;";
     for (row, entry, covering) in [
         (
             "reads(pair.first), writes(pair)",
@@ -590,7 +590,7 @@ fn an_entry_another_entry_covers_is_refused_at_the_row() {
             .replace("ROW", "reads(pair.first), reads(pair.second)")
             .replace(
                 "BODY",
-                "let first = deref(pair).first;\n  let second = deref(pair).second;",
+                "let first = pair^.first;\n  let second = pair^.second;",
             )
             .as_bytes(),
     );
@@ -603,7 +603,7 @@ fn an_entry_another_entry_covers_is_refused_at_the_row() {
 /// is admitted, where every call used to refuse it.
 #[test]
 fn one_argument_entries_that_overlap_at_every_position_are_not_compared() {
-    let body = "let whole = deref(pair);\n  set deref(pair).first = whole.second;";
+    let body = "let whole = pair^;\n  set pair^.first = whole.second;";
     assert_accepts(
         PAIR_ACT
             .replace("ROW", "reads(pair), writes(pair.first)")
@@ -620,8 +620,8 @@ fn one_argument_entries_that_overlap_at_every_position_are_not_compared() {
 }
 
 fn record(cell: &Cell) -> result: unit reads(cell), writes(cell.count) {
-  let whole = deref(cell);
-  set deref(cell).count = whole.total;
+  let whole = cell^;
+  set cell^.count = whole.total;
   return unit;
 }
 
@@ -629,9 +629,9 @@ fn pick(values: &Array<Cell, 4>, i: u64, j: u64, choose: Bool) -> result: unit r
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let selected = &deref(values)[i];
+  let selected = &values^[i];
   if choose {
-    set selected = &deref(values)[j];
+    set selected = &values^[j];
   }
   record(cell: selected);
   return unit;
@@ -654,8 +654,8 @@ fn position_dependent_and_cross_argument_pairs_are_still_compared() {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -675,9 +675,9 @@ fn main() -> status: std::process::ExitStatus pure {
     let take_after_read = |slot: &str| {
         format!(
             "fn take_after_read(window: &Slots<u64, 4>, i: u64) -> result: u64 reads(window[i]), writes(window.last), writes(window.len) contract {{
-  requires i < deref(window).len;
+  requires i < window^.len;
 }} {{
-  let observed = deref(window)[i];
+  let observed = window^[i];
   let taken = take_back(window: window);
   return observed +wrap taken;
 }}
@@ -696,10 +696,10 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_accepts(take_after_read("0_u64").as_bytes());
     assert_rule_kind(
         br#"fn take_after_read(source: &Slots<u64, 4>, window: &Slots<u64, 4>, i: u64) -> result: u64 reads(source[i]), writes(window.last), writes(window.len) contract {
-  requires i < deref(source).len;
-  requires 0_u64 < deref(window).len;
+  requires i < source^.len;
+  requires 0_u64 < window^.len;
 } {
-  let observed = deref(source)[i];
+  let observed = source^[i];
   let taken = take_back(window: window);
   return observed +wrap taken;
 }
@@ -724,9 +724,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn record(stats: &Stats, extra: &u64) -> result: unit reads(stats), reads(extra), writes(stats.count) {
-  let whole = deref(stats);
-  let added = deref(extra);
-  set deref(stats).count = whole.total +wrap added;
+  let whole = stats^;
+  let added = extra^;
+  set stats^.count = whole.total +wrap added;
   return unit;
 }
 
@@ -746,7 +746,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [EFF-5, FORM-2] the two substituted paths an EFF-5 rejection carries are
 /// spelled as the caller writes the places: a local by its name, the storage
-/// a reference parameter names under `deref`, and fields by their names —
+/// a reference parameter names under `^`, and fields by their names —
 /// never a checker binding number or field ordinal.
 #[test]
 fn overlapping_call_effects_carry_source_spelled_paths() {
@@ -756,8 +756,8 @@ fn overlapping_call_effects_carry_source_spelled_paths() {
 }
 
 fn act(pair: &Pair, seen: &u8) -> result: unit reads(seen), writes(pair) {
-  let old = deref(seen);
-  set deref(pair).second = old;
+  let old = seen^;
+  set pair^.second = old;
   return unit;
 }
 
@@ -769,9 +769,9 @@ fn act(pair: &Pair, seen: &u8) -> result: unit reads(seen), writes(pair) {
             "pair",
         ),
         (
-            "fn relay(holder: &Pair) -> result: unit writes(holder) {\n  act(pair: holder, seen: &deref(holder).first);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            "deref(holder).first",
-            "deref(holder)",
+            "fn relay(holder: &Pair) -> result: unit writes(holder) {\n  act(pair: holder, seen: &holder^.first);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            "holder^.first",
+            "holder^",
         ),
     ] {
         let source = format!("{callee}{caller}");
@@ -801,11 +801,11 @@ fn act(pair: &Pair, seen: &u8) -> result: unit reads(seen), writes(pair) {
 #[test]
 fn an_undischarged_call_separation_names_the_captured_indices() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
-  let length = deref(window).len;
+  let length = window^.len;
   if first < length {
     if second < length {
-      set deref(window)[first] = 1_u8;
-      set deref(window)[second] = 2_u8;
+      set window^[first] = 1_u8;
+      set window^[second] = 2_u8;
     }
   }
   return unit;
@@ -837,15 +837,15 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [EFF-5, REF-4] a range formed at the call is the actual's path extended
 /// by its own range step, and that step spells the endpoints it captured:
-/// over a local array and, re-sliced, through a range parameter's `deref`.
+/// over a local array and, re-sliced, through a range parameter's `^`.
 #[test]
 fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
     let callee = r#"fn fill_two(first: &[u8], second: &[u8]) -> result: unit writes(first), writes(second) {
-  if 0_u64 < deref(first).len {
-    set deref(first)[0_u64] = 1_u8;
+  if 0_u64 < first^.len {
+    set first^[0_u64] = 1_u8;
   }
-  if 0_u64 < deref(second).len {
-    set deref(second)[0_u64] = 2_u8;
+  if 0_u64 < second^.len {
+    set second^[0_u64] = 2_u8;
   }
   return unit;
 }
@@ -857,8 +857,8 @@ fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
             "values[0_u64..2_u64] and values[lo..hi] select different storage (one ends before the other starts, or one is empty)",
         ),
         (
-            "fn relay(part: &[u8]) -> result: unit writes(part) {\n  if 2_u64 <= deref(part).len {\n    fill_two(first: &deref(part)[0_u64..2_u64], second: &deref(part)[1_u64..2_u64]);\n  }\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            "deref(part)[0_u64..2_u64] and deref(part)[1_u64..2_u64] select different storage (one ends before the other starts, or one is empty)",
+            "fn relay(part: &[u8]) -> result: unit writes(part) {\n  if 2_u64 <= part^.len {\n    fill_two(first: &part^[0_u64..2_u64], second: &part^[1_u64..2_u64]);\n  }\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            "part^[0_u64..2_u64] and part^[1_u64..2_u64] select different storage (one ends before the other starts, or one is empty)",
         ),
     ] {
         let source = format!("{callee}{caller}");
@@ -884,11 +884,11 @@ fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
 #[test]
 fn substituted_index_values_do_not_inherit_their_actual_storage_separation() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
-  let length = deref(window).len;
+  let length = window^.len;
   if first < length {
     if second < length {
-      set deref(window)[first] = 1_u8;
-      set deref(window)[second] = 2_u8;
+      set window^[first] = 1_u8;
+      set window^[second] = 2_u8;
     }
   }
   return unit;
@@ -917,11 +917,11 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn indexed_call_separation_accepts_strict_orderings_and_disequality() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
-  let length = deref(window).len;
+  let length = window^.len;
   if first < length {
     if second < length {
-      set deref(window)[first] = 1_u8;
-      set deref(window)[second] = 2_u8;
+      set window^[first] = 1_u8;
+      set window^[second] = 2_u8;
     }
   }
   return unit;
@@ -945,8 +945,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn indexed_call_separation_does_not_retarget_captured_bindings() {
     let source =
         br#"fn write_refs(first: &u8, second: &u8) -> result: unit writes(first), writes(second) {
-  set deref(first) = 1_u8;
-  set deref(second) = 2_u8;
+  set first^ = 1_u8;
+  set second^ = 2_u8;
   return unit;
 }
 
@@ -973,8 +973,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn indexed_call_separation_keeps_formation_proof_after_source_writes() {
     let source =
         br#"fn write_refs(first: &u8, second: &u8) -> result: unit writes(first), writes(second) {
-  set deref(first) = 1_u8;
-  set deref(second) = 2_u8;
+  set first^ = 1_u8;
+  set second^ = 2_u8;
   return unit;
 }
 
@@ -997,11 +997,11 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn indexed_call_separation_is_unique_per_call_actual() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
-  let length = deref(window).len;
+  let length = window^.len;
   if first < length {
     if second < length {
-      set deref(window)[first] = 1_u8;
-      set deref(window)[second] = 2_u8;
+      set window^[first] = 1_u8;
+      set window^[second] = 2_u8;
     }
   }
   return unit;
@@ -1033,20 +1033,20 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn two_separations_at_one_call_are_judged_one_by_one() {
     const TWO: &str = r#"fn touch3(a: &Slots<u64, 4>, b: &Slots<u64, 4>, c: &Slots<u64, 4>, i: u64, j: u64, k: u64) -> result: unit reads(b[j]), reads(c[k]), writes(a[i]) contract {
-  requires i < deref(a).len;
-  requires j < deref(b).len;
-  requires k < deref(c).len;
+  requires i < a^.len;
+  requires j < b^.len;
+  requires k < c^.len;
 } {
-  let x = deref(b)[j];
-  let y = deref(c)[k];
-  set deref(a)[i] = 9_u64;
+  let x = b^[j];
+  let y = c^[k];
+  set a^[i] = 9_u64;
   return unit;
 }
 
 fn run(r: &Slots<u64, 4>, i: u64, j: u64, k: u64) -> result: unit reads(r[j]), reads(r[k]), writes(r[i]) contract {
-  requires i < deref(r).len;
-  requires j < deref(r).len;
-  requires k < deref(r).len;
+  requires i < r^.len;
+  requires j < r^.len;
+  requires k < r^.len;
   requires i != j;
   requires i != k;
 } {
@@ -1129,7 +1129,7 @@ fn an_index_endpoint_takes_its_own_arguments_value() {
 
 /// [TYPE-7] there is no implicit read through a reference: a reference binding
 /// used where a value of its referent type is expected is a hard error whose
-/// mechanical fix is `deref(.)`.
+/// mechanical fix is `p^`.
 #[test]
 fn reading_through_a_reference_is_explicit() {
     let source = include_bytes!("../../../../tests/conformance/cases/type7-neg-implicit-read.wf");
@@ -1138,7 +1138,7 @@ fn reading_through_a_reference_is_explicit() {
     });
 }
 
-/// [TYPE-7] `deref` takes a reference and nothing else. A `Box` is not a
+/// [TYPE-7] `^` takes a reference and nothing else. A `Box` is not a
 /// reference: its content is the field `inner` [TYPE-9], which is what the
 /// restructuring says.
 #[test]
@@ -1150,13 +1150,48 @@ fn deref_of_a_box_binding_names_no_referent() {
     });
 }
 
-/// [TYPE-7] `deref` of an owned place that is not a reference at all.
+/// [TYPE-7] `^` of an owned place that is not a reference at all.
 #[test]
 fn deref_of_a_non_reference_is_refused() {
     let source = include_bytes!("../../../../tests/conformance/cases/type7-neg-deref-nonref.wf");
     assert_rule_kind(source, SemanticRule::Type7, |kind| {
         matches!(kind, SemanticIssueKind::MissingDereference { .. })
     });
+}
+
+/// TYPE-7 attributes a malformed postfix access to its complete place,
+/// including when it is nested inside a reference formation.
+#[test]
+fn malformed_caret_reports_the_complete_place() {
+    for (source, place) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-deref-nonref.wf")
+                .as_slice(),
+            "a^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-caret-repeated.wf")
+                .as_slice(),
+            "pointer^^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-caret-array-element.wf")
+                .as_slice(),
+            "values[0_u64]^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-caret-constant.wf")
+                .as_slice(),
+            "answer^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-caret-formation.wf")
+                .as_slice(),
+            "value^",
+        ),
+    ] {
+        super::assert_rule_at(source, SemanticRule::Type7, place);
+    }
 }
 
 /// [REF-1] an index expression inside a path is evaluated when the reference is
@@ -1193,7 +1228,7 @@ fn examine(flag: Bool) -> result: unit pure {
   } else {
     give &permanent;
   }
-  set deref(selected) = 9_u64;
+  set selected^ = 9_u64;
   return unit;
 }
 
@@ -1216,7 +1251,7 @@ fn a_joined_dereference_exhibits_every_possible_parameter_read() {
   } else {
     give b;
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1246,8 +1281,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let token = Token(value: 7_u64);
   let target = &token;
   let aliased = &token;
-  set deref(target) = retain(old: move deref(aliased));
-  if deref(target).value == 7_u64 {
+  set target^ = retain(old: move aliased^);
+  if target^.value == 7_u64 {
     return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
@@ -1278,7 +1313,7 @@ fn examine(flag: Bool) -> result: unit pure {
     give &second;
   }
   let aliased = &first;
-  set deref(target) = retain(old: move deref(aliased));
+  set target^ = retain(old: move aliased^);
   return unit;
 }
 
@@ -1297,9 +1332,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_joined_reference_call_actual_checks_every_possible_target() {
     let source = br#"fn needs_one(value: &u64) -> result: unit reads(value) contract {
-  requires deref(value) == 1_u64;
+  requires value^ == 1_u64;
 } {
-  let observed = deref(value);
+  let observed = value^;
   return unit;
 }
 
@@ -1330,7 +1365,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_reborrow_of_a_joined_reference_kills_facts_for_every_possible_target() {
     let source = br#"fn zero(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 0_u64;
+  set target^ = 0_u64;
   return unit;
 }
 
@@ -1342,7 +1377,7 @@ fn examine(flag: Bool) -> result: u64 pure {
   } else {
     give &b;
   }
-  let q = &deref(p);
+  let q = &p^;
   if b != 0_u64 {
     zero(target: q);
     return 1_u64 / b;
@@ -1376,10 +1411,10 @@ fn a_reslice_of_a_joined_range_is_invalidated_by_either_origin_replacement() {
   } else {
     give &b[0_u64..2_u64];
   }
-  let first = &deref(part)[0_u64..1_u64];
+  let first = &part^[0_u64..1_u64];
   let replacement = array_filled::<u8, 2>(value: 3_u8);
   set b = replacement;
-  return deref(first)[0_u64];
+  return first^[0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1399,7 +1434,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_delivered_reference_with_a_returning_alternative_kills_stale_facts() {
     let source = br#"fn zero(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 0_u64;
+  set target^ = 0_u64;
   return unit;
 }
 
@@ -1429,7 +1464,7 @@ fn a_written_reference_cannot_select_named_constant_storage() {
     let source = br#"const permanent: u64 = 1_u64;
 
 fn overwrite(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 9_u64;
+  set target^ = 9_u64;
   return unit;
 }
 
@@ -1457,11 +1492,11 @@ fn a_constant_can_be_read_by_reference_and_copied_to_writable_storage() {
     let source = br#"const permanent: u64 = 1_u64;
 
 fn observe(value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn overwrite(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 9_u64;
+  set target^ = 9_u64;
   return unit;
 }
 
@@ -1485,14 +1520,14 @@ fn a_selected_payload_reference_survives_arm_exit() {
 fn examine(packet: &Packet) -> result: u64 reads(packet) {
   let fallback = 7_u64;
   let selected = &fallback;
-  match deref(packet) {
+  match packet^ {
     Data(value: payload) => {
-      set selected = &deref(payload);
+      set selected = &payload^;
     }
     Idle() => {
     }
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1513,7 +1548,7 @@ fn a_reference_to_an_if_local_dies_at_branch_exit() {
     let local = 9_u64;
     set selected = &local;
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1535,7 +1570,7 @@ fn a_non_loop_reference_may_change_path_shape() {
   let second = 9_u64;
   let selected = &first;
   set selected = &second;
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1554,7 +1589,7 @@ fn a_reference_rebinding_keeps_its_referent_type() {
   let second = 9_u8;
   let selected = &first;
   set selected = &second;
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1574,7 +1609,7 @@ fn a_reference_rebinding_keeps_its_reference_kind() {
   let values = array_filled::<u64, 2>(value: 7_u64);
   let selected = &values[0_u64];
   set selected = &values[0_u64..1_u64];
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1597,15 +1632,15 @@ fn a_selected_payload_reference_survives_value_match_delivery() {
 
 fn examine(packet: &Packet) -> result: u64 reads(packet) {
   let fallback = 7_u64;
-  let selected = match deref(packet) {
+  let selected = match packet^ {
     Data(value: payload) => {
-      give &deref(payload);
+      give &payload^;
     }
     Idle() => {
       give &fallback;
     }
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1626,9 +1661,9 @@ fn a_selected_payload_reference_survives_nested_give() {
 fn examine(packet: &Packet, choose: Bool) -> result: u64 reads(packet) {
   let fallback = 7_u64;
   let selected = if choose {
-    match deref(packet) {
+    match packet^ {
       Data(value: payload) => {
-        give &deref(payload);
+        give &payload^;
       }
       Idle() => {
         give &fallback;
@@ -1637,7 +1672,7 @@ fn examine(packet: &Packet, choose: Bool) -> result: u64 reads(packet) {
   } else {
     give &fallback;
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1659,9 +1694,9 @@ fn examine(packet: &Packet) -> result: u64 reads(packet) {
   let fallback = 7_u64;
   let selected = &fallback;
   loop @done {
-    match deref(packet) {
+    match packet^ {
       Data(value: payload) => {
-        set selected = &deref(payload);
+        set selected = &payload^;
         break @done;
       }
       Idle() => {
@@ -1669,7 +1704,7 @@ fn examine(packet: &Packet) -> result: u64 reads(packet) {
       }
     }
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1686,12 +1721,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_loop_carried_reference_may_change_its_captured_index() {
     let source = br#"fn inspect(values: &Array<u64, 3>) -> result: u64 reads(values) {
-  let selected = &deref(values)[0_u64];
+  let selected = &values^[0_u64];
   let result = 0_u64;
   for (i in 0_u64..3_u64) {
-    let current = deref(selected);
+    let current = selected^;
     set result = result +wrap current;
-    set selected = &deref(values)[i];
+    set selected = &values^[i];
   }
   return result;
 }
@@ -1713,12 +1748,12 @@ fn a_counted_reference_continuation_includes_zero_trip_and_backedges() {
         br#"fn select(values: &Array<u64, 3>, count: u64) -> result: u64 reads(values) contract {
   requires count <= 2_u64;
 } {
-  let selected = &deref(values)[0_u64];
+  let selected = &values^[0_u64];
   for (i in 0_u64..count) {
     let next = i + 1_u64;
-    set selected = &deref(values)[next];
+    set selected = &values^[next];
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1734,15 +1769,15 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_loop_head_use_observes_a_prior_iteration_window_invalidation() {
     let source = br#"fn inspect(owner: &Box<Slots<u64>>) -> result: u64 writes(owner) contract {
-  requires 0_u64 < deref(owner).inner.len;
-  requires deref(owner).inner.cap <= 4_u64;
+  requires 0_u64 < owner^.inner.len;
+  requires owner^.inner.cap <= 4_u64;
 } {
-  let selected = &deref(owner).inner[0_u64];
+  let selected = &owner^.inner[0_u64];
   let result = 0_u64;
   for (i in 0_u64..2_u64) {
-    let current = deref(selected);
+    let current = selected^;
     set result = result +wrap current;
-    let capacity = deref(owner).inner.cap;
+    let capacity = owner^.inner.cap;
     grow(cell: owner, capacity: capacity);
   }
   return result;
@@ -1765,18 +1800,18 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn reforming_before_use_and_noncontinuing_invalidation_are_valid() {
     let source = br#"fn reform(owner: &Box<Slots<u64>>) -> result: u64 writes(owner) contract {
-  requires 0_u64 < deref(owner).inner.len;
-  requires deref(owner).inner.cap <= 4_u64;
+  requires 0_u64 < owner^.inner.len;
+  requires owner^.inner.cap <= 4_u64;
 } {
-  let selected = &deref(owner).inner[0_u64];
+  let selected = &owner^.inner[0_u64];
   let result = 0_u64;
   for (i in 0_u64..2_u64) {
-    let nonempty = 0_u64 < deref(owner).inner.len;
+    let nonempty = 0_u64 < owner^.inner.len;
     if nonempty {
-      set selected = &deref(owner).inner[0_u64];
-      let current = deref(selected);
+      set selected = &owner^.inner[0_u64];
+      let current = selected^;
       set result = result +wrap current;
-      let capacity = deref(owner).inner.cap;
+      let capacity = owner^.inner.cap;
       let allocation_fits = capacity <= 4_u64;
       if allocation_fits {
         grow(cell: owner, capacity: capacity);
@@ -1787,13 +1822,13 @@ fn reforming_before_use_and_noncontinuing_invalidation_are_valid() {
 }
 
 fn one_trip(owner: &Box<Slots<u64>>) -> result: u64 writes(owner) contract {
-  requires 0_u64 < deref(owner).inner.len;
-  requires deref(owner).inner.cap <= 4_u64;
+  requires 0_u64 < owner^.inner.len;
+  requires owner^.inner.cap <= 4_u64;
 } {
-  let selected = &deref(owner).inner[0_u64];
+  let selected = &owner^.inner[0_u64];
   loop @done {
-    let current = deref(selected);
-    let capacity = deref(owner).inner.cap;
+    let current = selected^;
+    let capacity = owner^.inner.cap;
     grow(cell: owner, capacity: capacity);
     break @done;
   }
@@ -1817,14 +1852,14 @@ fn a_break_edge_with_an_unrepaired_invalid_reference_is_rejected() {
 }
 
 fn examine(packet: &Packet) -> result: u64 writes(packet) {
-  match deref(packet) {
+  match packet^ {
     Data(value: outer_payload) => {
-      let selected = &deref(outer_payload);
-      set deref(packet) = Packet::Data(value: 2_u64);
+      let selected = &outer_payload^;
+      set packet^ = Packet::Data(value: 2_u64);
       loop @done {
-        match deref(packet) {
+        match packet^ {
           Data(value: inner_payload) => {
-            set selected = &deref(inner_payload);
+            set selected = &inner_payload^;
             break @done;
           }
           Idle() => {
@@ -1832,7 +1867,7 @@ fn examine(packet: &Packet) -> result: u64 writes(packet) {
           }
         }
       }
-      return deref(selected);
+      return selected^;
     }
     Idle() => {
       return 0_u64;
@@ -1868,10 +1903,10 @@ fn examine(choose: Bool) -> result: u64 pure {
   } else {
     give &second;
   }
-  match deref(selected) {
+  match selected^ {
     Data(value: payload) => {
       set second = Packet::Idle();
-      return deref(payload);
+      return payload^;
     }
     Idle() => {
       return 0_u64;
@@ -1904,11 +1939,11 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < deref(part).len {
-    match deref(part)[index] {
+  if index < part^.len {
+    match part^[index] {
       Data(value: payload) => {
         set index = 0_u64;
-        return deref(payload);
+        return payload^;
       }
       Idle() => {
         return 0_u64;
@@ -1941,11 +1976,11 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < deref(part).len {
-    match deref(part)[index] {
+  if index < part^.len {
+    match part^[index] {
       Data(value: payload) => {
         set packets[1_u64] = Packet::Idle();
-        return deref(payload);
+        return payload^;
       }
       Idle() => {
         return 0_u64;
@@ -1975,17 +2010,17 @@ fn an_outer_payload_reference_survives_a_nested_identical_refinement() {
 }
 
 fn examine(packet: &Packet) -> result: u64 reads(packet) {
-  match deref(packet) {
+  match packet^ {
     Data(value: outer_payload) => {
-      let saved = &deref(outer_payload);
-      match deref(packet) {
+      let saved = &outer_payload^;
+      match packet^ {
         Data(value: inner_payload) => {
-          let observed = deref(inner_payload);
+          let observed = inner_payload^;
         }
         Idle() => {
         }
       }
-      return deref(saved);
+      return saved^;
     }
     Idle() => {
       return 0_u64;
@@ -2010,19 +2045,19 @@ fn a_new_selection_survives_the_replaced_outer_refinement() {
 }
 
 fn examine(packet: &Packet) -> result: u64 writes(packet) {
-  match deref(packet) {
+  match packet^ {
     Data(value: outer_payload) => {
-      let selected = &deref(outer_payload);
-      set deref(packet) = Packet::Data(value: 2_u64);
-      match deref(packet) {
+      let selected = &outer_payload^;
+      set packet^ = Packet::Data(value: 2_u64);
+      match packet^ {
         Data(value: inner_payload) => {
-          set selected = &deref(inner_payload);
+          set selected = &inner_payload^;
         }
         Idle() => {
           return 0_u64;
         }
       }
-      return deref(selected);
+      return selected^;
     }
     Idle() => {
       return 0_u64;
@@ -2053,7 +2088,7 @@ fn a_loop_local_reference_cannot_escape_on_a_give_edge() {
   } else {
     give &fallback;
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2069,8 +2104,8 @@ fn main() -> status: std::process::ExitStatus pure {
 const INDEXED_CALL_HELPER: &str = r#"fn write_two(values: &Array<u8, 4>, first: u64, second: u64) -> result: unit writes(values[first]), writes(values[second]) {
   if first < 4_u64 {
     if second < 4_u64 {
-      set deref(values)[first] = 1_u8;
-      set deref(values)[second] = 2_u8;
+      set values^[first] = 1_u8;
+      set values^[second] = 2_u8;
     }
   }
   return unit;
@@ -2184,8 +2219,8 @@ fn indexed_call_separation_uses_ordered_nested_candidates() {
     if ai < 4_u64 {
       if bo < 4_u64 {
         if bi < 4_u64 {
-          set deref(values)[ao][ai] = 1_u8;
-          set deref(values)[bo][bi] = 2_u8;
+          set values^[ao][ai] = 1_u8;
+          set values^[bo][bi] = 2_u8;
         }
       }
     }

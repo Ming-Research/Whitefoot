@@ -5,16 +5,16 @@ alias exit_status = std::process::exit_status;
 fn inspect(root: &Node) -> result: u64 writes(root) {
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
       }
     }
   }
-  set deref(cursor).value = 3_u64;
+  set cursor^.value = 3_u64;
   return 0_u64;
 }
 

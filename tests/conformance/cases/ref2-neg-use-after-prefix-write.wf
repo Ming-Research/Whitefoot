@@ -13,7 +13,7 @@ fn main() -> status: ExitStatus pure {
   let replacement = array_filled::<u64, 4>(value: 5_u64);
   let b = Owner(values: replacement);
   set a = move b;
-  let seen = deref(p);
+  let seen = p^;
   if seen == 5_u64 {
   } else {
     return exit_status(code: 1_u8);

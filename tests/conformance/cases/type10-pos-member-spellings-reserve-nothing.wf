@@ -23,7 +23,7 @@ struct Windows {
 }
 
 fn read_nested(value: &Outer) -> result: u64 reads(value.next.len) {
-  return deref(value).next.len;
+  return value^.next.len;
 }
 
 fn main() -> status: ExitStatus pure {

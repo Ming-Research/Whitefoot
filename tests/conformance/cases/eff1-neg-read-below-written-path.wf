@@ -8,8 +8,8 @@ struct Stats {
 
 fn reset(stats: &Stats) -> result: u64 reads(stats.count), writes(stats) {
   doc "EFF-1: writes(stats) states every access at or below stats, so reads(stats.count) states one of them twice.";
-  let old = deref(stats).count;
-  set deref(stats) = Stats(count: 0_u64, total: 0_u64);
+  let old = stats^.count;
+  set stats^ = Stats(count: 0_u64, total: 0_u64);
   return old;
 }
 

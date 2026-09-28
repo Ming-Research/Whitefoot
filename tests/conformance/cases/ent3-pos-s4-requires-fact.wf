@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn get(b: &[u8], i: u64) -> result: u8 reads(b) contract {
-  define spare = deref(b).len;
+  define spare = b^.len;
   define inside = i < spare;
   requires inside;
 } {
   doc "Source S4: the static requires expression, after every shared define is expanded, is the one relation admitted as an axiom at body entry [ENT-3.S4] and the only fact crossing into the body from outside [ENT-2]. Every ordinary caller must prove that complete goal before the call [FN-8].";
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

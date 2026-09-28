@@ -8,7 +8,7 @@ struct Pair {
 
 fn look(holder: &Pair) -> size: u64 reads(holder) {
   doc "OWN-1: a consuming use requires a place rooted in a live own-mode binding of this function. Content reached through a reference whose row declares only a read may never be moved out, so the rejection is the ordinary one at the complete place.";
-  let taken = move deref(holder).page;
+  let taken = move holder^.page;
   return 0_u64;
 }
 

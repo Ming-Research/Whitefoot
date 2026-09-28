@@ -45,7 +45,7 @@ fn ordered_test_model_new() -> result: OrderedTestModel pure {
 }
 
 fn ordered_test_fail(model: &OrderedTestModel) -> result: unit writes(model) {
-  set deref(model).failures = deref(model).failures +wrap 1_u64;
+  set model^.failures = model^.failures +wrap 1_u64;
   return unit;
 }
 
@@ -67,9 +67,9 @@ fn ordered_test_equal(actual: OrderedTestPair, expected: OrderedTestPair, model:
 
 fn ordered_test_model_find(model: &OrderedTestModel, key: u64) -> result: Option<OrderedTestPair> reads(model) {
   for (index in 0_u64..160_u64) {
-    if index < deref(model).length {
-      if deref(model).pairs[index].key == key {
-        return Some<OrderedTestPair>(value: deref(model).pairs[index]);
+    if index < model^.length {
+      if model^.pairs[index].key == key {
+        return Some<OrderedTestPair>(value: model^.pairs[index]);
       }
     }
   }
@@ -78,15 +78,15 @@ fn ordered_test_model_find(model: &OrderedTestModel, key: u64) -> result: Option
 
 fn ordered_test_model_put(model: &OrderedTestModel, pair: OrderedTestPair) -> result: unit writes(model) {
   doc "Independent sorted-array oracle: linear key search and backward array copies, with no tree shape, comparison binding, node helper or library mutation in the model.";
-  let count = deref(model).length;
+  let count = model^.length;
   let position = count;
   for (index in 0_u64..160_u64) {
     if index < count {
-      if deref(model).pairs[index].key == pair.key {
-        set deref(model).pairs[index] = pair;
+      if model^.pairs[index].key == pair.key {
+        set model^.pairs[index] = pair;
         return unit;
       }
-      if deref(model).pairs[index].key > pair.key {
+      if model^.pairs[index].key > pair.key {
         if position == count {
           set position = index;
         }
@@ -98,12 +98,12 @@ fn ordered_test_model_put(model: &OrderedTestModel, pair: OrderedTestPair) -> re
       let index = count - step;
       if index > position {
         let previous = index - 1_u64;
-        set deref(model).pairs[index] = deref(model).pairs[previous];
+        set model^.pairs[index] = model^.pairs[previous];
       }
     }
     if position < 160_u64 {
-      set deref(model).pairs[position] = pair;
-      set deref(model).length = count + 1_u64;
+      set model^.pairs[position] = pair;
+      set model^.length = count + 1_u64;
     } else {
       ordered_test_fail(model: model);
     }
@@ -114,20 +114,20 @@ fn ordered_test_model_put(model: &OrderedTestModel, pair: OrderedTestPair) -> re
 }
 
 fn ordered_test_model_remove(model: &OrderedTestModel, key: u64) -> result: Option<OrderedTestPair> writes(model) {
-  let count = deref(model).length;
+  let count = model^.length;
   for (position in 0_u64..160_u64) {
     if position < count {
-      if deref(model).pairs[position].key == key {
-        let removed = deref(model).pairs[position];
+      if model^.pairs[position].key == key {
+        let removed = model^.pairs[position];
         for (index in 0_u64..159_u64) {
           if index >= position {
             let next = index + 1_u64;
             if next < count {
-              set deref(model).pairs[index] = deref(model).pairs[next];
+              set model^.pairs[index] = model^.pairs[next];
             }
           }
         }
-        set deref(model).length = count - 1_u64;
+        set model^.length = count - 1_u64;
         return Some<OrderedTestPair>(value: removed);
       }
     }
@@ -137,13 +137,13 @@ fn ordered_test_model_remove(model: &OrderedTestModel, key: u64) -> result: Opti
 
 fn ordered_test_model_lower(model: &OrderedTestModel, key: u64) -> result: u64 reads(model) {
   for (index in 0_u64..160_u64) {
-    if index < deref(model).length {
-      if deref(model).pairs[index].key >= key {
+    if index < model^.length {
+      if model^.pairs[index].key >= key {
         return index;
       }
     }
   }
-  return deref(model).length;
+  return model^.length;
 }
 
 fn ordered_test_model_range(model: &OrderedTestModel, lower: u64, upper: u64) -> result: unit writes(model) {
@@ -152,16 +152,16 @@ fn ordered_test_model_range(model: &OrderedTestModel, lower: u64, upper: u64) ->
   if lower < upper {
     set end = ordered_test_model_lower(model: model, key: upper);
   }
-  set deref(model).cursor = start;
-  set deref(model).end = end;
+  set model^.cursor = start;
+  set model^.end = end;
   return unit;
 }
 
 fn ordered_test_model_visit(model: &OrderedTestModel, observed: OrderedTestPair) -> result: unit writes(model) {
-  let index = deref(model).cursor;
-  if index < deref(model).end {
+  let index = model^.cursor;
+  if index < model^.end {
     if index < 160_u64 {
-      let expected = deref(model).pairs[index];
+      let expected = model^.pairs[index];
       ordered_test_equal(actual: observed, expected: expected, model: model);
     } else {
       ordered_test_fail(model: model);
@@ -169,28 +169,28 @@ fn ordered_test_model_visit(model: &OrderedTestModel, observed: OrderedTestPair)
   } else {
     ordered_test_fail(model: model);
   }
-  set deref(model).cursor = index +wrap 1_u64;
+  set model^.cursor = index +wrap 1_u64;
   return unit;
 }
 
 fn ordered_test_model_end(model: &OrderedTestModel) -> result: unit writes(model) {
-  if deref(model).cursor != deref(model).end {
+  if model^.cursor != model^.end {
     ordered_test_fail(model: model);
   }
   return unit;
 }
 
 fn ordered_test_compare(env: &OrderedTestOrder, left: &u64, right: &u64) -> result: i32 reads(env), reads(left), reads(right) {
-  if deref(env).mode == 1_u64 {
+  if env^.mode == 1_u64 {
     return -37_i32;
   }
-  if deref(env).mode == 2_u64 {
+  if env^.mode == 2_u64 {
     return 91_i32;
   }
-  if deref(left) < deref(right) {
+  if left^ < right^ {
     return -37_i32;
   }
-  if deref(left) > deref(right) {
+  if left^ > right^ {
     return 91_i32;
   }
   return 0_i32;
@@ -201,23 +201,23 @@ binding OrderedTestKey : OrderedKey<u64, OrderedTestOrder> {
 }
 
 fn ordered_test_read(env: &OrderedTestModel, key: &u64, value: &u64) -> result: OrderedTestPair reads(key), reads(value) {
-  return ordered_test_pair(key: deref(key), value: deref(value));
+  return ordered_test_pair(key: key^, value: value^);
 }
 
 fn ordered_test_visit(env: &OrderedTestModel, key: &u64, value: &u64) -> result: unit reads(key), reads(value), writes(env) {
-  let pair = ordered_test_pair(key: deref(key), value: deref(value));
+  let pair = ordered_test_pair(key: key^, value: value^);
   ordered_test_model_visit(model: env, observed: pair);
   return unit;
 }
 
 fn ordered_test_update(env: &OrderedTestModel, key: &u64, value: &u64) -> result: OrderedTestPair reads(key), writes(value) {
-  let previous = ordered_test_pair(key: deref(key), value: deref(value));
-  set deref(value) = deref(value) +wrap 1000_u64;
+  let previous = ordered_test_pair(key: key^, value: value^);
+  set value^ = value^ +wrap 1000_u64;
   return previous;
 }
 
 fn ordered_test_consume(env: &OrderedTestModel, key: u64, value: u64) -> result: unit writes(env) {
-  set deref(env).consumed = deref(env).consumed +wrap 1_u64;
+  set env^.consumed = env^.consumed +wrap 1_u64;
   return unit;
 }
 
@@ -251,11 +251,11 @@ fn ordered_test_scalar_outcome(outcome: OrderedPut<u64, u64>, reason: u64, expec
 
 fn ordered_test_scalar_check(map: &OrderedMap<u64, u64, 144>, model: &OrderedTestModel) -> result: unit reads(map), writes(model) {
   let count = ordered_map_len::<u64, u64, 144>(map: map);
-  if count != deref(model).length {
+  if count != model^.length {
     ordered_test_fail(model: model);
   }
-  set deref(model).cursor = 0_u64;
-  set deref(model).end = deref(model).length;
+  set model^.cursor = 0_u64;
+  set model^.end = model^.length;
   ordered_map_each::<u64, u64, OrderedTestModel, fn ordered_test_visit, 144>(map: map, env: model);
   ordered_test_model_end(model: model);
   return unit;
@@ -280,7 +280,7 @@ fn ordered_test_scalar_put(map: &OrderedMap<u64, u64, 144>, key: u64, value: u64
       ordered_test_model_put(model: model, pair: offered);
     }
     None() => {
-      if deref(model).length < 144_u64 {
+      if model^.length < 144_u64 {
         ordered_test_model_put(model: model, pair: offered);
       } else {
         set reason = 2_u64;
@@ -476,9 +476,9 @@ fn ordered_test_owned_release(value: OrderedOwnedNode, ledger: &OrderedOwnerLedg
   let OrderedOwnedNode(child: child) = move value;
   let serial = child.inner.serial;
   if serial < 40_u64 {
-    set deref(ledger).releases[serial] = deref(ledger).releases[serial] +wrap 1_u64;
+    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
   } else {
-    ordered_test_fail(model: &deref(ledger).model);
+    ordered_test_fail(model: &ledger^.model);
   }
   return unit;
 }
@@ -496,7 +496,7 @@ fn ordered_test_owned_pair_consume(pair: OrderedPair<OrderedOwnedNode, OrderedOw
 }
 
 fn ordered_test_owned_compare(env: &OrderedTestOrder, left: &OrderedOwnedNode, right: &OrderedOwnedNode) -> result: i32 reads(env), reads(left), reads(right) {
-  return ordered_test_compare(env: env, left: &deref(left).child.inner.id, right: &deref(right).child.inner.id);
+  return ordered_test_compare(env: env, left: &left^.child.inner.id, right: &right^.child.inner.id);
 }
 
 binding OrderedOwnedKey : OrderedKey<OrderedOwnedNode, OrderedTestOrder> {
@@ -504,77 +504,77 @@ binding OrderedOwnedKey : OrderedKey<OrderedOwnedNode, OrderedTestOrder> {
 }
 
 fn ordered_test_owned_read(env: &OrderedOwnerLedger, key: &OrderedOwnedNode, value: &OrderedOwnedNode) -> result: OrderedTestPair reads(key), reads(value), writes(env) {
-  set deref(env).callbacks = deref(env).callbacks +wrap 1_u64;
-  return OrderedTestPair(key: deref(key).child.inner.id, value: deref(value).child.inner.id, key_serial: deref(key).child.inner.serial, value_serial: deref(value).child.inner.serial);
+  set env^.callbacks = env^.callbacks +wrap 1_u64;
+  return OrderedTestPair(key: key^.child.inner.id, value: value^.child.inner.id, key_serial: key^.child.inner.serial, value_serial: value^.child.inner.serial);
 }
 
 fn ordered_test_owned_visit(env: &OrderedOwnerLedger, key: &OrderedOwnedNode, value: &OrderedOwnedNode) -> result: unit reads(key), reads(value), writes(env) {
   let observed = ordered_test_owned_read(env: env, key: key, value: value);
-  ordered_test_model_visit(model: &deref(env).model, observed: observed);
+  ordered_test_model_visit(model: &env^.model, observed: observed);
   return unit;
 }
 
 fn ordered_test_owned_unordered_visit(env: &OrderedOwnerLedger, key: &OrderedOwnedNode, value: &OrderedOwnedNode) -> result: unit reads(key), reads(value), writes(env) {
   let actual = ordered_test_owned_read(env: env, key: key, value: value);
-  let expected = ordered_test_model_find(model: &deref(env).model, key: actual.key);
+  let expected = ordered_test_model_find(model: &env^.model, key: actual.key);
   match expected {
     Some(value: expected_pair) => {
-      ordered_test_equal(actual: actual, expected: expected_pair, model: &deref(env).model);
+      ordered_test_equal(actual: actual, expected: expected_pair, model: &env^.model);
     }
     None() => {
-      ordered_test_fail(model: &deref(env).model);
+      ordered_test_fail(model: &env^.model);
     }
   }
   let serial = actual.key_serial;
   if serial < 40_u64 {
-    set deref(env).visits[serial] = deref(env).visits[serial] +wrap 1_u64;
-    if deref(env).visits[serial] != 1_u64 {
-      ordered_test_fail(model: &deref(env).model);
+    set env^.visits[serial] = env^.visits[serial] +wrap 1_u64;
+    if env^.visits[serial] != 1_u64 {
+      ordered_test_fail(model: &env^.model);
     }
   } else {
-    ordered_test_fail(model: &deref(env).model);
+    ordered_test_fail(model: &env^.model);
   }
   return unit;
 }
 
 fn ordered_test_owned_snapshot(env: &OrderedOwnerLedger, key: &OrderedOwnedNode, value: &OrderedOwnedNode) -> result: OrderedOwnedNode reads(key), writes(value), writes(env) {
-  set deref(env).callbacks = deref(env).callbacks +wrap 1_u64;
-  if deref(key).child.inner.serial != 34_u64 {
-    ordered_test_fail(model: &deref(env).model);
+  set env^.callbacks = env^.callbacks +wrap 1_u64;
+  if key^.child.inner.serial != 34_u64 {
+    ordered_test_fail(model: &env^.model);
   }
-  if deref(value).child.inner.serial != 35_u64 {
-    ordered_test_fail(model: &deref(env).model);
+  if value^.child.inner.serial != 35_u64 {
+    ordered_test_fail(model: &env^.model);
   }
-  let previous = deref(value).child.inner.id;
-  set deref(value).child.inner.id = previous +wrap 1000_u64;
+  let previous = value^.child.inner.id;
+  set value^.child.inner.id = previous +wrap 1000_u64;
   return ordered_test_owned_make(id: previous, serial: 36_u64);
 }
 
 fn ordered_test_owned_check<const ceiling: u64>(map: &OrderedMap<OrderedOwnedNode, OrderedOwnedNode, ceiling>, ledger: &OrderedOwnerLedger) -> result: unit reads(map), writes(ledger) {
   let length = ordered_map_len::<OrderedOwnedNode, OrderedOwnedNode, ceiling>(map: map);
-  if length != deref(ledger).model.length {
-    ordered_test_fail(model: &deref(ledger).model);
+  if length != ledger^.model.length {
+    ordered_test_fail(model: &ledger^.model);
   }
-  set deref(ledger).model.cursor = 0_u64;
-  set deref(ledger).model.end = deref(ledger).model.length;
+  set ledger^.model.cursor = 0_u64;
+  set ledger^.model.end = ledger^.model.length;
   ordered_map_each::<OrderedOwnedNode, OrderedOwnedNode, OrderedOwnerLedger, fn ordered_test_owned_visit, ceiling>(map: map, env: ledger);
-  ordered_test_model_end(model: &deref(ledger).model);
+  ordered_test_model_end(model: &ledger^.model);
   return unit;
 }
 
 fn ordered_test_owned_range(map: &OrderedMap<OrderedOwnedNode, OrderedOwnedNode, 16>, lower: &OrderedOwnedNode, upper: &OrderedOwnedNode, env: &OrderedTestOrder, ledger: &OrderedOwnerLedger) -> result: unit reads(map), reads(lower), reads(upper), reads(env), writes(ledger) {
-  ordered_test_model_range(model: &deref(ledger).model, lower: deref(lower).child.inner.id, upper: deref(upper).child.inner.id);
+  ordered_test_model_range(model: &ledger^.model, lower: lower^.child.inner.id, upper: upper^.child.inner.id);
   ordered_map_range::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, fn ordered_test_owned_visit, 16>(map: map, lower: lower, upper: upper, key_env: env, visit_env: ledger);
-  ordered_test_model_end(model: &deref(ledger).model);
+  ordered_test_model_end(model: &ledger^.model);
   return unit;
 }
 
 fn ordered_test_owned_inserted(outcome: OrderedPut<OrderedOwnedNode, OrderedOwnedNode>, ledger: &OrderedOwnerLedger) -> result: unit writes(ledger) {
-  match outcome {
+  match move outcome {
     OrderedInserted() => {
     }
     OrderedReturned(reason: unexpected_reason, pair: unexpected_pair) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
       ordered_test_owned_pair_consume(pair: move unexpected_pair, ledger: ledger);
     }
   }
@@ -583,52 +583,52 @@ fn ordered_test_owned_inserted(outcome: OrderedPut<OrderedOwnedNode, OrderedOwne
 
 fn ordered_test_owned_absent(map: &OrderedMap<OrderedOwnedNode, OrderedOwnedNode, 16>, query: &OrderedOwnedNode, env: &OrderedTestOrder, ledger: &OrderedOwnerLedger) -> result: unit reads(query), reads(env), writes(map), writes(ledger) {
   doc "Absent lookup, edit and removal must leave every owner and callback untouched. This chain also runs with always-negative and always-positive comparisons, which have no equality law: calls must still return and preserve all owners, while those phases deliberately assert no sorted semantics.";
-  let before = deref(ledger).callbacks;
+  let before = ledger^.callbacks;
   let found = ordered_map_lookup::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, OrderedTestPair, fn ordered_test_owned_read, 16>(map: map, key: query, key_env: env, visit_env: ledger);
   match found {
     Ok(value: unexpected) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
     Err(error: absent) => {
     }
   }
   let edited = ordered_map_edit::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, OrderedOwnedNode, fn ordered_test_owned_snapshot, 16>(map: map, key: query, key_env: env, edit_env: ledger);
-  match edited {
+  match move edited {
     Ok(value: unexpected_owner) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
       ordered_test_owned_release(value: move unexpected_owner, ledger: ledger);
     }
     Err(error: absent) => {
     }
   }
   let removed = ordered_map_remove::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: query, env: env);
-  match removed {
+  match move removed {
     Some(value: unexpected_pair) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
       ordered_test_owned_pair_consume(pair: move unexpected_pair, ledger: ledger);
     }
     None() => {
     }
   }
-  if deref(ledger).callbacks != before {
-    ordered_test_fail(model: &deref(ledger).model);
+  if ledger^.callbacks != before {
+    ordered_test_fail(model: &ledger^.model);
   }
   for (index in 0_u64..40_u64) {
-    set deref(ledger).visits[index] = 0_u64;
+    set ledger^.visits[index] = 0_u64;
   }
   ordered_map_range::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, fn ordered_test_owned_unordered_visit, 16>(map: map, lower: query, upper: query, key_env: env, visit_env: ledger);
   for (index in 0_u64..40_u64) {
-    set deref(ledger).visits[index] = 0_u64;
+    set ledger^.visits[index] = 0_u64;
   }
-  let before_each = deref(ledger).callbacks;
+  let before_each = ledger^.callbacks;
   ordered_map_each::<OrderedOwnedNode, OrderedOwnedNode, OrderedOwnerLedger, fn ordered_test_owned_unordered_visit, 16>(map: map, env: ledger);
-  let after_each = before_each +wrap deref(ledger).model.length;
-  if deref(ledger).callbacks != after_each {
-    ordered_test_fail(model: &deref(ledger).model);
+  let after_each = before_each +wrap ledger^.model.length;
+  if ledger^.callbacks != after_each {
+    ordered_test_fail(model: &ledger^.model);
   }
   let length = ordered_map_len::<OrderedOwnedNode, OrderedOwnedNode, 16>(map: map);
-  if length != deref(ledger).model.length {
-    ordered_test_fail(model: &deref(ledger).model);
+  if length != ledger^.model.length {
+    ordered_test_fail(model: &ledger^.model);
   }
   return unit;
 }
@@ -637,39 +637,39 @@ fn ordered_test_owned_retained(map: &OrderedMap<OrderedOwnedNode, OrderedOwnedNo
   doc "The refused and replaced pairs remain owned by this caller. Their keys serve as borrowed queries without allocating dummy owners. A refused complete pair is retried after removal, and the old equal-key pair stays distinct from its replacement throughout lookup, owned-result edit and traversal.";
   let offered_actual = ordered_test_owned_read(env: ledger, key: &offered.key, value: &offered.value);
   let offered_expected = OrderedTestPair(key: 16_u64, value: 161_u64, key_serial: 32_u64, value_serial: 33_u64);
-  ordered_test_equal(actual: offered_actual, expected: offered_expected, model: &deref(ledger).model);
+  ordered_test_equal(actual: offered_actual, expected: offered_expected, model: &ledger^.model);
   let previous_actual = ordered_test_owned_read(env: ledger, key: &previous.key, value: &previous.value);
   let previous_expected = OrderedTestPair(key: 7_u64, value: 71_u64, key_serial: 14_u64, value_serial: 15_u64);
-  ordered_test_equal(actual: previous_actual, expected: previous_expected, model: &deref(ledger).model);
+  ordered_test_equal(actual: previous_actual, expected: previous_expected, model: &ledger^.model);
   ordered_test_owned_absent(map: map, query: &offered.key, env: env, ledger: ledger);
   ordered_test_owned_check::<16>(map: map, ledger: ledger);
   let found = ordered_map_lookup::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, OrderedTestPair, fn ordered_test_owned_read, 16>(map: map, key: &previous.key, key_env: env, visit_env: ledger);
   match found {
     Ok(value: actual) => {
       let expected = OrderedTestPair(key: 7_u64, value: 7001_u64, key_serial: 34_u64, value_serial: 35_u64);
-      ordered_test_equal(actual: actual, expected: expected, model: &deref(ledger).model);
+      ordered_test_equal(actual: actual, expected: expected, model: &ledger^.model);
     }
     Err(error: absent) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
   }
   let edited = ordered_map_edit::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, OrderedOwnedNode, fn ordered_test_owned_snapshot, 16>(map: map, key: &previous.key, key_env: env, edit_env: ledger);
-  match edited {
+  match move edited {
     Ok(value: snapshot) => {
       if snapshot.child.inner.id != 7001_u64 {
-        ordered_test_fail(model: &deref(ledger).model);
+        ordered_test_fail(model: &ledger^.model);
       }
       if snapshot.child.inner.serial != 36_u64 {
-        ordered_test_fail(model: &deref(ledger).model);
+        ordered_test_fail(model: &ledger^.model);
       }
       ordered_test_owned_release(value: move snapshot, ledger: ledger);
     }
     Err(error: absent) => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
   }
   let updated = OrderedTestPair(key: 7_u64, value: 8001_u64, key_serial: 34_u64, value_serial: 35_u64);
-  ordered_test_model_put(model: &deref(ledger).model, pair: updated);
+  ordered_test_model_put(model: &ledger^.model, pair: updated);
   ordered_test_owned_check::<16>(map: map, ledger: ledger);
   ordered_test_owned_range(map: map, lower: &previous.key, upper: &offered.key, env: env, ledger: ledger);
   ordered_test_owned_range(map: map, lower: &previous.key, upper: &previous.key, env: env, ledger: ledger);
@@ -677,58 +677,58 @@ fn ordered_test_owned_retained(map: &OrderedMap<OrderedOwnedNode, OrderedOwnedNo
   set offered.key.child.inner.id = 15_u64;
   let removed = ordered_map_remove::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: &offered.key, env: env);
   set offered.key.child.inner.id = 16_u64;
-  let removed_expected = ordered_test_model_remove(model: &deref(ledger).model, key: 15_u64);
-  match removed {
+  let removed_expected = ordered_test_model_remove(model: &ledger^.model, key: 15_u64);
+  match move removed {
     Some(value: pair) => {
       let actual = ordered_test_owned_read(env: ledger, key: &pair.key, value: &pair.value);
       let expected = OrderedTestPair(key: 15_u64, value: 151_u64, key_serial: 30_u64, value_serial: 31_u64);
-      ordered_test_equal(actual: actual, expected: expected, model: &deref(ledger).model);
+      ordered_test_equal(actual: actual, expected: expected, model: &ledger^.model);
       ordered_test_owned_pair_consume(pair: move pair, ledger: ledger);
     }
     None() => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
   }
   ordered_test_owned_check::<16>(map: map, ledger: ledger);
   let OrderedPair(key: retried_key, value: retried_value) = move offered;
   let retried = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: move retried_key, value: move retried_value, env: env);
   ordered_test_owned_inserted(outcome: move retried, ledger: ledger);
-  ordered_test_model_put(model: &deref(ledger).model, pair: offered_expected);
+  ordered_test_model_put(model: &ledger^.model, pair: offered_expected);
   ordered_test_owned_check::<16>(map: map, ledger: ledger);
   let relocated = ordered_map_remove::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: &previous.key, env: env);
-  match relocated {
+  match move relocated {
     Some(value: pair) => {
       let actual = ordered_test_owned_read(env: ledger, key: &pair.key, value: &pair.value);
-      ordered_test_equal(actual: actual, expected: updated, model: &deref(ledger).model);
-      set deref(env).mode = 1_u64;
+      ordered_test_equal(actual: actual, expected: updated, model: &ledger^.model);
+      set env^.mode = 1_u64;
       let OrderedPair(key: key, value: value) = move pair;
       let hostile_insert = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: move key, value: move value, env: env);
       ordered_test_owned_inserted(outcome: move hostile_insert, ledger: ledger);
     }
     None() => {
-      ordered_test_fail(model: &deref(ledger).model);
-      set deref(env).mode = 1_u64;
+      ordered_test_fail(model: &ledger^.model);
+      set env^.mode = 1_u64;
     }
   }
   ordered_test_owned_absent(map: map, query: &previous.key, env: env, ledger: ledger);
-  set deref(env).mode = 2_u64;
+  set env^.mode = 2_u64;
   ordered_test_owned_absent(map: map, query: &previous.key, env: env, ledger: ledger);
   let OrderedPair(key: full_key, value: full_value) = move previous;
   let hostile_full = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: map, key: move full_key, value: move full_value, env: env);
-  match hostile_full {
+  match move hostile_full {
     OrderedInserted() => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
     OrderedReturned(reason: returned_reason, pair: returned_pair) => {
       match returned_reason {
         OrderedReplaced() => {
-          ordered_test_fail(model: &deref(ledger).model);
+          ordered_test_fail(model: &ledger^.model);
         }
         OrderedFull() => {
         }
       }
       let actual = ordered_test_owned_read(env: ledger, key: &returned_pair.key, value: &returned_pair.value);
-      ordered_test_equal(actual: actual, expected: previous_expected, model: &deref(ledger).model);
+      ordered_test_equal(actual: actual, expected: previous_expected, model: &ledger^.model);
       ordered_test_owned_pair_consume(pair: move returned_pair, ledger: ledger);
     }
   }
@@ -762,7 +762,7 @@ fn ordered_test_owned() -> result: u64 pure {
   let leaf_replaced = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: &map, key: move leaf_key, value: move leaf_value, env: &env);
   let leaf_expected = OrderedTestPair(key: 0_u64, value: 9001_u64, key_serial: 37_u64, value_serial: 38_u64);
   ordered_test_model_put(model: &ledger.model, pair: leaf_expected);
-  match leaf_replaced {
+  match move leaf_replaced {
     OrderedInserted() => {
       ordered_test_fail(model: &ledger.model);
     }
@@ -789,7 +789,7 @@ fn ordered_test_owned() -> result: u64 pure {
   let replaced = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 16>(map: &map, key: move replacement_key, value: move replacement_value, env: &env);
   let replacement = OrderedTestPair(key: 7_u64, value: 7001_u64, key_serial: 34_u64, value_serial: 35_u64);
   ordered_test_model_put(model: &ledger.model, pair: replacement);
-  match refused {
+  match move refused {
     OrderedInserted() => {
       ordered_test_fail(model: &ledger.model);
       ordered_test_owned_inserted(outcome: move replaced, ledger: &ledger);
@@ -802,7 +802,7 @@ fn ordered_test_owned() -> result: u64 pure {
         OrderedFull() => {
         }
       }
-      match replaced {
+      match move replaced {
         OrderedInserted() => {
           ordered_test_fail(model: &ledger.model);
           ordered_test_owned_pair_consume(pair: move offered_pair, ledger: &ledger);
@@ -837,33 +837,33 @@ fn ordered_test_owned_replace_available(map: &OrderedMap<OrderedOwnedNode, Order
   let key = ordered_test_owned_make(id: replacement.key, serial: replacement.key_serial);
   let value = ordered_test_owned_make(id: replacement.value, serial: replacement.value_serial);
   let outcome = ordered_map_put::<OrderedOwnedKey, OrderedOwnedNode, 32>(map: map, key: move key, value: move value, env: env);
-  match outcome {
+  match move outcome {
     OrderedInserted() => {
-      ordered_test_fail(model: &deref(ledger).model);
+      ordered_test_fail(model: &ledger^.model);
     }
     OrderedReturned(reason: returned_reason, pair: returned_pair) => {
       match returned_reason {
         OrderedReplaced() => {
         }
         OrderedFull() => {
-          ordered_test_fail(model: &deref(ledger).model);
+          ordered_test_fail(model: &ledger^.model);
         }
       }
       let actual = ordered_test_owned_read(env: ledger, key: &returned_pair.key, value: &returned_pair.value);
-      ordered_test_equal(actual: actual, expected: previous, model: &deref(ledger).model);
+      ordered_test_equal(actual: actual, expected: previous, model: &ledger^.model);
       let found = ordered_map_lookup::<OrderedOwnedKey, OrderedOwnedNode, OrderedOwnerLedger, OrderedTestPair, fn ordered_test_owned_read, 32>(map: map, key: &returned_pair.key, key_env: env, visit_env: ledger);
       match found {
         Ok(value: current_pair) => {
-          ordered_test_equal(actual: current_pair, expected: replacement, model: &deref(ledger).model);
+          ordered_test_equal(actual: current_pair, expected: replacement, model: &ledger^.model);
         }
         Err(error: absent) => {
-          ordered_test_fail(model: &deref(ledger).model);
+          ordered_test_fail(model: &ledger^.model);
         }
       }
       ordered_test_owned_pair_consume(pair: move returned_pair, ledger: ledger);
     }
   }
-  ordered_test_model_put(model: &deref(ledger).model, pair: replacement);
+  ordered_test_model_put(model: &ledger^.model, pair: replacement);
   ordered_test_owned_check::<32>(map: map, ledger: ledger);
   return unit;
 }

@@ -12,7 +12,7 @@ struct Pair {
 
 fn write_left(pair: &Pair, value: u64) -> result: unit writes(pair.left) {
   doc "Writes exactly the field its declared row names.";
-  set deref(pair).left = value;
+  set pair^.left = value;
   return unit;
 }
 

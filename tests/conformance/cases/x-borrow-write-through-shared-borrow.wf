@@ -3,12 +3,12 @@ alias exit_status = std::process::exit_status;
 
 fn store(cell: &Box<i32>) -> function_result: unit reads(cell) {
   doc "Declares a read of the cell it was handed and then writes through it.";
-  set deref(cell).inner = 9_i32;
+  set cell^.inner = 9_i32;
   return unit;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Write authority is no longer a marker on the reference: a target reached through deref of a reference parameter is writable exactly when that parameter's declared row carries writes of the path [SET-1, EFF-1]. This row carries reads alone, so the assignment is refused at the target place.";
+  doc "Write authority is no longer a marker on the reference: a target reached through postfix ^ of a reference parameter is writable exactly when that parameter's declared row carries writes of the path [SET-1, EFF-1]. This row carries reads alone, so the assignment is refused at the target place.";
   let a = box_new::<i32>(value: 1_i32);
   store(cell: &a);
   return exit_status(code: 0_u8);

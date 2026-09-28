@@ -2,19 +2,19 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn write_one(window: &Slots<u64, 4>, index: u64) -> result: unit writes(window[index]) contract {
-  requires index < deref(window).len;
+  requires index < window^.len;
 } {
   doc "Writes element index of the window.";
-  set deref(window)[index] = 9_u64;
+  set window^[index] = 9_u64;
   return unit;
 }
 
 fn write_slot(window: &Slots<u64, 4>, index: u64) -> result: unit reads(window.len), writes(window[index]) contract {
-  requires index < deref(window).len;
+  requires index < window^.len;
 } {
   doc "Passes element 0 of the window to write_one.";
   set index = 0_u64;
-  if index < deref(window).len {
+  if index < window^.len {
     write_one(window: window, index: index);
   }
   return unit;
@@ -27,7 +27,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &r, value: 2_u64);
   let p = &r[0_u64];
   write_slot(window: &r, index: 1_u64);
-  let seen = deref(p);
+  let seen = p^;
   if seen == 1_u64 {
     return exit_status(code: 0_u8);
   }

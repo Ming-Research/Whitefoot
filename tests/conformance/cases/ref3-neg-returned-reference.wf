@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn leak(values: &[u64]) -> result: u64 reads(values) contract {
-  requires deref(values).len > 0_u64;
+  requires values^.len > 0_u64;
 } {
   doc "REF-3: a reference may not be returned; the restructuring is to return an index and let the caller form the reference.";
-  return &deref(values)[0_u64];
+  return &values^[0_u64];
 }
 
 fn main() -> status: ExitStatus pure {

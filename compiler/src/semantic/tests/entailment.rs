@@ -3364,7 +3364,7 @@ fn projection_does_not_preserve_a_bound_through_an_aliasing_write_to_its_endpoin
     // substitutes the callee row's `writes(value)` onto that path, so the
     // call kills every fact supported by x itself.
     let source = br#"fn overwrite(value: &u8) -> result: unit writes(value) {
-  set deref(value) = 255_u8;
+  set value^ = 255_u8;
   return unit;
 }
 
@@ -3438,7 +3438,7 @@ fn a_callee_writing_through_a_reference_kills_facts_on_that_place() {
 const values: Array<i32, count> =[0_i32, 0_i32, 0_i32, 0_i32];
 
 fn bump(p: &u64) -> result: unit writes(p) {
-  set deref(p) = 9_u64;
+  set p^ = 9_u64;
   return unit;
 }
 
@@ -3476,7 +3476,7 @@ fn a_callee_with_no_writes_row_kills_nothing() {
 const values: Array<i32, count> =[0_i32, 0_i32, 0_i32, 0_i32];
 
 fn peek(p: &u64) -> result: u64 reads(p) {
-  return deref(p);
+  return p^;
 }
 
 fn read(i: u64) -> result: i32 pure {
@@ -6098,12 +6098,12 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// The range half's residual spells its measure through the `deref` step.
-/// [REF-1]: "the storage it names is reached only through `deref` [TYPE-7]:
+/// The range half's residual spells its measure through the `^` step.
+/// [REF-1]: "the storage it names is reached only through `^` [TYPE-7]:
 /// every place expression, subscript, field selection, payload step, and
 /// measure read that goes through a reference variable `p` is written under
-/// that step -- `deref(p)`, `deref(p).field`, `deref(part)[i]`,
-/// `deref(part).len`", and [OP-15] gives the same one spelling: "`deref(part).len`
+/// that step -- `p^`, `p^.field`, `part^[i]`,
+/// `part^.len`", and [OP-15] gives the same one spelling: "`part^.len`
 /// of a range reference is the one measure no declaration states [REF-4]".
 /// A residual printing `order.len` names an expression the writer cannot
 /// write.
@@ -6120,7 +6120,7 @@ fn from_window() -> result: u8 pure {
 }
 
 fn from_range(order: &[u64]) -> result: u8 reads(order) {
-  return values[deref(order)[0_u64]];
+  return values[order^[0_u64]];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -6147,10 +6147,7 @@ fn main() -> status: std::process::ExitStatus pure {
         1,
         "the failed inner range index prevents the outer site from being reached"
     );
-    assert_eq!(
-        ranged[0].residual.as_deref(),
-        Some("0_u64 < deref(order).len")
-    );
+    assert_eq!(ranged[0].residual.as_deref(), Some("0_u64 < order^.len"));
 }
 
 #[test]
@@ -6345,7 +6342,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_range_reference_carries_its_formed_length() {
-    // [ENT-3.S6] `let part = &P[lo..hi];` establishes `deref(part).len = hi -
+    // [ENT-3.S6] `let part = &P[lo..hi];` establishes `part^.len = hi -
     // lo` over the captured endpoint values, which is the successor of the
     // retired whole-run `slice_of` former [REF-4].
     let source = br#"const count: u64 = 4_u64;
@@ -6354,7 +6351,7 @@ const values: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn read() -> result: u8 pure {
   let window = &values[0_u64..4_u64];
-  return deref(window)[3_u64];
+  return window^[3_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -6368,7 +6365,7 @@ fn main() -> status: std::process::ExitStatus pure {
             .map(|outcome| outcome.discharged)
             .collect::<Vec<_>>(),
         vec![true],
-        "deref(window).len = 4 - 0 = 4 [ENT-3] S6"
+        "window^.len = 4 - 0 = 4 [ENT-3] S6"
     );
 }
 
@@ -6755,14 +6752,14 @@ fn a_set_commit_from_a_term_publishes_its_post_commit_value() {
     // The RHS value is read before the write. After the target's stale facts
     // are killed, S5 publishes `start = back`; no runtime check is needed.
     let source = br#"fn tail_byte(data: &[u8]) -> result: u8 reads(data) {
-  let n = deref(data).len;
+  let n = data^.len;
   let have_room = n >= 8_u64;
   let start = 0_u64;
   let out = 0_u8;
   if have_room {
     let back = n -wrap 8_u64;
     set start = back;
-    let byte = deref(data)[start];
+    let byte = data^[start];
     set out = byte;
   }
   return out;
@@ -7079,7 +7076,7 @@ fn other_operand(value: f64, other: f64) -> result: i32 pure {
 fn alias_write(value: f64) -> result: i32 pure {
   let allowed = cvt.defined::<f64, i32>(value);
   let aliased = &value;
-  set deref(aliased) = 1.5_f64;
+  set aliased^ = 1.5_f64;
   if allowed {
     return cvt::<f64, i32>(value);
   }
@@ -7308,11 +7305,11 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_measure_operand_is_read_as_its_term() {
     let source = br#"fn pick(source: &[u64], seed: u64) -> result: u64 reads(source) contract {
-  define length = deref(source).len;
+  define length = source^.len;
   requires length != 0_u64;
 } {
-  let slot = seed % deref(source).len;
-  let value = deref(source)[slot];
+  let slot = seed % source^.len;
+  let value = source^[slot];
   return value;
 }
 
@@ -8169,7 +8166,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
 #[test]
 fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
-        " contract {\n  requires start <= end;\n  requires end <= deref(source).len;\n}",
+        " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
         "  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end);\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
@@ -8217,7 +8214,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
 fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
-        "  let capacity = deref(source).len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64]);\n    }\n  }\n",
+        "  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64]);\n    }\n  }\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8286,7 +8283,7 @@ fn a_transfer_endpoint_is_bounded_by_end_and_not_beyond_it() {
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
-  let source_length = deref(source).len;
+  let source_length = source^.len;
   let enough = 3_u64 <= source_length;
   if enough {
     match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64) {
@@ -8301,7 +8298,7 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
 }
 
 fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) {
-  let source_length = deref(source).len;
+  let source_length = source^.len;
   let enough = 4_u64 <= source_length;
   if enough {
     match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64) {
@@ -8354,7 +8351,7 @@ fn a_transfer_endpoint_bound_enters_the_observing_arm_only() {
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn main(text: &std::text::HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
-  requires 3_u64 <= deref(destination).len;
+  requires 3_u64 <= destination^.len;
 } {
   match std::text::host_copy_bytes(value: text, destination: destination, start: 0_u64, end: 3_u64) {
     Ok(value: copied) => {
@@ -8389,7 +8386,7 @@ fn a_host_copy_utf8_success_endpoint_is_bounded_by_end() {
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn main(text: &std::text::HostString, destination: &[u8]) -> result: unit reads(text), writes(destination) contract {
-  requires 3_u64 <= deref(destination).len;
+  requires 3_u64 <= destination^.len;
 } {
   match std::text::host_copy_utf8(value: text, destination: destination, start: 0_u64, end: 3_u64) {
     Ok(value: copied) => {
@@ -8422,7 +8419,7 @@ fn a_named_boundary_outcome_uses_the_same_numeric_evidence_as_source_calls() {
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
-  define capacity = deref(source).len;
+  define capacity = source^.len;
   requires 3_u64 <= capacity;
 } {
   let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64);
@@ -8437,7 +8434,7 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
 }
 
 fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
-  define capacity = deref(source).len;
+  define capacity = source^.len;
   requires limit <= capacity;
 } {
   let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit);
@@ -8478,7 +8475,7 @@ fn a_read_at_endpoint_is_observed_on_its_own_outcome_variant() {
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
 fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) contract {
-  requires 3_u64 <= deref(destination).len;
+  requires 3_u64 <= destination^.len;
 } {
   match std::fs::read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {
     Ok(value: next) => {
@@ -9493,9 +9490,9 @@ fn need(index: u64, upper: u64) -> result: unit pure contract {
 
 fn probe(limit: Limit) -> result: unit pure {
   let holder = &limit;
-  for @items (i in 0_u64..deref(holder).upper) {
-    set deref(holder).upper = 0_u64;
-    need(index: i, upper: deref(holder).upper);
+  for @items (i in 0_u64..holder^.upper) {
+    set holder^.upper = 0_u64;
+    need(index: i, upper: holder^.upper);
   }
   return unit;
 }
@@ -9546,7 +9543,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn counted_range_keeps_nested_box_steps_without_a_reference_wrapper_step() {
     let source = br#"fn probe(holder: &Box<Box<u64>>) -> result: unit reads(holder) {
-  for @items (i in deref(holder).inner.inner..1_u64) {
+  for @items (i in holder^.inner.inner..1_u64) {
   }
   return unit;
 }
@@ -10032,12 +10029,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_copy_referent_read_through_an_affine_box_is_an_exact_goal_origin() {
     let source = br#"fn observe(value: &Box<i32>) -> result: unit reads(value) contract {
-  define positive = deref(value).inner > 0_i32;
-  define small = deref(value).inner < 10_i32;
+  define positive = value^.inner > 0_i32;
+  define small = value^.inner < 10_i32;
   define complete = band(positive, small);
   requires complete;
 } {
-  let seen = deref(value).inner;
+  let seen = value^.inner;
   return unit;
 }
 
@@ -10112,14 +10109,14 @@ fn resolved_writes_stop_future_expansion_of_the_written_origin_binding() {
 }
 
 fn mutate(value: &Bool) -> result: unit writes(value) {
-  set deref(value) = False();
+  set value^ = False();
   return unit;
 }
 
 fn through_holder(first: Bool, second: Bool) -> result: unit pure {
   let source = band(first, second);
   let holder = &source;
-  set deref(holder) = False();
+  set holder^ = False();
   let aliased = source;
   if aliased {
     need(first: first, second: second);
@@ -10228,7 +10225,7 @@ fn contradiction_survives_effectful_prepared_call_writes_before_fn8() {
     let source = br#"fn rewrite(out: &i32) -> result: i32 writes(out) contract {
   ensures result == 0_i32;
 } {
-  set deref(out) = 0_i32;
+  set out^ = 0_i32;
   return 0_i32;
 }
 
@@ -10551,10 +10548,10 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_call_is_judged_before_its_callee_write_and_that_write_kills_the_second_call() {
     let source = br#"fn update(value: &u64) -> result: unit writes(value) contract {
-  requires deref(value) < 10_u64;
+  requires value^ < 10_u64;
 } {
-  let old = deref(value);
-  set deref(value) = old;
+  let old = value^;
+  set value^ = old;
   return unit;
 }
 
@@ -10598,18 +10595,18 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn writing_back_an_independent_copy_preserves_the_call_precondition() {
     let source = br#"fn observe(value: &u64) -> result: unit reads(value) contract {
-  requires deref(value) < 10_u64;
+  requires value^ < 10_u64;
 } {
-  let seen = deref(value);
+  let seen = value^;
   return unit;
 }
 
 fn update(value: &u64) -> result: unit writes(value) contract {
-  requires deref(value) < 10_u64;
+  requires value^ < 10_u64;
 } {
   observe(value: value);
-  let old = deref(value);
-  set deref(value) = old;
+  let old = value^;
+  set value^ = old;
   observe(value: value);
   return unit;
 }
@@ -10662,7 +10659,7 @@ fn main() -> status: std::process::ExitStatus pure {
             }
             _ => false,
         },
-        "the exact old - deref(value) <= 0 plus deref(value) - 10 <= -1 projection",
+        "the exact old - value^ <= 0 plus value^ - 10 <= -1 projection",
     );
 }
 

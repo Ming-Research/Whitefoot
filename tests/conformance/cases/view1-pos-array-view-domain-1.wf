@@ -5,7 +5,7 @@ fn main() -> status: ExitStatus pure {
   doc "An array-derived range reference preserves element bounds and, its root being a live own binding, carries write authority under SET-1; the same range is then read back through itself.";
   let values = array_filled::<u8, 2>(value: 0_u8);
   let view = &values[0_u64..2_u64];
-  set deref(view)[0_u64] = 1_u8;
-  let seen = deref(view)[0_u64];
+  set view^[0_u64] = 1_u8;
+  let seen = view^[0_u64];
   return exit_status(code: 0_u8);
 }

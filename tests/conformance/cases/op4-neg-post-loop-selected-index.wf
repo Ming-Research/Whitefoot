@@ -2,19 +2,19 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn last_written(xs: &[u8]) -> value: u8 reads(xs) contract {
-  define n0 = deref(xs).len;
+  define n0 = xs^.len;
   requires n0 >= 1_u64;
 } {
-  let n = deref(xs).len;
+  let n = xs^.len;
   let idx = 0_u64;
   for (i in 0_u64..n) {
-    let cur = deref(xs)[i];
+    let cur = xs^[i];
     let nonzero = cur != 0_u8;
     if nonzero {
       set idx = i;
     }
   }
-  return deref(xs)[idx];
+  return xs^[idx];
 }
 
 fn main() -> status: ExitStatus pure {

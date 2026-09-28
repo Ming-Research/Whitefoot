@@ -6,12 +6,12 @@ struct Seed {
 }
 
 fn seed_hash(env: &Seed, key: &u64) -> hash: u64 reads(env.salt), reads(key) {
-  let mixed = deref(key) +wrap deref(env).salt;
+  let mixed = key^ +wrap env^.salt;
   return mixed;
 }
 
 fn seed_equal(env: &Seed, left: &u64, right: &u64) -> equal: Bool reads(left), reads(right) {
-  let same = deref(left) == deref(right);
+  let same = left^ == right^;
   return same;
 }
 
@@ -78,11 +78,11 @@ struct Empty {
 }
 
 fn word_hash(env: &Empty, key: &u64) -> hash: u64 reads(key) {
-  return deref(key);
+  return key^;
 }
 
 fn word_equal(env: &Empty, left: &u64, right: &u64) -> equal: Bool reads(left), reads(right) {
-  return deref(left) == deref(right);
+  return left^ == right^;
 }
 
 binding WordKey : Key<u64, Empty> {
@@ -138,7 +138,7 @@ fn probe_index(home: u64, step: u64, count: u64) -> index: u64 pure contract {
 }
 
 fn key_probe<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> action: Probe reads(slot), reads(key), reads(env) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return Probe::Stop();
     }
@@ -146,7 +146,7 @@ fn key_probe<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> 
       return Probe::Skip();
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
-      if deref(saved) == tag {
+      if saved^ == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
           return Probe::Match();
@@ -158,21 +158,21 @@ fn key_probe<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> 
 }
 
 fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Box<Resource>, env: &E) -> outcome: KeyPut<K> reads(env), writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   doc "The installation is swap: the offered occupant goes into the slot and the binding comes back holding the slot's previous value, so the owning key and payload are never left in a hole.";
   let hash = Key::hash(env: env, key: &key);
   let tag = fingerprint(key: hash);
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let first_deleted = count;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = probe_index(home: home, step: step, count: count);
-    let action = key_probe::<Key<K, E>>(slot: &deref(slots).inner[index], tag: tag, key: &key, env: env);
+    let action = key_probe::<Key<K, E>>(slot: &slots^.inner[index], tag: tag, key: &key, env: env);
     match action {
       Match() => {
         let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
-        swap(first: &deref(slots).inner[index], second: &offered);
+        swap(first: &slots^.inner[index], second: &offered);
         return KeyPut<K>::Installed(previous: move offered);
       }
       Skip() => {
@@ -186,7 +186,7 @@ fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Bo
           set destination = first_deleted;
         }
         let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
-        swap(first: &deref(slots).inner[destination], second: &offered);
+        swap(first: &slots^.inner[destination], second: &offered);
         return KeyPut<K>::Installed(previous: move offered);
       }
       Miss() => {
@@ -195,22 +195,22 @@ fn key_put<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: K, payload: Bo
   }
   if first_deleted < count {
     let offered = Slot<K>::Occupied(fingerprint: tag, key: move key, payload: move payload);
-    swap(first: &deref(slots).inner[first_deleted], second: &offered);
+    swap(first: &slots^.inner[first_deleted], second: &offered);
     return KeyPut<K>::Installed(previous: move offered);
   }
   return KeyPut<K>::Rejected(key: move key, payload: move payload);
 }
 
 fn key_find_index<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E) -> found: Result<u64, unit> reads(slots), reads(key), reads(env) contract {
-  ensures when Ok(value: index): index < deref(slots).inner.len;
+  ensures when Ok(value: index): index < slots^.inner.len;
 } {
   let hash = Key::hash(env: env, key: key);
   let tag = fingerprint(key: hash);
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = probe_index(home: home, step: step, count: count);
-    let action = key_probe::<Key<K, E>>(slot: &deref(slots).inner[index], tag: tag, key: key, env: env);
+    let action = key_probe::<Key<K, E>>(slot: &slots^.inner[index], tag: tag, key: key, env: env);
     match action {
       Match() => {
         return Ok<u64, unit>(value: index);
@@ -228,27 +228,27 @@ fn key_find_index<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env
 }
 
 fn key_fill<K>(slots: &Box<Slots<Slot<K>>>, count: u64) -> result: unit writes(slots) contract {
-  requires deref(slots).inner.len == 0_u64;
-  requires count <= deref(slots).inner.cap - deref(slots).inner.len;
-  ensures deref(slots).inner.len == count;
+  requires slots^.inner.len == 0_u64;
+  requires count <= slots^.inner.cap - slots^.inner.len;
+  ensures slots^.inner.len == count;
 } {
   doc "One vacant slot per position, under a counted header that carries the length and the remaining free slots.";
   for (
     index in 0_u64..count,
-    invariant filled: deref(slots).inner.len >= index,
-    invariant bounded: deref(slots).inner.len <= index,
-    invariant spare: deref(slots).inner.cap - deref(slots).inner.len + index >= count
+    invariant filled: slots^.inner.len >= index,
+    invariant bounded: slots^.inner.len <= index,
+    invariant spare: slots^.inner.cap - slots^.inner.len + index >= count
   ) {
     let vacant = Slot<K>::Vacant();
-    place_back(window: &deref(slots).inner, value: move vacant);
+    place_back(window: &slots^.inner, value: move vacant);
   }
-  invariant complete_min: deref(slots).inner.len >= count;
-  invariant complete_max: deref(slots).inner.len <= count;
+  invariant complete_min: slots^.inner.len >= count;
+  invariant complete_max: slots^.inner.len <= count;
   return unit;
 }
 
 fn key_occupied<K>(slot: &Slot<K>) -> full: Bool reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Occupied(fingerprint: tag, key: present, payload: owner) => {
       return True();
     }
@@ -262,7 +262,7 @@ fn key_occupied<K>(slot: &Slot<K>) -> full: Bool reads(slot) {
 }
 
 fn key_slot_hash<interface Key<K, E>>(slot: &Slot<K>, env: &E) -> hash: u64 reads(slot), reads(env) {
-  match deref(slot) {
+  match slot^ {
     Occupied(fingerprint: tag, key: present, payload: owner) => {
       return Key::hash(env: env, key: present);
     }
@@ -297,9 +297,9 @@ fn key_begin<K>(source: Box<Slots<Slot<K>>>, count: u64) -> result: Rehash<K> pu
 
 fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<Slots<Slot<K>>>, progress: &Progress<K>, budget: u64, env: &E) -> (examined: u64, moved: u64) reads(env), writes(source), writes(target), writes(progress.held), writes(progress.source_next), writes(progress.next_probe), writes(progress.phase) {
   doc "Each transfer is two exchanges: the source slot's occupant goes into the held field and the held occupant goes into its target slot, so the displaced vacant value is released by the ordinary scope exit.";
-  let source_cursor = deref(progress).source_next;
-  let probe_cursor = deref(progress).next_probe;
-  let phase = deref(progress).phase;
+  let source_cursor = progress^.source_next;
+  let probe_cursor = progress^.next_probe;
+  let phase = progress^.phase;
   let inspected = 0_u64;
   let transfers = 0_u64;
   if phase < 2_u8 {
@@ -310,37 +310,37 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
       invariant moved_bound: transfers <= inspected
     ) {
       if phase == 0_u8 {
-        let count = deref(source).inner.len;
+        let count = source^.inner.len;
         if source_cursor >= count {
           set phase = 3_u8;
           break;
         }
         let index = source_cursor;
         set source_cursor = source_cursor + 1_u64;
-        let full = key_occupied::<K>(slot: &deref(source).inner[index]);
+        let full = key_occupied::<K>(slot: &source^.inner[index]);
         if full {
           let held_slot = Slot<K>::Deleted();
-          swap(first: &deref(source).inner[index], second: &held_slot);
-          swap(first: &deref(progress).held, second: &held_slot);
+          swap(first: &source^.inner[index], second: &held_slot);
+          swap(first: &progress^.held, second: &held_slot);
           set probe_cursor = 0_u64;
           set phase = 1_u8;
         }
       } else {
-        let count = deref(target).inner.len;
+        let count = target^.inner.len;
         if probe_cursor >= count {
           set phase = 2_u8;
           break;
         }
-        let key = key_slot_hash::<Key<K, E>>(slot: &deref(progress).held, env: env);
+        let key = key_slot_hash::<Key<K, E>>(slot: &progress^.held, env: env);
         let home = key % count;
         let index = probe_index(home: home, step: probe_cursor, count: count);
         set probe_cursor = probe_cursor + 1_u64;
-        let full = key_occupied::<K>(slot: &deref(target).inner[index]);
+        let full = key_occupied::<K>(slot: &target^.inner[index]);
         if full {
         } else {
           let held_slot = Slot<K>::Vacant();
-          swap(first: &deref(progress).held, second: &held_slot);
-          swap(first: &deref(target).inner[index], second: &held_slot);
+          swap(first: &progress^.held, second: &held_slot);
+          swap(first: &target^.inner[index], second: &held_slot);
           set transfers = transfers + 1_u64;
           set phase = 0_u8;
         }
@@ -348,21 +348,21 @@ fn key_advance<interface Key<K, E>>(source: &Box<Slots<Slot<K>>>, target: &Box<S
       set inspected = inspected + 1_u64;
     }
     if phase == 0_u8 {
-      let source_count = deref(source).inner.len;
+      let source_count = source^.inner.len;
       if source_cursor == source_count {
         set phase = 3_u8;
       }
     }
   }
-  set deref(progress).source_next = source_cursor;
-  set deref(progress).next_probe = probe_cursor;
-  set deref(progress).phase = phase;
+  set progress^.source_next = source_cursor;
+  set progress^.next_probe = probe_cursor;
+  set progress^.phase = phase;
   return inspected, transfers;
 }
 
 fn key_rehash_all<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, count: u64, env: &E) -> (code: u8, examined: u64, moved: u64) reads(env), writes(slots) contract {
-  requires deref(slots).inner.len <= 1048576_u64;
-  requires count >= deref(slots).inner.len;
+  requires slots^.inner.len <= 1048576_u64;
+  requires count >= slots^.inner.len;
   requires count <= 2097152_u64;
 } {
   doc "A complete migration into a fresh cell, committed over the caller's cell so the ordinary assignment releases the emptied source.";
@@ -371,12 +371,12 @@ fn key_rehash_all<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, count: u64, 
   let progress = Progress<K>(held: move held, source_next: 0_u64, next_probe: 0_u64, phase: 0_u8);
   let (work, moved) = key_advance::<Key<K, E>>(source: slots, target: &target, progress: &progress, budget: 18446744073709551615_u64, env: env);
   let phase = progress.phase;
-  set deref(slots) = move target;
+  set slots^ = move target;
   return phase, work, moved;
 }
 
 fn key_remove<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E) -> removed: Slot<K> reads(key), reads(env), writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   match key_find_index::<Key<K, E>>(slots: slots, key: key, env: env) {
     Err(error: absent) => {
@@ -384,14 +384,14 @@ fn key_remove<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E
     }
     Ok(value: index) => {
       let deleted = Slot<K>::Deleted();
-      swap(first: &deref(slots).inner[index], second: &deleted);
+      swap(first: &slots^.inner[index], second: &deleted);
       return move deleted;
     }
   }
 }
 
 fn key_inspect<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -> (action: Probe, id: u64) reads(slot), reads(key), reads(env) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return Probe::Stop(), 0_u64;
     }
@@ -399,10 +399,10 @@ fn key_inspect<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -
       return Probe::Skip(), 0_u64;
     }
     Occupied(fingerprint: saved, key: present, payload: owner) => {
-      if deref(saved) == tag {
+      if saved^ == tag {
         let same = Key::equal(env: env, left: present, right: key);
         if same {
-          return Probe::Match(), deref(owner).inner.id;
+          return Probe::Match(), owner^.inner.id;
         }
       }
       return Probe::Miss(), 0_u64;
@@ -413,12 +413,12 @@ fn key_inspect<interface Key<K, E>>(slot: &Slot<K>, tag: u8, key: &K, env: &E) -
 fn key_find<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E) -> (found: Option<u64>, examined: u64) reads(slots), reads(key), reads(env) {
   let hash = Key::hash(env: env, key: key);
   let tag = fingerprint(key: hash);
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   for (offset in 0_u64..count) {
     let home = hash % count;
     let index = probe_index(home: home, step: offset, count: count);
     let work = offset + 1_u64;
-    let (action, id) = key_inspect::<Key<K, E>>(slot: &deref(slots).inner[index], tag: tag, key: key, env: env);
+    let (action, id) = key_inspect::<Key<K, E>>(slot: &slots^.inner[index], tag: tag, key: key, env: env);
     match action {
       Stop() => {
         return None<u64>(), work;
@@ -436,7 +436,7 @@ fn key_find<interface Key<K, E>>(slots: &Box<Slots<Slot<K>>>, key: &K, env: &E) 
 }
 
 fn put(slots: &Box<Slots<Slot<u64>>>, key: u64, payload: Box<Resource>) -> outcome: PutOutcome writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   let env = Empty();
   match key_put::<WordKey>(slots: slots, key: key, payload: move payload, env: &env) {
@@ -466,7 +466,7 @@ fn find(slots: &Box<Slots<Slot<u64>>>, key: u64) -> (found: Option<u64>, examine
 }
 
 fn remove(slots: &Box<Slots<Slot<u64>>>, key: u64) -> removed: Option<Box<Resource>> writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   let env = Empty();
   let old = key_remove::<WordKey>(slots: slots, key: &key, env: &env);
@@ -496,8 +496,8 @@ fn advance(source: &Box<Slots<Slot<u64>>>, target: &Box<Slots<Slot<u64>>>, progr
 }
 
 fn rehash_all(slots: &Box<Slots<Slot<u64>>>, count: u64) -> (code: u8, examined: u64, moved: u64) writes(slots) contract {
-  requires deref(slots).inner.len <= 1048576_u64;
-  requires count >= deref(slots).inner.len;
+  requires slots^.inner.len <= 1048576_u64;
+  requires count >= slots^.inner.len;
   requires count <= 2097152_u64;
 } {
   let env = Empty();
@@ -514,7 +514,7 @@ fn create_table(count: u64) -> result: Box<Slots<Slot<u64>>> pure contract {
 }
 
 fn read_slot(slot: &Slot<u64>) -> (control: u8, key: u64, id: u64) reads(slot) {
-  match deref(slot) {
+  match slot^ {
     Vacant() => {
       return 128_u8, 0_u64, 0_u64;
     }
@@ -522,13 +522,13 @@ fn read_slot(slot: &Slot<u64>) -> (control: u8, key: u64, id: u64) reads(slot) {
       return 254_u8, 0_u64, 0_u64;
     }
     Occupied(fingerprint: saved_tag, key: saved_key, payload: owner) => {
-      return deref(saved_tag), deref(saved_key), deref(owner).inner.id;
+      return saved_tag^, saved_key^, owner^.inner.id;
     }
   }
 }
 
 fn allocate_put(slots: &Box<Slots<Slot<u64>>>, key: u64, id: u64) -> outcome: PutOutcome writes(slots) contract {
-  ensures deref(slots).inner.len == deref(entry(slots)).inner.len;
+  ensures slots^.inner.len == entry(slots)^.inner.len;
 } {
   doc "Allocation is total, so one owner is built for every offered insertion.";
   let data0 = id *wrap 17_u64;
@@ -571,11 +571,11 @@ fn check_put(outcome: PutOutcome, kind: u64, expected: u64) -> code: u8 pure {
 }
 
 fn digest(slots: &Box<Slots<Slot<u64>>>) -> result: u64 reads(slots) {
-  let count = deref(slots).inner.len;
+  let count = slots^.inner.len;
   let start = ixor(1469598103934665603_u64, count);
   let hash = start *wrap 1099511628211_u64;
   for (index in 0_u64..count) {
-    let (control, key, id) = read_slot(slot: &deref(slots).inner[index]);
+    let (control, key, id) = read_slot(slot: &slots^.inner[index]);
     let wide = cvt::<u8, u64>(control);
     let with_tag = ixor(hash, wide);
     set hash = with_tag *wrap 1099511628211_u64;
@@ -601,16 +601,16 @@ fn checked_insert(slots: &Box<Slots<Slot<u64>>>, key: u64, id: u64, kind: u64, e
 }
 
 fn state_hash(state: &Rehash<u64>) -> result: u64 reads(state.source), reads(state.target), reads(state.progress.held), reads(state.progress.source_next), reads(state.progress.next_probe), reads(state.progress.phase) {
-  let source = digest(slots: &deref(state).source);
-  let target = digest(slots: &deref(state).target);
-  let (control, key, id) = read_slot(slot: &deref(state).progress.held);
+  let source = digest(slots: &state^.source);
+  let target = digest(slots: &state^.target);
+  let (control, key, id) = read_slot(slot: &state^.progress.held);
   let first = source *wrap 131_u64;
   let second = first +wrap target;
   let third = second *wrap 131_u64;
-  let fourth = third +wrap deref(state).progress.source_next;
+  let fourth = third +wrap state^.progress.source_next;
   let fifth = fourth *wrap 131_u64;
-  let sixth = fifth +wrap deref(state).progress.next_probe;
-  let phase = cvt::<u8, u64>(deref(state).progress.phase);
+  let sixth = fifth +wrap state^.progress.next_probe;
+  let phase = cvt::<u8, u64>(state^.progress.phase);
   let seventh = sixth *wrap 131_u64;
   let eighth = seventh +wrap phase;
   let ninth = eighth *wrap 131_u64;
@@ -781,13 +781,13 @@ struct Branded {
 }
 
 fn branded_hash(env: &Seed, key: &Branded) -> hash: u64 reads(env.salt), reads(key.value) {
-  let value = deref(key).value.inner;
-  return value +wrap deref(env).salt;
+  let value = key^.value.inner;
+  return value +wrap env^.salt;
 }
 
 fn branded_equal(env: &Seed, left: &Branded, right: &Branded) -> equal: Bool reads(left.value), reads(right.value) {
-  let a = deref(left).value.inner;
-  let b = deref(right).value.inner;
+  let a = left^.value.inner;
+  let b = right^.value.inner;
   return a == b;
 }
 

@@ -804,7 +804,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn source_invariant_discharges_the_weigh_addition_domain() {
     let source = br#"fn weigh(weights: &[u8], count: u64) -> total: u32 reads(weights) contract {
-  define capacity = deref(weights).len;
+  define capacity = weights^.len;
   requires count <= capacity;
   requires count <= 1000_u64;
   ensures total <= 255000_u32;
@@ -814,7 +814,7 @@ fn source_invariant_discharges_the_weigh_addition_domain() {
     i in 0_u64..count,
     invariant per_byte: sum <= 255_u32 * i
   ) {
-    let w = deref(weights)[i];
+    let w = weights^[i];
     let wide = cvt::<u8, u32>(w);
     set sum = sum + wide;
   }
@@ -822,7 +822,7 @@ fn source_invariant_discharges_the_weigh_addition_domain() {
 }
 
 fn add_one(weights: &[u8], count: u64) -> result: u32 reads(weights) contract {
-  define capacity = deref(weights).len;
+  define capacity = weights^.len;
   requires count <= capacity;
   requires count <= 1000_u64;
 } {
@@ -1437,7 +1437,7 @@ fn main() -> status: std::process::ExitStatus pure {
 fn active_invariant_proves_a_dynamic_range_reference_index_obligation() {
     let source =
         br#"fn read_prefix(values: &[u8], count: u64) -> result: unit reads(values) contract {
-  define capacity = deref(values).len;
+  define capacity = values^.len;
   requires count <= capacity;
 } {
   let index = 0_u64;
@@ -1445,7 +1445,7 @@ fn active_invariant_proves_a_dynamic_range_reference_index_obligation() {
     i in 0_u64..count,
     invariant position: index <= i
   ) {
-    let value = deref(values)[index];
+    let value = values^[index];
     set index = index + 1_u64;
   }
   return unit;
@@ -1615,7 +1615,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
-  define capacity = deref(source).len;
+  define capacity = source^.len;
   requires limit <= capacity;
 } {
   let start = 0_u64;

@@ -1,5 +1,5 @@
 fn walk(value: &u64, choose: Bool) -> result: u64 reads(value) {
-  let local = deref(value);
+  let local = value^;
   let selected = if choose {
     give value;
   } else {

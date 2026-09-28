@@ -7,7 +7,7 @@ struct Marker<T> {
 
 fn read_marker(marker: &Marker<Slots<u8, 4>>) -> value: u64 reads(marker.value) {
   doc "One reader names one written instantiation in its parameter type and needs no provider argument beside it.";
-  return deref(marker).value;
+  return marker^.value;
 }
 
 fn main() -> status: ExitStatus pure {

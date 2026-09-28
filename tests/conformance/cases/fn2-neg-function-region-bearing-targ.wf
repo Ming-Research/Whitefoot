@@ -8,7 +8,7 @@ fn preserve<T: drop>(value: T) -> result: T pure {
 fn invalid(part: &[u8]) -> result: u64 pure {
   doc "A range reference may be a directly written parameter, as `part` is, but never a generic type argument: GRAM-3's `targ` alternatives contain value types and const expressions, with no reference-kind production [TYPE-8].";
   let kept = preserve::<&[u8]>(value: part);
-  return deref(part).len;
+  return part^.len;
 }
 
 fn main() -> status: ExitStatus pure {

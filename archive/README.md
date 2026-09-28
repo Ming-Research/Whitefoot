@@ -65,3 +65,10 @@ developer's absolute directory.
   democ, and tape-era inventory. Their exact Git
   identities and replay instructions are recorded inside. The active compiler
   starts fresh in Rust and imports nothing from this archive.
+
+- `experiments/reference-access-grammar/main.rs` — the retired v0.75 reference
+  spelling comparison. The v0.76 compiler and conformance cases replace its
+  relabelled-predicate grammar probe. It remains inert evidence; reproduce the
+  original runs from revision `44032cac693afe4246cf9e9b872ddf40c2491945`, where
+  the driver and its imported generator share their original paths. The live
+  comparison is in `research/investigations/contract-surface/OWNERSHIP.md`.

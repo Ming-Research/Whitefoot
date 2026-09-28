@@ -622,6 +622,7 @@ impl ConditionalBlocks {
 /// Written alternatives only; selected storage and reference rules belong
 /// to semantic checking. Payload selection retains its variant token.
 pub(crate) enum PlaceSuffix {
+    Dereference,
     Member(MemberForm),
     Index { offset: NodeId },
     Range { start: NodeId, end: NodeId },
@@ -666,6 +667,9 @@ impl SyntaxView<'_> {
     }
 
     pub(crate) fn place_suffix(&self, node: NodeId) -> Result<PlaceSuffix, SyntaxViewFailure> {
+        if self.has_fixed(node, crate::FixedTerminal::Caret)? {
+            return Ok(PlaceSuffix::Dereference);
+        }
         if let Some(offset) = self.first_child_with(node, Production::Atom)? {
             return Ok(match self.first_child_with(node, Production::RangeTail)? {
                 Some(tail) => PlaceSuffix::Range {
@@ -697,7 +701,7 @@ impl SyntaxView<'_> {
             PlaceSuffix::Index { offset } | PlaceSuffix::Range { start: offset, .. } => {
                 Some(offset)
             }
-            PlaceSuffix::Member(_) => None,
+            PlaceSuffix::Member(_) | PlaceSuffix::Dereference => None,
         })
     }
 
@@ -856,39 +860,23 @@ impl MemberForm {
     }
 }
 
-pub(crate) enum PlaceBase {
-    Name,
-    Dereference(NodeId),
-    Entry,
-}
-
-impl PlaceBase {
-    pub(crate) fn is_dereference(&self) -> bool {
-        matches!(self, Self::Dereference(_))
-    }
-}
-
 impl SyntaxView<'_> {
-    pub(crate) fn place_base(&self, node: NodeId) -> Result<PlaceBase, SyntaxViewFailure> {
-        if self.has_fixed(node, crate::FixedTerminal::Deref)? {
-            Ok(PlaceBase::Dereference(
-                self.first_child_with(node, Production::Place)?
-                    .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?,
-            ))
-        } else if self.has_fixed(node, crate::FixedTerminal::Entry)? {
-            Ok(PlaceBase::Entry)
-        } else {
-            Ok(PlaceBase::Name)
-        }
+    /// Only the path's own suffixes count; an index operand has its own place.
+    pub(crate) fn place_has_dereference(&self, place: NodeId) -> Result<bool, SyntaxViewFailure> {
+        Ok(self
+            .reference_step(&self.children_with(place, Production::Psuffix)?)?
+            .is_some())
     }
 
-    pub(crate) fn dereferenced_place(
+    pub(crate) fn reference_step(
         &self,
-        node: NodeId,
-    ) -> Result<Option<NodeId>, SyntaxViewFailure> {
-        Ok(match self.place_base(node)? {
-            PlaceBase::Dereference(inner) => Some(inner),
-            PlaceBase::Name | PlaceBase::Entry => None,
-        })
+        suffixes: &[NodeId],
+    ) -> Result<Option<usize>, SyntaxViewFailure> {
+        for (index, &suffix) in suffixes.iter().enumerate() {
+            if matches!(self.place_suffix(suffix)?, PlaceSuffix::Dereference) {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
     }
 }

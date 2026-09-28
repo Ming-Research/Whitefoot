@@ -20,10 +20,10 @@ fn sum(head: &Option<Box<Link>>) -> result: u64 reads(head) {
   let cursor = head;
   let total = 0_u64;
   loop {
-    match deref(cursor) {
+    match cursor^ {
       Some(value: node) => {
-        set total = total +wrap deref(node).inner.value;
-        set cursor = &deref(node).inner.next;
+        set total = total +wrap node^.inner.value;
+        set cursor = &node^.inner.next;
       }
       None() => {
         return total;
@@ -34,7 +34,7 @@ fn sum(head: &Option<Box<Link>>) -> result: u64 reads(head) {
 }
 
 fn without_first(head: Option<Box<Link>>) -> result: Option<Box<Link>> pure {
-  match head {
+  match move head {
     Some(value: cell) => {
       let node = move cell.inner;
       return move node.next;
@@ -49,13 +49,13 @@ fn remove_even(head: &Option<Box<Link>>) -> result: unit writes(head) {
   doc "A single link-slot cursor removes nodes by atomic owned transformation, preserving the occupied slot and releasing each removed cell.";
   let cursor = head;
   loop {
-    match deref(cursor) {
+    match cursor^ {
       Some(value: node) => {
-        let parity = deref(node).inner.value % 2_u64;
+        let parity = node^.inner.value % 2_u64;
         if parity == 0_u64 {
-          set deref(cursor) = without_first(head: move deref(cursor));
+          set cursor^ = without_first(head: move cursor^);
         } else {
-          set cursor = &deref(node).inner.next;
+          set cursor = &node^.inner.next;
         }
       }
       None() => {
@@ -69,10 +69,10 @@ fn remove_even(head: &Option<Box<Link>>) -> result: unit writes(head) {
 fn raise_values(head: &Option<Box<Link>>) -> result: unit writes(head) {
   let cursor = head;
   loop {
-    match deref(cursor) {
+    match cursor^ {
       Some(value: node) => {
-        set deref(node).inner.value = deref(node).inner.value +wrap 1_u64;
-        set cursor = &deref(node).inner.next;
+        set node^.inner.value = node^.inner.value +wrap 1_u64;
+        set cursor = &node^.inner.next;
       }
       None() => {
         return unit;
@@ -106,15 +106,15 @@ fn tree() -> result: Tree pure {
 fn edge(root: &Tree, right: Bool) -> result: u64 reads(root) {
   let cursor = root;
   loop {
-    match deref(cursor) {
+    match cursor^ {
       Leaf(value: leaf_value) => {
-        return deref(leaf_value);
+        return leaf_value^;
       }
       Fork(left: first, right: next) => {
         if right {
-          set cursor = &deref(next).inner;
+          set cursor = &next^.inner;
         } else {
-          set cursor = &deref(first).inner;
+          set cursor = &first^.inner;
         }
       }
     }
@@ -129,10 +129,10 @@ fn repeated_sum(head: &Option<Box<Link>>) -> result: u64 reads(head) {
   for (pass in 0_u64..3_u64) {
     set cursor = head;
     loop @walk {
-      match deref(cursor) {
+      match cursor^ {
         Some(value: node) => {
-          set total = total +wrap deref(node).inner.value;
-          set cursor = &deref(node).inner.next;
+          set total = total +wrap node^.inner.value;
+          set cursor = &node^.inner.next;
         }
         None() => {
           break @walk;

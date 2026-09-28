@@ -474,7 +474,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
-  match std::net::receive_next(receive: &deref(connection).receive, destination: destination, start: 0_u64, end: 1_u64) {
+  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64) {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -489,7 +489,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match std::net::send_once(send: &deref(connection).send, source: source, start: 0_u64, end: 1_u64) {
+  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64) {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;

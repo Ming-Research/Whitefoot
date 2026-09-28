@@ -10,7 +10,7 @@ nocopy enum Sign {
 fn main() -> status: ExitStatus pure {
   doc "Matching an own place moves it [OWN-13]; forming a reference to the now-dead binding afterward is a use after move, distinct from the usual match-after-move form and rejected citing OWN-1.";
   let s = Sign::Pos();
-  match s {
+  match move s {
     Neg(mag: m) => {
     }
     Zero() => {

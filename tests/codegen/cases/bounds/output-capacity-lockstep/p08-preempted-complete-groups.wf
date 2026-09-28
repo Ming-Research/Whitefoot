@@ -1,5 +1,5 @@
 fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out), traps contract {
-  define out_len = len_of(deref(out));
+  define out_len = len_of(out^);
   define src_len = len_of(src);
   define groups = ishr.wrap(out_len, 2_u32);
   define covered = groups *wrap 3_u64;
@@ -17,10 +17,10 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out), tra
     let o1 = o +wrap 1_u64;
     let o2 = o +wrap 2_u64;
     let o3 = o +wrap 3_u64;
-    set deref(out)[o] = 0_u8;
-    set deref(out)[o1] = 1_u8;
-    set deref(out)[o2] = 2_u8;
-    set deref(out)[o3] = 3_u8;
+    set out^[o] = 0_u8;
+    set out^[o1] = 1_u8;
+    set out^[o2] = 2_u8;
+    set out^[o3] = 3_u8;
     set i = i +wrap 3_u64;
     set o = o +wrap 4_u64;
   }
@@ -30,10 +30,10 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out), tra
     let a1 = o +wrap 1_u64;
     let a2 = o +wrap 2_u64;
     let a3 = o +wrap 3_u64;
-    set deref(out)[o] = 4_u8;
-    set deref(out)[a1] = 5_u8;
-    set deref(out)[a2] = 6_u8;
-    set deref(out)[a3] = 7_u8;
+    set out^[o] = 4_u8;
+    set out^[a1] = 5_u8;
+    set out^[a2] = 6_u8;
+    set out^[a3] = 7_u8;
     set o = o +wrap 4_u64;
   }
   if tail == 2_u64 {
@@ -41,10 +41,10 @@ fn probe(out: &uniq buffer<u8>, src: buffer<u8>) -> result: u64 writes(out), tra
     let b1 = o +wrap 1_u64;
     let b2 = o +wrap 2_u64;
     let b3 = o +wrap 3_u64;
-    set deref(out)[o] = 8_u8;
-    set deref(out)[b1] = 9_u8;
-    set deref(out)[b2] = 10_u8;
-    set deref(out)[b3] = 11_u8;
+    set out^[o] = 8_u8;
+    set out^[b1] = 9_u8;
+    set out^[b2] = 10_u8;
+    set out^[b3] = 11_u8;
     set o = o +wrap 4_u64;
   }
   return o;

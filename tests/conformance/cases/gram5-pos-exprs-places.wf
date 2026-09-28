@@ -11,7 +11,7 @@ fn main() -> return_value: ExitStatus pure {
   doc "GRAM-5: literal atom, place atom, borrow_expr atom, a `deref` place reaching a reference referent [TYPE-7], a field step reaching a Box's content [TYPE-9], a table-op infix, and a construct. `deref` is the one step that reaches stored data through a reference, and a cell's content is its field `inner`.";
   let a = 5_i32;
   let p = &a;
-  let b = deref(p) +wrap a;
+  let b = p^ +wrap a;
   let cell = box_new::<i32>(value: 2_i32);
   let inner = cell.inner;
   let s = Sign::Zero();

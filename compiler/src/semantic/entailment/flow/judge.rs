@@ -933,7 +933,7 @@ impl Analyzer<'_, '_> {
                 reached: self.judge_range_element_place(place, states),
             },
             // [OP-4, REF-4] one element of the run a range names owes
-            // `i < deref(p).len`, the range's one measure [MSR-1].
+            // `i < p^.len`, the range's one measure [MSR-1].
             CheckedExpression::RangeIndex { place, .. }
             | CheckedExpression::BorrowRangeIndex { place, .. } => ExpressionJudgment {
                 prepared_call: None,

@@ -59,29 +59,29 @@ fn assert_fn9_refuted(source: &[u8]) {
 fn direct_range_measure_returns_prove_only_the_matching_postcondition() {
     assert_complete(
         br#"fn count(part: &[u8]) -> result: u64 reads(part) contract {
-  ensures result == deref(part).len;
+  ensures result == part^.len;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 "#,
     );
 
     assert_fn9_refuted(
         br#"fn count(part: &[u8]) -> result: u64 reads(part) contract {
-  requires deref(part).len <= 18446744073709551614_u64;
-  ensures result == deref(part).len + 1_u64;
+  requires part^.len <= 18446744073709551614_u64;
+  ensures result == part^.len + 1_u64;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 "#,
     );
 
     assert_rule(
         br#"fn first(part: &[u8]) -> result: u64 reads(part) contract {
-  requires deref(part).len > 0_u64;
-  ensures result == deref(part).len;
+  requires part^.len > 0_u64;
+  ensures result == part^.len;
 } {
-  let byte = deref(part)[0_u64];
+  let byte = part^[0_u64];
   return cvt::<u8, u64>(byte);
 }
 "#,
@@ -124,9 +124,9 @@ fn nested(owner: Box<Box<Slots<u8>>>) -> result: u64 pure contract {
 }
 
 fn referenced(owner: &Box<Slots<u8>>) -> result: u64 reads(owner.inner) contract {
-  ensures result == deref(owner).inner.len;
+  ensures result == owner^.inner.len;
 } {
-  return deref(owner).inner.len;
+  return owner^.inner.len;
 }
 
 fn boxed_indexed(owner: Box<Array<Slots<u8, 2>, 2>>) -> result: u64 pure contract {
@@ -191,11 +191,11 @@ fn field(owner: Holder) -> result: u64 pure contract {
 
     assert_fn9_refuted(
         br#"fn distinct_references(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> result: u64 reads(left.inner) contract {
-  requires deref(left).inner.len == 0_u64;
-  requires deref(right).inner.len == 1_u64;
-  ensures result == deref(right).inner.len;
+  requires left^.inner.len == 0_u64;
+  requires right^.inner.len == 1_u64;
+  ensures result == right^.inner.len;
 } {
-  return deref(left).inner.len;
+  return left^.inner.len;
 }
 "#,
     );
@@ -229,25 +229,25 @@ fn distinct_fields(owner: Pair) -> result: u64 pure contract {
 }
 
 /// A declared postcondition over a reference parameter substitutes through a
-/// Box content projection written as `&deref(boxed).inner` at the call. The
+/// Box content projection written as `&boxed^.inner` at the call. The
 /// wrapper publishes the resulting concrete `.inner.len` relation.
 #[test]
 fn a_box_content_actual_preserves_an_imported_length_postcondition() {
     let source = br#"fn append_one(values: &Slots<u8, 4>) -> result: unit writes(values.next), writes(values.len) contract {
-  requires deref(values).len == 0_u64;
-  requires 1_u64 <= deref(values).cap;
-  ensures deref(values).len == 1_u64;
+  requires values^.len == 0_u64;
+  requires 1_u64 <= values^.cap;
+  ensures values^.len == 1_u64;
 } {
   place_back(window: values, value: 7_u8);
   return unit;
 }
 
 fn through_box(slots: &Box<Slots<u8, 4>>) -> result: unit writes(slots.inner.next), writes(slots.inner.len) contract {
-  requires deref(slots).inner.len == 0_u64;
-  requires 1_u64 <= deref(slots).inner.cap;
-  ensures deref(slots).inner.len == 1_u64;
+  requires slots^.inner.len == 0_u64;
+  requires 1_u64 <= slots^.inner.cap;
+  ensures slots^.inner.len == 1_u64;
 } {
-  let appended = append_one(values: &deref(slots).inner);
+  let appended = append_one(values: &slots^.inner);
   return unit;
 }
 
@@ -271,15 +271,15 @@ fn a_generic_grow_wrapper_publishes_its_integer_result_relation() {
 
 fn reserve<T, const ceiling: u64>(values: &Holder<T, ceiling>, total: u64) -> capacity: u64 writes(values.storage) contract {
   requires total <= ceiling;
-  ensures capacity == deref(values).storage.inner.cap;
+  ensures capacity == values^.storage.inner.cap;
   ensures capacity >= total;
-  ensures deref(values).storage.inner.len == deref(entry(values)).storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
 } {
-  let current = deref(values).storage.inner.cap;
+  let current = values^.storage.inner.cap;
   if current >= total {
     return current;
   }
-  grow(cell: &deref(values).storage, capacity: total);
+  grow(cell: &values^.storage, capacity: total);
   return total;
 }
 
@@ -806,20 +806,20 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_projected_call_write_invalidates_its_postcondition_entry_image() {
     let source = br#"fn overwrite(out: &i32) -> result: unit writes(out) {
-  set deref(out) = 1_i32;
+  set out^ = 1_i32;
   return unit;
 }
 
 fn transfer(out: &i32) -> result: i32 writes(out) contract {
-  ensures result == deref(out);
+  ensures result == out^;
 } {
-  let before = deref(out);
+  let before = out^;
   overwrite(out: out);
   return before;
 }
 
 fn plain(out: &i32) -> result: i32 writes(out) {
-  let before = deref(out);
+  let before = out^;
   overwrite(out: out);
   return before;
 }
@@ -977,13 +977,13 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
     // carries the write permission the retiring `&uniq MutSlice<u8>` marker
     // used to carry [REF-1, EFF-1].
     let source = br#"fn append_bytes(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
-  requires capacity == deref(destination).len;
+  requires capacity == destination^.len;
   requires filled <= capacity;
   ensures result <= capacity;
 } {
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let admitted = filled <= spare;
-  let length = deref(text).len;
+  let length = text^.len;
   if admitted {
     for @append (at in filled..spare) {
       let taken = at -wrap filled;
@@ -991,8 +991,8 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
       if done {
         return at;
       }
-      let byte = deref(text)[taken];
-      set deref(destination)[at] = byte;
+      let byte = text^[taken];
+      set destination^[at] = byte;
     }
     return spare;
   } else {
@@ -1229,13 +1229,13 @@ fn a_borrowed_formal_substitution_consumes_its_one_formal_deref() {
 }
 
 fn observe(pair: &Pair) -> result: i32 reads(pair.value) contract {
-  ensures result == deref(pair).value;
+  ensures result == pair^.value;
 } {
-  return deref(pair).value;
+  return pair^.value;
 }
 
 fn caller(pair: &Pair) -> result: i32 reads(pair.value) contract {
-  ensures result == deref(pair).value;
+  ensures result == pair^.value;
 } {
   let observed = observe(pair: pair);
   return observed;
@@ -1490,7 +1490,7 @@ fn caller() -> result: unit pure {
   let source = 1_i32;
   let observed = observe(value: source);
   let writer = &source;
-  set deref(writer) = 2_i32;
+  set writer^ = 2_i32;
   guard(left: observed, right: source);
   return unit;
 }
@@ -2239,7 +2239,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_nonbare_result_use_in_an_ensures_expression_is_still_rejected() {
     let source = br#"fn hidden(value: i32) -> result: i32 pure contract {
-  ensures deref(result) == value;
+  ensures result^ == value;
 } {
   return value;
 }
@@ -2248,7 +2248,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_rule_at(source, SemanticRule::Fn9, "deref(result) == value");
+    assert_rule_at(source, SemanticRule::Fn9, "result^ == value");
 }
 
 #[test]
@@ -2268,9 +2268,9 @@ fn from_cell(owner: Box<Pair>) -> result: i32 pure contract {
 }
 
 fn from_shared(owner: &Pair) -> result: i32 reads(owner.value) contract {
-  ensures result == deref(owner).value;
+  ensures result == owner^.value;
 } {
-  return deref(owner).value;
+  return owner^.value;
 }
 
 fn field_length(values: Values) -> result: u64 pure contract {
@@ -2488,10 +2488,10 @@ fn a_holder_alias_does_not_change_the_selected_return_term_identity() {
 }
 
 fn from_shared_alias(owner: &Pair) -> result: i32 reads(owner.value) contract {
-  ensures result == deref(owner).value;
+  ensures result == owner^.value;
 } {
   let aliased = owner;
-  return deref(aliased).value;
+  return aliased^.value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2503,7 +2503,7 @@ fn main() -> status: std::process::ExitStatus pure {
         dispositions(&proof),
         vec![PostconditionDisposition::Unproved]
     );
-    assert_rule_at(source, SemanticRule::Fn9, "return deref(aliased).value;");
+    assert_rule_at(source, SemanticRule::Fn9, "return aliased^.value;");
 }
 
 #[test]
@@ -3601,8 +3601,8 @@ fn append_does_not_invent_a_positive_destination_length() {
 
 #[test]
 fn a_conditional_unique_call_keeps_the_other_branch_measure_image() {
-    // [MSR-3] the callee's exit measure is `deref(values).len` and its entry
-    // measure is `deref(entry(values)).len`; write permission comes from the
+    // [MSR-3] the callee's exit measure is `values^.len` and its entry
+    // measure is `entry(values)^.len`; write permission comes from the
     // row rather than from the retiring `&uniq` marker [REF-1, EFF-1], and the
     // window is replaced by [SET-1] under [WIN-3]'s disposition.
     for branches in [
@@ -3611,10 +3611,10 @@ fn a_conditional_unique_call_keeps_the_other_branch_measure_image() {
     ] {
         let source = format!(
             r#"fn touch(values: &Slots<u8, 16>) -> result: unit writes(values) contract {{
-  requires deref(values).len >= 1_u64;
-  ensures deref(values).len == deref(entry(values)).len;
+  requires values^.len >= 1_u64;
+  ensures values^.len == entry(values)^.len;
 }} {{
-  set deref(values)[0_u64] = 7_u8;
+  set values^[0_u64] = 7_u8;
   return unit;
 }}
 
@@ -3653,7 +3653,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 fn a_referent_replacement_still_kills_its_own_branch_measure_image() {
     let source = br#"fn clear(values: &Slots<u8, 16>) -> result: unit writes(values) {
   let empty = slots_new::<u8, 16>();
-  set deref(values) = move empty;
+  set values^ = move empty;
   return unit;
 }
 
@@ -3705,7 +3705,7 @@ fn assert_fn9_rejects(source: &[u8]) {
 /// distinct terms, and both are read at the selected return whether the
 /// callee's own call is that return or a statement before it.
 ///
-/// [MSR-3]'s table gives `ensures, deref(reference parameter the row writes)`
+/// [MSR-3]'s table gives `ensures, reference parameter the row writes^`
 /// the exit-state term and `ensures, deref(entry(reference parameter the row
 /// writes))` the immutable entry datum, and says so in one sentence: "Entry
 /// and exit measures are distinct terms even when both project from the same
@@ -3716,8 +3716,8 @@ fn assert_fn9_rejects(source: &[u8]) {
 /// published exit relation -- before the clause is queried, exactly as the
 /// two-statement form does (compiler/checker-facts, pending).
 ///
-/// Under `requires deref(free).len == 2_u64` the entry length is two and
-/// `take_back`'s `ensures deref(window).len + 1_u64 == deref(entry(window)).len`
+/// Under `requires free^.len == 2_u64` the entry length is two and
+/// `take_back`'s `ensures window^.len + 1_u64 == entry(window)^.len`
 /// makes the exit length one. So `+ 1_u64 == entry` and `== 1_u64` hold and
 /// `== entry` and `== 2_u64` do not, in both body forms. A reading that took
 /// the entry state at the exit would accept `== entry` and `== 2_u64` and
@@ -3727,7 +3727,7 @@ fn entry_and_exit_measures_are_two_states_at_a_returned_call_and_at_a_statement(
     let program = |clause: &str, body: &str| {
         format!(
             r#"fn take_one(free: &Slots<u8, 4>) -> taken: u8 writes(free.last), writes(free.len) contract {{
-  requires deref(free).len == 2_u64;
+  requires free^.len == 2_u64;
   ensures {clause};
 }} {{
 {body}
@@ -3746,12 +3746,10 @@ fn main() -> status: std::process::ExitStatus pure {{
     let returned_call = "  return take_back(window: free);";
     let own_statement = "  let one = take_back(window: free);\n  return one;";
     for body in [returned_call, own_statement] {
-        assert_complete(
-            program("deref(free).len + 1_u64 == deref(entry(free)).len", body).as_bytes(),
-        );
-        assert_fn9_rejects(program("deref(free).len == deref(entry(free)).len", body).as_bytes());
-        assert_complete(program("deref(free).len == 1_u64", body).as_bytes());
-        assert_fn9_rejects(program("deref(free).len == 2_u64", body).as_bytes());
+        assert_complete(program("free^.len + 1_u64 == entry(free)^.len", body).as_bytes());
+        assert_fn9_rejects(program("free^.len == entry(free)^.len", body).as_bytes());
+        assert_complete(program("free^.len == 1_u64", body).as_bytes());
+        assert_fn9_rejects(program("free^.len == 2_u64", body).as_bytes());
     }
 }
 
@@ -3763,11 +3761,11 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn postcondition_measure_candidates_distinguish_holder_rebinding_from_descendant_writes() {
     let descendant_write = br#"fn take_at(window: &Ring<Box<u64>, 4>, at: u64) -> taken: Box<u64> writes(window) contract {
-  requires at + 2_u64 <= deref(window).len;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires at + 2_u64 <= window^.len;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let end = take_back(window: window);
-  swap(first: &deref(window)[at], second: &end);
+  swap(first: &window^[at], second: &end);
   return move end;
 }
 
@@ -3779,8 +3777,8 @@ fn main() -> status: std::process::ExitStatus pure {
 
     let descriptor_write =
         br#"fn take_twice(window: &Ring<u64, 4>) -> taken: u64 writes(window) contract {
-  requires deref(window).len >= 2_u64;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires window^.len >= 2_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let taken = take_back(window: window);
   let extra = take_back(window: window);
@@ -3795,13 +3793,13 @@ fn main() -> status: std::process::ExitStatus pure {
 
     let whole_replacement = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
-  set deref(window) = move empty;
+  set window^ = move empty;
   return unit;
 }
 
 fn replace_after_take(window: &Ring<u64, 4>) -> taken: u64 writes(window) contract {
-  requires deref(window).len >= 2_u64;
-  ensures deref(window).len + 1_u64 == deref(entry(window)).len;
+  requires window^.len >= 2_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let taken = take_back(window: window);
   clear(window: window);
@@ -3816,13 +3814,13 @@ fn main() -> status: std::process::ExitStatus pure {
 
     let joined_write = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
-  set deref(window) = move empty;
+  set window^ = move empty;
   return unit;
 }
 
 fn maybe_replace(first: &Ring<u64, 4>, second: &Ring<u64, 4>, choose: Bool) -> taken: u64 writes(first), writes(second) contract {
-  requires deref(first).len >= 2_u64;
-  ensures deref(first).len + 1_u64 == deref(entry(first)).len;
+  requires first^.len >= 2_u64;
+  ensures first^.len + 1_u64 == entry(first)^.len;
 } {
   let taken = take_back(window: first);
   let selected = if choose {
@@ -3841,12 +3839,12 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_fn9_rejects(joined_write);
 
     let holder_rebinding = br#"fn rebind_after_take(first: &Ring<u64, 4>, second: &Ring<u64, 4>) -> taken: u64 writes(first) contract {
-  requires deref(first).len >= 2_u64;
-  ensures deref(first).len + 1_u64 == deref(entry(first)).len;
+  requires first^.len >= 2_u64;
+  ensures first^.len + 1_u64 == entry(first)^.len;
 } {
   let selected = first;
   let taken = take_back(window: selected);
-  set selected = &deref(second);
+  set selected = &second^;
   return taken;
 }
 

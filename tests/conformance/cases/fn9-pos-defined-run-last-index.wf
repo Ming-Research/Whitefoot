@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn last_index(values: &Slots<u8, 12>) -> index: u64 reads(values.len) contract {
-  define capacity = deref(values).len;
+  define capacity = values^.len;
   requires capacity > 0_u64;
   ensures index < capacity;
 } {
   doc "A definition expands the run length in both the requirement and the result bound; a proved nonempty window admits length minus one and proves the returned index is strictly inside that same entry measure.";
-  let capacity = deref(values).len;
+  let capacity = values^.len;
   let index = capacity - 1_u64;
   return index;
 }

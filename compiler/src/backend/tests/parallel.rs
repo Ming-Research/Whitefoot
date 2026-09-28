@@ -734,13 +734,13 @@ const EXPRESSION_STATEMENT_PAIR: &[u8] = br#"struct Pair {
 
 fn fill_left(pair: &Pair, seed: u64) -> result: unit writes(pair.left) {
   let value = seed *wrap 3_u64;
-  set deref(pair).left = value;
+  set pair^.left = value;
   return unit;
 }
 
 fn fill_right(pair: &Pair, seed: u64) -> result: unit writes(pair.right) {
   let value = seed *wrap 5_u64;
-  set deref(pair).right = value;
+  set pair^.right = value;
   return unit;
 }
 
@@ -1168,7 +1168,7 @@ fn a_permitted_pair_whose_first_member_is_borrowed_is_not_handed_out() {
 }
 
 fn peek(v: &u64) -> result: u64 reads(v) {
-  return deref(v);
+  return v^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1192,7 +1192,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn peek(v: &u64) -> result: u64 reads(v) {
-  return deref(v);
+  return v^;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2314,7 +2314,7 @@ fn recursive_controls_preserve_scalar_and_destination_results() {
   requires depth <= 5_u64;
 }} {{
   if depth == 0_u64 {{
-    let value = deref(seed);
+    let value = seed^;
     return {leaf};
   }}
   let below = depth - 1_u64;

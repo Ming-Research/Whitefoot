@@ -11,12 +11,12 @@ impl Input<'_, '_> {
 
     /// [REF-1] the body-side reading of one clause place's projections.
     ///
-    /// A clause names a reference parameter's referent as `deref(p)`, and the
+    /// A clause names a reference parameter's referent as `p^`, and the
     /// declaration-boundary template keeps that step as its leading
     /// projection because a caller substitutes the actual's own path for the
     /// formal and consumes exactly it [FN-8, CALL-6]. Inside the body the
     /// parameter name *is* the path, so the step names no place of its own
-    /// and is dropped: that is the identity every other term over `deref(p)`
+    /// and is dropped: that is the identity every other term over `p^`
     /// already carries, `is_holder` above having synthesized none.
     pub(super) fn body_projections<'projections>(
         &self,
@@ -291,7 +291,7 @@ impl Input<'_, '_> {
     /// call writes through parameter i is this place extended by that row's
     /// `epsuffix*`. An argument that is not a place names none.
     ///
-    /// A range formed at the call, `&x[lo..hi]` or `&deref(part)[a..b]`, is a
+    /// A range formed at the call, `&x[lo..hi]` or `&part^[a..b]`, is a
     /// `borrow_expr` written here exactly as `&x[i]` is: it names its source's
     /// resolved places extended by the formation's own range step [REF-4,
     /// OWN-7], the same path a bound range reference would name. That step
@@ -772,7 +772,7 @@ impl Reasoning<'_, '_, '_> {
                     // term reads the same two sentences in
                     // `event_kills_measure`, and a goal over the same measure
                     // must die on the same event: otherwise the goal-level
-                    // reading of `deref(p).len` survives the operation that
+                    // reading of `p^.len` survives the operation that
                     // changed it and stands beside the row's own post-state
                     // relation as a contradiction.
                     support.measure.is_some_and(|measure| {
@@ -1320,11 +1320,11 @@ pub(super) fn record_continuing(continuing: &mut Vec<KillEvent>, events: &[KillE
 
 /// [REF-1] a reference variable is not storage of its own.
 ///
-/// v0.59 spelled a holder's referent by inserting a `deref` step into
+/// v0.59 represented a holder's referent by inserting a `Deref` step into
 /// every term over it. v0.60 resolves the root instead: a place rooted at
 /// a reference variable is replaced by the path that reference names, so
-/// no step is synthesized here and the checked tree's own `deref` nodes
-/// are the only ones a path carries [TYPE-7].
+/// no step is synthesized here. The internal `Deref` steps a path carries
+/// select `Box.inner` [TYPE-9].
 pub(super) const fn is_holder(_binding: BindingId) -> bool {
     false
 }

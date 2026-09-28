@@ -10,17 +10,17 @@ fn inspect(root: &Node) -> result: u64 reads(root) {
   doc "A common subtree cover is not equality of the selected values.";
   let cursor = root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
       }
     }
   }
-  if deref(root).value != 0_u64 {
-    return 1_u64 / deref(cursor).value;
+  if root^.value != 0_u64 {
+    return 1_u64 / cursor^.value;
   }
   return 0_u64;
 }

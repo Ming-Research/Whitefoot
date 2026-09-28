@@ -43,7 +43,7 @@ fn optvec_push(v: OptVec, x: u32) -> result: OptVec pure {
   }
   let filled = Cell<u32>::Filled(value: x);
   swap(first: &v.buf[count], second: &filled);
-  match filled {
+  match move filled {
     EmptyCell() => {
     }
     Filled(value: stray) => {
@@ -73,7 +73,7 @@ fn optvec_pop(v: OptVec) -> (rest: OptVec, taken: u32) pure {
   let hole = Cell<u32>::EmptyCell();
   swap(first: &v.buf[last], second: &hole);
   set v.fill = last;
-  match hole {
+  match move hole {
     EmptyCell() => {
       return move v, 0_u32;
     }
@@ -104,9 +104,9 @@ enum BoxSlotView {
 
 fn view_box_entry(stored_entry: &Option<Entry>, same: &Option<Entry>) -> result: BoxSlotView reads(stored_entry) {
   doc "Two reference arguments may name one place when both only read it: the call site admits read/read overlap [EFF-5].";
-  match deref(stored_entry) {
+  match stored_entry^ {
     Some(value: present) => {
-      return BoxSlotView::Occupied(key: deref(present).key, value: deref(present).payload.inner);
+      return BoxSlotView::Occupied(key: present^.key, value: present^.payload.inner);
     }
     None() => {
       return BoxSlotView::Empty();
@@ -136,7 +136,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   let replacement_entry = Entry(key: 5_u64, payload: move replacement);
   let replacement_slot = Some<Entry>(value: move replacement_entry);
   swap(first: &entries[2_u64], second: &replacement_slot);
-  match replacement_slot {
+  match move replacement_slot {
     None() => {
       return 10_u8;
     }
@@ -156,7 +156,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   swap(first: &entries[1_u64], second: &delete_empty);
   let old_state = states[1_u64];
   set states[1_u64] = 2_u64;
-  let recycled = match delete_empty {
+  let recycled = match move delete_empty {
     None() => {
       return 20_u8;
     }
@@ -213,7 +213,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   swap(first: &entries[1_u64], second: &reused_slot);
   let tombstone_state = states[1_u64];
   set states[1_u64] = 1_u64;
-  match reused_slot {
+  match move reused_slot {
     Some(value: unexpected_tombstone_entry) => {
       return 40_u8;
     }
@@ -291,7 +291,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
     if states[at] == 1_u64 {
       let source_empty = None<Entry>();
       swap(first: &entries[at], second: &source_empty);
-      match source_empty {
+      match move source_empty {
         None() => {
           set states[at] = 0_u64;
         }
@@ -311,7 +311,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
               break;
             }
           }
-          match pending {
+          match move pending {
             Some(value: unplaced_entry) => {
               let unplaced = Some<Entry>(value: move unplaced_entry);
               swap(first: &entries[at], second: &unplaced);
@@ -356,7 +356,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   }
   let final_empty1 = None<Entry>();
   swap(first: &target[1_u64], second: &final_empty1);
-  match final_empty1 {
+  match move final_empty1 {
     None() => {
       return 70_u8;
     }
@@ -374,7 +374,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   }
   let final_empty5 = None<Entry>();
   swap(first: &target[5_u64], second: &final_empty5);
-  match final_empty5 {
+  match move final_empty5 {
     None() => {
       return 73_u8;
     }
@@ -392,7 +392,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
   }
   let final_empty6 = None<Entry>();
   swap(first: &target[6_u64], second: &final_empty6);
-  match final_empty6 {
+  match move final_empty6 {
     None() => {
       return 76_u8;
     }

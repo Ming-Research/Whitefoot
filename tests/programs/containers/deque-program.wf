@@ -28,15 +28,15 @@ nodrop struct DequeTicket {
 }
 
 fn deque_observe(env: &DequeObservation, value: u64) -> result: unit writes(env) {
-  set deref(env).total = deref(env).total +wrap value;
-  let prefix = deref(env).sequence *wrap 257_u64;
-  set deref(env).sequence = prefix +wrap value;
-  set deref(env).count = deref(env).count +wrap 1_u64;
+  set env^.total = env^.total +wrap value;
+  let prefix = env^.sequence *wrap 257_u64;
+  set env^.sequence = prefix +wrap value;
+  set env^.count = env^.count +wrap 1_u64;
   return unit;
 }
 
 fn deque_scalar_visit(env: &DequeObservation, value: &u64) -> result: unit reads(value), writes(env) {
-  deque_observe(env: env, value: deref(value));
+  deque_observe(env: env, value: value^);
   return unit;
 }
 
@@ -49,7 +49,7 @@ binding DequeScalarDrain : DequeDrain<u64, DequeObservation> {
 }
 
 fn deque_owned_visit(env: &DequeObservation, value: &Box<DequeItem>) -> result: unit reads(value), writes(env) {
-  deque_observe(env: env, value: deref(value).inner.id);
+  deque_observe(env: env, value: value^.inner.id);
   return unit;
 }
 
@@ -73,7 +73,7 @@ fn deque_ticket_new(id: u64) -> result: DequeTicket pure {
 }
 
 fn deque_ticket_visit(env: &DequeObservation, value: &DequeTicket) -> result: unit reads(value), writes(env) {
-  deque_observe(env: env, value: deref(value).payload.inner.id);
+  deque_observe(env: env, value: value^.payload.inner.id);
   return unit;
 }
 
@@ -126,7 +126,7 @@ fn deque_scalar_chain() -> code: u64 pure {
   let one = deque_push_back::<u64>(values: &values, value: 1_u64);
   let original_first = &values.inner[0_u64];
   let two = deque_push_back::<u64>(values: &values, value: 2_u64);
-  let first_after_append = deref(original_first);
+  let first_after_append = original_first^;
   if first_after_append != 1_u64 {
     return 19_u64;
   }

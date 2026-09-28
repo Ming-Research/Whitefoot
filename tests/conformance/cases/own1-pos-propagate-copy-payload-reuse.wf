@@ -11,7 +11,7 @@ nocopy enum StepError {
 
 fn forward(incoming: Result<State, StepError>) -> return_value: Result<i32, StepError> pure {
   doc "OWN-1: propagate records the concrete tag-only Ok payload type, so the bound state remains Copy across repeated matches.";
-  let state = propagate incoming;
+  let state = propagate move incoming;
   match state {
     Ready() => {
     }

@@ -20,15 +20,15 @@ fn window_sum<const n: u64>(buf: Slots<u8, n>, offset: u64, length: u64) -> tota
 }
 
 fn copy_window(src: &[u8], dst: &[u8], start: u64, end: u64) -> result: unit reads(src), writes(dst) contract {
-  define spare = deref(src).len;
-  define out_room = deref(dst).len;
+  define spare = src^.len;
+  define out_room = dst^.len;
   requires start < end;
   requires end <= spare;
   requires end <= out_room;
 } {
   for (i in start..end) {
-    let byte = deref(src)[i];
-    set deref(dst)[i] = byte;
+    let byte = src^[i];
+    set dst^[i] = byte;
   }
   return unit;
 }
@@ -59,8 +59,8 @@ fn reverse_bytes<const n: u64>(buf: Slots<u8, n>) -> out: Slots<u8, n> pure {
 }
 
 fn copy_checked_window(src: &[u8], start: u64, width: u64, dst: &[u8]) -> written: u64 reads(src), writes(dst) {
-  let capacity = deref(src).len;
-  let spare = deref(dst).len;
+  let capacity = src^.len;
+  let spare = dst^.len;
   let count = 0_u64;
   loop @copy (
     invariant progress: count <= width
@@ -82,8 +82,8 @@ fn copy_checked_window(src: &[u8], start: u64, width: u64, dst: &[u8]) -> writte
         } else {
           break @copy;
         }
-        let byte = deref(src)[source_at];
-        set deref(dst)[count] = byte;
+        let byte = src^[source_at];
+        set dst^[count] = byte;
       }
       Err(error: overflow) => {
         break @copy;

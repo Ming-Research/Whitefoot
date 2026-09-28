@@ -16,8 +16,8 @@ fn grayscale_value(red: u8, green: u8, blue: u8) -> result: Result<u8, NarrowErr
 }
 
 fn grayscale(input: &[u8], output: &[u8]) -> result: Result<unit, NarrowError> reads(input), writes(output) contract {
-  define input_length = deref(input).len;
-  define output_length = deref(output).len;
+  define input_length = input^.len;
+  define output_length = output^.len;
   requires input_length >= 24_u64;
   requires output_length >= 8_u64;
 } {
@@ -31,37 +31,37 @@ fn grayscale(input: &[u8], output: &[u8]) -> result: Result<unit, NarrowError> r
     let base = pixel *wrap 3_u64;
     let green_offset = base +wrap 1_u64;
     let blue_offset = base +wrap 2_u64;
-    let input_room = deref(input).len;
+    let input_room = input^.len;
     let red_ok = base < input_room;
     if red_ok {
     } else {
       let error = NarrowError();
       return Err<unit, NarrowError>(error: error);
     }
-    let red = deref(input)[base];
+    let red = input^[base];
     let green_ok = green_offset < input_room;
     if green_ok {
     } else {
       let error = NarrowError();
       return Err<unit, NarrowError>(error: error);
     }
-    let green = deref(input)[green_offset];
+    let green = input^[green_offset];
     let blue_ok = blue_offset < input_room;
     if blue_ok {
     } else {
       let error = NarrowError();
       return Err<unit, NarrowError>(error: error);
     }
-    let blue = deref(input)[blue_offset];
+    let blue = input^[blue_offset];
     let value = propagate grayscale_value(red: red, green: green, blue: blue);
-    let output_room = deref(output).len;
+    let output_room = output^.len;
     let pixel_ok = pixel < output_room;
     if pixel_ok {
     } else {
       let error = NarrowError();
       return Err<unit, NarrowError>(error: error);
     }
-    set deref(output)[pixel] = value;
+    set output^[pixel] = value;
     set pixel = pixel +wrap 1_u64;
   }
   return Ok<unit, NarrowError>(value: unit);

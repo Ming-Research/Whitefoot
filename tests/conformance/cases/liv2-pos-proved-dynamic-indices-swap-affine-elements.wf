@@ -7,13 +7,13 @@ nocopy struct Row {
 }
 
 fn exchange(values: &Slots<Row, 2>, left: u64, right: u64) -> result: unit writes(values) contract {
-  requires left < deref(values).len;
-  requires right < deref(values).len;
+  requires left < values^.len;
+  requires right < values^.len;
   requires left < right;
-  ensures deref(values).len == deref(entry(values)).len;
+  ensures values^.len == entry(values)^.len;
 } {
   doc "Exchanges two runtime-selected elements of one window under a proved strict order.";
-  swap(first: &deref(values)[left], second: &deref(values)[right]);
+  swap(first: &values^[left], second: &values^[right]);
   return unit;
 }
 

@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn exchange(window: &Slots<Box<u64>, 2>, i: u64, j: u64) -> result: unit writes(window[i]), writes(window[j]) contract {
-  requires i < deref(window).len;
-  requires j < deref(window).len;
+  requires i < window^.len;
+  requires j < window^.len;
 } {
   doc "OP-11: swap is the one operation whose two reference arguments may name the same place, so swap over two unproved-distinct slots needs no i != j branch.";
-  swap(first: &deref(window)[i], second: &deref(window)[j]);
+  swap(first: &window^[i], second: &window^[j]);
   return unit;
 }
 

@@ -10,7 +10,7 @@ fn probe(src: buffer<u8>) -> result: u64 pure {
     let i2 = i +wrap 2_u64;
     region {
       let p = &uniq i2;
-      set deref(p) = i +wrap 3_u64;
+      set p^ = i +wrap 3_u64;
     }
     let x = src[i2];
     let wide = cvt::<u8, u64>(x);

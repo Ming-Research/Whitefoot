@@ -3,12 +3,12 @@ alias exit_status = std::process::exit_status;
 
 fn append_run_length(source: &Slots<u64, 8>, target: &Slots<u64, 8>, lo: u64, hi: u64) -> result: unit reads(source[lo..hi]), writes(target.next), writes(target.len) contract {
   requires lo <= hi;
-  requires hi <= deref(source).len;
-  requires deref(target).len < deref(target).cap;
+  requires hi <= source^.len;
+  requires target^.len < target^.cap;
 } {
   doc "Appends to target the length of the run source[lo..hi].";
-  let run = &deref(source)[lo..hi];
-  let count = deref(run).len;
+  let run = &source^[lo..hi];
+  let count = run^.len;
   place_back(window: target, value: count);
   return unit;
 }

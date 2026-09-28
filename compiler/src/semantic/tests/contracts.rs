@@ -168,17 +168,17 @@ binding Refinement : Refined {
 fn behavior_contract_implication_keeps_entry_exit_and_result_datums_distinct() {
     let source = r#"interface Grower {
   fn grow(values: &Slots<u64, 4>) -> result: u64 writes(values) contract {
-    requires deref(values).len < deref(values).cap;
-    ensures result == deref(entry(values)).len;
+    requires values^.len < values^.cap;
+    ensures result == entry(values)^.len;
   };
 }
 
 fn grow_and_count(values: &Slots<u64, 4>) -> result: u64 writes(values) contract {
-  requires deref(values).len < deref(values).cap;
-  ensures result == deref(values).len;
+  requires values^.len < values^.cap;
+  ensures result == values^.len;
 } {
   place_back(window: values, value: 7_u64);
-  return deref(values).len;
+  return values^.len;
 }
 
 binding CountedGrow : Grower {
@@ -342,8 +342,8 @@ interface Mixer {
 }
 
 fn mix(destination: &Pair, observer: &Pair) -> result: unit reads(observer.right), writes(destination.left) {
-  let observed = deref(observer).right;
-  set deref(destination).left = observed;
+  let observed = observer^.right;
+  set destination^.left = observed;
   return unit;
 }
 
@@ -389,7 +389,7 @@ interface Inspect {
 }
 
 fn visit_left(input: &Pair) -> result: u64 reads(input.left) {
-  return deref(input).left;
+  return input^.left;
 }
 
 binding ReadLeft : Inspect {
@@ -427,12 +427,12 @@ fn main() -> status: std::process::ExitStatus pure {
         .replace("writes(data)", "reads(data)")
         .replace("reads(input.left)", "writes(input.left)")
         .replace(
-            "  return deref(input).left;",
-            "  set deref(input).left = 1_u64;\n  return deref(input).left;",
+            "  return input^.left;",
+            "  set input^.left = 1_u64;\n  return input^.left;",
         );
     let sibling_read = field_formal
         .replace("reads(input.left)", "reads(input.right)")
-        .replace("return deref(input).left;", "return deref(input).right;");
+        .replace("return input^.left;", "return input^.right;");
     let uncovered_read = source
         .replace("writes(value)", "pure")
         .replace("writes(data)", "pure");
@@ -1492,7 +1492,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_behavior_rule(
         &source.replace(
             "-> result: u64 reads(value);",
-            "-> result: u64 reads(value) contract {\n    requires deref(entry(value)).payload == deref(entry(value)).payload;\n  };",
+            "-> result: u64 reads(value) contract {\n    requires entry(value)^.payload == entry(value)^.payload;\n  };",
         ),
         SemanticRule::Msr3,
     );
@@ -1507,8 +1507,8 @@ fn nominal_formal_contract_queries_survive_scratch_rollback() {
 
 interface Reader<T: copy> {
   fn read(value: &Envelope<T>) -> result: u64 reads(value) contract {
-    requires deref(value).tag <= 99_u64;
-    ensures result == deref(value).tag;
+    requires value^.tag <= 99_u64;
+    ensures result == value^.tag;
   };
 }
 
@@ -1517,10 +1517,10 @@ interface Factory {
 }
 
 fn read_tag(input: &Envelope<u64>) -> output: u64 reads(input.tag) contract {
-  requires deref(input).tag <= 99_u64;
-  ensures output == deref(input).tag;
+  requires input^.tag <= 99_u64;
+  ensures output == input^.tag;
 } {
-  return deref(input).tag;
+  return input^.tag;
 }
 
 binding ReadU64 : Reader<u64> {
@@ -1528,8 +1528,8 @@ binding ReadU64 : Reader<u64> {
 }
 
 fn invoke<interface Reader<T>>(value: &Envelope<T>) -> result: u64 reads(value) contract {
-  requires deref(value).tag <= 99_u64;
-  ensures result == deref(value).tag;
+  requires value^.tag <= 99_u64;
+  ensures result == value^.tag;
 } {
   let answer = Reader::read(value: value);
   return answer;
@@ -1882,8 +1882,8 @@ fn formal_row_comparison_uses_parameter_ordinals_not_binder_spellings() {
 }
 
 fn add_lengths(first: &Slots<u8, 4>, second: &Slots<u8, 4>) -> result: u64 reads(first), reads(second) {
-  let first_length = deref(first).len;
-  let second_length = deref(second).len;
+  let first_length = first^.len;
+  let second_length = second^.len;
   return first_length +wrap second_length;
 }
 
@@ -1919,10 +1919,10 @@ fn formal_range_reference_parameters_compare_by_ordinal() {
 }
 
 fn read_first(bytes: &[u8]) -> result: u8 reads(bytes) {
-  let spare = deref(bytes).len;
+  let spare = bytes^.len;
   let ok = 0_u64 < spare;
   if ok {
-    return deref(bytes)[0_u64];
+    return bytes^[0_u64];
   } else {
     return 0_u8;
   }

@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill(window: &[u8]) -> result: unit writes(window) contract {
-  requires 1_u64 <= deref(window).len;
+  requires 1_u64 <= window^.len;
 } {
   doc "Takes the range reference kind, not a reference to the whole array.";
-  set deref(window)[0_u64] = 9_u8;
+  set window^[0_u64] = 9_u8;
   return unit;
 }
 

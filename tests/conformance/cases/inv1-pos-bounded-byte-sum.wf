@@ -2,16 +2,16 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn byte_sum(bytes: &[u8]) -> result: u32 reads(bytes) contract {
-  requires deref(bytes).len <= 16_u64;
+  requires bytes^.len <= 16_u64;
 } {
   doc "A finite input bound and the per-byte header admit each exact u32 addition of an arbitrary widened byte.";
-  let count = deref(bytes).len;
+  let count = bytes^.len;
   let sum = 0_u32;
   for (
     i in 0_u64..count,
     invariant per_byte: sum <= 255_u32 * i
   ) {
-    let sample = deref(bytes)[i];
+    let sample = bytes^[i];
     let wide = cvt::<u8, u32>(sample);
     set sum = sum + wide;
   }

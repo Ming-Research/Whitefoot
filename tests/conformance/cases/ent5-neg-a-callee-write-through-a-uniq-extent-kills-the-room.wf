@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn reserve(store: &Slots<u8, 64>) -> result: unit writes(store.next), writes(store.len) contract {
-  requires deref(store).len < deref(store).cap;
+  requires store^.len < store^.cap;
 } {
   doc "Fills one slot of the window it was handed, which moves that window's own boundary.";
   place_back(window: store, value: 0_u8);

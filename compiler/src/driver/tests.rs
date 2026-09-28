@@ -1170,38 +1170,38 @@ fn a_range_beside_an_append_or_an_element_write_is_judged_by_its_bounds() {
         "ranges.wf",
         br#"fn total(part: &[u64]) -> result: u64 reads(part) {
   let sum = 0_u64;
-  for (k in 0_u64..deref(part).len) {
-    let x = deref(part)[k];
+  for (k in 0_u64..part^.len) {
+    let x = part^[k];
     set sum = sum +wrap x;
   }
   return sum;
 }
 
 fn range_then_append(r: &Slots<u64, 8>) -> result: u64 writes(r) contract {
-  requires deref(r).len == 2_u64;
+  requires r^.len == 2_u64;
 } {
-  let a = total(part: &deref(r)[0_u64..2_u64]);
+  let a = total(part: &r^[0_u64..2_u64]);
   place_back(window: r, value: 9_u64);
   return a;
 }
 
 fn append_then_range(r: &Slots<u64, 8>) -> result: u64 writes(r) contract {
-  requires deref(r).len == 2_u64;
+  requires r^.len == 2_u64;
 } {
   place_back(window: r, value: 9_u64);
-  let a = total(part: &deref(r)[0_u64..3_u64]);
+  let a = total(part: &r^[0_u64..3_u64]);
   return a;
 }
 
 fn write_beside(v: &Array<u64, 8>) -> result: u64 writes(v) {
-  set deref(v)[5_u64] = 4_u64;
-  let a = total(part: &deref(v)[0_u64..2_u64]);
+  set v^[5_u64] = 4_u64;
+  let a = total(part: &v^[0_u64..2_u64]);
   return a;
 }
 
 fn write_inside(v: &Array<u64, 8>) -> result: u64 writes(v) {
-  set deref(v)[1_u64] = 4_u64;
-  let a = total(part: &deref(v)[0_u64..2_u64]);
+  set v^[1_u64] = 4_u64;
+  let a = total(part: &v^[0_u64..2_u64]);
   return a;
 }
 
@@ -1221,11 +1221,11 @@ fn main() -> status: std::process::ExitStatus pure {
         [
             "PAR permitted   ranges.wf:13  pair(total, place_back)  eligible",
             "PAR denied      ranges.wf:21  pair(place_back, total)  condition 1: \
-             the write of s1 overlaps the read of s2 at r vs &deref(r)[0_u64..3_u64]",
+             the write of s1 overlaps the read of s2 at r vs &r^[0_u64..3_u64]",
             "PAR permitted   ranges.wf:27  pair(a set statement, total)  eligible",
             "PAR denied      ranges.wf:33  pair(a set statement, total)  condition 1: \
              the write of s1 overlaps the read of s2 at \
-             set deref(v)[1_u64] = 4_u64; vs &deref(v)[0_u64..2_u64]",
+             set v^[1_u64] = 4_u64; vs &v^[0_u64..2_u64]",
         ]
     );
 }
@@ -1403,13 +1403,13 @@ fn a_reference_parameter_keeps_its_later_call_requirement() {
     .expect_err("the unchanged source still lacks the file-name range proof");
     assert_eq!(failure.rule_id(), Some("FN-8"));
     assert!(
-        failure.detail().contains("1_u64 <= deref(name).len"),
+        failure.detail().contains("1_u64 <= name^.len"),
         "{}",
         failure.detail()
     );
     let bounded = std::str::from_utf8(source).unwrap().replace(
         "writes(factory) {",
-        "writes(factory) contract {\n  requires 1_u64 <= deref(name).len;\n} {",
+        "writes(factory) contract {\n  requires 1_u64 <= name^.len;\n} {",
     );
     compile(
         &[SourceInput::new("bounded_walk.wf", bounded.as_bytes())],
@@ -1583,15 +1583,15 @@ fn boxed_branch(left: Box<BoxNode>, right: Box<BoxNode>) -> result: Box<BoxNode>
 fn the_permission_ledger_reports_eligible_pairs_and_their_chains() {
     let eligible = format!(
         "{TREE_PRELUDE}fn fold(node: &Box<BoxNode>) -> result: u64 writes(node) {{
-  match deref(node).inner {{
+  match node^.inner {{
     Leaf(w: leaf_w) => {{
-      return deref(leaf_w);
+      return leaf_w^;
     }}
     Branch(left: l, right: r, w: slot) => {{
       let a = fold(node: l);
       let b = fold(node: r);
       let total = imax(a, b);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }}
   }}
@@ -1632,9 +1632,9 @@ fn main() -> status: std::process::ExitStatus pure {{
 }}
 
 fn bubble(node: &Box<BoxNode>) -> result: u64 writes(node) {{
-  match deref(node).inner {{
+  match node^.inner {{
     Leaf(w: leaf_w) => {{
-      let w = deref(leaf_w);
+      let w = leaf_w^;
       let values = array_filled::<u64, 8>(value: 1_u64);
       let touched = scaled(values: values, index: w);
       return w;
@@ -1643,7 +1643,7 @@ fn bubble(node: &Box<BoxNode>) -> result: u64 writes(node) {{
       let a = bubble(node: l);
       let b = bubble(node: r);
       let total = a +wrap b;
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }}
   }}
@@ -1750,8 +1750,8 @@ fn the_permission_ledger_names_the_condition_that_refused_each_pair() {
     // storage rather than two exclusive loans, and the overlap is
     // reported under condition 1 [REF-1, EFF-1, PAR-1].
     let overlapping = b"fn bump(slot: &u64) -> result: u64 writes(slot) {
-  let seen = deref(slot);
-  set deref(slot) = 7_u64;
+  let seen = slot^;
+  set slot^ = 7_u64;
   return seen;
 }
 
@@ -1811,11 +1811,11 @@ fn main() -> status: std::process::ExitStatus pure {
     // — the edge condition — once for each adjacent pair it stands in
     // rather than once for the two ordinary calls it separates.
     let propagating = b"fn peek(slot: &u8) -> result: u64 reads(slot) {
-  return cvt::<u8, u64>(deref(slot));
+  return cvt::<u8, u64>(slot^);
 }
 
 fn stamp(slot: &u8) -> result: u64 writes(slot) {
-  set deref(slot) = 9_u8;
+  set slot^ = 9_u8;
   return 1_u64;
 }
 
@@ -1993,8 +1993,8 @@ fn a_proven_counted_binder_buffer_map_is_permitted() {
 #[test]
 fn a_counted_loop_whose_callee_writes_carried_state_is_denied_by_condition_two() {
     let source = b"fn accum(slot: &f64, x: f64) -> result: u64 writes(slot) {
-  set deref(slot) = fadd.strict(deref(slot), x);
-  let bits = reinterpret::<f64, u64>(deref(slot));
+  set slot^ = fadd.strict(slot^, x);
+  let bits = reinterpret::<f64, u64>(slot^);
   return iand(bits, 1_u64);
 }
 
@@ -2071,12 +2071,12 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_counted_loop_a_give_can_leave_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
-  let count = deref(src).len;
+  let count = src^.len;
   let acc = 0_u64;
   let always = True();
   let answer = if always {
     for @scan (i in 0_u64..count) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set acc = acc +wrap v;
       let hit = v == needle;
       if hit {
@@ -2131,12 +2131,12 @@ fn main() -> status: std::process::ExitStatus pure {
     // The same loop with the give removed is permitted, so the refusal is
     // about the exit edge and not about the shape.
     let contained = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
-  let count = deref(src).len;
+  let count = src^.len;
   let acc = 0_u64;
   let always = True();
   let answer = if always {
     for @scan (i in 0_u64..count) {
-      let v = deref(src)[i];
+      let v = src^[i];
       set acc = acc +wrap v;
     }
     give 4096_u64;
@@ -2300,15 +2300,15 @@ fn the_permission_ledger_is_output_beside_an_unchanged_module() {
 fn the_ledger_names_every_cyclic_component_and_what_the_budget_did_with_it() {
     let recursive = format!(
         "{TREE_PRELUDE}fn fold(node: &Box<BoxNode>) -> result: u64 writes(node) {{
-  match deref(node).inner {{
+  match node^.inner {{
     Leaf(w: leaf_w) => {{
-      return deref(leaf_w);
+      return leaf_w^;
     }}
     Branch(left: l, right: r, w: slot) => {{
       let a = fold(node: l);
       let b = fold(node: r);
       let total = imax(a, b);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }}
   }}
@@ -2426,15 +2426,15 @@ fn main() -> status: std::process::ExitStatus pure {
 fn the_permission_ledger_does_not_depend_on_whether_the_lowering_is_taken() {
     let source = format!(
         "{TREE_PRELUDE}fn fold(node: &Box<BoxNode>) -> result: u64 writes(node) {{
-  match deref(node).inner {{
+  match node^.inner {{
     Leaf(w: leaf_w) => {{
-      return deref(leaf_w);
+      return leaf_w^;
     }}
     Branch(left: l, right: r, w: slot) => {{
       let a = fold(node: l);
       let b = fold(node: r);
       let total = imax(a, b);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }}
   }}
@@ -3003,7 +3003,7 @@ fn the_contract_block_repair_gram9_names_is_accepted() {
         &[SourceInput::new(
             "repaired.wf",
             br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 pure contract {
-  define spare = deref(data).len;
+  define spare = data^.len;
   requires end <= spare;
 } {
   return 0_u64;
@@ -3032,8 +3032,8 @@ fn an_effect_row_defect_names_its_condition_and_the_row_that_repairs_it() {
     let detail = rejection(
             "row.wf",
             br#"fn probe(cwd: &u64, out: &u64) -> status: std::process::ExitStatus writes(cwd), writes(cwd), writes(out) {
-  set deref(cwd) = 1_u64;
-  set deref(out) = 2_u64;
+  set cwd^ = 1_u64;
+  set out^ = 2_u64;
   return std::process::exit_status(code: 0_u8);
 }
 "#,

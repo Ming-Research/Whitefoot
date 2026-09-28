@@ -8,7 +8,7 @@ struct Row {
 
 fn store(rows: &Array<Row, 4>, value: u64) -> result: unit reads(rows) {
   doc "An index and a field inherit the writability of their selected base, and a reference parameter whose row declares only reads supplies none.";
-  set deref(rows)[0_u64].left = value;
+  set rows^[0_u64].left = value;
   return unit;
 }
 

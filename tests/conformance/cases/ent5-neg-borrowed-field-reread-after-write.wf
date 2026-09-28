@@ -7,11 +7,11 @@ struct Cell {
 
 fn h3(b: &Cell, w: u8) -> result: u8 writes(b.v) {
   doc "A field reached through a reference parameter is replaced between two reads. The earlier local copy's bound cannot prove the fresh field read's domain [ENT-5, OP-2].";
-  let old = deref(b).v;
+  let old = b^.v;
   let bounded = old <= 5_u8;
   if bounded {
-    set deref(b).v = w;
-    let cur = deref(b).v;
+    set b^.v = w;
+    let cur = b^.v;
     let z = cur + 250_u8;
     return z;
   } else {

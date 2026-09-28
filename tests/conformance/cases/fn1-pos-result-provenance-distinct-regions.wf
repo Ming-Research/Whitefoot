@@ -7,8 +7,8 @@ struct Cell {
 
 fn store(target: &Cell, source: &Cell) -> result: unit reads(source.value), writes(target.value) {
   doc "The accepted repair: one parameter is the place written and the other is the place read, stated by the row rather than by a mode marker [EFF-1]. The write through `target` reaches exactly the place the caller named when it formed the reference [REF-1, SET-1].";
-  let taken = deref(source).value;
-  set deref(target).value = taken;
+  let taken = source^.value;
+  set target^.value = taken;
   return unit;
 }
 

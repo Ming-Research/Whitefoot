@@ -671,7 +671,7 @@ fn classify_node(
             complete_counts,
         )?,
         // [EFF-1] `epbase := IDENT`: the reference parameter is the row's
-        // root, with no source `deref` wrapper.
+        // root, with no source `^` suffix.
         Production::Epbase => add_single(
             classified,
             owner,

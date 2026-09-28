@@ -2,13 +2,13 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn record(destination: &Slots<u8, 4>, value: u8) -> count: u64 writes(destination) contract {
-  requires deref(destination).len < deref(destination).cap;
-  ensures count == deref(destination).len;
-  ensures deref(destination).len == deref(entry(destination)).len + 1_u64;
+  requires destination^.len < destination^.cap;
+  ensures count == destination^.len;
+  ensures destination^.len == entry(destination)^.len + 1_u64;
 } {
   doc "Fills one slot of the window it is handed and reports the length that results.";
   place_back(window: destination, value: value);
-  let after = deref(destination).len;
+  let after = destination^.len;
   return after;
 }
 

@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn get(x: &Slots<u64, 4>, i: u64) -> result: u64 reads(x) contract {
-  requires i < deref(x).len;
+  requires i < x^.len;
 } {
   doc "Reads element i of the window x names.";
-  let v = deref(x)[i];
+  let v = x^[i];
   return v;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "REF-1, FN-8: set k = 1_u64 supersedes the index of r2 = &rows[k] before the loop, and r1 = &rows[k] is formed after it. The loop writes no k, so no write reaches its backedge: r1's index is still named by k in every iteration, and 3 <= rows[k].len proves the requirement 2 < deref(r1).len of a call passing r1.";
+  doc "REF-1, FN-8: set k = 1_u64 supersedes the index of r2 = &rows[k] before the loop, and r1 = &rows[k] is formed after it. The loop writes no k, so no write reaches its backedge: r1's index is still named by k in every iteration, and 3 <= rows[k].len proves the requirement 2 < r1^.len of a call passing r1.";
   let rows = slots_new::<Slots<u64, 4>, 4>();
   let a = slots_new::<u64, 4>();
   let b = slots_new::<u64, 4>();
@@ -40,7 +40,7 @@ fn main() -> status: ExitStatus pure {
         }
       }
     }
-    let e = deref(r2).len;
+    let e = r2^.len;
     if e == 1_u64 {
       return exit_status(code: 0_u8);
     }

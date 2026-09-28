@@ -8,6 +8,9 @@ their existing rules. Contract-local result aliases were not selected.
 Ownership transfer, reference access, expression nesting and the canonical
 source policy are outside this change.
 
+The follow-up [ownership-surface comparison](OWNERSHIP.md) examines transfer
+and reference access using the current container and owned-link programs.
+
 ## Requirements and comparison criterion
 
 The comparison criterion was recorded before examining the alternatives:

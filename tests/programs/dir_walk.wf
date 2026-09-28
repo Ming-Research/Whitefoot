@@ -17,7 +17,7 @@ alias write_once = std::io::write_once;
 const empty_prefix: Array<u8, 1> =[0_u8];
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it.";
@@ -42,10 +42,10 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn stored_byte(records: &Slots<u8, 8192>, index: u64) -> result: u8 reads(records) {
   doc "Reads one record byte, delivering zero for a position the record table does not hold.";
-  let held = deref(records).len;
+  let held = records^.len;
   let inside = index < held;
   if inside {
-    let value = deref(records)[index];
+    let value = records^[index];
     return value;
   }
   return 0_u8;
@@ -96,17 +96,17 @@ fn record_line(records: &Slots<u8, 8192>, index: u64, destination: &[u8], at: u6
   let length_at = base +wrap 1_u64;
   let length = stored_byte(records: records, index: length_at);
   let count = cvt::<u8, u64>(length);
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let cursor = at;
   let glyph = 48_u8 +wrap kind;
   let kind_fits = cursor < spare;
   if kind_fits {
-    set deref(destination)[cursor] = glyph;
+    set destination^[cursor] = glyph;
     set cursor = cursor +wrap 1_u64;
   }
   let space_fits = cursor < spare;
   if space_fits {
-    set deref(destination)[cursor] = 32_u8;
+    set destination^[cursor] = 32_u8;
     set cursor = cursor +wrap 1_u64;
   }
   let path_start = base +wrap 2_u64;
@@ -123,13 +123,13 @@ fn record_line(records: &Slots<u8, 8192>, index: u64, destination: &[u8], at: u6
     } else {
       break @path;
     }
-    set deref(destination)[cursor] = byte;
+    set destination^[cursor] = byte;
     set cursor = cursor +wrap 1_u64;
     set taken = taken +wrap 1_u64;
   }
   let end_fits = cursor < spare;
   if end_fits {
-    set deref(destination)[cursor] = 10_u8;
+    set destination^[cursor] = 10_u8;
     set cursor = cursor +wrap 1_u64;
   }
   return cursor;
@@ -142,7 +142,7 @@ fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) 
 
 fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
   define ordered = start <= end;
-  define capacity = deref(name).len;
+  define capacity = name^.len;
   define within = end <= capacity;
   requires ordered;
   requires within;
@@ -195,7 +195,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
         loop @stored_entry {
           let entries_room = entries.len;
           let child_room = child.len;
-          let prefix_room = deref(prefix).len;
+          let prefix_room = prefix^.len;
           let header_end = at +wrap 3_u64;
           let complete = header_end <= produced;
           if complete {
@@ -294,7 +294,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
                 } else {
                   break @prefix_copy;
                 }
-                let byte = deref(prefix)[cursor];
+                let byte = prefix^[cursor];
                 set child[cursor] = byte;
                 set cursor = cursor +wrap 1_u64;
               }
@@ -331,12 +331,12 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
               if room_left {
                 let stored = imin(cursor, 126_u64);
                 let byte_length = cvt::<u64, u8>(stored);
-                let start = deref(records).len;
+                let start = records^.len;
                 let record_fits = start <= 8064_u64;
                 if record_fits {
                   for @record (
                     slot in 0_u64..128_u64,
-                    invariant filled: deref(records).len == start + slot,
+                    invariant filled: records^.len == start + slot,
                     invariant fits: start <= 8064_u64
                   ) {
                     let byte = 0_u8;
@@ -483,7 +483,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     let line_window = &line[0_u64..256_u64];
     let length = record_line(records: &records, index: index, destination: line_window, at: 0_u64);
     let payload = &line[0_u64..256_u64];
-    let payload_length = deref(payload).len;
+    let payload_length = payload^.len;
     let length_fits = length <= payload_length;
     if length_fits {
       match publish_all(factory: files, output: out, source: payload, length: length) {

@@ -31,9 +31,9 @@ fn main() -> status: ExitStatus pure {
   let plain = keep::<u8>(value: 7_u8);
   let other = Payload::Present(value: 9_u8);
   let kept = keep::<Payload>(value: move other);
-  match boxed {
+  match move boxed {
     Present(value: got) => {
-      match kept {
+      match move kept {
         Present(value: also) => {
           if back == 5_u8 {
             if held == 4_u64 {

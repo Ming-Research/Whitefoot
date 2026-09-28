@@ -46,13 +46,13 @@ fn priority_test_sort(sequence: &PriorityTestSequence, count: u64) -> result: un
         break @insert;
       }
       let previous = at - 1_u64;
-      if deref(sequence).values[previous] <= deref(sequence).values[at] {
+      if sequence^.values[previous] <= sequence^.values[at] {
         break @insert;
       }
-      let earlier = deref(sequence).values[previous];
-      let later = deref(sequence).values[at];
-      set deref(sequence).values[previous] = later;
-      set deref(sequence).values[at] = earlier;
+      let earlier = sequence^.values[previous];
+      let later = sequence^.values[at];
+      set sequence^.values[previous] = later;
+      set sequence^.values[at] = earlier;
       set at = previous;
     }
   }
@@ -60,27 +60,27 @@ fn priority_test_sort(sequence: &PriorityTestSequence, count: u64) -> result: un
 }
 
 fn priority_test_expect(env: &PriorityTestSequence, value: u64) -> result: unit writes(env) {
-  let at = deref(env).next;
-  if at < deref(env).count {
+  let at = env^.next;
+  if at < env^.count {
     if at < 16_u64 {
-      if value != deref(env).values[at] {
-        set deref(env).failures = deref(env).failures +wrap 1_u64;
+      if value != env^.values[at] {
+        set env^.failures = env^.failures +wrap 1_u64;
       }
     } else {
-      set deref(env).failures = deref(env).failures +wrap 1_u64;
+      set env^.failures = env^.failures +wrap 1_u64;
     }
   } else {
-    set deref(env).failures = deref(env).failures +wrap 1_u64;
+    set env^.failures = env^.failures +wrap 1_u64;
   }
-  set deref(env).next = at +wrap 1_u64;
+  set env^.next = at +wrap 1_u64;
   return unit;
 }
 
 fn priority_test_word_compare(env: &PriorityTestEmpty, left: &u64, right: &u64) -> order: i32 reads(left), reads(right) {
-  if deref(left) < deref(right) {
+  if left^ < right^ {
     return -1_i32;
   }
-  if deref(left) > deref(right) {
+  if left^ > right^ {
     return 1_i32;
   }
   return 0_i32;
@@ -91,7 +91,7 @@ binding PriorityTestWords : PriorityOrder<u64, PriorityTestEmpty> {
 }
 
 fn priority_test_word_read(env: &PriorityTestEmpty, value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn priority_test_word_release(env: &PriorityTestEmpty, value: u64) -> result: unit pure {
@@ -313,24 +313,24 @@ fn priority_test_ledger() -> result: PriorityTestLedger pure {
 }
 
 fn priority_test_fail(ledger: &PriorityTestLedger) -> result: unit writes(ledger) {
-  set deref(ledger).failures = deref(ledger).failures +wrap 1_u64;
+  set ledger^.failures = ledger^.failures +wrap 1_u64;
   return unit;
 }
 
 fn priority_test_release(env: &PriorityTestLedger, value: Box<PriorityTestPayload>) -> result: unit writes(env) {
   let id = value.inner.id;
   if id < 16_u64 {
-    set deref(env).releases[id] = deref(env).releases[id] +wrap 1_u64;
+    set env^.releases[id] = env^.releases[id] +wrap 1_u64;
   } else {
     priority_test_fail(ledger: env);
   }
-  let at = deref(env).count;
+  let at = env^.count;
   if at < 16_u64 {
-    set deref(env).sequence[at] = id;
+    set env^.sequence[at] = id;
   } else {
     priority_test_fail(ledger: env);
   }
-  set deref(env).count = at +wrap 1_u64;
+  set env^.count = at +wrap 1_u64;
   return unit;
 }
 
@@ -392,10 +392,10 @@ fn priority_test_ticket_release(env: &PriorityTestLedger, value: PriorityTestTic
 }
 
 fn priority_test_owner_compare(env: &PriorityTestEmpty, left: &Box<PriorityTestPayload>, right: &Box<PriorityTestPayload>) -> order: i32 reads(left), reads(right) {
-  if deref(left).inner.key < deref(right).inner.key {
+  if left^.inner.key < right^.inner.key {
     return -1_i32;
   }
-  if deref(left).inner.key > deref(right).inner.key {
+  if left^.inner.key > right^.inner.key {
     return 1_i32;
   }
   return 0_i32;
@@ -406,15 +406,15 @@ binding PriorityTestOwners : PriorityOrder<Box<PriorityTestPayload>, PriorityTes
 }
 
 fn priority_test_ticket_compare(env: &PriorityTestDirection, left: &PriorityTestTicket, right: &PriorityTestTicket) -> order: i32 reads(env), reads(left), reads(right) {
-  if deref(env).mode == 1_u64 {
+  if env^.mode == 1_u64 {
     return 0_i32;
   }
-  if deref(env).mode == 2_u64 {
+  if env^.mode == 2_u64 {
     return 2147483647_i32;
   }
-  if deref(env).mode == 3_u64 {
-    let first = deref(left).child.inner.id % 3_u64;
-    let second = deref(right).child.inner.id % 3_u64;
+  if env^.mode == 3_u64 {
+    let first = left^.child.inner.id % 3_u64;
+    let second = right^.child.inner.id % 3_u64;
     if first == second {
       return 0_i32;
     }
@@ -425,10 +425,10 @@ fn priority_test_ticket_compare(env: &PriorityTestDirection, left: &PriorityTest
     }
     return 2147483647_i32;
   }
-  let first = deref(left).child.inner.key;
-  let second = deref(right).child.inner.key;
-  let left_id = deref(left).child.inner.id;
-  let right_id = deref(right).child.inner.id;
+  let first = left^.child.inner.key;
+  let second = right^.child.inner.key;
+  let left_id = left^.child.inner.id;
+  let right_id = right^.child.inner.id;
   let order = 0_i32;
   if first < second {
     set order = -1_i32;
@@ -442,7 +442,7 @@ fn priority_test_ticket_compare(env: &PriorityTestDirection, left: &PriorityTest
       set order = 1_i32;
     }
   }
-  if deref(env).reverse {
+  if env^.reverse {
     if order < 0_i32 {
       return 1_i32;
     }
@@ -458,11 +458,11 @@ binding PriorityTestTickets : PriorityOrder<PriorityTestTicket, PriorityTestDire
 }
 
 fn priority_test_ticket_read(env: &PriorityTestEmpty, value: &PriorityTestTicket) -> result: u64 reads(value) {
-  return deref(value).child.inner.id;
+  return value^.child.inner.id;
 }
 
 fn priority_test_owner_outcome(outcome: Result<unit, Box<PriorityTestPayload>>, ledger: &PriorityTestLedger) -> result: unit writes(ledger) {
-  match outcome {
+  match move outcome {
     Ok(value: accepted) => {
     }
     Err(error: returned) => {
@@ -474,7 +474,7 @@ fn priority_test_owner_outcome(outcome: Result<unit, Box<PriorityTestPayload>>, 
 }
 
 fn priority_test_ticket_outcome(outcome: Result<unit, PriorityTestTicket>, ledger: &PriorityTestLedger) -> result: unit writes(ledger) {
-  match outcome {
+  match move outcome {
     Ok(value: accepted) => {
     }
     Err(error: returned) => {
@@ -488,15 +488,15 @@ fn priority_test_ticket_outcome(outcome: Result<unit, PriorityTestTicket>, ledge
 fn priority_test_check_releases(ledger: &PriorityTestLedger, count: u64) -> result: unit writes(ledger) contract {
   requires count < 16_u64;
 } {
-  if deref(ledger).count != count {
+  if ledger^.count != count {
     priority_test_fail(ledger: ledger);
   }
-  if deref(ledger).releases[0_u64] != 0_u64 {
+  if ledger^.releases[0_u64] != 0_u64 {
     priority_test_fail(ledger: ledger);
   }
   for (offset in 0_u64..count) {
     let id = offset + 1_u64;
-    if deref(ledger).releases[id] != 1_u64 {
+    if ledger^.releases[id] != 1_u64 {
       priority_test_fail(ledger: ledger);
     }
   }
@@ -515,7 +515,7 @@ fn priority_test_owning_drop() -> failures: u64 pure {
   }
   let offered_owner = priority_test_payload(id: 4_u64, key: 4_u64);
   let refused = priority_queue_push::<PriorityTestOwners, 3>(queue: &queue, value: move offered_owner, env: &env);
-  match refused {
+  match move refused {
     Ok(value: accepted) => {
       priority_test_fail(ledger: &ledger);
     }
@@ -602,7 +602,7 @@ fn priority_test_owning_wide() -> failures: u64 pure {
   }
   let offered_owner = priority_test_ticket(id: 6_u64);
   let refused = priority_queue_push::<PriorityTestTickets, 5>(queue: &queue, value: move offered_owner, env: &env);
-  match refused {
+  match move refused {
     Ok(value: accepted) => {
       priority_test_fail(ledger: &ledger);
     }
@@ -716,7 +716,7 @@ binding PriorityTestUnits : PriorityOrder<unit, PriorityTestEmpty> {
 }
 
 fn priority_test_unit_release(env: &PriorityTestSequence, value: unit) -> result: unit writes(env) {
-  set deref(env).next = deref(env).next +wrap 1_u64;
+  set env^.next = env^.next +wrap 1_u64;
   return unit;
 }
 
@@ -732,7 +732,7 @@ binding PriorityTestZeros : PriorityOrder<PriorityTestZero, PriorityTestEmpty> {
 }
 
 fn priority_test_zero_release(env: &PriorityTestSequence, value: PriorityTestZero) -> result: unit writes(env) {
-  set deref(env).next = deref(env).next +wrap 1_u64;
+  set env^.next = env^.next +wrap 1_u64;
   return unit;
 }
 

@@ -8,10 +8,10 @@ struct Pair {
 
 fn change(cell: &Box<Slots<u8>>) -> result: u64 writes(cell) {
   doc "Writes the first element of the window behind the cell it was handed, when that window has one.";
-  let size = deref(cell).inner.len;
+  let size = cell^.inner.len;
   let available = size != 0_u64;
   if available {
-    set deref(cell).inner[0_u64] = 9_u8;
+    set cell^.inner[0_u64] = 9_u8;
   }
   return 7_u64;
 }
@@ -24,8 +24,8 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &second.inner, value: 5_u8);
   let pair = Pair(left: move first, right: move second);
   let holder = &pair;
-  let a = change(cell: &deref(holder).left);
-  let b = change(cell: &deref(holder).right);
-  let resumed = change(cell: &deref(holder).left);
+  let a = change(cell: &holder^.left);
+  let b = change(cell: &holder^.right);
+  let resumed = change(cell: &holder^.left);
   return exit_status(code: 0_u8);
 }

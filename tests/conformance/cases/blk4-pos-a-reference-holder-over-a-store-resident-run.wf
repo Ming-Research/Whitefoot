@@ -6,9 +6,9 @@ fn main() -> status: ExitStatus pure {
   let cell = box_slots_new::<u8>(capacity: 2_u64);
   place_back(window: &cell.inner, value: 5_u8);
   let holder = &cell.inner;
-  let size = deref(holder).len;
+  let size = holder^.len;
   if 0_u64 < size {
-    let seen = deref(holder)[0_u64];
+    let seen = holder^[0_u64];
     if seen == 5_u8 {
     } else {
       return exit_status(code: 1_u8);

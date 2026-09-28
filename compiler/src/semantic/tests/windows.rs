@@ -179,10 +179,10 @@ fn readonly_provenance_survives_reference_aliases_and_reborrows() {
     let definition = b"fn make() -> record: Record pure {\n  return Record(value: 1_u8);\n}\n";
     for writer in [
         b"  let p = &record.value;\n  put(cell: p);\n".as_slice(),
-        b"  let p = &record;\n  put(cell: &deref(p).value);\n".as_slice(),
-        b"  let p = &record.value;\n  put(cell: &deref(p));\n".as_slice(),
+        b"  let p = &record;\n  put(cell: &p^.value);\n".as_slice(),
+        b"  let p = &record.value;\n  put(cell: &p^);\n".as_slice(),
     ] {
-        let mut main = b"alias records = pkg::records;\n\nfn put(cell: &u8) -> result: unit writes(cell) {\n  set deref(cell) = 9_u8;\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let record = records::make();\n".to_vec();
+        let mut main = b"alias records = pkg::records;\n\nfn put(cell: &u8) -> result: unit writes(cell) {\n  set cell^ = 9_u8;\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let record = records::make();\n".to_vec();
         main.extend_from_slice(writer);
         main.extend_from_slice(b"  return std::process::exit_status(code: 0_u8);\n}\n");
         let failure = check_module_sources(
@@ -287,7 +287,7 @@ fn grow_remakes_a_boxed_window() {
     ));
 }
 
-/// [OP-10] `place_back`'s `requires deref(window).len < deref(window).cap` is an ordinary
+/// [OP-10] `place_back`'s `requires window^.len < window^.cap` is an ordinary
 /// [FN-8] requirement, so a full window is refused at the call.
 #[test]
 fn place_back_on_a_full_window_is_an_undischarged_requirement() {

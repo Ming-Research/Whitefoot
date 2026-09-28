@@ -16,31 +16,31 @@ fn store_u32_be(out: &[u8], offset: u64, value: u32) -> result: Result<unit, Nar
   let second_offset = offset +wrap 1_u64;
   let third_offset = offset +wrap 2_u64;
   let fourth_offset = offset +wrap 3_u64;
-  let store_room = deref(out).len;
+  let store_room = out^.len;
   if offset < store_room {
   } else {
     let error = NarrowError();
     return Err<unit, NarrowError>(error: error);
   }
-  set deref(out)[offset] = first;
+  set out^[offset] = first;
   if second_offset < store_room {
   } else {
     let error = NarrowError();
     return Err<unit, NarrowError>(error: error);
   }
-  set deref(out)[second_offset] = second;
+  set out^[second_offset] = second;
   if third_offset < store_room {
   } else {
     let error = NarrowError();
     return Err<unit, NarrowError>(error: error);
   }
-  set deref(out)[third_offset] = third;
+  set out^[third_offset] = third;
   if fourth_offset < store_room {
   } else {
     let error = NarrowError();
     return Err<unit, NarrowError>(error: error);
   }
-  set deref(out)[fourth_offset] = fourth;
+  set out^[fourth_offset] = fourth;
   return Ok<unit, NarrowError>(value: unit);
 }
 
@@ -48,27 +48,27 @@ fn load_u32_be(input: &[u8], offset: u64) -> result: u32 reads(input) {
   let second_offset = offset +wrap 1_u64;
   let third_offset = offset +wrap 2_u64;
   let fourth_offset = offset +wrap 3_u64;
-  let load_room = deref(input).len;
+  let load_room = input^.len;
   if offset < load_room {
   } else {
     return 0_u32;
   }
-  let first_byte = deref(input)[offset];
+  let first_byte = input^[offset];
   if second_offset < load_room {
   } else {
     return 0_u32;
   }
-  let second_byte = deref(input)[second_offset];
+  let second_byte = input^[second_offset];
   if third_offset < load_room {
   } else {
     return 0_u32;
   }
-  let third_byte = deref(input)[third_offset];
+  let third_byte = input^[third_offset];
   if fourth_offset < load_room {
   } else {
     return 0_u32;
   }
-  let fourth_byte = deref(input)[fourth_offset];
+  let fourth_byte = input^[fourth_offset];
   let first = cvt::<u8, u32>(first_byte);
   let second = cvt::<u8, u32>(second_byte);
   let third = cvt::<u8, u32>(third_byte);

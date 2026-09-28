@@ -3,20 +3,20 @@ alias exit_status = std::process::exit_status;
 
 fn fill(output: &[u64]) -> result: u64 writes(output) {
   doc "Two adjacent range references over one destination are proved disjoint by their captured endpoints, so both children are handed out at once and the origin's own length survives their writes.";
-  let count = deref(output).len;
+  let count = output^.len;
   if count <= 1_u64 {
     if 0_u64 < count {
-      set deref(output)[0_u64] = 7_u64;
+      set output^[0_u64] = 7_u64;
     }
     return count;
   }
   let middle = count / 2_u64;
-  let left = &deref(output)[0_u64..middle];
-  let right = &deref(output)[middle..count];
+  let left = &output^[0_u64..middle];
+  let right = &output^[middle..count];
   let a = fill(output: left);
   let b = fill(output: right);
-  let restored = deref(output)[0_u64];
-  set deref(output)[0_u64] = restored;
+  let restored = output^[0_u64];
+  set output^[0_u64] = restored;
   return a +wrap b;
 }
 

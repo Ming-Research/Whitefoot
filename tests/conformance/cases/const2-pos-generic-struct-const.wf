@@ -18,7 +18,7 @@ const small: Pair<u8> = Pair<u8>(left: 5_u8, right: 7_u8);
 const packet: Packet<Pair<u64>, count> = Packet<Pair<u64>, count>(tag: 11_u8, values:[Pair<u64>(left: 13_u64, right: 17_u64), Pair<u64>(left: 19_u64, right: 23_u64)]);
 
 fn read<T: copy>(pair: &Pair<T>) -> result: T reads(pair) {
-  return deref(pair).left;
+  return pair^.left;
 }
 
 fn main() -> status: ExitStatus pure {

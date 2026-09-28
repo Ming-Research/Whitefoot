@@ -88,10 +88,10 @@ fn recursively_boxed_tree_executes_with_derived_cleanup() {
 #[test]
 fn the_byte_accessor_without_its_length_branch_is_an_op4_rejection() {
     let source = br#"fn byte_at(s: &[u8], index: u64) -> result: u8 reads(s) {
-  let stored = deref(s).len;
+  let stored = s^.len;
   let within = index < stored;
   if within {
-    let value = deref(s)[index];
+    let value = s^[index];
     return value;
   } else {
     return 0_u8;
@@ -115,5 +115,5 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_ne!(stripped, source, "the length branch must have been found");
     let failure = compile_rejection(stripped.as_bytes()).to_string();
     assert!(failure.contains("[OP-4]"), "{failure}");
-    assert!(failure.contains("index < deref(s).len"), "{failure}");
+    assert!(failure.contains("index < s^.len"), "{failure}");
 }

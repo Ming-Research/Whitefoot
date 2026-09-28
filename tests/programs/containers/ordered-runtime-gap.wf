@@ -14,13 +14,13 @@ fn boxed_empty() -> made: Box<RuntimeGapNode> pure {
 
 fn insert_once(tree: &Box<RuntimeGapNode>) -> inserted: Bool writes(tree) {
   doc "Minimal valid-source trigger: allocate a replacement recursive node and commit it over the caller's cell, so the ordinary assignment releases the displaced Empty cell and scope exit releases the resulting tree.";
-  match deref(tree).inner {
+  match tree^.inner {
     Empty() => {
       let left_child = boxed_empty();
       let right_child = boxed_empty();
       let stored_entry = RuntimeGapNode::Entry(left: move left_child, right: move right_child);
       let replacement = box_new::<RuntimeGapNode>(value: move stored_entry);
-      set deref(tree) = move replacement;
+      set tree^ = move replacement;
       return True();
     }
     Entry(left: existing_left, right: existing_right) => {

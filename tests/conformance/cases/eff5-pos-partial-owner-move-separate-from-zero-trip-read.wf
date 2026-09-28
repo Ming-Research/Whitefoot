@@ -10,7 +10,7 @@ fn observe(input: &Box<Array<u64>>, consumed: Box<u64>) -> result: u64 reads(inp
   doc "EFF-2 retains the exhibited Array-header read even when this counted body has zero trips.";
   let observed = 0_u64;
   for (i in 0_u64..0_u64) {
-    set observed = deref(input).inner.len;
+    set observed = input^.inner.len;
   }
   return observed;
 }
