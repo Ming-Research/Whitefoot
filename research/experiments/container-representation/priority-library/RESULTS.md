@@ -296,6 +296,18 @@ bounded progress independently of comparator consistency. A direct C-hole
 transcription is inadmissible under WIN-3 and OP-11; it is not a selected WF
 implementation or a reason to weaken ownership.
 
+The direct reverse-carrier rotation fails that reporting constraint. Replacing
+the root of the min-heap `[1, 3, 2, 7, 5, 6, 4]` by `9` reports `(value, index)`
+as `(9, 0), (2, 0), (9, 2), (4, 2), (9, 6)` through indexed replacement and the
+current shared sink. Rotating destination-to-root writes positions 6, 2, 0 and
+naturally reports `(9, 6), (4, 2), (2, 0)`. The final heap agrees but an ordered
+reporter distinguishes them. Replaying the old stream afterward would report
+`9` at position 2 while it resides at 6, and would still change chronology.
+Keeping the original forward resident swaps restores the protocol and the
+movement being targeted. Heapify and arbitrary indexed repair also lack the
+incoming owner that pop/replacement can carry outside the initialized prefix.
+No direct delayed-carrier variant is admitted or constructed from this idea.
+
 The discriminator changes one source algorithm under the frozen compiler,
 adapters, allocator policy and workload. First require the independent sorted
 oracle, complete wide-owner/refusal checks, nested-owner consumption, indexed
@@ -682,3 +694,524 @@ The remaining scalar Result boundary and small wide replacement questions
 need bounded follow-up; this evidence supports an executable reusable heap,
 not a claim that those costs are solved or that a new language mechanism
 has been selected.
+
+### Prospective fixed-storage exchange with bounded scratch
+
+Before native construction or measurement, this candidate changes only the
+compiler's ordinary OP-11 fixed-storage aggregate exchange. Its code patch
+starts from `22096b01dbd508d47643a1211a8feb950b26a3f1`; library and workload
+sources, public interfaces, binary sifting, ownership and cleanup remain
+unchanged. The [pending storage-placement amendment](../../../../design/amendments/fixed-storage-exchange.md)
+is unselected. No source-language or live-tree rule changes here.
+
+The candidate retains one exchange IR operation and plans one raw temporary
+of at most 16 bytes through the target frame plan. A constant-trip loop copies
+A to scratch, B to A, then scratch to B before advancing, followed by the
+exact remainder. Ordinary memcpy preserves equal targets, representation
+padding and inactive bytes; zero-size storage transfers nothing. Scalar and
+runtime-content pointer-slot exchanges and generic snapshot copies remain
+unchanged. Current qualified targets have eight-byte, eight-aligned pointers,
+whose complete fields fit these chunk boundaries. A future target must
+establish its representation-preserving copy granule before reusing this
+choice. No integer reinterpretation, volatile operation, barrier, alias
+assertion, new inline hint or runtime alias branch forces the result.
+The existing frame plan owns scratch extent and alignment; lowering and the
+backend share the stored-aggregate classification. The loop bounds emitted IR
+for large aggregates while native unrolling/register allocation remain screen
+outcomes. Generic copying, result reuse and ownership checking stay unchanged.
+
+The first screen builds one gate-profile CLI with jobs=2 under the shared
+guard, preserving the baseline CLI `5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`
+and the separate Deque-only CLI. Since the integrated source also contains
+the pending Ring entry-capacity fact, require unchanged-source Deque raw LLVM
+to equal its frozen Deque-only candidate, and require PriorityQueue raw LLVM
+from the baseline and Deque-only CLIs to agree. Combined PriorityQueue LLVM
+may change only fixed-storage swap bodies. Cross-factor changes require a
+separate comparison. Record exact patches, inputs, commands, hashes, exits
+and separate construction/check costs.
+
+Compile the unchanged practical timed LLVM with the recorded ordinary Apple
+Clang O3 flags and inspect every changed WF body. Both wide hot exchanges
+must lose complete 256-byte stack staging, preserve vector movement and heap
+repair work, introduce no hot copy helper, and not grow the complete wide
+trace frame. Record instructions, branches, text, relocations, placement and
+unwind changes. A smaller temporary with unchanged whole-exchange stack
+traffic fails; a failed mechanism screen stops before timing.
+
+After independent admission, the existing ordinary/retained checks and
+semantic regressions must pass: dynamic equal/disjoint wrapped 264-byte
+owners, ordered words and pointer remainder, padded-enum bytes and active
+cleanup, zero-size canaries, and unchanged runtime-content exchange. Retain
+negative controls for omitted chunks/remainder, padding, canaries and release.
+Complete practical checks preserve 3,600 traces and eight refusal/retry chains
+per image, all 150 accounting rows, and existing checksum/accounting faults.
+Account equality describes those instrumented images only.
+
+Timing requires a further explicit admission: one complete control/candidate
+pair of `measure 0 64` and `measure 1 64`, all seven samples and all five
+implementations, retaining 2,100 rows per arm. Report every one of 24 useful
+cells and the six unranked storage controls under the current ECOSYSTEM
+duration, stability, native-drift and observed-range criteria. No selected
+subset, extra variant or policy conclusion follows from a partial result.
+
+The 2026-09-28 native screen remains unselected. The integrated CLI
+`afa4e18e6cf813b9c792074b163bdffd2b73103ada1cf9b59fea94f04bf1d0c7`
+preserves the Deque-only raw LLVM exactly; baseline and Deque-only CLIs emit
+identical PriorityQueue LLVM, and its sole combined raw change is the wide
+`wf_swap$instance$d8e29ae129ba2326` body. Native code changes 11 of 68 bodies,
+all wide; the scalar trace is unchanged. The standalone swap frame falls
+from 272 to 16 bytes, but 13 of 16 chunks still store and reload scratch:
+416 bytes per exchange versus 512 before, with 54 to 93 instructions.
+Both indexed sift helpers retain that same 416-byte traffic. The wide trace
+frame falls from 3,296 to 3,072 bytes, while four static calls to existing
+indexed sift helpers replace previously inlined work. These control costs
+and residual copies are adverse observations, not a preregistered automatic
+refusal. Before any timing, the necessary native screen is admitted: complete
+256-byte staging disappears, stack traffic falls from 512 to 416 bytes,
+vector movement remains, no hot copy helper is added, and the complete trace
+frame shrinks. The unchanged full correctness/accounting phase must pass
+before a separately authorized complete timing pair decides that tradeoff.
+No criterion or compiler variant changes. Text falls from
+16,788 to 14,032 bytes; text relocations rise from 178 to 189, 51 symbols move,
+and unwind contents change. Constant-section bytes remain identical.
+
+Installed Apple Clang O3 LLVM retains all 48 small memcpy operations through
+an independent 16-byte alloca. Its filtered pass trace shows SROA after full
+unrolling, MemCpyOpt, and late SROA all retaining the copies. This is residual
+memory-copy work, not demonstrated register-pressure spilling or failure to
+split the target frame. The exact later three-chunk forwarding limit is not
+established. The diagnostic's printer filter also limits its final LLVM
+output; an initial whole-module equality assertion stopped orchestration,
+and the corrected read-only comparison found the selected body byte-identical.
+
+The first shared unit build passed in 88.714 s. Its new fixture sources failed
+before backend execution: one Deque canonical-form error, plus three swap
+fixtures with missing canonical trivia or arithmetic written directly as a
+comparison operand. Existing tests passed 24/29/7 in the windows/owned-places/runtime-swap
+filters; direct filter exits were 101/101/0. Only source-authoring repairs
+followed, preserving the work, checks and fault controls; frozen-CLI source
+checks passed. One repaired unit rebuild took 57.909 s. The same filters then
+passed 25/32/7 tests with direct exits 0/0/0 and empty stderr, taking
+6.629/15.543/4.774 s respectively. These include the wrapped 264-byte owner,
+padding/inactive-byte, zero-size, retained-call and deliberate copy/cleanup
+fault checks. All 417 pinned source inputs stayed unchanged during each run.
+
+The initial CLI build took 54.222 s; baseline/candidate native assembly took
+0.246/0.197 s and assembly-to-object construction 0.068/0.057 s. Exact commands,
+hashes, full changed-body inventory, diagnostic and failed/passing logs remain
+in `/private/tmp/whitefoot-fixed-storage-swap/` (`screen/`, `cause/`,
+`semantics/`, `semantics-continuation/`, `fixture-authoring/`, and
+`semantics-repaired/`).
+
+The subsequent guarded practical phase passed all 16 check/ledger/fault
+commands. Each arm passed 2,160 ordinary and 2,160 retained traces with four
+native refusal/retry chains per image, then 3,600 practical traces and eight
+chains in each timed/account image. The unchanged C-only images each passed
+1,440 traces and four chains. All ten public queue operations and four
+callbacks survive in both retained WF modules and the C control. Both
+150-row ledgers are byte-identical to the existing accounting reference,
+SHA-256 `ed77d5bf20c8c3c0a120b052de682e7e49d5692705b1933707ff8dd16cc667fc`;
+this equality concerns instrumented images only. Both arms' checksum and
+accounting faults exit 1 with the required diagnostics. The 479 pinned inputs
+remain unchanged; neither CLI nor ecosystem peer was rebuilt. The newly
+linked control timed/account images are byte-identical to the existing
+baseline images. Native fixture construction took 2.451 s, symbol inspection
+0.036 s, normal checks/accounting 5.466 s and fault execution 0.017 s
+(guard wall time 8.292 s). Exact commands, statuses and hashes are in
+`/private/tmp/whitefoot-fixed-storage-swap/practical/`. That correctness phase
+ran no performance timing and changed no language or live design-tree rule.
+
+
+### Fixed-storage exchange timing: three gains and six useful losses
+
+The single authorized 2026-09-28 pair rejects selection of this bounded-scratch
+lowering. Among 24 useful cells, three have qualified observed-range gains,
+six have qualified losses and fifteen overlap. All six storage controls
+overlap and remain unranked. Wide pop/push improves by 3.13–3.14% at 16,
+8.08–9.46% at 256 and 10.97–11.13% at 4,096, measured as elapsed-time
+reduction. Wide replace-top regresses at every population by 13.54–15.37%;
+wide grow-pop/16 by 12.43–13.42%; wide heapify-pop/16 by 12.26–12.93% and
+heapify-pop/256 by 2.75–3.12%. No scalar useful-cell gain or loss is established.
+
+The current slower-standard target moves from 11 pass / 10 deficit / 3
+inconclusive to 10 / 10 / 4. Wide heapify-pop/16 loses its pass. The three
+pop/push improvements still miss that target: candidate/C++ medians are
+1.643–1.646, 1.896–1.919 and 1.981–1.982 at the three populations;
+candidate/Rust is 1.987–1.989, 2.082–2.094 and 2.081–2.088. Replacement's
+remaining native wins do not erase its regressions from the control.
+
+The [full control samples](ecosystem-fixed-storage-swap-control-samples.csv)
+and [full candidate samples](ecosystem-fixed-storage-swap-candidate-samples.csv)
+retain 2,100 rows each. The [paired cells](ecosystem-fixed-storage-swap-paired.csv)
+retain both cohort medians and all observed bounds, qualifications and four
+native-control drifts. The table below reports every cell; a ratio below one
+means the candidate took less time. P/D/I is the separately qualified
+slower-standard target, not the before/after result.
+
+| Bytes | Path | Count | Candidate/control c0 / c1 | Paired result | Native target control → candidate |
+|---:|---|---:|---:|---|---|
+| 8 | pop-push | 16 | 1.0135 / 0.9740 | overlap | I → I |
+| 8 | pop-push | 256 | 1.0228 / 0.9989 | overlap | D → D |
+| 8 | pop-push | 4096 | 0.9980 / 1.0071 | overlap | P → P |
+| 8 | replace-top | 16 | 0.9992 / 1.0264 | overlap | P → P |
+| 8 | replace-top | 256 | 1.0008 / 1.0008 | overlap | P → P |
+| 8 | replace-top | 4096 | 0.9965 / 0.9965 | overlap | P → P |
+| 8 | grow-pop | 16 | 0.9775 / 0.9973 | overlap | D → D |
+| 8 | grow-pop | 256 | 0.9995 / 1.0043 | overlap | I → I |
+| 8 | grow-pop | 4096 | 0.9958 / 0.9968 | overlap | P → P |
+| 8 | heapify-pop | 16 | 0.9977 / 1.0010 | overlap | I → I |
+| 8 | heapify-pop | 256 | 0.9984 / 1.0028 | overlap | P → P |
+| 8 | heapify-pop | 4096 | 1.0010 / 1.0009 | overlap | P → P |
+| 8 | setup-cleanup | 16 | 0.9983 / 1.0046 | overlap | unranked |
+| 8 | setup-cleanup | 256 | 0.9985 / 0.9975 | overlap | unranked |
+| 8 | setup-cleanup | 4096 | 0.9971 / 1.0055 | overlap | unranked |
+| 256 | pop-push | 16 | 0.9686 / 0.9687 | gain | D → D |
+| 256 | pop-push | 256 | 0.9054 / 0.9192 | gain | D → D |
+| 256 | pop-push | 4096 | 0.8887 / 0.8903 | gain | D → D |
+| 256 | replace-top | 16 | 1.1448 / 1.1387 | loss | P → P |
+| 256 | replace-top | 256 | 1.1354 / 1.1537 | loss | P → P |
+| 256 | replace-top | 4096 | 1.1363 / 1.1363 | loss | P → P |
+| 256 | grow-pop | 16 | 1.1342 / 1.1243 | loss | D → D |
+| 256 | grow-pop | 256 | 1.0244 / 1.0277 | overlap | D → D |
+| 256 | grow-pop | 4096 | 1.0066 / 1.0106 | overlap | D → D |
+| 256 | heapify-pop | 16 | 1.1226 / 1.1293 | loss | P → I |
+| 256 | heapify-pop | 256 | 1.0275 / 1.0312 | loss | D → D |
+| 256 | heapify-pop | 4096 | 1.0180 / 1.0202 | overlap | D → D |
+| 256 | setup-cleanup | 16 | 1.0032 / 1.0020 | overlap | unranked |
+| 256 | setup-cleanup | 256 | 0.9963 / 1.0008 | overlap | unranked |
+| 256 | setup-cleanup | 4096 | 0.9958 / 0.9977 | overlap | unranked |
+
+Every recorded sample, including native controls, exceeds 1 ms: the minima
+are 1.163 ms for control and 1.162 ms for candidate. No maintained native
+comparison is duration- or cohort-unstable. The useful WF before/after minimum
+is 1.206 ms and maximum cohort-ratio spread is 4.055%. Inter-arm native median
+ratios over useful cells are 0.9771–1.0308 for swap C, 0.9721–1.0403 for hole C,
+0.9866–1.0349 for Rust and 0.9512–1.0281 for C++; no cell exceeds the recorded
+10% drift screen. All outliers remain. The observed bounds are sufficient
+separation tests, not confidence intervals, and overlapping samples do not
+establish equivalence.
+
+The pair uses the already checked images: control SHA-256
+`ba7726f586341071cc3364fd6f037e501660e0517788c3443bb2240005b5150f`
+and candidate `39db8b84322f6dfee9cd63a0a628ba2f25a206a92fb63dc78cd76b4eed775abf`.
+There was no rebuild, extra factor, replay or selected-cell run. The four
+direct commands were control `measure 0 64`, control `measure 1 64`, candidate
+`measure 0 64`, candidate `measure 1 64`, under one shared guard with jobs=2.
+All exited 0, with empty stderr; all non-time fields match across arms and
+all 245 pinned artifacts/inputs remained unchanged. Their respective wall
+costs were 27.409152, 27.433780, 27.394347 and 27.347373 s; reduction took
+0.212859 s and the complete guarded phase 110.183258 s. These costs include
+oracle/warmup/output work and are not operation latencies or selection grounds.
+
+Native code supports a mixed mechanism: whole-owner staging is removed, but
+416 bytes of scratch traffic remain and ordinary inlining changes introduce
+four static sift calls. Replacement's sift remains inline in both trace
+bodies. Its preceding root exchange instead grows from 41 to 86 instructions:
+the control directly saves the old root and writes the incoming owner, while
+the candidate first copies the complete incoming owner into the carrier and
+retains thirteen scratch store/reload pairs. Those matched blocks contain
+1,024 versus 1,952 bytes of vector load/store operands, before any downward
+exchange (`screen/control.s:2086` and `screen/candidate.s:1958` in the retained
+local evidence). These are instruction operand totals, not measured cache or
+memory-system traffic. The growing-fill path adds a rise call per accepted
+push; heapify adds a sink call per parent; final drain now calls pop, which
+calls sink. Their old bodies contained those repairs inline. This explains
+which extra work accompanies the small-population losses, without assigning
+it an isolated time cost. This paired trial does not isolate the separate cost
+of scratch traffic, call placement, instruction growth or code layout. Static
+addresses do not establish equal runtime ASLR or data addresses across
+processes. The evidence covers this Apple Clang 21 O3 arm64 host and fixed
+order pair; it selects no cross-target or general performance policy. The
+recommendation is to retain the prior lowering and generic representation/
+ownership tests. The surgical withdrawal removes only this unselected
+production machinery. Dynamic equal/disjoint wrapped 264-byte ownership,
+all-word/pointer checks, zero-size canaries, padded-enum bytes and active
+cleanup remain covered in ordinary and retained forms. The 16-byte scratch/
+8-byte remainder and zero-byte no-frame IR assertions, plus faults that
+remove the candidate's 8/16-byte copies, are retired because they describe
+the refused mechanism. The replay patch preserves those experimental
+observations; no language or generic behavior requirement is retired.
+
+**Reconstruction.** The [seven-file replay patch](ecosystem-fixed-storage-swap-replay.patch)
+applies with `git apply --unidiff-zero` to
+`22096b01dbd508d47643a1211a8feb950b26a3f1` and preserves the exact
+PQ compiler factor plus the corrected semantic fixtures described above.
+It does not include Deque or projection changes. The measured combined CLI
+also contained the separate Deque factor; the recorded baseline/Deque-only
+PQ LLVM equality establishes that factor's neutrality for this module.
+The original combined CLI source patch, individual compiler binaries and
+417-file build pin remain in the local `screen/` evidence. Do not infer
+replayed CLI byte identity from that module-level isolation.
+
+Build control and patched candidate CLIs in separate isolated source trees
+with the ordinary `cargo build --manifest-path compiler/Cargo.toml --profile
+gate --bin whitefootc --locked --offline -j 2` under the shared guard. The
+unchanged [family Makefile](Makefile), [ecosystem recipe](../ecosystem.mk) and
+[runtime recipe](../../../../compiler/runtime.mk) reconstruct ordinary,
+retained, timed and accounting images and native inputs. Use `check
+ecosystem-check ecosystem-account` with a fresh `BUILD` and the corresponding
+`WHITEFOOTC`. Timed LLVM renames `main`, retains exactly the two whole-trace
+boundaries, and receives one ordinary `clang -O3 -Wno-override-module -x ir`
+compilation. Accounting applies the existing malloc/free substitutions and
+allocator return attributes before that compilation. In the measured pair,
+the 15 non-WF link inputs per image, their order and flags remained fixed.
+Raw PQ LLVM hashes are control
+`c6725edd5e9f4d8d0267eebc150b2d8fea9926727d44625e43ee3b0b4a5e5307`
+and candidate `06abf69a74e4ef89dac9c9720476c655c27c39f9286c85e2409bda42ee2b7094`;
+O3 object hashes are `8c3feb1e1cd0a6921b44470460ce1b57798bef9d964d5b607f2ddd051d57d2e7`
+and `89505fcefbb77767f8fcbd0f36e10172816cbe8f0a95a44d1ce5a227f72ef4db`.
+
+Reduce either published arm with `perl ../summarize-ecosystem.pl --complete
+priority=FILE` and `--targets priority=FILE` from this directory. For each
+paired cell/cohort, use candidate median / control median; the observed lower
+and upper are candidate minimum / control maximum and candidate maximum /
+control minimum. A gain requires both uppers below one; a loss requires both
+lowers above one. Qualify with minimum sample at least 1 ms and
+`100 * (max cohort ratio / min cohort ratio - 1) <= 10`, and retain native
+inter-arm drift separately. No new maintained runner is needed. Exact commands,
+phase exits, freezes and the small one-shot reduction remain in
+`/private/tmp/whitefoot-fixed-storage-swap/timing/` for this trial.
+
+Published SHA-256 values, in control/candidate/paired/replay-patch order, are
+`1a4a4a845c694b28d326e7ffe9db4c44e82ab7bfbfc67d500c1ba046be7586f3`,
+`94ee4bf36759688deb32f8da6f49fd805029c773c468e1010cf698325785e0d0`,
+`ee652df6e827da841f116c94694db0b7f8fb61410e016c734de43c4273461d83`, and
+`27bca60c8c0896ae25a67d7863cfba0b767e0f92e9477e2880aec0a6e69404dc`.
+
+### Existing consumed-projection factor: unchanged PriorityQueue code
+
+The 2026-09-28 native-only screen compared the same unchanged witness with
+frozen CLI `5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`
+and the clean projection CLI
+`f575555aa641f6cbd2aa70f08f3ff5a1969381c13e9811a4e3958715b044270c`.
+The prediction recorded before emission was no applicability: the consumed
+`PriorityCostRecord.words` projection has a parameter parent, excluded by the
+new planner, and both push-result matches are direct expressions without a
+consumed binding root. Whole-owner swaps/takes lie outside that factor.
+
+Raw LLVM, the unchanged timed transformation, complete assembly and complete
+object are byte-identical between arms and to the earlier frozen baseline.
+All 74 LLVM definitions and 26 types agree, including all 4 memcpy and 32
+memmove call sites. All 68 native bodies agree: 4,197 instructions and 82
+static calls, with unchanged ABI, owning calls, frame sizes, literal bytes,
+relocations, CFI and layout. The scalar/wide trace frames remain 192/3,296
+bytes. `record_accept` already reads directly from its input in native code,
+with 53 instructions, no calls and no stack allocation. There is no native
+code change to measure and no PriorityQueue result to credit to this factor.
+
+All 13 direct construction/inspection commands exited 0 under one guard,
+reported at 1.20 s; the script recorded 1.056751 s. No compiler build, linking,
+correctness execution or timing ran. Twenty new pre/post pins agree; a separate
+post-screen audit finds all 12 module declarations/catalog files equal to
+both earlier frozen source manifests. The prior raw/assembly/object hashes
+remain `c6725edd...`, `2013a9ee...` and `8c3feb1e...`, with complete values above.
+The preregistration, exact commands, direct statuses and all-body inventory
+are local one-shot evidence in `.build/consumed-projection-native/`.
+Its first read-only instruction counter omitted operand-free `ret`; correcting
+that parser required no re-emission and reproduces the object text size.
+
+### Preregistered ordinary exchange-helper source screen
+
+Before source admission on 2026-09-28, freeze the two-helper candidate in
+`.build/exchange-alias-source/criterion.md` and `source.patch`. Replace only
+the two swaps in the shared indexed sifts with an ordinary private call over
+the already proved-disjoint parent/child references. It atomically updates
+one referent through an owned-element helper that swaps its local with the
+other referent and returns that local. Keep unconstrained T, both plain and
+indexed callers, all public interfaces, root/local swaps, comparisons,
+heapify order and the two immediate position callbacks in their exact order.
+This tests the ordinary reference alias boundary, not a new lowering rule;
+consumed-input/result placement is not assumed to apply to a PlaceRead.
+
+Use frozen CLI575 and the existing Apple clang O3 flags. Qualify an identical
+package carrier by requiring its entire baseline assembly to equal the frozen
+standard-module assembly after only `std.collections.priority_queue.` becomes
+`priority_queue.`. Both arms use the same ten caller alias substitutions,
+module graph/interface and unchanged timed whole-trace boundaries. Source
+refusal or a carrier mismatch stops without a fallback or narrowing T.
+
+Require less complete-owner movement in both wide shared sifts and their trace
+paths, without owner-sized replacement staging, new hot helper/copy calls,
+frame growth, scalar mechanism regression or expansion of replacement's root
+exchange. Preserve SIMD movement, owning ABI and allocation/cleanup call
+domains; inventory all other bodies, frames, transfers, calls, CFI and layout.
+Keep direct statuses, hashes and source/native costs under the shared guard.
+This authorizes source/IR/assembly/object inspection only: no execution,
+accounting, timing or selection. The exact one-shot command and prospective
+continuation conditions are in the frozen scratch criterion.
+
+The first guarded stage stopped at that carrier assertion (direct outer
+exit 1, 0.88 s; script 0.765827 s). Baseline source check, LLVM emission and
+O3 assembly exited 0 in 0.156232, 0.347899 and 0.228121 s. All 43 input pins
+held. Candidate admission/emission, object construction and execution did not
+run. The saved diff changes twelve assembly lines: only the scalar/wide
+indexed rise/sink instance names and their comments. Their function-actual
+argument names the copied private `ignore_position`, so module-qualified
+generic identity changes its digest. Four exact additional sift-symbol maps
+make the complete assembly equal; this was discovered after, and does not
+rewrite, the failed one-prefix criterion. Raw LLVM's 74 definitions also
+agree after those maps and two same-layout `{ ptr }` type-name maps; its only
+other difference is eighteen unused external declarations and blank lines.
+`baseline-mismatch.diff`, `baseline-raw-mismatch.diff` and
+`carrier-analysis.json` preserve that read-only diagnosis. No normalization
+change or continuation is inferred from it; the candidate remains untested.
+
+After independent verification, the corrected setup criterion explicitly
+admits only the four documented full sift-symbol mappings (rise and sink,
+scalar `69e12dced9658a85` to `c3d7b709dd11a924`, wide `5786705437533435` to
+`a18d9435e766a12a`) and the two documented same-layout raw type names. Complete
+assembly and all 74 raw definitions must agree; no broader normalization is
+allowed. `continuation-criterion.md` records this before candidate admission,
+with instruction/symbol falsifiers. The original failure remains frozen; its
+baseline outputs are reused. The same candidate and native mechanism gate
+continue under a new guarded command, still without runtime or timing.
+
+That continuation qualified the carrier and rejected both synthetic identity
+and instruction faults, then stopped at candidate source admission. CLI575
+returned exit 1 in 0.038451 s at `priority_queue.wf:65:7`:
+`error[WIN-3]: LinearAssignmentTarget`, target type `T`, on
+`set first^ = priority_queue_exchange_owned::<T>(held: move first^, other: second);`.
+The generic target may be linear; OP-12's affine/copy update does not supply
+the required unconstrained-owner operation. No `drop` bound, owner-domain
+narrowing or language/compiler change was substituted. This does not test the
+separate unverified dynamic-index OP-12 concern. The outer command exited 1
+in 0.11 s; the script recorded 0.060951 s. All 65 input/prior-artifact pins
+held. No candidate LLVM, optimized IR, assembly, object or program ran, and
+the pending baseline native commands were skipped. The source patch and both
+failed-stage records remain in the same scratch home.
+
+### Preregistered distinct-reference helper screen
+
+The next ordinary-source factor adds one private generic helper over two
+write references; its body calls the unchanged builtin `swap` and returns
+unit. Only the two common indexed-sift calls use it, with their existing strict
+index-separation proofs and unchanged immediate reporter order. There is no
+owned local or atomic update, so unconstrained/nodrop T remains in scope.
+Root/local swaps, public APIs, scalar instances, heapify and cleanup are
+controls. The current queue parameter's `noalias` does not distinguish two
+subplaces reached through it. The ordinary two-reference helper can instead
+carry EFF-5's disjointness for each parameter; the builtin swap still permits
+equal addresses and retains its existing ABI (`backend/emitter.rs`'s
+`aliasing_admitted_row` and `reference_parameter_facts`). Whether O3 propagates
+that fact far enough to remove staging remains the native discriminator.
+
+Before source admission, `.build/exchange-distinct-source/criterion.md`
+records the unchanged full movement/frame/SIMD/scalar/root-exchange/hot-call
+gate, exact qualified carrier, CLI575, O3 commands and input pins. Reuse the
+saved baseline; do not rebuild a compiler or peers. One short guarded
+source/IR/native stage follows Slots' complete timing pair, with no simultaneous
+compiler commands. Stop before any runtime or timing. A later admitted phase
+must include complete ownership and indexed reporter-order checks before the
+unchanged full-matrix comparison; this preparation makes no selection claim.
+
+### Distinct-reference helper result: native movement gate failed
+
+The single native-only stage admitted unconstrained T and completed all 13
+direct commands with exit 0. All 81 input/prior-artifact pins held. Source
+check/emission cost 0.161602/0.361218 s; native construction/inspection cost
+0.355299/0.343253 s. The guard reported 1.31 s and the script 1.246599 s.
+The saved baseline was reused; no compiler or peer was rebuilt. No image was
+linked or executed, and no correctness, accounting or timing phase followed.
+
+The new helper carries both ordinary `noalias` parameters, and O3 propagates
+their alias scopes into the shared sifts. This changes the middle 256-byte
+transfer from memmove to memcpy and uses fewer simultaneous vector registers.
+It retains the complete 256-byte private snapshot, the first transfer into
+it and the final transfer out: three 256-byte copies and 512 bytes of stack
+payload traffic per exchange. The new wide helper remains 54 instructions
+with a 272-byte frame; scalar is 6 instructions with no frame. Wide indexed
+sink/rise remain 82/68 instructions and 272-byte frames. The complete wide
+trace remains 1,525 instructions with a 3,296-byte frame; scalar remains
+446 instructions and 192 bytes. Required movement reduction therefore fails.
+This is an observed use of the new alias fact without the required movement
+benefit, not evidence that the fact was missing or that runtime would improve.
+
+Raw LLVM changes exactly the four scalar/wide shared-sift call targets and
+adds two helper instances (74 to 76 definitions). Ten existing native bodies
+change their wide-copy scheduling: the wide trace, push, pop, replace_top,
+heapify, drain, ordinary rise/sink and indexed rise/sink. Every existing body's
+instruction, SIMD load/store and call counts, stack allocation and CFI stay
+the same; scalar bodies remain exact. There are 77 branch-link calls plus
+5 tail calls in each arm. Replacement's initial root exchange is unchanged.
+The two added leaf bodies grow text from 16,788 to 17,028 bytes and total
+instructions from 4,197 to 4,257; native definitions increase from 68 to 70.
+Fifteen existing symbols move by 24 or 240 bytes. Literal16/const bytes and
+eh_frame stay exact; compact-unwind changes only five function-start fields.
+Section relocation counts and symbol-relative meanings agree throughout.
+
+The exact patch and complete body/layout/relocation inventory remain in
+`.build/exchange-distinct-source/{source.patch,native-screen.json}`. The
+candidate raw LLVM, assembly and object SHA-256 values are
+`a61ecf4d6905775e39f77aba13d5820b232e54a6afc05d3d1416b0eabe22e048`,
+`bbdefa07717193ff12bb405e69207e0066984b7079970abcd3b60ddebfa2ca45`, and
+`a04f623d80b732418b2fa7d16178aa7de2a64191a3fe107e0e3d1cd6001e51d7`.
+The first read-only inventory's extra helper-byte-equality assertion failed:
+the real scheduling differences are retained in `changed-native.diff`, not
+normalized away. Correcting that inventory required no native rerun. The
+source candidate stays in scratch; no library, compiler or language change
+is selected from this failed gate.
+
+### Replacement result placement: unselected lowering diagnosis
+
+Read-only inspection separates a replacement cost from the shared sift's
+three-copy algorithm. In the qualified carrier's frozen
+`.build/exchange-distinct-source/screen/baseline.opt.ll`, lines 1909–1912
+save the old 256-byte root in `%v3.sroa.0.i` and install the incoming record;
+the saved root stays live through the complete sink loop. Line 1963 copies
+it into `%wf.slot.9`, then ends its lifetime before the ordered digest.
+The independent swap temporary at lines 1954–1958 is a different lifetime.
+The retained O2 baseline also keeps the old root across its comparator calls
+and copies it into `%wf.result` at line 1572 of
+`/private/tmp/whitefoot-fixed-storage-swap/practical/control/retained.opt.ll`.
+This is code attribution, not a measured causal share or a hole-sift proposal.
+
+The frozen raw `screen/control.raw.ll:2295` in that same scratch experiment
+has an owned-input snapshot `%wf.slot.0`, a separate addressed binding `%v3`,
+and a final whole-binding load into `%wf.result`. The checked lowering path
+explains those objects: `lowering/builder/storage.rs` promotes the borrowed
+owned parameter with `AddressOf`; `binding_value`/`load_storage_value` makes
+the final value read a `Load`. `backend/storage.rs` gives that load its own
+aggregate group. `returned_storage_slot` already chooses that group for the
+result, while `FunctionFramePlan` still allocates `FunctionSlot::Address`.
+`load_place_result` therefore emits the surviving binding-to-result copy.
+These relevant lowering, destination-selection and load-emission functions
+match baseline `22096b01dbd508d47643a1211a8feb950b26a3f1`. Existing fresh-binding
+forwarding only redirects an earlier producer into its initializer's address;
+it does not place a mutable binding in its eventual result. Entry parameters
+also fail its same-block producer test. Exposed aggregate groups are frozen,
+and ordinary `Load` is deliberately not an input/result reuse edge.
+
+The proposed next factor is general whole-binding result placement, pending
+review before implementation. Qualify one acyclic private `AddressOf` root
+of the complete result type, dominating its uses, whose terminal whole loads
+supply every return. Require that the returned group has only those terminal
+producers, no competing definition, entry parameter, field/projection backing
+or exposed snapshot, and no deferred address lifetime. Preserve all earlier
+value snapshots, complete CFG interference, target extent/alignment, and
+entry capture before the binding first writes result storage. Only that
+address allocation uses the existing result destination; no source name,
+record-size rule, swap change, new alias fact or projected Call operand is
+involved. Partial returns, competing roots and unproved address transports
+retain their current storage.
+
+Early result writes also need the existing caller-placement proof: calls use
+private result groups; whole/field reuse excludes exposed backing and keeps
+complete interference checks. A caller-visible reference to an old target,
+including an OP-12 environment read before commit, must never become an alias
+of this early result. Owned-input capture alone does not prove that condition.
+Tests must distinguish same/distinct owned-input result destinations, late
+old-target reads, another input captured before result writes, intermediate
+snapshots surviving mutation, and competing/backedge returns. Full payload,
+padded owning enum, smaller-return canary and zero-size behavior need normal
+and retained execution, cleanup faults, and unchanged indexed reporter order.
+
+The prospective native discriminator is removal of the ordinary wide
+replacement's extra complete transfer, counting all replacement setup and
+return traffic rather than just the final copy. A retained helper may instead
+need an incoming snapshot when its result aliases its owned input; record
+that separately and require no additional complete transfers, hot calls or
+frame growth. Keep SIMD, scalar and shared-sift mechanisms, ABI and callback
+order; inventory every changed body. Failure stops before runtime/timing.
+Only an admitted candidate proceeds to the existing complete owning/refusal,
+normal/retained and 150-row accounting checks, then a separately authorized
+full practical pair. No implementation, build or new measurement ran here.

@@ -1,0 +1,469 @@
+--- a/compiler/src/ir.rs
++++ b/compiler/src/ir.rs
+@@ -236,0 +237,32 @@
++}
++
++impl IrType {
++    /// Whether an ordinary value carries its inline payload in planned storage.
++    /// Lowering and the backend share this representation choice; descriptors
++    /// and Box pointers retain their ordinary SSA form. A missing nominal is
++    /// malformed IR, not a scalar representation.
++    pub(crate) fn is_stored_aggregate(self, nominals: &[IrNominal]) -> Option<bool> {
++        Some(match self {
++            Self::Array { .. }
++            | Self::Window {
++                capacity: Some(_), ..
++            } => true,
++            Self::Nominal(id) => {
++                let nominal = nominals.get(id.index())?;
++                match nominal.kind() {
++                    IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
++                    IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
++                    IrNominalKind::Box { .. } => false,
++                }
++            }
++            Self::Unit
++            | Self::Bool
++            | Self::Integer { .. }
++            | Self::Float { .. }
++            | Self::Buffer { .. }
++            | Self::Window { capacity: None, .. }
++            | Self::Range { .. }
++            | Self::RuntimeBoxPayload { .. }
++            | Self::Address(_) => false,
++        })
++    }
+@@ -1095,0 +1128,9 @@
++    /// Exchange complete fixed-size stored representations [OP-11]. The two
++    /// targets are exactly equal or disjoint, and no source observation occurs
++    /// inside the operation. Padding and inactive bytes retain copy semantics;
++    /// the backend need not materialize either complete owner as a value.
++    FixedStorageSwap {
++        first: IrValueId,
++        second: IrValueId,
++        referent: IrAddressed,
++    },
+--- a/compiler/src/lowering/builder/prelude.rs
++++ b/compiler/src/lowering/builder/prelude.rs
+@@ -446,3 +446,3 @@
+-    /// Both values are read before either is written, so the one call
+-    /// [OP-11] admits whose two arguments name the same place leaves that
+-    /// place holding what it held.
++    /// Scalar values read both operands before either store. Stored aggregates
++    /// keep one exchange operation so the backend can bound its raw temporary;
++    /// the checked equal-or-disjoint domain preserves the same-place case.
+@@ -462,0 +463,15 @@
++            )?;
++            return self.return_unit();
++        }
++        if referent
++            .ty()
++            .is_stored_aggregate(self.nominals)
++            .ok_or(LoweringFailure::InvalidCheckedProgram)?
++        {
++            self.define(
++                IrType::Unit,
++                IrOperation::FixedStorageSwap {
++                    first,
++                    second,
++                    referent,
++                },
+--- a/compiler/src/lowering/operands.rs
++++ b/compiler/src/lowering/operands.rs
+@@ -173 +173,2 @@
+-            IrOperation::RuntimeContentSwap { first, second } => {
++            IrOperation::FixedStorageSwap { first, second, .. }
++            | IrOperation::RuntimeContentSwap { first, second } => {
+--- a/compiler/src/backend/storage.rs
++++ b/compiler/src/backend/storage.rs
+@@ -27,23 +27,2 @@
+-    Ok(match ty {
+-        IrType::Array { .. }
+-        | IrType::Window {
+-            capacity: Some(_), ..
+-        } => true,
+-        IrType::Nominal(nominal) => {
+-            let nominal = program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?;
+-            match nominal.kind() {
+-                IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
+-                IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
+-                IrNominalKind::Box { .. } => false,
+-            }
+-        }
+-        IrType::Unit
+-        | IrType::Bool
+-        | IrType::Integer { .. }
+-        | IrType::Float { .. }
+-        | IrType::Buffer { .. }
+-        | IrType::Window { capacity: None, .. }
+-        | IrType::Range { .. }
+-        | IrType::RuntimeBoxPayload { .. }
+-        | IrType::Address(_) => false,
+-    })
++    ty.is_stored_aggregate(program.nominals())
++        .ok_or(BackendFailure::InvalidIr)
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -915,0 +916,2 @@
++    /// Raw nonowning staging for one fixed-storage OP-11 exchange.
++    SwapScratch(IrValueId),
+@@ -1009,0 +1012,12 @@
++                    }
++                    IrOperation::FixedStorageSwap { referent, .. } => {
++                        let layout = fixed_swap_layout(target, program, *referent)?;
++                        if layout.size() != 0 {
++                            push_function_slot(
++                                &mut specifications,
++                                &mut ordered,
++                                FunctionSlot::SwapScratch(*result),
++                                TargetStorageType::bytes(layout.size().min(SWAP_CHUNK_BYTES)),
++                                Some(layout.align().min(SWAP_CHUNK_BYTES)),
++                            )?;
++                        }
+@@ -1164,0 +1179,18 @@
++}
++
++/// Every currently qualified target has ordinary eight-byte, eight-aligned
++/// pointers. Aggregate layout preserves that alignment, so these boundaries
++/// never split a pointer representation. An additional target must establish
++/// its own representation-preserving copy granule before reusing this choice.
++const SWAP_CHUNK_BYTES: u64 = 16;
++
++fn fixed_swap_layout(
++    target: TargetLayout,
++    program: &IrProgram,
++    referent: IrAddressed,
++) -> Result<TargetAggregateLayout, BackendFailure> {
++    if referent.is_runtime_content() || !is_stored_aggregate(program, referent.ty())? {
++        return Err(BackendFailure::InvalidIr);
++    }
++    validate_static_storage(target, program, &TargetStorageType::source(referent.ty()))
++        .map_err(BackendFailure::TargetLayout)
+@@ -2188,0 +2221,5 @@
++            IrOperation::FixedStorageSwap {
++                first,
++                second,
++                referent,
++            } => self.emit_fixed_storage_swap(result, ty, *first, *second, *referent),
+--- a/compiler/src/backend/emitter/operations.rs
++++ b/compiler/src/backend/emitter/operations.rs
+@@ -72,0 +73,85 @@
++    }
++
++    /// Exchange raw representations without constructing temporary owners.
++    /// Completing each chunk preserves OP-11's equal-or-disjoint domain while
++    /// bounding live staging independently of the aggregate's complete size.
++    pub(super) fn emit_fixed_storage_swap(
++        &mut self,
++        result: IrValueId,
++        ty: IrType,
++        first: IrValueId,
++        second: IrValueId,
++        referent: IrAddressed,
++    ) -> Result<(), BackendFailure> {
++        if ty != IrType::Unit
++            || self.value_type(first) != Some(IrType::Address(referent))
++            || self.value_type(second) != Some(IrType::Address(referent))
++        {
++            return Err(BackendFailure::InvalidIr);
++        }
++        let size = fixed_swap_layout(self.target, self.program, referent)?.size();
++        if size == 0 {
++            return self.emit_constant(result, ty, IrConstant::Unit);
++        }
++        let scratch = self.entry_slot(FunctionSlot::SwapScratch(result))?;
++        let first = self.value_name(first);
++        let second = self.value_name(second);
++        let remainder = size % SWAP_CHUNK_BYTES;
++        let complete = size - remainder;
++        self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
++        self.output.symbol("llvm.memcpy.p0.p0.i64".to_owned());
++        if complete != 0 {
++            let pre = format!("swap.{}.pre", result.index());
++            let body = format!("swap.{}.body", result.index());
++            let done = format!("swap.{}.done", result.index());
++            let offset = self.next_temporary()?;
++            let next = self.next_temporary()?;
++            let more = self.next_temporary()?;
++            writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(pre.clone());
++            writeln!(self.output, "  br label %{body}")
++                .map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(body.clone());
++            writeln!(
++                self.output,
++                "  %{offset} = phi i64 [ 0, %{pre} ], [ %{next}, %{body} ]"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            self.emit_swap_chunk(
++                &first,
++                &second,
++                &scratch,
++                &format!("%{offset}"),
++                SWAP_CHUNK_BYTES,
++            )?;
++            writeln!(
++                self.output,
++                "  %{next} = add i64 %{offset}, {SWAP_CHUNK_BYTES}\n  %{more} = icmp ult i64 %{next}, {complete}\n  br i1 %{more}, label %{body}, label %{done}"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(done);
++        }
++        if remainder != 0 {
++            self.emit_swap_chunk(&first, &second, &scratch, &complete.to_string(), remainder)?;
++        }
++        self.emit_constant(result, ty, IrConstant::Unit)
++    }
++
++    fn emit_swap_chunk(
++        &mut self,
++        first: &str,
++        second: &str,
++        scratch: &str,
++        offset: &str,
++        size: u64,
++    ) -> Result<(), BackendFailure> {
++        let left = self.next_temporary()?;
++        let right = self.next_temporary()?;
++        // Ordinary memcpy admits equal pointers. Keep all three transfers as
++        // byte copies: padding and inactive fields need not be initialized
++        // scalar values, and an integer load can lose pointer external state.
++        writeln!(
++            self.output,
++            "  %{left} = getelementptr inbounds i8, ptr {first}, i64 {offset}\n  %{right} = getelementptr inbounds i8, ptr {second}, i64 {offset}\n  call void @llvm.memcpy.p0.p0.i64(ptr {scratch}, ptr %{left}, i64 {size}, i1 false)\n  call void @llvm.memcpy.p0.p0.i64(ptr %{left}, ptr %{right}, i64 {size}, i1 false)\n  call void @llvm.memcpy.p0.p0.i64(ptr %{right}, ptr {scratch}, i64 {size}, i1 false)"
++        )
++        .map_err(|_| BackendFailure::TextEmission)
+--- a/compiler/src/backend/tests/owned_places.rs
++++ b/compiler/src/backend/tests/owned_places.rs
+@@ -1055,0 +1056,3 @@
++  for (index in 0_u64..32_u64) {
++    set words[index] = value +wrap index;
++  }
+@@ -1061 +1064 @@
+-  requires first < second;
++  requires first < values^.len;
+@@ -1066,8 +1068,0 @@
+-  return unit;
+-}
+-
+-fn same(values: &Ring<Row, 3>, index: u64) -> result: unit writes(values) contract {
+-  requires index < values^.len;
+-  ensures values^.len == entry(values)^.len;
+-} {
+-  swap(first: &values^[index], second: &values^[index]);
+@@ -1088 +1083 @@
+-  same(values: &values, index: 1_u64);
++  exchange(values: &values, first: 1_u64, second: 1_u64);
+@@ -1099 +1094,4 @@
+-    if values[0_u64].words[index] != 11_u64 {
++    let expected_first = 11_u64 +wrap index;
++    let expected_second = 33_u64 +wrap index;
++    let expected_third = 22_u64 +wrap index;
++    if values[0_u64].words[index] != expected_first {
+@@ -1102 +1100 @@
+-    if values[1_u64].words[index] != 33_u64 {
++    if values[1_u64].words[index] != expected_second {
+@@ -1105 +1103 @@
+-    if values[2_u64].words[index] != 22_u64 {
++    if values[2_u64].words[index] != expected_third {
+@@ -1117,0 +1116,81 @@
++    assert!(swap.contains("[16 x i8]"), "{swap}");
++    assert!(!swap.contains("[32 x i64]"), "{swap}");
++    assert!(
++        swap.contains("i64 8, i1 false)"),
++        "264-byte remainder: {swap}"
++    );
++    let host = allocation_observer(3, 0);
++    for emitted in [module.clone(), retain_calls(&module)] {
++        let observed = emitted
++            .replace("@malloc(", "@wf_test_allocate(")
++            .replace("@free(", "@wf_test_release(");
++        let output = compile_link_and_run(&observed, Some(&host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{output:?}");
++        assert!(output.stderr.is_empty(), "{output:?}");
++        let text = std::str::from_utf8(&output.stdout).unwrap();
++        let mut records = text.split_terminator(';').collect::<Vec<_>>();
++        records.sort_unstable();
++        assert_eq!(records, ["A1", "A2", "A3", "F1", "F2", "F3"]);
++    }
++
++    // Omitting the whole remainder still exchanges every word, but leaves the
++    // owning pointers in their old slots. The independent owner oracle must
++    // reject it before a successful-looking payload digest can hide the bug.
++    // Conversely, dropping the full chunks keeps the exchanged pointer tail
++    // correct but must fail the ordered-word oracle. Each checks a different
++    // part of the representation against the source's independent result.
++    for (omitted_size, status) in [(8, 1), (16, 4)] {
++        let size = format!("i64 {omitted_size}, i1 false)");
++        let faulty_swap = swap
++            .lines()
++            .filter(|line| !(line.contains("@llvm.memcpy.") && line.contains(&size)))
++            .collect::<Vec<_>>()
++            .join("\n");
++        assert_ne!(swap, faulty_swap);
++        let faulty = retain_calls(&module.replace(swap, &faulty_swap));
++        let output = compile_and_run(&faulty);
++        assert_eq!(output.status.code(), Some(status), "{output:?}");
++    }
++}
++
++#[test]
++fn zero_sized_swap_preserves_both_adjacent_fields() {
++    let module = compile(
++        br#"nocopy struct Empty {
++  bytes: Array<u64, 0>;
++}
++
++struct Envelope {
++  before: u64;
++  empty: Empty;
++  after: u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let left_bytes = array_filled::<u64, 0>(value: 0_u64);
++  let left_empty = Empty(bytes: left_bytes);
++  let left = Envelope(before: 11_u64, empty: move left_empty, after: 17_u64);
++  let right_bytes = array_filled::<u64, 0>(value: 0_u64);
++  let right_empty = Empty(bytes: right_bytes);
++  let right = Envelope(before: 23_u64, empty: move right_empty, after: 29_u64);
++  swap(first: &left.empty, second: &right.empty);
++  swap(first: &left.empty, second: &left.empty);
++  if left.before != 11_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if left.after != 17_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  if right.before != 23_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  if right.after != 29_u64 {
++    return std::process::exit_status(code: 4_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++    );
++    let swap = super::emitted_prelude_row(&module, "swap");
++    assert!(!swap.contains("alloca"), "{swap}");
++    assert!(!swap.contains("@llvm.memcpy."), "{swap}");
+@@ -1119,0 +1199,118 @@
++}
++
++/// Fully initialized native representations make padding/inactive bytes an
++/// independent byte oracle. Active owners remain valid, and ordinary WF
++/// cleanup must release exactly the owner selected by the exchanged tag.
++#[test]
++fn fixed_swap_preserves_padded_enum_bytes_and_active_cleanup() {
++    let module = compile(
++        br#"enum Packet {
++  Held(marker: u8, owner: Box<u64>, bytes: Array<u8, 17>);
++  Empty(stamp: u16);
++}
++
++fn exchange_packets(values: &Slots<Packet, 2>, first: u64, second: u64) -> result: unit writes(values) contract {
++  requires first < values^.len;
++  requires second < values^.len;
++  ensures values^.len == entry(values)^.len;
++} {
++  swap(first: &values^[first], second: &values^[second]);
++  return unit;
++}
++
++fn consume_packets(values: Slots<Packet, 2>) -> result: u64 pure {
++  return 0_u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++    )
++    .replace("@main(", "@wf_test_unused_main(")
++    .replace("@free(", "@wf_test_release(");
++    let host = r#"#include <stddef.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++typedef struct {
++    uint32_t tag;
++    uint8_t marker;
++    uint64_t *owner;
++    uint8_t bytes[17];
++    uint16_t stamp;
++} Packet;
++typedef struct { uint64_t len; Packet values[2]; } Slots;
++typedef struct { uint64_t before; Slots slots; uint64_t after; } Guarded;
++_Static_assert(sizeof(Packet) == 40 && offsetof(Packet, owner) == 8
++    && offsetof(Packet, bytes) == 16 && offsetof(Packet, stamp) == 34, "qualified Packet layout");
++extern uint8_t wf_exchange_packets(Slots *, uint64_t, uint64_t);
++extern uint64_t wf_consume_packets(Slots *);
++static uint64_t *held;
++static unsigned released, fault;
++static void fail(const char *reason) { fprintf(stderr, "%s\n", reason); exit(93); }
++void wf_test_release(void *pointer) {
++    if (pointer != held || released != 0) fail("active owner identity");
++    if (fault == 2) return;
++    ++released;
++    free(pointer);
++}
++int main(int argc, char **argv) {
++    fault = argc > 1 ? (unsigned)atoi(argv[1]) : 0;
++    for (unsigned position = 0; position < 2; ++position) {
++        Guarded guarded;
++        memset(&guarded, 0x39, sizeof guarded);
++        guarded.before = UINT64_C(0x123456789abcdef0);
++        guarded.after = UINT64_C(0xfedcba9876543210);
++        guarded.slots.len = 2;
++        held = malloc(sizeof *held);
++        if (held == NULL) fail("fixture allocation");
++        *held = 71 + position;
++        released = 0;
++        for (unsigned i = 0; i < 2; ++i) {
++            Packet *p = &guarded.slots.values[i];
++            memset(p, i ? 0xa7 : 0x5b, sizeof *p);
++            p->tag = i == position ? 0 : 1;
++            if (i == position) {
++                p->marker = 13 + position;
++                p->owner = held;
++                for (unsigned n = 0; n < 17; ++n) p->bytes[n] = (uint8_t)(n * 7 + position);
++            } else p->stamp = 513;
++        }
++        Slots expected;
++        memcpy(&expected, &guarded.slots, sizeof expected);
++        wf_exchange_packets(&guarded.slots, position, position);
++        if (memcmp(&expected, &guarded.slots, sizeof expected)) fail("same-slot representation");
++        memcpy(&expected.values[0], &guarded.slots.values[1], sizeof(Packet));
++        memcpy(&expected.values[1], &guarded.slots.values[0], sizeof(Packet));
++        if (fault == 1) ((unsigned char *)&expected.values[0])[7] ^= 1;
++        wf_exchange_packets(&guarded.slots, 0, 1);
++        if (memcmp(&expected, &guarded.slots, sizeof expected)) fail("padded enum representation");
++        if (fault == 3) guarded.after ^= 1;
++        if (guarded.before != UINT64_C(0x123456789abcdef0)
++            || guarded.after != UINT64_C(0xfedcba9876543210)) fail("adjacent canary");
++        if (guarded.slots.values[1 - position].owner != held || *held != 71 + position)
++            fail("active pointer representation");
++        if (wf_consume_packets(&guarded.slots) != 0 || released != 1) fail("active owner cleanup");
++    }
++    return 0;
++}
++"#;
++    for emitted in [module.clone(), retain_calls(&module)] {
++        let output = compile_link_and_run(&emitted, Some(host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{output:?}");
++        assert!(
++            output.stdout.is_empty() && output.stderr.is_empty(),
++            "{output:?}"
++        );
++        for (fault, diagnostic) in [
++            (b"1".as_slice(), "padded enum representation\n"),
++            (b"2".as_slice(), "active owner cleanup\n"),
++            (b"3".as_slice(), "adjacent canary\n"),
++        ] {
++            let output = compile_link_and_run(&emitted, Some(host), &[fault]);
++            assert_eq!(output.status.code(), Some(93), "{output:?}");
++            assert_eq!(output.stderr, diagnostic.as_bytes(), "{output:?}");
++        }
++    }
