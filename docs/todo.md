@@ -1685,23 +1685,17 @@ each is resolved by a discussion and a tree change.
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
-- **Two waiting calls whose results are both used cannot overlap.** Minimal
-  witness: a waiting function makes `let a = read_at(…first file…);` and
-  then `let b = read_at(…second file…);` and combines `a` and `b`. The second
-  read starts only after the first has completed: a statement that contains
-  a waiting call has no overlap permission [PAR-1, PAR-2], and [WAIT-2]
-  lets a waiting call execute alongside later statements only as an
-  expression statement whose result it releases, so neither read can run
-  alongside the other. Before
-  kernel-spec v0.77, `--par` could hand such calls to two workers. Serving
-  independent connections does not need this; issuing several requests and
-  combining their answers does. The direction agreed with the owner
-  (`research/investigations/io-model/WAITS.md`, "The program means its
-  sequential execution") is `let a = mustpar f(…);` for a waiting `f`: run
-  the call as a context and join it where `a` is first used or where the
-  activation exits. That matches the join a `--par` call already has, and it
-  needs a result slot per context rather than one count per activation.
-  Reopen when a program needs to gather several I/O results.
+- **A loop or a non-call match ends a bound context's run early.** A
+  marked waiting `let` is joined before the first later statement of its
+  block that uses its binding or that the [PAR-1] footprint judgment refuses,
+  and the judgment refuses a loop and a match whose scrutinee is not a call
+  (`research/investigations/io-model/WAITS.md`, "A bound context is joined
+  where its result is first used"). Minimal witness: `let a = mustpar
+  fetch(…); for (i in 0_u64..n) { … } use(a);` joins `a` before the loop
+  even when the loop never names it. A footprint for those forms, the union
+  of their bodies' footprints with their exits, would let the call proceed
+  across them. Reopen when a program's gather has a loop between the call
+  and its use and its rate depends on it.
 
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
@@ -1716,9 +1710,10 @@ each is resolved by a discussion and a tree change.
   between concurrent activities"), because the order of their operations is
   observed. The admitted candidates are a context writing an output of its
   own, a record sink whose observation is the set of records rather than
-  their order, and a result that the starter joins where it uses it (the
-  entry above). Reopen when a context-serving program needs to log or
-  report.
+  their order, and a result that the starter joins where it uses it, which
+  kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
+  whose starter can wait for it, not for an accept loop that never ends.
+  Reopen when a context-serving program needs to log or report.
 
 ## Ownership redesign (candidate x1) follow-ups
 

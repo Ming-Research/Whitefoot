@@ -2520,3 +2520,111 @@ fn a_scrutinee_call_written_first_with_independent_arms_forms_a_pair() {
         PermissionVerdict::PermittedEligible
     );
 }
+
+/// [WAIT-2] where the one marked waiting `let` of `main` is joined: how many
+/// statements after it, or `None` for its block's end. The fixture binds
+/// `bound`, then runs `body` before `main` returns.
+fn bound_await(body: &str) -> Option<u32> {
+    let source = format!(
+        "fn observe(value: &u64) -> result: u64 reads(value) {{\n  return value^;\n}}\n\n\
+         fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
+         std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
+         fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
+         let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;\n  \
+         let factory = std::io::factory_share(factory: &handles);\n  \
+         let bound = mustpar weigh(factory: move factory, directory: move cwd, weight: 7_u64);\n\
+         {body}\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("bound await fixture must check: {outcome:?}");
+        };
+        let main = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        let [planned] = main.waiting.context_awaits.as_slice() else {
+            panic!("one marked let: {:?}", main.waiting.context_awaits);
+        };
+        assert!(main.waiting.context_starts.contains(&planned.statement));
+        planned.before
+    })
+}
+
+#[test]
+fn a_bound_context_is_joined_before_the_first_statement_that_reads_it() {
+    assert_eq!(
+        bound_await("  let other = 5_u64;\n  let total = bound +wrap other;"),
+        Some(2)
+    );
+    assert_eq!(bound_await("  let copied = bound;"), Some(1));
+}
+
+#[test]
+fn a_bound_context_is_joined_before_a_borrow_of_its_binding() {
+    assert_eq!(
+        bound_await("  let other = 5_u64;\n  let seen = observe(value: &bound);"),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_bound_context_is_joined_before_a_write_of_its_binding() {
+    assert_eq!(
+        bound_await("  let other = 5_u64;\n  set bound = other;"),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_bound_context_is_joined_before_a_statement_that_may_leave_its_block() {
+    // The trailing `return` is the first statement after an unused binding.
+    assert_eq!(bound_await("  let other = 5_u64;"), Some(2));
+    // A loop is a form the footprint judgment does not compute, so the join
+    // precedes it even though its body never names the binding.
+    assert_eq!(
+        bound_await(
+            "  let other = 5_u64;\n  loop @spin {\n    break @spin;\n  }\n  let total = bound +wrap other;"
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
+    let source = br#"fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {
+  std::fs::close_directory(factory: &factory, directory: move directory);
+  return weight;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let factory = std::io::factory_share(factory: &handles);
+  let flag = 1_u64;
+  if flag == 1_u64 {
+    let bound = mustpar weigh(factory: move factory, directory: move cwd, weight: 7_u64);
+    let other = 5_u64;
+  } else {
+    let unmarked = weigh(factory: move factory, directory: move cwd, weight: 1_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("fixture must check: {outcome:?}");
+        };
+        let main = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        let [planned] = main.waiting.context_awaits.as_slice() else {
+            panic!("one marked let: {:?}", main.waiting.context_awaits);
+        };
+        assert_eq!(planned.before, None);
+    });
+}

@@ -310,13 +310,16 @@ Safe, fast and small are the core. These are the other things worth knowing.
   context of its own, and while one context waits the thread runs the
   others, so a server serves every connection at once
   (`tests/programs/tcp_contexts.wf`). The function that marked the call
-  returns only after it finishes. A waiting function keeps its state in a
+  returns only after it finishes. A marked call can also bind its result,
+  `let a = mustpar fetch(…);`, and the function waits for it only where it
+  first uses `a`, so several requests proceed together
+  (`tests/programs/tcp_gather.wf`). A waiting function keeps its state in a
   frame the size of what it holds across a wait, not in a stack of its own,
   so a context costs about what its own variables do and adds no kernel
   mapping. The compiled program carries out I/O through a completion runtime
   (io_uring on Linux, I/O completion ports on Windows). Computation that
-  `--par` overlaps never waits for I/O. Still open: getting a result back
-  from a marked call, and running contexts on more than one thread.
+  `--par` overlaps never waits for I/O. Still open: running contexts on
+  more than one thread.
 
 ### Planned
 

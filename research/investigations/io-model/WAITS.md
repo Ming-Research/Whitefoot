@@ -584,13 +584,62 @@ Consequences, the first two carried by kernel-spec v0.77:
   context of its own and its starter waits for it at the activation's exit.
 - [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
   execution of the same program is a conforming one.
-- Later: a marked waiting call may bind its result, and the starter joins it
-  where the result is first used (`docs/todo.md`).
+- Later, carried by kernel-spec v0.78: a marked waiting call may bind its
+  result, and the starter joins it where the result is first used ([A bound
+  context is joined where its result is first used](#a-bound-context-is-joined-where-its-result-is-first-used)).
 
 Refused: a separate keyword whose meaning is that a context must start. The
 only difference it would make is a promise of progress, which the sequential
 reading does not need and which no single-implementation research compiler
 has to write into the language.
+
+### A bound context is joined where its result is first used
+
+Directed by the owner on 2026-09-28 ("do `let a = mustpar f(…)`, joined where
+the result is first used"); kernel-spec v0.78 [WAIT-2, PAR-4]. A waiting call
+in a `let` right-hand side whose callee takes only value parameters may run
+alongside the statements after it, and it completes before its binding is
+next read, written or released and before the activation leaves. `mustpar`
+asserts that permission, as it does for an expression statement, and this
+compiler runs every marked one as a context of its own.
+
+Where the join stands is the compiler's choice under that rule. It is placed
+before the first later statement of the `let`'s block whose [PAR-1]
+footprint reaches the binding, or that the footprint judgment refuses
+because it may leave the block (`return`, `give`, `break`, error
+propagation) or has a form the judgment does not compute (a loop, a match
+that is not rooted in a call), and otherwise at the block's end. The
+footprints are the ones overlap permission already relies on, and they fail
+closed, so the join precedes every use, the release at the block's end
+included, and a context started in a loop body is joined before the next
+iteration reuses its result slot. A statement that waits does not end the
+run: two marked fetches both proceed until the statement that combines
+their results. The context writes its result into a slot of the starting
+frame, which outlives the context because the join precedes every exit.
+
+Evidence: `two_bound_fetches_proceed_together_on_both_routes`
+(`compiler/tests/programs/network.rs`) runs `tcp_gather.wf` against two
+servers, the first of which answers only after the second has received its
+request. It passes with the plan and fails, after 20 seconds, when every
+bound context is joined at the statement after its `let`, which is the
+sequential order.
+
+Alternatives refused:
+
+- Joining at the statement after the `let`: it loses the concurrency this
+  form exists for whenever independent work stands between the call and its
+  use, as it does in the gather above.
+- Joining inside the statement that first uses the binding, on the path that
+  reaches the use: a use in one arm of a match would define the binding on
+  that path only, and every later join would have to merge a joined and an
+  unjoined path. Joining before the whole statement costs the concurrency of
+  that statement's other arms and keeps one definition.
+- Joining only at the block's end: a use before the end would read a result
+  that has not arrived.
+
+What this does not do yet: a loop or a non-call match between the `let` and
+its use ends the run early, because the footprint judgment refuses those
+forms; a footprint for them would let the call proceed across them.
 
 ### Sharing between concurrent activities
 

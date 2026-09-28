@@ -455,6 +455,65 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
     }
 }
 
+/// Two bound `mustpar` fetches proceed together [WAIT-2]: the first server
+/// answers only once the second has received its request, which a program
+/// that waited for the first fetch's byte before sending the second request
+/// never sends. Each result is joined where it is first used, the sum.
+#[cfg(unix)]
+#[test]
+fn two_bound_fetches_proceed_together_on_both_routes() {
+    let llvm = compile_program("tcp_gather.wf");
+    assert!(
+        llvm.contains("@wf__context_launch("),
+        "each marked fetch starts a context"
+    );
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let first = TcpListener::bind("127.0.0.1:0").expect("the first server's port");
+        let second = TcpListener::bind("127.0.0.1:0").expect("the second server's port");
+        let first_port = first
+            .local_addr()
+            .expect("first address")
+            .port()
+            .to_string();
+        let second_port = second
+            .local_addr()
+            .expect("second address")
+            .port()
+            .to_string();
+        let (arrived, second_request) = std::sync::mpsc::channel();
+        let second_server = std::thread::spawn(move || {
+            let mut stream = accept_when_ready(&second);
+            let mut request = [0_u8; 1];
+            stream.read_exact(&mut request).expect("the second request");
+            arrived.send(request[0]).expect("tell the first server");
+            stream.write_all(&[20]).expect("the second answer");
+        });
+        let first_server = std::thread::spawn(move || {
+            let mut stream = accept_when_ready(&first);
+            let mut request = [0_u8; 1];
+            stream.read_exact(&mut request).expect("the first request");
+            let other = second_request
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the second request arrived while the first fetch waited");
+            stream.write_all(&[10]).expect("the first answer");
+            (request[0], other)
+        });
+        let child = program.spawn_on_route(
+            native_ring,
+            &[first_port.as_bytes(), second_port.as_bytes()],
+        );
+        let (status, _) = finished(child);
+        assert_eq!(
+            first_server.join().expect("the first server"),
+            (1, 2),
+            "native ring: {native_ring}"
+        );
+        second_server.join().expect("the second server");
+        assert_eq!(status, 30, "native ring: {native_ring}");
+    }
+}
+
 /// Ordinary PAR-2 body-shape rules leave this fanout loop sequential; no
 /// suspension classification decides which calls may be handed out.
 #[cfg(unix)]
