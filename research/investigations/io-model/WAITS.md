@@ -1,9 +1,14 @@
 # Waiting functions: design and measurements
 
-Status: direction agreed with the owner on 2026-09-27 in conversation. Nothing
-in this file is a design-tree decision yet; each choice it states becomes an
-amendment when it is proposed. It serves the concurrent I/O design and is
-superseded by the design-tree nodes that record its surviving decisions.
+Status: direction agreed with the owner on 2026-09-27 in conversation, and
+revised with the owner on 2026-09-28: waiting functions compile to resumable
+frames instead of running on stacks of their own ([A waiting function is a
+resumable frame](#a-waiting-function-is-a-resumable-frame)), and a program
+means its sequential execution ([The program means its sequential
+execution](#the-program-means-its-sequential-execution)). Nothing in this file
+is a design-tree decision yet; each choice it states becomes an amendment when
+it is proposed. It serves the concurrent I/O design and is superseded by the
+design-tree nodes that record its surviving decisions.
 
 ## The question
 
@@ -258,6 +263,40 @@ threads. The shipped route waits for readiness on the contexts' own thread and
 holds all of them. With four peers the two runtimes do not differ, so a check
 of this route needs more peers than helpers.
 
+## Experiment 3: the resumable-frame server
+
+### Design
+
+The same `tests/programs/tcp_contexts.wf`, unchanged, compiled once by the
+stackful compiler of Experiment 2 (the parent of the first commit that lowers
+waiting functions to frames) and once by the frame compiler ([A waiting
+function is a resumable frame](#a-waiting-function-is-a-resumable-frame)),
+both with no flag. The references are `waiting_echo --threads 1` and the two
+C servers of Experiment 1 under the same `linux-net-bench.sh measure`
+protocol, run twice.
+
+Memory is measured on the same program with idle connections: a client opens
+N connections, sends nothing, and the server's resident set and mapping count
+are read from `/proc` once every connection has been accepted, for N of 1,000
+and 10,000 and for the largest N each server holds up to 100,000, with the
+client spread across loopback addresses so the host's ephemeral ports do not
+bound N.
+
+### What would distinguish the hypotheses, stated before measuring
+
+- The frame costs no throughput if, in both runs, the frame server's median
+  rate is at least 0.83 of `waiting_echo --threads 1` at 64 connections with
+  64-byte messages, that is within 0.05 of the stackful server's 0.88 in
+  Experiment 2, and within the stackful server's range at 1024 connections
+  and with 64 KiB messages (0.80 to 1.10), where the reference itself moved
+  13 and 22 percent between runs. Below that, the cost is attributed before
+  any later revision is built on it.
+- The frame removes the stackful ceiling if the frame server holds 100,000
+  idle connections where the stackful server stops near the mapping limit,
+  and its resident memory per idle connection, measured in the same run, is
+  below the stackful server's.
+- One connection is reported but not judged, as in Experiments 1 and 2.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
@@ -289,25 +328,74 @@ Alternatives refused:
   loop is ordinary code, so nothing states where it may run, and it needs a
   hand-written state machine per protocol.
 
-### A context pauses only where it needs an unfinished result
+### A waiting function is a resumable frame
 
-A waiting call executes as an ordinary call. The runtime implements a host
-operation's wait by switching from the calling context's stack to the driver,
-which resumes another ready context or polls for completions [WAIT-2]. The
-compiler does not transform a waiting function into a state machine.
+Revised with the owner on 2026-09-28; it replaces the stackful shape of
+Experiments 1 and 2, whose measurements stay here as the evidence that shape
+produced.
+
+Each waiting function compiles to a resumable frame. An activation's frame is
+allocated when it is entered, from the arena of the context that runs it, and
+released when its caller has read its result, so a context's frames are
+allocated and released last in, first out. The values that live across a
+suspension point are kept in the frame; everything else stays where ordinary
+code keeps it. A host operation that has not completed suspends the frame and
+returns to the driver; its completion makes the context ready, and the driver
+resumes the frame that suspended. A context [WAIT-2] is one chain of such
+frames. The root context runs the entry, and each context a `mustpar` start
+creates [PAR-4] runs its wrapper; one driver thread resumes every context, and
+compute tasks run on the compute workers and never wait [PAR-1, PAR-2].
+
+The frame is LLVM's switched-resume coroutine: the frame starts suspended, a
+caller transfers into its callee and a finishing callee transfers back to its
+caller by resuming the target immediately before its own suspension, which
+LLVM 18's coroutine split turns into a tail call, so a chain of calls that
+return to their callers does not grow the native stack. LLVM 18 has no
+symmetric-transfer intrinsic (`llvm.coro.await.suspend.handle` links as an
+undefined symbol); the resume-before-suspend form is what its split
+recognizes. A design probe ran twenty million such call round trips inside
+an 8 MiB stack at `-O0` and `-O2`; a compiler test pins the same property on
+emitted code.
+
+Why the stackful shape is replaced:
+
+- It has a concurrency ceiling that a frame does not. Each context is a
+  reservation of its own with a guard page below it, two kernel memory
+  mappings, and the kernel's default limit on mappings per process
+  (`vm.max_map_count`, 65,530 on the development host) therefore bounds a
+  process to about 32,000 contexts. A frame is heap storage the size of the
+  state that lives across a wait. Experiment 3 measures both.
+- A compute join inside a waiting function holds the driver's stack, so no
+  other context runs until the join finishes. A frame can suspend at such a
+  join; that is the next revision's work, not this one's.
+- The reasons recorded against resumable frames do not hold. Proofs are
+  erased before lowering, so a frame is a lowering of the checked function
+  like any other and carries no proof. The continuation branch was refused
+  because it derived which functions suspend from the call graph; here the
+  writer declares the kind [WAIT-1], so the calling convention follows the
+  written signature and a leaf that begins to wait is a rejection in every
+  caller that does not declare `waits`.
 
 Alternatives refused:
 
-- Compiling a waiting function into a resumable state machine (the Rust
-  `async` model): every local that lives across a wait moves into a
-  compiler-built record, and the proofs checked on the written function would
-  have to be carried to the transformed one. Experiment 1 shows that the
-  stackful shape reaches 0.94 to 0.98 of the best hand-written server, so the
-  transform buys no measured speed here.
+- Stacks of their own for waiting contexts (Experiments 1 and 2): the mapping
+  ceiling and the resident stack above, and a compute join stops every
+  context.
+- Returning every finished callee through the driver's ready queue instead of
+  a tail transfer to its caller: a queue push and pop per return that the
+  split's tail call makes unnecessary.
+- The continuation branch's two-thread coordinator (Experiment 39 of
+  `SCHEDULER-FINDINGS.md`): 2.6 to 7.1 process switches per round trip made
+  it uncompetitive. Here the driver that reaps completions resumes the frames
+  on its own thread, as the stackful runtime of Experiment 2 did.
 - A host thread per context: one thread per connection is the design the
   echo references beat; its stack and scheduling cost grow with connections.
 
 ### `mustpar` asserts independence and starts contexts
+
+This is the kernel-spec v0.76 text. The next revision makes the third form an
+assertion like the other two ([The program means its sequential
+execution](#the-program-means-its-sequential-execution)).
 
 One marker states that a construct proceeds independently of what follows it,
 and the checker must prove it [PAR-4]:
@@ -375,3 +463,91 @@ Alternatives refused:
 The accounting stays a plain counter because every context runs on one driver
 thread and only a waiting host call writes the counter, and a waiting call
 never runs on a compute worker [PAR-1, PAR-2].
+
+The next specification revision replaces this shared budget with a split
+([Sharing between concurrent activities](#sharing-between-concurrent-activities)).
+
+### The program means its sequential execution
+
+Agreed with the owner on 2026-09-28. The meaning of a program is the meaning
+of its sequential execution. Every concurrency the implementation adds, an
+overlapped statement, a started context, where a context runs and on which
+thread a compute task runs, is derived from proved independence and is an
+implementation liberty of the same kind as marking a pointer `noalias`: one
+path-disjointness judgment [OWN-7, EFF-5] authorizes all of them. The writer
+reasons sequentially, and the concurrency obligation moves from every program
+into one trusted runtime.
+
+Consequences the next specification revision carries:
+
+- `mustpar` on a waiting call becomes an assertion like its other two forms.
+  It states that the call is independent of every statement that follows it
+  in the activation, is a rejection when that is not proved, and guarantees
+  no overlap. The compiler's policy, recorded as a compiler decision rather
+  than promised by the language, is that every marked waiting call runs as a
+  context of its own and its starter waits for it only where it first uses
+  its result or at the activation's exit.
+- [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
+  execution of the same program is a conforming one.
+- A marked waiting call may bind its result; the starter joins it where the
+  result is first used.
+
+Refused: a separate keyword whose meaning is that a context must start. The
+only difference it would make is a promise of progress, which the sequential
+reading does not need and which no single-implementation research compiler
+has to write into the language.
+
+### Sharing between concurrent activities
+
+A host interface may split one resource into separately held parts only when
+operations through different parts commute under every observation the
+interface defines, so that reordering them changes no observation. Two files
+written separately commute; two writers of one standard output do not,
+because the byte order is observed, so standard output has one owner. The
+two ends of a channel do not commute, because what a receive returns and
+whether it waits depend on the sends, and a channel whose ends are separate
+values is therefore not admitted. External systems are outside this rule:
+the specification does not define how a peer or a database answers, and a
+program is correct for every answer.
+
+`factory_share` fails the rule. Two factories drawing on one budget let one
+acquisition's refusal depend on what the other factory holds, so its result
+depends on the order of operations in two contexts. The next revision
+replaces it with a split that gives each part a fixed share of the credits.
+
+Mutable state shared by several concurrent activities has no admitted form in
+this revision. A program keeps such state behind an external system, or in
+one owner that processes requests in the order the host delivers them (the
+Redis shape). Two later forms were considered and deferred until a program
+needs one: an explicit shared object whose operations are whole atomic
+transactions in an unspecified order, and one whose transactions take effect
+in the order of the host completions that produced them. Both revise
+[CAP-1].
+
+### What the first version keeps open
+
+The first version is one driver thread, frames, `mustpar` starts and the
+sharing rule above. Every later need considered with the owner is an
+addition to it, provided the first version keeps these properties:
+
+1. Every marked waiting call runs as a context of its own. A later form that
+   orders transactions by host completion depends on which calls are
+   contexts, so this is a compiler constraint and not an optimization choice.
+2. Every completion reaches a context through one entry per driver, where a
+   completion stamp can later be added.
+3. The frame layout and the context header are private to the runtime.
+4. A context's frames are released only after every operation it has in
+   flight has completed or been cancelled and reaped.
+5. Join bookkeeping is dynamic: a loop may start any number of contexts.
+6. Every split host interface satisfies the sharing rule, and no program can
+   observe which calls ran as contexts.
+7. The footprint classification of [PAR-1] can take a new class, the one a
+   shared object would need.
+
+| Later need | Form | First version changes |
+|---|---|---|
+| Shared mutable state | external system; one owner in host order; a shared object | none; a shared object adds a footprint class and revises [CAP-1] |
+| Shutdown | an external signal as host input; pending operations complete as cancelled | none, given property 4 |
+| Select and timeouts | a host operation over several operations, and operations with a deadline | none |
+| Logging | each context writes its own output, or a record sink whose observation is a set of records | none |
+| Several driver threads | placement at the start of a context | none |
