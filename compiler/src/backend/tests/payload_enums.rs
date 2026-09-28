@@ -368,7 +368,8 @@ const PROGRAM: &[u8] = include_bytes!("payload_enums.wf");
 /// Counts allocations, refuses a release of anything not allocated, and
 /// reports the allocations still live when the program ends. The overlap
 /// lowering runs handed-out calls on the parallel runtime's worker threads,
-/// so every access to the ledger holds its lock.
+/// and contexts may run on several drivers, so every access to the ledger
+/// holds its lock.
 const ALLOCATION_OBSERVER: &str = r#"#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -480,15 +481,10 @@ fn a_payload_reference_addresses_its_variants_view() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-/// A memory-only value, a union-laid-out enum or an aggregate holding one
-/// inline, is never an LLVM first-class value: every emitted mention of its
-/// type is a type declaration, an address computation, a frame reservation or
-/// the zero fill of a construction. Loads, stores, phis, arguments, returns,
-/// `extractvalue` and `insertvalue` of it would each carry it through a type
-/// LLVM cannot represent it in.
-#[test]
-fn memory_only_values_are_never_first_class() {
-    let names = with_ir(PROGRAM, |program| {
+/// The emitted type names of `source`'s memory-only nominals: its
+/// union-laid-out enums and the structs and enums that hold one inline.
+fn memory_only_type_names(source: &[u8]) -> Vec<String> {
+    with_ir(source, |program| {
         program
             .nominals()
             .iter()
@@ -501,29 +497,176 @@ fn memory_only_values_are_never_first_class() {
                 .expect("memory-only classification")
             })
             .map(|nominal| format!("%wf.t.{}", nominal.link_name()))
-            .collect::<Vec<_>>()
-    });
+            .collect()
+    })
+}
+
+/// Every line of `llvm` that mentions one of `names` is a type declaration,
+/// an address computation, a frame reservation or the zero fill of a
+/// construction.
+fn assert_never_first_class(names: &[String], llvm: &str, context: &str) {
+    for line in llvm.lines() {
+        let mentions = names.iter().any(|name| {
+            line.match_indices(name.as_str()).any(|(at, _)| {
+                !line[at + name.len()..]
+                    .starts_with(|next: char| next == '.' || next.is_ascii_alphanumeric())
+            })
+        });
+        if !mentions {
+            continue;
+        }
+        assert!(
+            line.contains(" = type ")
+                || line.contains("getelementptr")
+                || line.contains(" = alloca ")
+                || line.contains(" zeroinitializer, ptr "),
+            "{context}: a memory-only value is first-class in `{line}`"
+        );
+    }
+}
+
+/// A memory-only value, a union-laid-out enum or an aggregate holding one
+/// inline, is never an LLVM first-class value: every emitted mention of its
+/// type is a type declaration, an address computation, a frame reservation or
+/// the zero fill of a construction. Loads, stores, phis, arguments, returns,
+/// `extractvalue` and `insertvalue` of it would each carry it through a type
+/// LLVM cannot represent it in.
+#[test]
+fn memory_only_values_are_never_first_class() {
+    let names = memory_only_type_names(PROGRAM);
     assert!(names.len() >= 5, "{names:?}");
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
         let llvm = emit_lowered(PROGRAM, overlap);
-        for line in llvm.lines() {
-            let mentions = names.iter().any(|name| {
-                line.match_indices(name.as_str()).any(|(at, _)| {
-                    !line[at + name.len()..]
-                        .starts_with(|next: char| next == '.' || next.is_ascii_alphanumeric())
-                })
-            });
-            if !mentions {
-                continue;
-            }
-            assert!(
-                line.contains(" = type ")
-                    || line.contains("getelementptr")
-                    || line.contains(" = alloca ")
-                    || line.contains(" zeroinitializer, ptr "),
-                "{overlap:?}: a memory-only value is first-class in `{line}`"
-            );
+        assert_never_first_class(&names, &llvm, &format!("{overlap:?}"));
+    }
+}
+
+/// A waiting program whose waiting calls take and return union-laid-out
+/// enums (design/compiler/waiting-contexts.md): `build` returns one through
+/// its destination to a direct waiting call, two bound `mustpar` starts
+/// construct one each in the starting frame's slot, which their awaits move
+/// into the bindings [WAIT-2], a third bound start's binding is released
+/// without being read, and an unbound start takes one by value into its
+/// context's argument block, whose wrapper consumes it. `Piece` is a union
+/// enum nested in `Holder`'s `Nested` variant.
+const WAITING_PROGRAM: &[u8] = br#"struct Span {
+  start: u32;
+  end: u32;
+}
+
+enum Piece {
+  Word(span: Span, weight: u64);
+  Mark(code: u32);
+  Gap();
+}
+
+enum Holder {
+  Boxed(cell: Box<u64>, stamp: u64);
+  Many(values: Box<Slots<u64>>);
+  Nested(inner: Piece, extra: Box<u64>);
+  Nothing();
+}
+
+fn build(kind: u64, seed: u64) -> result: Holder pure waits {
+  let next = seed +wrap 1_u64;
+  if kind == 0_u64 {
+    let cell = box_new::<u64>(value: seed);
+    return Holder::Boxed(cell: move cell, stamp: next);
+  }
+  if kind == 1_u64 {
+    let values = box_slots_new::<u64>(capacity: 2_u64);
+    place_back(window: &values.inner, value: seed);
+    place_back(window: &values.inner, value: next);
+    return Holder::Many(values: move values);
+  }
+  if kind == 2_u64 {
+    let extra = box_new::<u64>(value: seed);
+    let span = Span(start: 1_u32, end: 5_u32);
+    let inner = Piece::Word(span: span, weight: next);
+    return Holder::Nested(inner: inner, extra: move extra);
+  }
+  return Holder::Nothing();
+}
+
+fn weight(holder: Holder) -> result: u64 pure waits {
+  match move holder {
+    Boxed(cell: c, stamp: s) => {
+      return c.inner +wrap s;
+    }
+    Many(values: v) => {
+      let count = v.inner.len;
+      return count +wrap 1000_u64;
+    }
+    Nested(inner: i, extra: e) => {
+      match i {
+        Word(span: s, weight: w) => {
+          let end = cvt::<u32, u64>(s.end);
+          let sum = end +wrap w;
+          return sum +wrap e.inner;
         }
+        Mark(code: c) => {
+          let code = cvt::<u32, u64>(c);
+          return code;
+        }
+        Gap() => {
+          return 0_u64;
+        }
+      }
+    }
+    Nothing() => {
+      return 7777_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let direct = build(kind: 0_u64, seed: 3_u64);
+  let first = mustpar build(kind: 2_u64, seed: 5_u64);
+  let second = mustpar build(kind: 1_u64, seed: 7_u64);
+  let given = build(kind: 0_u64, seed: 9_u64);
+  mustpar weight(holder: move given);
+  let kept = mustpar build(kind: 2_u64, seed: 11_u64);
+  let direct_weight = weight(holder: move direct);
+  if direct_weight != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let first_weight = weight(holder: move first);
+  if first_weight != 16_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let second_weight = weight(holder: move second);
+  if second_weight != 1002_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// Union-laid-out enums cross waiting calls and contexts as memory: every
+/// result, bound or direct, and every argument handed to a context is
+/// copied by memmove and never first-class, every observation matches, and
+/// every owner is released exactly once. Contexts may run on several
+/// drivers, which the observer's lock serves too.
+#[test]
+fn union_enums_cross_waiting_calls_and_contexts() {
+    let names = memory_only_type_names(WAITING_PROGRAM);
+    assert!(names.len() >= 2, "{names:?}");
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(WAITING_PROGRAM, overlap);
+        assert!(
+            module.contains("%wf.ctx.group."),
+            "{overlap:?}: a bound start"
+        );
+        assert!(
+            module.contains("@wf__context_launch(ptr %wf.ctx.group,"),
+            "{overlap:?}: an unbound start"
+        );
+        assert_never_first_class(&names, &module, &format!("{overlap:?}"));
+        let output = compile_link_and_run(&observed(&module), Some(ALLOCATION_OBSERVER), &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        let report = String::from_utf8(output.stdout).expect("report");
+        assert!(report.ends_with(" live=0\n"), "{overlap:?}: {report}");
+        assert!(!report.starts_with("allocated=0 "), "{overlap:?}: {report}");
     }
 }
 
