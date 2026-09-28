@@ -517,7 +517,9 @@ pub(crate) fn is_union_enum(
 /// (compiler/payload-enum-layout): it lives in storage, moves by memmove, and
 /// is never loaded, stored or passed as one LLVM first-class value, because
 /// LLVM has no union type to carry it. A `Box` and a runtime-capacity block
-/// hold their content behind a pointer, so they are not memory-only.
+/// hold their content behind a pointer, and a zero-length array or
+/// zero-capacity window holds no element at all, so none of them is
+/// memory-only.
 pub(crate) fn is_memory_only(
     nominals: &[IrNominal],
     elements: &[IrType],
@@ -534,6 +536,14 @@ fn holds_union_enum(
     visiting: &mut HashSet<IrNominalId>,
 ) -> Result<bool, TargetLayoutFailure> {
     match ty {
+        // Neither holds an element: target layout gives a zero-length array
+        // no storage and a zero-capacity window only its header. A nominal
+        // may name itself inline through a zero-length array, as
+        // `struct Node { children: Array<Node, 0>; }` does.
+        IrType::Array { length: 0, .. }
+        | IrType::Window {
+            capacity: Some(0), ..
+        } => Ok(false),
         IrType::Array { element, .. }
         | IrType::Window {
             element,
