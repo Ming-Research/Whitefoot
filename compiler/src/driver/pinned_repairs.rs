@@ -57,7 +57,7 @@ const REPAIRS: &[RepairPair] = &[
         rule: "FORM-7",
         sentences: &[
             "]: InvalidTextItem\n",
-            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
+            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
             "\n  mechanical_fix: write `A` in place of `\\u{41}`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
@@ -84,6 +84,24 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "character-escaped-tab.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\t` in place of `\\u{9}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\t'_u8;
   return std::process::exit_status(code: 0_u8);
 }
 "#],

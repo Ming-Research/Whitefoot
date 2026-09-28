@@ -1001,6 +1001,9 @@ mod tests {
             b"'\\''_u8",
             b"'\"'_u32",
             b"'\\n'_u8",
+            b"'\\t'_u8",
+            b"'\\r'_u32",
+            b"'\\u{9}'_u8",
             b"'\\u{e9}'_u32",
             b"'\\u{41}'_u8",
             b"'\\u{0041}'_u8",
@@ -1019,7 +1022,7 @@ mod tests {
             b"'a' _u8",
             b"'\\u{E9}'_u32",
             b"'\\u{}'_u32",
-            b"'\\t'_u8",
+            b"'\\x09'_u8",
         ] {
             assert!(!is_literal(spelling), "{spelling:?}");
         }
@@ -1031,6 +1034,7 @@ mod tests {
             b"\"\"".as_slice(),
             b"\"text\"",
             b"\"\\n\\\"\\\\\"",
+            b"\"\\t\\r\"",
             b"\"it's\"",
             b"\"\\u{e9}\\u{0}\"",
             b"\"\\u{41}\"",
@@ -1039,7 +1043,7 @@ mod tests {
         }
         for spelling in [
             b"text".as_slice(),
-            b"\"\\t\"",
+            b"\"\\x09\"",
             b"\"line\nfeed\"",
             b"\"\\'\"",
             b"\"\\u{E9}\"",

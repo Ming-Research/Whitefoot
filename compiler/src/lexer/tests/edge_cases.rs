@@ -111,7 +111,7 @@ fn an_apostrophe_opens_a_character_form() {
         (SourceIssueKind::InvalidTextEscape, 1, 3)
     );
     assert_eq!(
-        issue(br"'\t'_u8"),
+        issue(br"'\x09'_u8"),
         (SourceIssueKind::InvalidTextEscape, 1, 3)
     );
     assert_eq!(issue(br"'\n\n"), (SourceIssueKind::UnterminatedText, 0, 5));
@@ -124,6 +124,9 @@ fn an_apostrophe_opens_a_character_form() {
         b"'\\''_u8",
         b"'\"'_u32",
         b"'\\u{e9}'_u32",
+        b"'\\t'_u8",
+        b"'\\r'_u32",
+        b"\"\\t\\r\"",
         b"'ab'_i32",
         b"\"\\u{e9}\"",
     ] {
@@ -138,7 +141,7 @@ fn an_apostrophe_opens_a_character_form() {
 
 #[test]
 fn strings_reject_unknown_escapes_raw_controls_unicode_and_eof() {
-    assert_eq!(issue(br#""bad\t""#).0, SourceIssueKind::InvalidTextEscape);
+    assert_eq!(issue(br#""bad\x""#).0, SourceIssueKind::InvalidTextEscape);
     assert_eq!(issue(b"\"bad\n\"").0, SourceIssueKind::InvalidTextByte);
     assert_eq!(
         issue("\"snowman ☃\"".as_bytes()).0,

@@ -27,18 +27,25 @@ literal. `'a'_u8` and `97_u8` are both legal, each the one canonical spelling
 of its own construct, and each literal still has exactly one canonical
 spelling of its interior.
 
+On reviewing the decision cards the owner approved the design and added the
+escapes `\t` (U+0009) and `\r` (U+000D) to the escape set before merge. Tab
+and carriage return occur in ordinary text such as tab-separated rows and
+CRLF line ends, and each value keeps one spelling: `\u{9}` and `\u{d}` become
+noncanonical, as `\u{a}` is beside `\n`.
+
 ## Design
 
 - **Character literal** `'C'_TYPE`, TYPE `u8` or `u32`, suffix mandatory as on
   every numeric literal. C is one text item: a raw printable ASCII byte other
-  than `'` and `\`, one of `\\`, `\'`, `\n`, or `\u{H}` with H lowercase
-  hexadecimal. It is an integer literal of TYPE, so it is legal wherever one
-  is, including a `cvalue`, a contract clause and an affine factor.
+  than `'` and `\`, one of `\\`, `\'`, `\n`, `\t`, `\r`, or `\u{H}` with H
+  lowercase hexadecimal. It is an integer literal of TYPE, so it is legal
+  wherever one is, including a `cvalue`, a contract clause and an affine
+  factor.
 - **One spelling per value.** The raw byte for printable ASCII other than `\`
-  and the delimiting quote; `\\`, the quote escape and `\n` for their three
-  values; `\u{H}` without leading zeros for every other value. A `u8`
-  character is at most 0x7F, so it is always ASCII and never a UTF-8 byte;
-  `u32` admits every Unicode scalar value.
+  and the delimiting quote; `\\`, the quote escape, `\n`, `\t` and `\r` for
+  their five values; `\u{H}` without leading zeros for every other value. A
+  `u8` character is at most 0x7F, so it is always ASCII and never a UTF-8
+  byte; `u32` admits every Unicode scalar value.
 - **Byte-string constant.** STRING gains `\u{H}` under the same rule (with
   `"` as its quote) and becomes a `cvalue` of `Array<u8, N>`, denoting the
   UTF-8 encoding of its scalar values; N must equal the byte length. It is

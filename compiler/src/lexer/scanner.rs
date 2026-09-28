@@ -238,9 +238,9 @@ impl<'bytes> Scanner<'bytes> {
     /// occurrence of the opening quote, and, for a character form, the
     /// maximal `[A-Za-z0-9_]*` suffix after it.
     ///
-    /// The escapes are `\\`, `\n`, `\u`, and the form's own quote escaped;
-    /// the `{H}` completing a `\u` is ordinary interior bytes whose shape
-    /// terminal membership decides [FORM-5].
+    /// The escapes are `\\`, `\n`, `\t`, `\r`, `\u`, and the form's own
+    /// quote escaped; the `{H}` completing a `\u` is ordinary interior bytes
+    /// whose shape terminal membership decides [FORM-5].
     fn quoted(&self, start: usize, kind: TokenKind) -> Result<RawLexeme, RawIssue> {
         let quote = self.bytes[start];
         let mut cursor = start + 1;
@@ -286,7 +286,7 @@ impl<'bytes> Scanner<'bytes> {
                             kind: SourceIssueKind::InvalidTextEscape,
                         });
                     }
-                    if !matches!(escaped, b'\\' | b'n' | b'u') && escaped != quote {
+                    if !matches!(escaped, b'\\' | b'n' | b't' | b'r' | b'u') && escaped != quote {
                         return Err(RawIssue {
                             start: cursor,
                             end: cursor + 2,
