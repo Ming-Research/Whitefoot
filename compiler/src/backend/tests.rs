@@ -36,6 +36,8 @@ mod integer_negation;
 mod loop_split;
 mod owned_places;
 mod parallel;
+/// Union-laid-out payload enums (compiler/payload-enum-layout).
+mod payload_enums;
 /// Range references over the three storage origins [REF-4, STOR-1], and the
 /// compute kernels that take a range of work.
 ///

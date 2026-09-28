@@ -5,7 +5,8 @@ use std::fmt::Write;
 use crate::target::TargetLayout;
 use crate::{IrReleaseClass, IrVariant, IrWindowShape};
 
-use super::{BackendFailure, IrNominalKind, IrProgram, IrType, variant_field_base};
+use super::union_enums::{is_memory_only, variant_field_gep};
+use super::{BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType};
 
 /// One release action per node type of the release graph [PROV-6].
 ///
@@ -36,16 +37,23 @@ pub(super) fn emit_resource_drop_helpers(
         }
 
         let mut output = FunctionBody::default();
-        let aggregate_ty = output.type_name(program, ty)?;
+        // A memory-only enum's helper takes its address
+        // (compiler/payload-enum-layout); every other takes the value.
+        let by_address = is_memory_only(program, ty)?;
+        let parameter = if by_address {
+            "ptr".to_owned()
+        } else {
+            output.type_name(program, ty)?
+        };
         let symbol = drop_helper_symbol(nominal);
         let mut signature = Signature::new(
             symbol,
             "void",
-            vec![Parameter::named(aggregate_ty.clone(), "%value")],
+            vec![Parameter::named(parameter.clone(), "%value")],
         );
         signature.linkage = Linkage::Private;
         signature.references = output.references.clone();
-        emit_enum_cleanup_body(program, &mut output, variants, ty, &aggregate_ty)?;
+        emit_enum_cleanup_body(program, &mut output, id, variants, by_address, &parameter)?;
         module.define(signature.define(output, "")?);
         module.text("\n");
     }
@@ -75,22 +83,26 @@ fn emit_run_drop_helper(
     let run_llvm = output.type_name(program, ty)?;
     let symbol = run_drop_helper_symbol(program, ty)?;
     // A runtime-capacity block is reached only through the `Box` that owns
-    // it [TYPE-9], so its helper takes the block pointer; every other run is
-    // a value and its helper takes that value.
-    let parameter = if matches!(
-        ty,
-        IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
-    ) {
+    // it [TYPE-9], so its helper takes the block pointer. A memory-only run
+    // (compiler/payload-enum-layout) is released from its address too; every
+    // other run is a value and its helper takes that value.
+    let by_address = is_memory_only(program, ty)?;
+    let parameter = if by_address
+        || matches!(
+            ty,
+            IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+        ) {
         "ptr".to_owned()
     } else {
         run_llvm.clone()
     };
-    let mut signature = Signature::new(symbol, "void", vec![Parameter::named(parameter, "%value")]);
+    let mut signature = Signature::new(
+        symbol,
+        "void",
+        vec![Parameter::named(parameter.clone(), "%value")],
+    );
     signature.linkage = Linkage::Private;
-    if !matches!(
-        ty,
-        IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
-    ) {
+    if parameter != "ptr" {
         signature.references = output.references.clone();
     }
     output.open_block("entry".to_owned());
@@ -105,6 +117,14 @@ fn emit_run_drop_helper(
         }
         // A full array has no window descriptor. Every logical element is
         // live; the shared walk performs no access for an empty array.
+        IrType::Array { element, length } if by_address => {
+            writeln!(
+                output,
+                "  %pointer = getelementptr inbounds {run_llvm}, ptr %value, i64 0, i64 0\n  %capacity = add i64 {length}, 0\n  %length = add i64 {length}, 0\n  %origin = add i64 0, 0"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            element
+        }
         IrType::Array { element, length } => {
             writeln!(
                 output,
@@ -118,6 +138,26 @@ fn emit_run_drop_helper(
         // compiler/storage-representation: the header is first and the
         // slots follow it in the same block, so one address computation
         // serves the inline window; a `Slots` window begins at slot zero.
+        IrType::Window {
+            shape,
+            element,
+            capacity: Some(length),
+        } if by_address => {
+            let slots = if shape == IrWindowShape::Ring { 2 } else { 1 };
+            let origin = if shape == IrWindowShape::Ring {
+                format!(
+                    "  %origin.pointer = getelementptr inbounds {run_llvm}, ptr %value, i64 0, i32 1\n  %origin = load i64, ptr %origin.pointer"
+                )
+            } else {
+                "  %origin = add i64 0, 0".to_owned()
+            };
+            writeln!(
+                output,
+                "  %pointer = getelementptr inbounds {run_llvm}, ptr %value, i64 0, i32 {slots}, i64 0\n  %capacity = add i64 {length}, 0\n  %length = load i64, ptr %value\n{origin}"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            element
+        }
         IrType::Window {
             shape,
             element,
@@ -176,16 +216,21 @@ fn emit_run_drop_helper(
         output.open_block("walk".to_string());
         write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
         output.open_block("body".to_string());
-        write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n  %element = load {element_llvm}, ptr %element.pointer\n").map_err(|_| BackendFailure::TextEmission)?;
+        write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n").map_err(|_| BackendFailure::TextEmission)?;
     };
     let mut temporary = 0_u32;
-    emit_value_cleanup(
-        program,
-        &mut output,
-        &mut temporary,
-        element_ty,
-        "%element".to_owned(),
-    )?;
+    // A memory-only element is released where it lies.
+    let element = if is_memory_only(program, element_ty)? {
+        CleanupOperand::Address("%element.pointer".to_owned())
+    } else {
+        writeln!(
+            output,
+            "  %element = load {element_llvm}, ptr %element.pointer"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        CleanupOperand::Value("%element".to_owned())
+    };
+    emit_cleanup(program, &mut output, &mut temporary, element_ty, element)?;
     output.push_str("  %next = add i64 %index, 1\n  br label %walk\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
@@ -384,6 +429,14 @@ pub(super) fn drop_helper_symbol(nominal: &crate::IrNominal) -> String {
     format!("wf.drop.t.{}", nominal.link_name())
 }
 
+/// What a release reads: a first-class value, or the address of a value
+/// that stays in its storage. A memory-only value
+/// (compiler/payload-enum-layout) is always released from its address.
+pub(super) enum CleanupOperand {
+    Value(String),
+    Address(String),
+}
+
 enum CleanupJob {
     Value {
         ty: IrType,
@@ -395,22 +448,41 @@ enum CleanupJob {
         index: usize,
         field_ty: IrType,
     },
+    /// The value of type `ty` at `address`.
+    Place {
+        ty: IrType,
+        address: String,
+    },
+    /// Field `index` of the struct of type `aggregate_ty` at `address`.
+    StructFieldPlace {
+        aggregate_ty: IrType,
+        address: String,
+        index: usize,
+        field_ty: IrType,
+    },
+    /// Payload field `field` of variant `variant` of the enum at `address`.
+    VariantFieldPlace {
+        nominal: IrNominalId,
+        address: String,
+        variant: u32,
+        field: u32,
+        field_ty: IrType,
+    },
     FreePointer(String),
 }
 
-pub(super) fn emit_value_cleanup(
+pub(super) fn emit_cleanup(
     program: &IrProgram,
     output: &mut FunctionBody,
     temporary: &mut u32,
     ty: IrType,
-    operand: String,
+    operand: CleanupOperand,
 ) -> Result<(), BackendFailure> {
-    emit_cleanup_jobs(
-        program,
-        output,
-        temporary,
-        vec![CleanupJob::Value { ty, operand }],
-    )
+    let job = match operand {
+        CleanupOperand::Value(operand) => CleanupJob::Value { ty, operand },
+        CleanupOperand::Address(address) => CleanupJob::Place { ty, address },
+    };
+    emit_cleanup_jobs(program, output, temporary, vec![job])
 }
 
 fn emit_cleanup_jobs(
@@ -449,6 +521,113 @@ fn emit_cleanup_jobs(
                     ty: field_ty,
                     operand: format!("%{value}"),
                 });
+            }
+            CleanupJob::StructFieldPlace {
+                aggregate_ty,
+                address,
+                index,
+                field_ty,
+            } => {
+                let pointer = next_temporary(temporary)?;
+                let emitted = output.type_name(program, aggregate_ty)?;
+                writeln!(
+                    output,
+                    "  %{pointer} = getelementptr inbounds {emitted}, ptr {address}, i32 0, i32 {index}"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                jobs.push(CleanupJob::Place {
+                    ty: field_ty,
+                    address: format!("%{pointer}"),
+                });
+            }
+            CleanupJob::VariantFieldPlace {
+                nominal,
+                address,
+                variant,
+                field,
+                field_ty,
+            } => {
+                let pointer = next_temporary(temporary)?;
+                let (emitted, indices) = variant_field_gep(
+                    program,
+                    &mut output.references.types,
+                    nominal,
+                    variant,
+                    field,
+                )?;
+                writeln!(
+                    output,
+                    "  %{pointer} = getelementptr inbounds {emitted}, ptr {address}, {indices}"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                jobs.push(CleanupJob::Place {
+                    ty: field_ty,
+                    address: format!("%{pointer}"),
+                });
+            }
+            CleanupJob::Place { ty, address } => {
+                if !type_requires_cleanup(program, ty)? {
+                    continue;
+                }
+                if !is_memory_only(program, ty)? {
+                    let loaded = next_temporary(temporary)?;
+                    let emitted = output.type_name(program, ty)?;
+                    writeln!(output, "  %{loaded} = load {emitted}, ptr {address}")
+                        .map_err(|_| BackendFailure::TextEmission)?;
+                    jobs.push(CleanupJob::Value {
+                        ty,
+                        operand: format!("%{loaded}"),
+                    });
+                    continue;
+                }
+                match ty {
+                    IrType::Nominal(id) => {
+                        let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
+                        match nominal.kind() {
+                            // Jobs are popped: enqueue in reverse to preserve
+                            // PROV-6's declaration-order traversal.
+                            IrNominalKind::Struct { fields } => {
+                                for (index, field) in fields.iter().enumerate().rev() {
+                                    if type_requires_cleanup(program, field.ty())? {
+                                        jobs.push(CleanupJob::StructFieldPlace {
+                                            aggregate_ty: ty,
+                                            address: address.clone(),
+                                            index,
+                                            field_ty: field.ty(),
+                                        });
+                                    }
+                                }
+                            }
+                            IrNominalKind::Enum { .. } => {
+                                let symbol = drop_helper_symbol(nominal);
+                                output.symbol(symbol.clone());
+                                writeln!(output, "  call void @{symbol}(ptr {address})")
+                                    .map_err(|_| BackendFailure::TextEmission)?;
+                            }
+                            // A pointer owner and the opaque representation
+                            // hold no union enum inline.
+                            IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+                                return Err(BackendFailure::InvalidIr);
+                            }
+                        }
+                    }
+                    IrType::Array { .. }
+                    | IrType::Window {
+                        capacity: Some(_), ..
+                    } => {
+                        let symbol =
+                            run_drop_helper(program, ty)?.ok_or(BackendFailure::InvalidIr)?;
+                        output.symbol(symbol.clone());
+                        writeln!(output, "  call void @{symbol}(ptr {address})")
+                            .map_err(|_| BackendFailure::TextEmission)?;
+                    }
+                    _ => return Err(BackendFailure::InvalidIr),
+                }
+            }
+            // A memory-only value never reaches a release as a first-class
+            // value (compiler/payload-enum-layout).
+            CleanupJob::Value { ty, .. } if is_memory_only(program, ty)? => {
+                return Err(BackendFailure::InvalidIr);
             }
             CleanupJob::Value { ty, operand } => match ty {
                 // A runtime-capacity `Array<T>` exists only as `Box` content
@@ -540,6 +719,18 @@ fn emit_cleanup_jobs(
                                 }
                                 continue;
                             }
+                            // A memory-only referent is released in the
+                            // cell before the cell itself.
+                            if is_memory_only(program, *referent)? {
+                                if *release == IrReleaseClass::General {
+                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
+                                }
+                                jobs.push(CleanupJob::Place {
+                                    ty: *referent,
+                                    address: operand,
+                                });
+                                continue;
+                            }
                             let loaded = next_temporary(temporary)?;
                             {
                                 let emitted_type_0 = output.type_name(program, *referent)?;
@@ -610,14 +801,21 @@ fn next_temporary(counter: &mut u32) -> Result<String, BackendFailure> {
 fn emit_enum_cleanup_body(
     program: &IrProgram,
     output: &mut FunctionBody,
+    nominal: IrNominalId,
     variants: &[IrVariant],
-    ty: IrType,
+    by_address: bool,
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
+    let ty = IrType::Nominal(nominal);
     {
         output.open_block("entry".to_string());
-        writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        // The tag is at offset 0 in every enum layout.
+        if by_address {
+            writeln!(output, "  %tag = load i32, ptr %value")
+        } else {
+            writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
+        }
+        .map_err(|_| BackendFailure::TextEmission)?;
     };
     writeln!(output, "  switch i32 %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
@@ -635,19 +833,30 @@ fn emit_enum_cleanup_body(
     let mut temporary = 0_u32;
     for variant in variants {
         output.open_block(format!("variant.{}", variant.tag()));
-        let base = variant_field_base(variants, variant.tag())?;
+        let base = super::variant_field_base(variants, variant.tag())?;
         let mut jobs = Vec::new();
         for (field, declaration) in variant.fields().iter().enumerate().rev() {
-            if type_requires_cleanup(program, declaration.ty())? {
-                jobs.push(CleanupJob::Field {
+            if !type_requires_cleanup(program, declaration.ty())? {
+                continue;
+            }
+            jobs.push(if by_address {
+                CleanupJob::VariantFieldPlace {
+                    nominal,
+                    address: "%value".to_owned(),
+                    variant: variant.tag(),
+                    field: u32::try_from(field).map_err(|_| BackendFailure::CounterOverflow)?,
+                    field_ty: declaration.ty(),
+                }
+            } else {
+                CleanupJob::Field {
                     aggregate_ty: ty,
                     aggregate: "%value".to_owned(),
                     index: base
                         .checked_add(field)
                         .ok_or(BackendFailure::CounterOverflow)?,
                     field_ty: declaration.ty(),
-                });
-            }
+                }
+            });
         }
         emit_cleanup_jobs(program, output, &mut temporary, jobs)?;
         output.push_str("  br label %done\n");

@@ -92,8 +92,7 @@ impl FunctionEmitter<'_, '_> {
                 parameter.ty(),
                 &mut frame_references.types,
             )?;
-            let operand = self.value_operand(*argument)?;
-            operands.push(format!("{parameter_type} {operand}"));
+            operands.push(self.frame_operand(&parameter_type, *argument)?);
             field_types.push(parameter_type);
         }
         let result_type = super::llvm_type_with_references(
@@ -142,9 +141,10 @@ impl FunctionEmitter<'_, '_> {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
                 self.output,
-                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}\n  store {operand}, ptr {field}"
+                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.store_frame_operand(operand, &field)?;
         }
         writeln!(
             self.output,

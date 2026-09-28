@@ -413,6 +413,357 @@ pub(super) fn element_has_zero_stride(
     Ok(layouts.layout(element)?.size == 0)
 }
 
+/// The selected-target layout of one union-laid-out enum
+/// (compiler/payload-enum-layout): the value's size and alignment, and each
+/// variant's view, the `i32` tag followed by that variant's fields.
+struct UnionLayout {
+    value: Layout,
+    views: Vec<(u32, Layout)>,
+}
+
+/// What the emitter prints for one union-laid-out enum: the value's size,
+/// and the tag of a payload variant whose view has the value's alignment,
+/// which the value type's trailing zero-length array names so
+/// that LLVM gives the value the target's alignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UnionEnumLayout {
+    size: u64,
+    aligning_variant: u32,
+}
+
+impl UnionEnumLayout {
+    pub(crate) const fn size(self) -> u64 {
+        self.size
+    }
+
+    pub(crate) const fn aligning_variant(self) -> u32 {
+        self.aligning_variant
+    }
+}
+
+/// The union layout of `id`, which must be a union-laid-out enum
+/// ([`is_union_enum`]). This is the one source of the sizes the emitted
+/// types state.
+pub(crate) fn union_enum_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+    id: IrNominalId,
+) -> Result<UnionEnumLayout, TargetLayoutFailure> {
+    if !is_union_enum(program.nominals(), program.elements(), id)? {
+        return Err(TargetLayoutFailure::InvalidIr);
+    }
+    let IrNominalKind::Enum { variants } = program
+        .nominal(id)
+        .ok_or(TargetLayoutFailure::InvalidIr)?
+        .kind()
+    else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let union = layouts.union_layout(variants)?;
+    let aligning_variant = variants
+        .iter()
+        .zip(&union.views)
+        .find(|(variant, (_, view))| {
+            !variant.fields().is_empty() && view.align == union.value.align
+        })
+        .map(|(variant, _)| variant.tag())
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    Ok(UnionEnumLayout {
+        size: union.value.size,
+        aligning_variant,
+    })
+}
+
+/// Whether `id` is laid out as a union of variant views
+/// (compiler/payload-enum-layout): an enum with at least two
+/// payload-carrying variants whose product representation, the tag followed
+/// by every variant's fields, would not return in registers under
+/// compiler/result-registers. Every other enum keeps its representation: a
+/// tag-only enum compiler/tag-only-lowering's, one with a single payload
+/// variant the product, which already is that variant's view, and one whose
+/// product returns in registers that product and its register return.
+///
+/// The rule reads only the concrete nominal and the register budget shared
+/// by every admitted target, so it is target-independent, and target layout,
+/// the emitter and the call ABI all ask this one predicate.
+pub(crate) fn is_union_enum(
+    nominals: &[IrNominal],
+    elements: &[IrType],
+    id: IrNominalId,
+) -> Result<bool, TargetLayoutFailure> {
+    let nominal = nominals
+        .get(id.index())
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = nominal.kind() else {
+        return Ok(false);
+    };
+    if variants
+        .iter()
+        .filter(|variant| !variant.fields().is_empty())
+        .count()
+        < 2
+    {
+        return Ok(false);
+    }
+    let mut leaves = ReturnLeaves::new(nominals, elements);
+    leaves.product_enum(variants, 1)?;
+    Ok(!leaves.fit())
+}
+
+/// Whether a value of `ty` holds a union-laid-out enum inline: the enum
+/// itself, or a struct, enum payload, inline array or inline window that
+/// contains one. Such a value is memory-only in the backend
+/// (compiler/payload-enum-layout): it lives in storage, moves by memmove, and
+/// is never loaded, stored or passed as one LLVM first-class value, because
+/// LLVM has no union type to carry it. A `Box` and a runtime-capacity block
+/// hold their content behind a pointer, so they are not memory-only.
+pub(crate) fn is_memory_only(
+    nominals: &[IrNominal],
+    elements: &[IrType],
+    ty: IrType,
+) -> Result<bool, TargetLayoutFailure> {
+    let mut visiting = HashSet::new();
+    holds_union_enum(nominals, elements, ty, &mut visiting)
+}
+
+fn holds_union_enum(
+    nominals: &[IrNominal],
+    elements: &[IrType],
+    ty: IrType,
+    visiting: &mut HashSet<IrNominalId>,
+) -> Result<bool, TargetLayoutFailure> {
+    match ty {
+        IrType::Array { element, .. }
+        | IrType::Window {
+            element,
+            capacity: Some(_),
+            ..
+        } => {
+            let element = *elements
+                .get(element.index())
+                .ok_or(TargetLayoutFailure::InvalidIr)?;
+            holds_union_enum(nominals, elements, element, visiting)
+        }
+        IrType::Nominal(id) => {
+            if is_union_enum(nominals, elements, id)? {
+                return Ok(true);
+            }
+            if !visiting.insert(id) {
+                // An inline cycle has no layout; target qualification
+                // reports it.
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let nominal = nominals
+                .get(id.index())
+                .ok_or(TargetLayoutFailure::InvalidIr)?;
+            let mut holds = false;
+            let fields: Vec<IrType> = match nominal.kind() {
+                IrNominalKind::Struct { fields } => fields.iter().map(|field| field.ty()).collect(),
+                IrNominalKind::Enum { variants } => variants
+                    .iter()
+                    .flat_map(|variant| variant.fields())
+                    .map(|field| field.ty())
+                    .collect(),
+                IrNominalKind::Box { .. } | IrNominalKind::Opaque => Vec::new(),
+            };
+            for field in fields {
+                if holds_union_enum(nominals, elements, field, visiting)? {
+                    holds = true;
+                    break;
+                }
+            }
+            visiting.remove(&id);
+            Ok(holds)
+        }
+        IrType::Unit
+        | IrType::Bool
+        | IrType::Integer { .. }
+        | IrType::Float { .. }
+        | IrType::Buffer { .. }
+        | IrType::Window { capacity: None, .. }
+        | IrType::Range { .. }
+        | IrType::RuntimeBoxPayload { .. }
+        | IrType::Address(_) => Ok(false),
+    }
+}
+
+/// The integer-class words one returned first-class value can occupy on
+/// every admitted target: LLVM's x86-64 return convention assigns RAX, RDX
+/// and RCX, one per scalar leaf, and AArch64 assigns X0 to X7.
+const RETURN_INTEGER_WORDS: u64 = 3;
+
+/// The floating leaves one returned value can occupy on every admitted
+/// target: XMM0 and XMM1 on x86-64, and D0 to D7 on AArch64. A third
+/// floating leaf on x86-64 returns in the x87 register ST0 through a stack
+/// store and `fld`, which quiets a signaling NaN, so this bound also keeps
+/// returned floats bit-exact.
+const RETURN_FLOATING_LEAVES: u64 = 2;
+
+/// Whether every scalar leaf of `ty`'s LLVM representation gets its own
+/// return register on every admitted target (compiler/result-registers).
+/// The backend's call ABI reads this through
+/// `backend::abi::fits_return_registers`, and the union-layout rule reads
+/// the same count for an enum's product representation.
+pub(crate) fn fits_return_registers(
+    nominals: &[IrNominal],
+    elements: &[IrType],
+    ty: IrType,
+) -> Result<bool, TargetLayoutFailure> {
+    let mut leaves = ReturnLeaves::new(nominals, elements);
+    leaves.add(ty, 1)?;
+    Ok(leaves.fit())
+}
+
+/// The scalar leaves of one LLVM representation, counted in the return
+/// registers they occupy. Counts saturate, so a long array only ever
+/// exceeds the budget.
+struct ReturnLeaves<'types> {
+    nominals: &'types [IrNominal],
+    elements: &'types [IrType],
+    visiting: HashSet<IrNominalId>,
+    integer_words: u64,
+    floating: u64,
+}
+
+impl<'types> ReturnLeaves<'types> {
+    fn new(nominals: &'types [IrNominal], elements: &'types [IrType]) -> Self {
+        Self {
+            nominals,
+            elements,
+            visiting: HashSet::new(),
+            integer_words: 0,
+            floating: 0,
+        }
+    }
+
+    const fn fit(&self) -> bool {
+        self.integer_words <= RETURN_INTEGER_WORDS && self.floating <= RETURN_FLOATING_LEAVES
+    }
+
+    fn element(&self, element: IrElement) -> Result<IrType, TargetLayoutFailure> {
+        self.elements
+            .get(element.index())
+            .copied()
+            .ok_or(TargetLayoutFailure::InvalidIr)
+    }
+
+    /// Adds `copies` repetitions of `ty`'s leaves, mirroring the
+    /// representation the emitter's `llvm_type` gives it.
+    fn add(&mut self, ty: IrType, copies: u64) -> Result<(), TargetLayoutFailure> {
+        match ty {
+            // `i8`, `i1`, the integer widths, a pointer, and a Box owner's
+            // pointer each occupy one integer-class register.
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Integer {
+                width: 8 | 16 | 32 | 64,
+                ..
+            }
+            | IrType::Address(_)
+            | IrType::RuntimeBoxPayload { .. } => self.integer(copies, 1),
+            IrType::Integer { .. } => return Err(TargetLayoutFailure::InvalidIr),
+            IrType::Float { width: 32 | 64 } => {
+                self.floating = self.floating.saturating_add(copies);
+            }
+            IrType::Float { .. } => return Err(TargetLayoutFailure::InvalidIr),
+            // `[0 x i8]` has no leaf; a longer array repeats its element.
+            IrType::Array { length: 0, .. } => {}
+            IrType::Array { element, length } => {
+                self.add(self.element(element)?, copies.saturating_mul(length))?;
+            }
+            // `{ ptr, i64 }`, and the runtime-capacity blocks' headers, whose
+            // zero-length element tails have no leaf.
+            IrType::Range { .. } => self.integer(copies, 2),
+            IrType::Buffer { .. } => self.integer(copies, 1),
+            IrType::Window {
+                shape,
+                element,
+                capacity,
+            } => {
+                let header = match (shape, capacity) {
+                    (IrWindowShape::Slots, Some(_)) => 1,
+                    (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
+                    (IrWindowShape::Ring, None) => 3,
+                };
+                self.integer(copies, header);
+                if let Some(length @ 1..) = capacity {
+                    self.add(self.element(element)?, copies.saturating_mul(length))?;
+                }
+            }
+            IrType::Nominal(id) => {
+                let nominals = self.nominals;
+                let nominal = nominals
+                    .get(id.index())
+                    .ok_or(TargetLayoutFailure::InvalidIr)?;
+                match nominal.kind() {
+                    IrNominalKind::Box { .. } => self.integer(copies, 1),
+                    // `{ i128, i128 }`: each `i128` takes two words.
+                    IrNominalKind::Opaque => self.integer(copies, 4),
+                    // `i1` or `i32`.
+                    IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => {
+                        self.integer(copies, 1);
+                    }
+                    // A union-laid-out enum is memory-only and is never a
+                    // first-class value, so nothing holding it returns in
+                    // registers.
+                    IrNominalKind::Enum { .. }
+                        if is_union_enum(self.nominals, self.elements, id)? =>
+                    {
+                        self.integer_words = u64::MAX;
+                    }
+                    IrNominalKind::Enum { variants } => {
+                        self.nominal_fields(id, |leaves| leaves.product_enum(variants, copies))?;
+                    }
+                    IrNominalKind::Struct { fields } => {
+                        self.nominal_fields(id, |leaves| {
+                            for field in fields {
+                                leaves.add(field.ty(), copies)?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The `i32` tag, then every variant's fields in order.
+    fn product_enum(
+        &mut self,
+        variants: &[crate::IrVariant],
+        copies: u64,
+    ) -> Result<(), TargetLayoutFailure> {
+        self.integer(copies, 1);
+        for field in variants.iter().flat_map(|variant| variant.fields()) {
+            self.add(field.ty(), copies)?;
+        }
+        Ok(())
+    }
+
+    /// Counts one nominal's fields, refusing an inline cycle, which has no
+    /// representation.
+    fn nominal_fields(
+        &mut self,
+        id: IrNominalId,
+        count: impl FnOnce(&mut Self) -> Result<(), TargetLayoutFailure>,
+    ) -> Result<(), TargetLayoutFailure> {
+        if !self.visiting.insert(id) {
+            return Err(TargetLayoutFailure::InvalidIr);
+        }
+        count(self)?;
+        self.visiting.remove(&id);
+        Ok(())
+    }
+
+    fn integer(&mut self, copies: u64, words: u64) {
+        self.integer_words = self
+            .integer_words
+            .saturating_add(copies.saturating_mul(words));
+    }
+}
+
 pub(super) fn validate_static_storage(
     target: TargetLayout,
     program: &IrProgram,
@@ -1294,6 +1645,11 @@ impl<'types> LayoutComputer<'types> {
             } else {
                 Layout { size: 4, align: 4 }
             }
+        } else if is_union_enum(self.nominals, self.elements, id)? {
+            let IrNominalKind::Enum { variants } = nominal.kind() else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            self.union_layout(variants)?.value
         } else {
             let mut fields = Vec::new();
             match nominal.kind() {
@@ -1324,6 +1680,35 @@ impl<'types> LayoutComputer<'types> {
         self.visiting.remove(&id);
         self.nominal.insert(id, layout);
         Ok(layout)
+    }
+
+    /// compiler/payload-enum-layout: every variant on its own as the
+    /// sequence of the `i32` tag and its fields, the value sized and aligned
+    /// for the largest and most aligned of them. A fieldless variant's view
+    /// is the tag alone. A nested enum field takes its own selected layout.
+    fn union_layout(
+        &mut self,
+        variants: &[crate::IrVariant],
+    ) -> Result<UnionLayout, TargetLayoutFailure> {
+        let mut views = Vec::with_capacity(variants.len());
+        let mut size = 0_u64;
+        let mut align = 1_u64;
+        for variant in variants {
+            let mut fields = vec![IrType::Integer {
+                width: 32,
+                signed: false,
+            }];
+            fields.extend(variant.fields().iter().map(|field| field.ty()));
+            let view = self.struct_layout(fields)?;
+            size = size.max(view.size);
+            align = align.max(view.align);
+            views.push((variant.tag(), view));
+        }
+        let size = align_up(self.target, size, align, TargetObject::Representation)?;
+        Ok(UnionLayout {
+            value: Layout { size, align },
+            views,
+        })
     }
 
     fn struct_layout(&mut self, fields: Vec<IrType>) -> Result<Layout, TargetLayoutFailure> {

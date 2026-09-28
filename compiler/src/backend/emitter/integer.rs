@@ -806,11 +806,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let [ok, error] = variants.as_slice() else {
             return Err(BackendFailure::InvalidIr);
         };
+        // The producers build this result first-class; its tag, scalar and
+        // one-leaf error always fit the return registers, so it keeps the
+        // product layout (compiler/payload-enum-layout).
         if ok.tag() != 0
             || error.tag() != 1
             || ok.fields().len() != 1
             || error.fields().len() != 1
             || ok.fields()[0].ty() != operand_type
+            || self.is_memory_only(result_type)?
         {
             return Err(BackendFailure::InvalidIr);
         }
