@@ -281,6 +281,53 @@ fn weigh_all(items: &[Component]) -> result: u64 reads(items) {
   return total;
 }
 
+fn exchange_and_overwrite() -> result: u64 pure {
+  let left = make_holder(kind: 0_u64, seed: 30_u64);
+  let right = make_holder(kind: 2_u64, seed: 40_u64);
+  swap(first: &left, second: &right);
+  let swapped = peek(holder: &right);
+  set right = make_holder(kind: 1_u64, seed: 50_u64);
+  let replaced = peek(holder: &right);
+  let wrapped = Wrapped(label: 1_u32, holder: move left, tail: 2_u8);
+  let before = peek(holder: &wrapped.holder);
+  set wrapped.holder = make_holder(kind: 0_u64, seed: 60_u64);
+  let after = peek(holder: &wrapped.holder);
+  let early = swapped +wrap replaced;
+  let late = before +wrap after;
+  return early +wrap late;
+}
+
+fn ring_rounds() -> result: u64 pure {
+  let ring = ring_new::<Holder, 3>();
+  let a = make_holder(kind: 0_u64, seed: 1_u64);
+  place_back(window: &ring, value: move a);
+  let b = make_holder(kind: 1_u64, seed: 2_u64);
+  place_back(window: &ring, value: move b);
+  let first = take_front(window: &ring);
+  let c = make_holder(kind: 2_u64, seed: 3_u64);
+  place_back(window: &ring, value: move c);
+  let d = make_holder(kind: 0_u64, seed: 4_u64);
+  place_back(window: &ring, value: move d);
+  let second = take_front(window: &ring);
+  let early = drain(holder: move first);
+  let late = drain(holder: move second);
+  let scaled = early *wrap 10000_u64;
+  return scaled +wrap late;
+}
+
+fn array_rounds() -> result: u64 pure {
+  let staged = slots_new::<Holder, 2>();
+  let a = make_holder(kind: 2_u64, seed: 7_u64);
+  place_back(window: &staged, value: move a);
+  let b = make_holder(kind: 0_u64, seed: 8_u64);
+  place_back(window: &staged, value: move b);
+  let items = slots_into_array::<Holder, 2>(values: move staged);
+  let early = peek(holder: &items[0_u64]);
+  let late = peek(holder: &items[1_u64]);
+  let scaled = early *wrap 1000_u64;
+  return scaled +wrap late;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   let total = 0_u64;
   for (step in 0_u64..6_u64) {
@@ -401,6 +448,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let even = alternate(rounds: 4_u64);
   if even != 211002_u64 {
     return std::process::exit_status(code: 14_u8);
+  }
+  let exchanged = exchange_and_overwrite();
+  if exchanged != 1653_u64 {
+    return std::process::exit_status(code: 17_u8);
+  }
+  let rung = ring_rounds();
+  if rung != 31002_u64 {
+    return std::process::exit_status(code: 18_u8);
+  }
+  let arrayed = array_rounds();
+  if arrayed != 436017_u64 {
+    return std::process::exit_status(code: 19_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }

@@ -357,33 +357,50 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
 /// The program every execution case below runs: union-laid-out enums
 /// (`Component`, `Holder`, `Outer`) constructed in every variant, matched by
 /// value and through references, copied, moved through calls, results,
-/// block edges and a loop that exchanges two of them, written through
-/// references into their payloads, and held in a struct, an `Option`, a
-/// `Box`, a boxed and an inline `Slots` and an `Array`, with `Box` and
-/// `Slots` owners in several variants. It exits 0 when every observation
-/// matches.
+/// block edges and a loop that exchanges two of them, exchanged by `swap`,
+/// overwritten with another variant whole and as a struct field, written
+/// through references into their payloads, and held in a struct, an
+/// `Option`, a `Box`, a boxed and an inline `Slots`, a `Ring` whose live
+/// elements wrap around its end and an `Array`, with `Box` and `Slots` owners
+/// in several variants. It exits 0 when every observation matches.
 const PROGRAM: &[u8] = include_bytes!("payload_enums.wf");
 
 /// Counts allocations, refuses a release of anything not allocated, and
-/// reports the allocations still live when the program ends.
-const ALLOCATION_OBSERVER: &str = r#"#include <stdio.h>
+/// reports the allocations still live when the program ends. The overlap
+/// lowering runs handed-out calls on the parallel runtime's worker threads,
+/// so every access to the ledger holds its lock.
+const ALLOCATION_OBSERVER: &str = r#"#include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #define WF_TEST_HELD 256
 static void *held[WF_TEST_HELD];
 static unsigned count;
+static atomic_flag ledger = ATOMIC_FLAG_INIT;
+
+static void lock_ledger(void) {
+    while (atomic_flag_test_and_set_explicit(&ledger, memory_order_acquire)) {}
+}
+
+static void unlock_ledger(void) {
+    atomic_flag_clear_explicit(&ledger, memory_order_release);
+}
 
 void *wf_test_allocate(size_t size) {
     void *allocation = malloc(size);
+    lock_ledger();
     if (allocation == NULL || count == WF_TEST_HELD) abort();
     held[count++] = allocation;
+    unlock_ledger();
     return allocation;
 }
 
 void wf_test_release(void *allocation) {
+    lock_ledger();
     for (unsigned index = 0; index < count; ++index) {
         if (held[index] == allocation) {
             held[index] = NULL;
+            unlock_ledger();
             free(allocation);
             return;
         }
@@ -393,8 +410,10 @@ void wf_test_release(void *allocation) {
 
 __attribute__((destructor)) static void wf_test_report(void) {
     unsigned live = 0;
+    lock_ledger();
     for (unsigned index = 0; index < count; ++index) live += held[index] != NULL;
     printf("allocated=%u live=%u\n", count, live);
+    unlock_ledger();
 }
 "#;
 
