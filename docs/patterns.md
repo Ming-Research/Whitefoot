@@ -483,7 +483,8 @@ const digits: Array<u8, 4> =['0'_u8, '1'_u8, '2'_u8, '3'_u8];
 ```
 
 A message or other text is an `Array<u8, N>` written as a STRING, whose N is
-its UTF-8 byte length; a non-ASCII character is written `\u{H}`, and the
+its UTF-8 byte length. A line feed, tab and carriage return are written `\n`,
+`\t` and `\r`, any other control or non-ASCII character `\u{H}`, and the
 checker states the right N when it differs:
 
 ```whitefoot

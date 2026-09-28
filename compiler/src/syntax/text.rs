@@ -58,8 +58,8 @@ pub(crate) struct QuotedText {
 /// Reads a token that opens with `quote` as a sequence of text items up to
 /// its closing quote, or `None` when the bytes are not that shape: a raw
 /// byte outside U+0020..U+007E, the quote or `\` unescaped, an escape other
-/// than `\\`, `\n`, the quote escape and `\u{H}` with H one or more lowercase
-/// hexadecimal digits, or no closing quote.
+/// than `\\`, `\n`, `\t`, `\r`, the quote escape and `\u{H}` with H one or
+/// more lowercase hexadecimal digits, or no closing quote.
 ///
 /// This is the shape [FORM-5] decides at terminal membership; whether an
 /// item is its value's one spelling is [FORM-7]'s check-time judgment,
@@ -85,6 +85,8 @@ pub(crate) fn quoted_text(token: &[u8], quote: u8) -> Option<QuotedText> {
             match follower {
                 b'\\' => Some(u32::from(b'\\')),
                 b'n' => Some(u32::from(b'\n')),
+                b't' => Some(u32::from(b'\t')),
+                b'r' => Some(u32::from(b'\r')),
                 b'u' => {
                     let (value, end) = hexadecimal_escape(token, cursor)?;
                     cursor = end;
@@ -138,13 +140,15 @@ fn lowercase_hex_digit(byte: u8) -> Option<u32> {
 
 /// The one spelling of a scalar value inside the given quote [FORM-7]: the
 /// raw byte for printable ASCII other than `\` and the quote, `\\`, the quote
-/// escape and `\n` for their three values, and `\u{H}` in lowercase
+/// escape, `\n`, `\t` and `\r` for their five values, and `\u{H}` in lowercase
 /// hexadecimal without leading zeros for every other value.
 pub(crate) fn canonical_spelling(scalar: char, quote: u8) -> String {
     let value = u32::from(scalar);
     match value {
         0x5c => "\\\\".to_owned(),
         0x0a => "\\n".to_owned(),
+        0x09 => "\\t".to_owned(),
+        0x0d => "\\r".to_owned(),
         _ if value == u32::from(quote) => format!("\\{scalar}"),
         0x20..=0x7e => scalar.to_string(),
         _ => format!("\\u{{{value:x}}}"),
@@ -162,17 +166,24 @@ mod tests {
     #[test]
     fn items_decode_every_escape_form() {
         assert_eq!(
-            values(br#""a\\\"\n\u{e9}\u{0}""#, STRING_QUOTE),
+            values(br#""a\\\"\n\t\r\u{e9}\u{0}""#, STRING_QUOTE),
             Some(vec![
                 Some(0x61),
                 Some(0x5c),
                 Some(0x22),
                 Some(0x0a),
+                Some(0x09),
+                Some(0x0d),
                 Some(0xe9),
                 Some(0),
             ])
         );
         assert_eq!(values(br"'\''_u8", CHARACTER_QUOTE), Some(vec![Some(0x27)]));
+        assert_eq!(values(br"'\t'_u8", CHARACTER_QUOTE), Some(vec![Some(0x09)]));
+        assert_eq!(
+            values(br"'\r'_u32", CHARACTER_QUOTE),
+            Some(vec![Some(0x0d)])
+        );
         assert_eq!(
             quoted_text(br"'a'_u32", CHARACTER_QUOTE).map(|text| text.suffix_start),
             Some(3)
@@ -205,7 +216,8 @@ mod tests {
             (br#""\u41""#, STRING_QUOTE),
             (br#""\'""#, STRING_QUOTE),
             (br#"'\"'_u8"#, CHARACTER_QUOTE),
-            (br"'\t'_u8", CHARACTER_QUOTE),
+            (br"'\x09'_u8", CHARACTER_QUOTE),
+            (br#""\0""#, STRING_QUOTE),
             (b"'\x7f'_u8", CHARACTER_QUOTE),
             (br"'a", CHARACTER_QUOTE),
         ] {
@@ -222,7 +234,9 @@ mod tests {
         assert_eq!(canonical_spelling('"', STRING_QUOTE), "\\\"");
         assert_eq!(canonical_spelling('\\', STRING_QUOTE), "\\\\");
         assert_eq!(canonical_spelling('\n', STRING_QUOTE), "\\n");
-        assert_eq!(canonical_spelling('\t', STRING_QUOTE), "\\u{9}");
+        assert_eq!(canonical_spelling('\t', STRING_QUOTE), "\\t");
+        assert_eq!(canonical_spelling('\r', CHARACTER_QUOTE), "\\r");
+        assert_eq!(canonical_spelling('\u{b}', STRING_QUOTE), "\\u{b}");
         assert_eq!(canonical_spelling('\0', STRING_QUOTE), "\\u{0}");
         assert_eq!(canonical_spelling('\u{7f}', STRING_QUOTE), "\\u{7f}");
         assert_eq!(canonical_spelling('é', STRING_QUOTE), "\\u{e9}");
@@ -237,13 +251,15 @@ mod tests {
                 .iter()
                 .all(|item| item.is_canonical(token, quote))
         };
-        assert!(canonical(br#""it's \"x\"\n\u{e9}\u{0}""#, STRING_QUOTE));
+        assert!(canonical(br#""it's \"x\"\n\t\r\u{e9}\u{0}""#, STRING_QUOTE));
         assert!(canonical(br"'\''_u8", CHARACTER_QUOTE));
         assert!(canonical(br#"'"'_u8"#, CHARACTER_QUOTE));
         assert!(!canonical(br#""\u{41}""#, STRING_QUOTE));
         assert!(!canonical(br#""\u{0e9}""#, STRING_QUOTE));
         assert!(!canonical(br#""\u{00}""#, STRING_QUOTE));
         assert!(!canonical(br#""\u{a}""#, STRING_QUOTE));
+        assert!(!canonical(br#""\u{9}""#, STRING_QUOTE));
+        assert!(!canonical(br"'\u{d}'_u8", CHARACTER_QUOTE));
         assert!(!canonical(br#""\u{d800}""#, STRING_QUOTE));
         assert!(!canonical(br#""\u{110000}""#, STRING_QUOTE));
         assert!(!canonical(br"'\u{27}'_u8", CHARACTER_QUOTE));

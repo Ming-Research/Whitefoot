@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "A character literal is an integer literal of its suffix type whose value is the scalar value of its one text item, spelled raw, as one of the three escapes, or as a hexadecimal scalar.";
+  doc "A character literal is an integer literal of its suffix type whose value is the scalar value of its one text item, spelled raw, as a named escape, or as a hexadecimal scalar.";
   let letter = 'a'_u8 == 97_u8;
   if letter {
   } else {

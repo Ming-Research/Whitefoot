@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Read one spelling per construct and add character and byte-string text literals
+
+Nodes: language/surface-form, language/surface-form/text-literals
+
+Owner-approved: 2026-09-28, the owner approved the #166 decision cards (surface-form, text-literals, tab and carriage-return escapes) in the session handoff
+
+Summary: Apply the two reviewed amendments of PR #166. language/surface-form's first decision now reads the one-spelling principle per construct, so the character literal `'a'_u8` and the numeric literal `97_u8` are each the one spelling of their own construct while every literal keeps one spelling of its interior; the old wording is recorded as replaced because it did not say how two constructs that denote one value are counted. Add language/surface-form/text-literals: a character literal `'C'_TYPE` with suffix `u8` or `u32` is an integer literal of TYPE, a `u8` character at most 0x7F; each Unicode scalar value has one spelling per quote; a STRING is the `cvalue` of an `Array<u8, N>` constant holding its UTF-8 encoding, with N checked and never inferred, and is never an expression; item shape is decided at token classification and value judgments at check time with a repair. With this approval the owner added the escapes `\t` (U+0009) and `\r` (U+000D), so the node's escape decision names five escaped values and `\u{9}` and `\u{d}` become noncanonical; this is the only change from the amendment as shown. The [text-literals investigation](../research/investigations/text-literals/DESIGN.md) holds the evidence and rejected alternatives. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts

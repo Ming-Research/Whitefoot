@@ -2535,7 +2535,7 @@ fn every_pre_semantic_rejection_publishes_the_rule_its_stage_attributed() {
             ),
             (
                 "string.wf",
-                b"fn probe() -> result: unit pure {\n  let text: str = \"bad\\t\";\n  return unit;\n}\n",
+                b"fn probe() -> result: unit pure {\n  let text: str = \"bad\\x\";\n  return unit;\n}\n",
                 CompilationStage::Lexing,
                 "FORM-5",
             ),

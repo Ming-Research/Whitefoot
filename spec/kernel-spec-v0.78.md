@@ -109,8 +109,8 @@ Its canonical spelling is the candidate with the fewest ASCII bytes before `_TYP
 This selection is total, host-independent, and unique; in particular `0.0` and `-0.0` remain distinct.
 Other examples are `1.5_f64` and `6.022e23_f64`.
 `unit`.
-A text item is one raw ASCII-printable byte in U+0020..U+007E other than `\` and the quote that delimits its literal, or one escape: `\\`, that quote preceded by `\`, `\n`, or `\u{H}` with H one or more lowercase hexadecimal digits `[0-9a-f]`; no other byte is legal.
-A raw byte denotes its own scalar value, `\\` U+005C, the quote escape its quote, `\n` U+000A, and `\u{H}` the value of H read in base 16; [FORM-7] gives each value its one spelling.
+A text item is one raw ASCII-printable byte in U+0020..U+007E other than `\` and the quote that delimits its literal, or one escape: `\\`, that quote preceded by `\`, `\n`, `\t`, `\r`, or `\u{H}` with H one or more lowercase hexadecimal digits `[0-9a-f]`; no other byte is legal.
+A raw byte denotes its own scalar value, `\\` U+005C, the quote escape its quote, `\n` U+000A, `\t` U+0009, `\r` U+000D, and `\u{H}` the value of H read in base 16; [FORM-7] gives each value its one spelling.
 A character literal `'C'_TYPE` is exactly one text item C delimited by `'` with a mandatory suffix TYPE, `u8` or `u32`; it is an integer literal of TYPE, spelled as a character rather than in decimal, whose value is C's scalar value, e.g. `'a'_u8`, `'\n'_u8`, `'\''_u8`, and `'\u{e9}'_u32`.
 STRING `"..."` is a sequence of zero or more text items delimited by `"`, denoting the sequence of their scalar values; it is written in a `doc` entry [GRAM-2] and as a `cvalue` [CONST-2] and is not a member of `literal`, so no expression contains one.
 There are no boolean literals: `Bool` is a prelude enum (§14).
@@ -123,7 +123,7 @@ The lowercase spelling follows the primitive-type convention (TYPE-1: primitives
 [FORM-7] Literal well-formedness.
 A decimal integer literal `-?d_T` is legal where its signed value lies in the closed range of T (signed `[-2^(K-1), 2^(K-1)-1]`, unsigned `[0, 2^K-1]`) and it has no leading zeros: the single digit `0` is its own form, a leading `-` is legal for signed T, and `-0` is written `0`.
 A float literal is legal only when it has the unique canonical spelling selected by [FORM-5] and denotes a finite value of its stated TYPE.
-A text item [FORM-5] is legal only when it denotes a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF, in that value's one spelling: the raw byte for U+0020..U+007E other than `\` and the delimiting quote; `\\`, the quote escape, and `\n` for U+005C, the quote, and U+000A; and `\u{H}` with no leading zeros, the single digit `0` being its own form, for every other value.
+A text item [FORM-5] is legal only when it denotes a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF, in that value's one spelling: the raw byte for U+0020..U+007E other than `\` and the delimiting quote; `\\`, the quote escape, `\n`, `\t`, and `\r` for U+005C, the quote, U+000A, U+0009, and U+000D; and `\u{H}` with no leading zeros, the single digit `0` being its own form, for every other value.
 A character literal of TYPE `u8` is legal only when its value is at most 0x7F, so a `u8` character is always ASCII; TYPE `u32` admits every Unicode scalar value.
 An out-of-range integer, a leading-zero integer, a noncanonical float spelling, a float decimal that rounds to a non-finite value, a text item that is noncanonical or denotes no scalar value, or a `u8` character literal above 0x7F is a hard error at check time [SCOPE-2], and each text-literal rejection carries a repair where its value has a legal spelling [DIAG-1]; a literal never denotes a wrapped, truncated, saturated, or undefined value.
 
@@ -146,7 +146,7 @@ A single dot and every other numeric candidate retain the preceding maximal rule
 Raw formation deliberately retains broad candidates such as `1e+`, `1.00_f64`, `1.0E2_f64`, `'ab'_i32`, and `'\u{41}'_u8`; [FORM-5] and [FORM-7] decide membership and canonicality without rescanning or splitting them.
 - An operator form starts with `+`, `*`, `/`, or `%`, or with a `-` that is immediately followed by neither a decimal digit (numeric form, unchanged) nor `>` (the `->` compound, unchanged), and continues through the maximal `[a-z]*` suffix; the suffix must be empty or one of `wrap`, `defined`, `checked`, `sat` per the closed `infix_op` list, and any other suffix is a terminal-membership rejection.
 - A character form starts with `'` and a STRING form with `"`; each ends at the first unescaped occurrence of its own opening quote, after which a character form continues through the maximal `[A-Za-z0-9_]*` suffix.
-The interior of either consists only of raw bytes `0x20` through `0x7e` other than `\` and the form's own quote, or two-byte escapes: `\` followed by `\`, `n`, `u`, or the form's own quote.
+The interior of either consists only of raw bytes `0x20` through `0x7e` other than `\` and the form's own quote, or two-byte escapes: `\` followed by `\`, `n`, `t`, `r`, `u`, or the form's own quote.
 An escape consumes its backslash and follower together; the bytes that complete a `\u{H}` escape are ordinary interior bytes whose shape [FORM-5] decides.
 - `->`, `=>`, `..`, `==`, `!=`, `<=`, `>=`, and `::` are the eight compound punctuation tokens; each is formed exactly when its two bytes are adjacent, by the same maximal rule that forms `=>` from `=` and `>`.
 The byte `!` occurs in no other token: a `!` not immediately followed by `=` is a raw lexical defect.
@@ -1678,7 +1678,7 @@ Any valid non-ASCII scalar outside a quoted candidate cites [FORM-1] and spans i
 
 After an opening quote, `//` and `/*` are ordinary raw interior bytes and never comment prefixes.
 A final backslash cites [FORM-5] and spans only that backslash.
-A backslash followed by an ASCII byte other than `\`, `n`, `u`, or the candidate's own quote cites [FORM-5] and spans both bytes.
+A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the candidate's own quote cites [FORM-5] and spans both bytes.
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
 A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
 At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.

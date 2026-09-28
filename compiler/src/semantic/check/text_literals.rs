@@ -148,7 +148,7 @@ impl DeclarationInventory<'_> {
             Some(scalar) => {
                 let written = String::from_utf8_lossy(&bytes[item.start..item.end]);
                 SemanticIssueKind::InvalidTextItem {
-                    reason: "each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value",
+                    reason: "each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value",
                     mechanical_fix: Some(format!(
                         "write `{}` in place of `{written}`",
                         canonical_spelling(scalar, quote)
