@@ -1089,6 +1089,91 @@ rarely insert at the same place.
   sources. Reopen when the next parallel-lowering experiment has to change the
   split.
 
+- **Every waiting context runs on the one thread that runs the entry.**
+  The runtime keeps every context [WAIT-2] on the floor's thread with one
+  completion ring, so a server's I/O uses one core however many it has; the
+  [waiting runtime shape](../research/investigations/io-model/WAITS.md#experiment-1-the-waiting-runtime-shape-against-the-native-echo-servers)
+  that met the bar ran one ring and one set of contexts per core. Several
+  drivers need a ring each, a group count and a handle budget that another
+  thread can change, and a rule for which driver a started context joins.
+  Reopen when the echo comparison of a compiled context server against
+  `uring_echo` on the same cores shows the single driver as the limit.
+
+- **A context's operation with no readiness form still blocks the thread
+  every context shares.** With other contexts live, a socket receive, send
+  or accept waits in the ring or, with no ring, for its descriptor's
+  readiness. Every other host call a context makes that the ring does not
+  take runs on that thread and blocks it: a read or write of a pipe such as
+  standard input or output, a connect to a remote peer, and on a host with no
+  ring every open, close and directory operation. A context reading a pipe
+  that another context of the same program writes would stop both. Route such
+  operations to the helper pool whenever other contexts are live, with the
+  context parked on its record; validate with two contexts joined by a pipe,
+  on both routes.
+
+- **A readiness wait and a helper's completion are found by scanning.** A
+  record published on the thread that runs the contexts wakes its context by
+  address, but one a helper thread publishes is found by a pass over every
+  parked context, and with no ring every readiness wait is one `poll` over
+  every waiting descriptor. Both are linear in the waiting contexts per wake.
+  An `epoll` or `kqueue` registration, and a helper publication that queues
+  its waiter, would make them proportional to the completions. Reopen when a
+  many-context measurement on the helper or no-ring route attributes time to
+  either pass.
+
+- **Windows contexts have not been run.** Waiting functions lower to
+  resumable frames on every target and the context driver is shared C, but
+  the Windows host job (`io-hosts.yml`) compiles it without starting a
+  context, so neither the completion port route nor the readiness route has
+  run a context there. Add a context program to that job's runs; until then
+  treat a Windows context server as unvalidated.
+
+- **The compiled context server trails the hand-written shape at 64
+  connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
+  `waiting_echo --threads 1` at 64 connections with 64-byte messages in both
+  runs of Experiment 2, and the frame build 0.84 and 0.93 in the two runs of
+  Experiment 3, beside the stackful build's 0.84 and 0.97; the gap is not
+  attributed (`research/investigations/io-model/WAITS.md`). The candidates
+  are the park path, which waits in `epoll_wait` and then enters the ring
+  where the hand-written driver enters once, the ring locks taken on every
+  submit and reap pass, and the emitted receive and send path. Attribute with
+  a `perf` profile of both servers at 64 connections before changing the
+  runtime; reopen with the next change to the context scheduler or when a
+  program's rate depends on it.
+
+- **Frame memory for a context with small state is unmeasured.** Experiment 3
+  measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window
+  lives in `serve`'s frame, so frames and stacks both touched about 17 pages
+  per connection (70.0 and 68.0 KiB) and the comparison showed only the page
+  rounding around the window (`research/investigations/io-model/WAITS.md`,
+  Experiment 3). Where a stack still touches at least one page per context, a
+  frame should touch only its own bytes plus a 1 KiB context record and a
+  1 KiB first chunk, which the runtime could allocate as one block. Measure a
+  server whose per-connection state is a few hundred bytes, frames against
+  the stackful build, before claiming a memory advantage; reopen when a
+  program with small per-connection state, such as a proxy that shares its
+  buffers, is written.
+
+- **A 16-byte shift of a kernel's code changes its measured speed by 40
+  percent.** The `records` compute kernel's hot function,
+  `wf__par_seq_summarize_records`, runs about 21 ms at one worker when it
+  starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
+  instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
+  imported libc function adds a PLT entry before `.text`, which is enough to
+  move it. The stackful waiting-context floor's `mprotect`, since removed,
+  did that, and so did an unrelated `getpagesize` import linked beside the
+  base runtime. The measured
+  times were 20.7 ms for the base, 29.5 ms for the base with the extra import
+  and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
+  Xeon. `compute-regression` then reports `records` as adverse at two widths
+  for a change that leaves the kernel's generated code identical. Every later
+  runtime import will do the same. Align emitted functions and loop headers
+  (for example 64-byte function alignment, or building kernel objects with
+  `-mbranches-within-32B-boundaries`), measure the kernels under both
+  placements, and adopt whichever makes their time independent of the
+  offset. Reopen when the next compute-regression verdict names a kernel
+  whose generated code did not change.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -1103,25 +1188,6 @@ rarely insert at the same place.
   existing floor tests. Disabling probes is not an acceptable workaround.
   Defer this separate toolchain extension while the current native path is
   supported; reopen when another native Darwin consumer is required.
-
-- **Connection-level concurrency is not supplied by ordinary source order.**
-  A loop that accepts and serves connections in source order
-  completes the current handler before entering the next, so a handler waiting
-  on a silent peer holds up every later connection, and 1024 open connections
-  are not 1024 independently resumable handlers. The source is accepted and
-  compiled through ordinary calls. The retained multi-client TCP protocol can
-  wait forever when the first handler awaits EOF while clients close only
-  after every peer has finished; the
-  [C2 measurements](../research/experiments/io-completion-bench/C2-RESULTS.md)
-  record that noncompletion without a throughput result. No replacement
-  interface has been chosen. `WF_STACKS` is inert: the runtime has no
-  switchable-stack pool for it to size, so it is neither read nor validated.
-
-- **At most eight peers may wait at once on a host without a native ring.**
-  On Darwin, and under `WF_IO_NO_NATIVE_RING`, a peer wait beyond the eighth
-  concurrent one has no helper and queues with no timeout. The readiness-
-  driven adapter that would lift this, one poll over every queued descriptor
-  from inside the park, was never built.
 
 - **There is no source-level foreign-function boundary.** C enters only as a
   trusted linked definition of an ordinary declaration [PRE-2, SCOPE-3], which
@@ -1322,6 +1388,23 @@ rarely insert at the same place.
   the route only for a value bound from a call and not written since; validate
   with that case and the existing callee-route pins, and reopen when a writer
   report shows the route costing a round.
+
+- **The I/O research record and two runtime comments describe retired
+  states.** `research/investigations/io-model/NETWORK.md` says the hand-out
+  of a may-suspend call to a pool stack landed and serves `tcp_fanout.wf`'s
+  peers concurrently, which [PAR-4] contexts replace; `DESIGN.md` still says
+  canonical `make check` stops on a v0.37 `CANDIDATE` identity; the
+  concurrency catalog's retired PAR-3 text and staged-loop sketch predate the
+  current rule; the join comment in `compiler/src/backend/completion/bridge.h`
+  describes pool stacks rather than contexts; the `.wf` programs under
+  `research/experiments/io-completion-bench/programs/` use the retired
+  `&uniq` syntax and no longer compile; and `.github/workflows/io-bench.yml`
+  says the gate compiles those programs, which it does not. A reader following
+  any of them is misled about what runs. Mark the research passages
+  superseded with a pointer to `WAITS.md`, rewrite the `bridge.h` comment
+  against the context scheduler, and either migrate the benchmark programs
+  and wire their compilation or delete them with the workflow sentence;
+  reopen with the next edit of any of these files.
 
 ## Modules and libraries
 
@@ -1601,6 +1684,41 @@ each is resolved by a discussion and a tree change.
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
+
+- **Two waiting calls whose results are both used cannot overlap.** Minimal
+  witness: a waiting function makes `let a = read_at(…first file…);` and
+  then `let b = read_at(…second file…);` and combines `a` and `b`. The second
+  read starts only after the first has completed: a statement that contains
+  a waiting call has no overlap permission [PAR-1, PAR-2], and [WAIT-2]
+  lets a waiting call execute alongside later statements only as an
+  expression statement whose result it releases, so neither read can run
+  alongside the other. Before
+  kernel-spec v0.77, `--par` could hand such calls to two workers. Serving
+  independent connections does not need this; issuing several requests and
+  combining their answers does. The direction agreed with the owner
+  (`research/investigations/io-model/WAITS.md`, "The program means its
+  sequential execution") is `let a = mustpar f(…);` for a waiting `f`: run
+  the call as a context and join it where `a` is first used or where the
+  activation exits. That matches the join a `--par` call already has, and it
+  needs a result slot per context rather than one count per activation.
+  Reopen when a program needs to gather several I/O results.
+
+- **A context can neither log nor report back.** Minimal witness:
+  `tcp_contexts.wf` with `serve` writing one line to standard output when
+  its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
+  `stdout`, so moving it into the first marked `serve` leaves nothing to
+  move on the next iteration; a reference parameter is refused because a
+  call executing alongside later statements outlives its statement
+  [WAIT-2]; and the marked call's result is released in its context, so
+  the starter cannot log on its behalf. A second writer of one standard
+  output and the two ends of a channel both fail the sharing rule agreed
+  with the owner (`research/investigations/io-model/WAITS.md`, "Sharing
+  between concurrent activities"), because the order of their operations is
+  observed. The admitted candidates are a context writing an output of its
+  own, a record sink whose observation is the set of records rather than
+  their order, and a result that the starter joins where it uses it (the
+  entry above). Reopen when a context-serving program needs to log or
+  report.
 
 ## Ownership redesign (candidate x1) follow-ups
 

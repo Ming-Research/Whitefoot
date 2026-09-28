@@ -30,15 +30,21 @@ fn program_functions() -> &'static [&'static str] {
                 continue;
             };
             let name = signature.split(['(', '[', '<']).next().expect("fn name");
-            if name == "main" {
-                continue;
-            }
-            let needle = format!(" @wf_{name}(");
-            if module
-                .match_indices(&needle)
-                .any(|(at, _)| definition_start(module, at).is_some())
-            {
-                functions.push(source_function(module, &format!("wf_{name}")));
+            // A waiting function's body is its coroutine's `.resume` half
+            // once the host has split it; its own symbol keeps only the
+            // ramp that makes the frame. The entry waits too, so its body is
+            // `wf_main.resume` rather than inside the launcher.
+            for symbol in [format!("wf_{name}"), format!("wf_{name}.resume")] {
+                if name == "main" && symbol == "wf_main" {
+                    continue;
+                }
+                let needle = format!(" @{symbol}(");
+                if module
+                    .match_indices(&needle)
+                    .any(|(at, _)| definition_start(module, at).is_some())
+                {
+                    functions.push(source_function(module, &symbol));
+                }
             }
         }
         functions
@@ -105,6 +111,12 @@ fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'modu
         if pointer == "%wf.result" && first_parameter == Some(pointer) {
             return true;
         }
+        // A waiting function's resumed half runs in its frame, the coroutine
+        // form of its allocas, and reloads its destination parameter from
+        // that frame under the name the coroutine split gives the spill.
+        if pointer == "%wf.coro.handle" && first_parameter == Some(pointer) {
+            return true;
+        }
         if seen.contains(&pointer) {
             return false;
         }
@@ -115,6 +127,19 @@ fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'modu
         };
         if definition.starts_with("alloca ") {
             return true;
+        }
+        if let Some(address) = definition
+            .strip_prefix("load ptr, ptr ")
+            .and_then(|rest| rest.split(',').next())
+            .map(str::trim)
+            .filter(|address| address.starts_with("%wf.result.reload.addr"))
+        {
+            let address_prefix = format!("  {address} = ");
+            return function
+                .lines()
+                .find_map(|line| line.strip_prefix(&address_prefix))
+                .and_then(getelementptr_base)
+                .is_some_and(|base| base == "%wf.coro.handle" && first_parameter == Some(base));
         }
         if !definition.starts_with("getelementptr ") {
             return false;
@@ -302,6 +327,18 @@ fn aggregate_destination_provenance_ignores_commas_inside_gep_types() {
 }"#;
     assert!(!is_aggregate_destination(heap, "%wf.slot"));
     assert!(!is_aggregate_destination(heap, "%wf.inner"));
+    // A resumed waiting function reaches its destination through the frame
+    // spill the coroutine split makes; a pointer loaded from any other frame
+    // field is not the destination.
+    let resumed = r#"define internal fastcc void @f.resume(ptr %wf.coro.handle) {
+  %wf.result.reload.addr = getelementptr inbounds %f.Frame, ptr %wf.coro.handle, i32 0, i32 2
+  %wf.result.reload = load ptr, ptr %wf.result.reload.addr, align 8
+  %other.addr = getelementptr inbounds %f.Frame, ptr %wf.coro.handle, i32 0, i32 3
+  %other = load ptr, ptr %other.addr, align 8
+  ret void
+}"#;
+    assert!(is_aggregate_destination(resumed, "%wf.result.reload"));
+    assert!(!is_aggregate_destination(resumed, "%other"));
     assert!(aggregate_destination_trace(stack, "%wf.inner").contains("%wf.frame = alloca "));
 }
 

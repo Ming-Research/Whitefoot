@@ -1,4 +1,4 @@
-# Kernel Specification v0.76
+# Kernel Specification v0.77
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -187,7 +187,7 @@ vfield_list  := vfield ("," vfield)*
 vfield       := "public"? IDENT ":" type
 fn_decl      := "fn" IDENT generics? "(" param_list? ")"
                 "->" ( result_binding | "(" result_binding ("," result_binding)+ ")" )
-                effects contract_block? ( ";" | doc | "{" doc? stmt* "}" )
+                effects "waits"? contract_block? ( ";" | doc | "{" doc? stmt* "}" )
 result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
@@ -198,7 +198,7 @@ interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
 binding_decl  := "binding" TYPEID ":" (pack_use | type_path targs?) "{" doc? fn_bind* "}"
 fn_sig       := "fn" IDENT "(" param_list? ")"
                 "->" (result_binding | "(" result_binding ("," result_binding)+ ")")
-                effects contract_block?
+                effects "waits"? contract_block?
 pack_use     := TYPEID targs?
 function_arg := "fn" callee ("::" targs)?
 const_decl   := "const" IDENT ":" type "=" cvalue ";"
@@ -254,7 +254,7 @@ expr_stmt   := call ";"
 return_stmt := "return" expr ("," expr)* ";"
 loop_stmt   := "loop" LABEL? ("(" header_invariant ("," header_invariant)* ")")?
                "{" stmt* "}"
-for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ")"
+for_stmt    := "mustpar"? "for" LABEL? "(" for_binding ("," header_invariant)* ")"
                "{" stmt* "}"
 for_binding := IDENT "in" atom ".." atom
 header_invariant := "invariant" IDENT ":" affine_expr compare_op affine_expr
@@ -287,7 +287,7 @@ infix_op       := "+" | "+wrap" | "+defined" | "+checked" | "+sat"
                 | "%" | "%defined" | "%checked"
 compare_op     := "==" | "!=" | "<" | "<=" | ">" | ">="
 atom           := literal | "move" place | place | borrow_expr
-call           := "musttail"? callee ("::" targs)? "(" ( atom_list | fieldinit_list )? ")"
+call           := ("musttail" | "mustpar")? callee ("::" targs)? "(" ( atom_list | fieldinit_list )? ")"
 callee         := OPNAME | IDENT ("::" callee_path)? | ("pkg" | "std") "::" callee_path
                 | pack_use ("::" (IDENT | TYPEID))?
 callee_path    := IDENT ("::" callee_path)? | pack_use ("::" (IDENT | TYPEID))?
@@ -1180,7 +1180,7 @@ One quantity, one spelling: there is no reader operation beside the place form [
 
 ## 8. Functions, generics, contracts
 
-[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
+[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, whether it waits [WAIT-1], the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
 A function returns owned values only [GRAM-3, REF-3]; a position found by a search is returned as an index with its bounds relation in `ensures` [FN-9].
 Every result binder's spelling is mandatory but ignored by callable-signature equality and denotes no runtime storage.
 
@@ -1275,6 +1275,7 @@ A supplied function may refine the formal signature rather than match it.
 Parameter and result counts, modes, and exact types must agree in order; parameter and result binder spellings are not signature identity.
 The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
 The actual's own declaration must independently satisfy EFF-1 and exhibit exactly its own row under EFF-2.
+An actual that waits [WAIT-1] requires a formal that waits; a formal that waits admits an actual that does not.
 The actual's `requires` must be weaker than the formal's and its `ensures` stronger, and each actual's requirements and ensures have the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
 Weaker and stronger are decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual `requires` goal, the formal's `requires` set must discharge it under [MSR-4]'s disposition with the formal's own set as the only premises; for each formal `ensures` relation, the actual's `ensures` set must discharge it with the actual's own set as the only premises.
 The check is deterministic and terminating because both sets are finite and each query exhausts [ENT-6]'s fixed families.
@@ -1451,6 +1452,13 @@ Every still-live owned binding, parameters included, must admit its ordinary sco
 The checker represents all remaining releases explicitly [DIAG-2]; after capturing all actual values, those releases run in their ordinary order, then all parameters receive the captured arguments together and execution restarts at function entry. No caller continuation, result copy, or release remains after the transfer.
 A failed condition is a hard error citing FN-10 at the marked `call`, naming the failed condition and the offending argument or owner when applicable; a call to another function, including a mutual-recursion edge or a function-kind parameter, fails the direct-self condition.
 An unmarked call carries no tail-transfer guarantee. The guarantee bounds only stack retained by the marked transfer, not the stack or heap used by argument evaluation, release, or the rest of the program, and does not prove termination.
+
+[WAIT-1] Waiting functions.
+The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
+A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
+A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
+A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1], which [WAIT-2] permits an implementation to execute in a context of its own.
+The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
 ## 9. Effects
 
@@ -2044,8 +2052,8 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 ## 13. Execution overlap
 
-[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1] and [PAR-2].
-The kernel defines no thread construct. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
+[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
+The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
 Read/read overlap is admitted.
@@ -2056,8 +2064,9 @@ Allocation and release contribute no path [STOR-8].
 The paths of both statements are interpreted in the state before the first statement; the first statement's `ensures` maps the second's indices into that state, so an index that is live only after an append is not distinct from the append slot [WIN-2].
 Permission composes: any run of adjacent statements that pairwise may overlap may all overlap, and "pairwise" means every ordered pair in the run.
 A footprint element whose caller place the implementation does not resolve overlaps every place and denies permission.
+A statement that contains a waiting call [WAIT-1] has no overlap permission with any statement.
 
-Under a permitted overlap, bindings and every Whitefoot state place equal the source-order result.
+Under a permitted overlap, bindings and every Whitefoot state place equal the source-order result, and the two statements' host effects follow [HOST-1].
 That identity is conditional on contract compliance, exactly as [SCOPE-3]'s freedom from undefined behavior is conditional on its trusted computing base.
 It holds in every source execution, not in a typical execution or in some execution: accepted source contains no writer-reachable proof-failure branch, and every partial operation in the window has already been discharged by its owning static Goal.
 No overlapped pair reaches one state place except as the permission conditions above admit.
@@ -2090,6 +2099,7 @@ Among proved range references through which B writes, all whose resolved origins
 A footprint element whose caller place the implementation does not resolve overlaps every place, so an unresolved element denies permission rather than granting it.
 Effects and path overlap decide interference between iterations exactly as they do between [PAR-1] statements. An implementation retains each iteration's live storage for that complete extent.
 Every normal continuation of every statement of B reaches L's compiler-owned binder update, so no statement of B is a `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop enclosing L, or a `let_stmt` selecting `propagate_let_rhs` [FN-1, GIVE-1, ERR-3].
+B contains no waiting call [WAIT-1].
 
 Under a permitted overlap every state-place observable is the one produced by executing L's iterations in index order.
 Write a0 for the accumulator's value on the true header edge entering the first executed iteration, and t0 through tm for the values the second operand of its writes evaluates to, in the order those writes execute across L's iterations taken in index order.
@@ -2102,10 +2112,32 @@ That identity is conditional on contract compliance exactly as [PAR-1]'s is; eve
 Both endpoint atoms are still evaluated exactly once each in [FN-1]'s order before any iteration begins, and the binder still takes each value of the half-open range exactly once; this rule relaxes only the order in which iterations execute and the shape of the accumulator's combination, never the set of iterations, the values the binder takes, or either endpoint evaluation.
 The number of workers, the identity of the host thread that executes an iteration, the schedule, how the index range is divided, and whether any overlap or recombination was performed at all are not observable, and no rule of this specification is stated in terms of them.
 An implementation that overlaps nothing therefore conforms: this permission is never an obligation, and no program depends on it being taken.
-When an execution of one iteration does not reach its continuation, the overlapped execution produces exactly the observables the index-order execution produces before that point and produces none after it.
+When an execution of one iteration does not reach its continuation, the overlapped execution produces exactly the state-place observables the index-order execution produces before that point and none after it; the host effects of the other iterations follow [HOST-1].
 Exhaustion of the execution resources an implementation spends on overlapping is a resource condition under [SCOPE-3] and is not an observable of this rule.
 Permission over the iterations of a `for_stmt` written inside B is exactly this rule applied to that loop; no rule of this specification joins two index ranges into one iteration space.
 This rule uses [CAP-1]'s ordinary ownership boundary directly; it introduces no additional sharing classification for the accumulator or any other place.
+
+[HOST-1] Host effects are ordered through shared state and in no other way.
+Of two host operations that execute in one context, the earlier takes effect on the host before the later exactly when their footprints [PAR-1] overlap with at least one write [OWN-7]; an order between two host operations exists only through state both reach.
+Operations with disjoint footprints have no host order: an overlapped statement or iteration [PAR-1, PAR-2] and a context [WAIT-2] may produce host effects interleaved in any way with an independent statement, including while an earlier independent statement has not completed or never completes.
+A program that needs two host operations ordered passes both through one owner whose state both reach [EFF-1, EFF-5].
+
+[PAR-4] The optional `mustpar` atom on a `for_stmt` [GRAM-4] or on a `call` [GRAM-5] states that the marked construct proceeds independently of what follows it, and the checker must prove that statement:
+
+1. On a `for_stmt`, [PAR-2]'s permission holds for that loop.
+2. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee does not wait [WAIT-1], a next statement of the same block follows the marked statement and [PAR-1]'s permission holds for the two.
+3. On the `call` of an `expr_stmt` whose callee waits, [WAIT-2]'s permission holds for that statement.
+
+A `mustpar` in any other position, and a marked construct whose stated condition does not hold, is a hard error citing PAR-4 at the marked `for_stmt` or `call`, carrying the failed condition or the denied permission [DIAG-1].
+In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, and whether an implementation overlaps the marked construct remains its choice [PAR-1, PAR-2, WAIT-2].
+
+[WAIT-2] The meaning of an execution is its sequential execution: one control flow that executes every construct in the order it defines, starting with the entry [PROG-3].
+A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
+An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1] alongside the statements that follow it in its activation exactly when every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1]; the call then completes and releases its result before the activation leaves by any edge [FN-1, ERR-3].
+Such a call's footprint is the storage its arguments moved or copied into it [EFF-5], so no later statement of the activation overlaps it, and its host effects follow [HOST-1].
+A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, and how the host effects of different contexts interleave, is an input of the execution: two executions that receive the same outcomes in the same order execute every context identically.
+Which calls execute as contexts, where a context executes, and whether one context proceeds while another waits for the host are not observable, and no rule of this specification is stated in terms of them; an implementation that executes every call in order conforms.
+No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
 
 ## 14. Prelude and host modules (normative, counted)
 
@@ -2274,6 +2306,8 @@ pkg::process: [pkg::io, pkg::text, pkg::fs];
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
+A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
+Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 
 `std::io`, the record `io/module.wfm`:
@@ -2324,14 +2358,16 @@ public enum ReadStop {
   ReadFailed(public error: IoError);
 }
 
-public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) contract {
+public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
+
+public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) waits contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written.";
 
-public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) contract {
+public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
@@ -2419,39 +2455,39 @@ public enum ListStop {
 
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
 
-public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) contract {
+public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Reads bytes of file at file_offset into destination from start toward end with one host read; Ok carries the index after the last byte read, and ReadEnd reports the end of the file.";
 
-public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
+public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
-public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) doc "Opens the listing of the entries of directory.";
+public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits doc "Opens the listing of the entries of directory.";
 
-public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) contract {
+public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
 } doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
 
-public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) contract {
+public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for reading.";
 
-public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) doc "Closes file.";
+public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
 
-public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) doc "Closes directory.";
+public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) waits doc "Closes directory.";
 
-public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) doc "Closes the directory listing source.";
+public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the directory listing source.";
 ```
 
 `std::net`, the record `net/module.wfm`:
@@ -2487,31 +2523,31 @@ public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: So
 
 public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
 
-public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) doc "Opens a TCP listener bound to address.";
+public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
 
-public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) doc "Accepts the next connection on listener and returns it with the address of its peer.";
+public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) waits doc "Accepts the next connection on listener and returns it with the address of its peer.";
 
-public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) doc "Opens a TCP connection to address.";
+public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) waits doc "Opens a TCP connection to address.";
 
-public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(receive), writes(destination) contract {
+public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64) -> result: Result<u64, ReadStop> writes(receive), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, and ReadEnd reports that the peer finished sending.";
 
-public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(send) contract {
+public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(send) waits contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent.";
 
-public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) doc "Closes listener.";
+public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
 
-public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) doc "Closes the receiving half of a connection.";
+public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
 
-public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) doc "Closes the sending half of a connection.";
+public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
 ```
 
 `std::process`, the record `process/module.wfm`:

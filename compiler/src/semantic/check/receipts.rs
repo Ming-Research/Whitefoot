@@ -485,6 +485,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         allocates: _,
         call_separations,
         permission_separation_queries,
+        waiting,
         obligations: _,
         entailment: _,
     } = function;
@@ -493,7 +494,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{requirements:?}\n{requirement_places:?}\n\
          {postconditions:?}\n{body:?}\n{reference_origins:?}\n{body_disposition:?}\n\
-         {call_separations:?}\n{permission_separation_queries:?}"
+         {call_separations:?}\n{permission_separation_queries:?}\n{waiting:?}"
     )
 }
 

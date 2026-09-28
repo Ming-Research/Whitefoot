@@ -99,7 +99,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
   doc "The end 4104 exceeds the 4096-element destination range. FN-8 rejects directory_next through its ordinary end <= destination^.len requirement.";
   let entries = box_array_filled::<u8>(count: 4096_u64, value: 0_u8);
   let window = &entries.inner[0_u64..4096_u64];
@@ -135,7 +135,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once, with the rest marker covering the fields this program does not name; the referenced operation chain returns before the initial directory is explicitly closed.";
   let Inputs(cwd: root, handles: files, ..) = move inputs;
   let outcome = exercise(cwd: &root, files: &files);

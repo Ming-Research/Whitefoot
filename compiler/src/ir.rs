@@ -772,6 +772,17 @@ pub enum IrOperation {
         function: u32,
         arguments: Vec<IrValueId>,
     },
+    /// [PAR-4] starts `function`, a synthesized wrapper taking exactly
+    /// `arguments` by value and returning `Unit`, in a context of its own;
+    /// the activation continues without waiting for it. Defines `Unit`.
+    ContextStart {
+        function: u32,
+        arguments: Vec<IrValueId>,
+    },
+    /// [PAR-4] waits until every context this activation started has
+    /// finished. It stands before every exit of an activation that starts
+    /// one. Defines `Unit`.
+    ContextJoin,
     Integer {
         operation: IrIntegerOperation,
         operand_type: IrType,
@@ -1472,11 +1483,20 @@ pub struct IrFunction {
     pub(crate) counted_ranges: Vec<IrCountedRange>,
     pub(crate) overlaps: Vec<IrOverlap>,
     pub(crate) synthesis: Option<IrSynthesis>,
+    /// [WAIT-1] whether the function waits: its declaration writes `waits`,
+    /// or it is the wrapper a context start runs. The backend lowers such a
+    /// function to a resumable frame and every call of it to a transfer.
+    pub(crate) waits: bool,
 }
 
 impl IrFunction {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether the function waits [WAIT-1].
+    pub const fn waits(&self) -> bool {
+        self.waits
     }
 
     /// Why this function exists, or `None` for a source function.

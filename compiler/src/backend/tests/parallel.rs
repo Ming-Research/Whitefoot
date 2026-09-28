@@ -151,7 +151,7 @@ fn last_byte(v: u64) -> result: u8 pure {
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "A pure call handed out while a pure call written as an if condition runs.";
   let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1026,8 +1026,8 @@ fn the_bootstrap_selects_one_world_once() {
     let bootstrap = function_body(&overlapped, "@wf__main_body");
     assert!(
         bootstrap.contains("  %par.pool = call i32 @wf__par_pool_active()")
-            && bootstrap.contains("call void @\"wf_main\"(ptr %status,")
-            && bootstrap.contains("call void @\"wf__par_seq_main\"(ptr %status,"),
+            && bootstrap.contains("call ptr @\"wf_main\"(ptr %status, ptr %wf.parent,")
+            && bootstrap.contains("call ptr @\"wf__par_seq_main\"(ptr %status, ptr %wf.parent,"),
         "the bootstrap must branch between the two lowerings of the entry:\n{bootstrap}"
     );
     // These POSIX fallback definitions are an emitted-module property. The
@@ -1996,12 +1996,18 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(!module.contains("@wf__completion_file_"));
 }
 
-/// A published ordinary source body may call a linked I/O body before returning.
-/// The join observer selects an execution on another thread, rather than
-/// hoping the worker steals the single task before the caller reaches join.
+/// A handed-out call never reaches the host: a statement holding a waiting
+/// call has no overlap permission [PAR-1, WAIT-1], so the pair below, whose
+/// first member writes through the linked I/O library, is not offered.
+///
+/// Before v0.77 this pair was offered and the test observed the I/O body
+/// running on a worker thread under a join observer. A worker that waits
+/// strands every join beneath it (`docs/todo.md` recorded that defect), and
+/// the language now excludes it, so what that test observed can no longer be
+/// written; this is the observation that replaces it.
 #[test]
-fn an_ordinary_worker_helper_can_call_the_linked_io_library() {
-    let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure {
+fn a_waiting_helper_is_never_handed_out() {
+    let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 88_u8);
@@ -2020,7 +2026,7 @@ fn choose(value: u64) -> result: u64 pure {
   return value;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let first = write_byte(inputs: move inputs);
   let second = choose(value: 1_u64);
   if first != second {
@@ -2031,129 +2037,13 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
 "#;
     let module = emit_with_overlap(source);
     let helper = function_body(&module, "@wf_write_byte");
-    // KEPT AS WRITTEN for the lowering port: `write_once` now takes its source
-    // as the parameter kind `&[T]` [REF-4, TYPE-8], so its emitted argument
-    // list is whatever the range-reference ABI becomes. Only the `void` return
-    // (the `Result` destination) is asserted here.
-    assert!(helper.contains("call void @wf_std.io.write_once("));
-    assert!(!helper.contains("@wf__completion_"));
+    assert!(helper.contains("call i32 @wf_std.io.write_once.start("));
     let main = function_body(&module, "@wf_main");
-    let publishes = main
-        .lines()
-        .filter(|line| line.contains("call void @wf__par_publish(ptr "))
-        .collect::<Vec<_>>();
-    assert_eq!(publishes.len(), 1, "observe exactly one published task");
-    let thunk = publishes[0]
-        .rsplit_once(", ptr ")
-        .and_then(|(_, operand)| operand.trim().strip_suffix(')'))
-        .expect("the publication names its ordinary thunk");
     assert!(
-        function_body(&module, thunk)
-            .lines()
-            .any(|line| line.contains("call ") && line.contains("@wf_write_byte(")),
-        "the observed task must be write_byte, not its sibling"
+        !main.contains("@wf__par_publish(") && !main.contains("@wf__par_join("),
+        "a waiting call is never offered to a worker: {main}"
     );
-    assert_eq!(main.matches("call void @wf__par_join(").count(), 1);
-    // Only this caller's one publication and join enter the observer. The
-    // real acquisition, release, frame, thunk and native I/O body stay intact.
-    let observed_main = main
-        .replace(
-            "call void @wf__par_publish(",
-            "call void @wf_test_io_publish(",
-        )
-        .replace("call void @wf__par_join(", "call void @wf_test_io_join(");
-    let observed = format!(
-        "{}\ndeclare void @wf_test_io_publish(ptr, ptr)\ndeclare void @wf_test_io_join(ptr)\n",
-        module.replacen(main, &observed_main, 1)
-    );
-    let directory = test_directory();
-    let executable = build_linked_executable(&observed, Some(IO_WORKER_OBSERVER), &[], &directory);
-    for workers in ["0", "4"] {
-        let output = Command::new(&executable)
-            .env("WF_WORKERS", workers)
-            .env_remove("WF_SCHED_REPORT")
-            .output()
-            .expect("run the ordinary I/O task under the selected schedule");
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(output.stdout, b"X");
-        let expected = if workers == "0" {
-            "published=0 entered=0 completed=0 other_thread=0\n"
-        } else {
-            "published=1 entered=1 completed=1 other_thread=1\n"
-        };
-        assert_eq!(String::from_utf8_lossy(&output.stderr), expected);
-    }
-    std::fs::remove_dir_all(directory).expect("remove linked worker fixture");
 }
-
-/// The production publish only queues the thunk; it never calls it inline.
-/// Acquisition starts the configured workers before returning the real frame.
-/// With join withheld, the offering thread cannot consume that queued task,
-/// so another worker enters it and releases this test-only barrier. A refused
-/// acquisition skips both observer calls and fails the final positive ledger
-/// instead of waiting. A failed worker startup fails before publication. The
-/// workers=0 clone reaches neither observer at all.
-const IO_WORKER_OBSERVER: &str = r#"#include <pthread.h>
-#include <sched.h>
-#include <stdatomic.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-extern void wf__par_publish(void *frame, void (*run)(void *));
-extern void wf__par_join(void *frame);
-extern unsigned wf__sched_pool_running(void);
-extern uint64_t wf_prim_monotonic_us(void);
-static void *published_frame;
-static void (*original_run)(void *);
-static pthread_t offering_thread;
-static _Atomic unsigned published, entered, completed, other_thread;
-
-static void run_observed(void *frame) {
-    if (frame != published_frame || pthread_equal(pthread_self(), offering_thread)) abort();
-    atomic_store(&other_thread, 1);
-    if (atomic_fetch_add_explicit(&entered, 1, memory_order_release) != 0) abort();
-    original_run(frame);
-    atomic_fetch_add(&completed, 1);
-}
-
-void wf_test_io_publish(void *frame, void (*run)(void *)) {
-    if (atomic_fetch_add(&published, 1) != 0) abort();
-    if (wf__sched_pool_running() == 0) {
-        fputs("worker publication fixture: pool startup produced no worker\n", stderr);
-        abort();
-    }
-    published_frame = frame;
-    original_run = run;
-    offering_thread = pthread_self();
-    wf__par_publish(frame, run_observed);
-}
-
-void wf_test_io_join(void *frame) {
-    if (frame != published_frame) abort();
-    unsigned long long started = wf_prim_monotonic_us();
-    while (atomic_load_explicit(&entered, memory_order_acquire) == 0) {
-        unsigned long long now = wf_prim_monotonic_us();
-        if (!started || !now || now - started >= 5000000) {
-            fputs("worker publication fixture: no real worker entered within five seconds\n", stderr);
-            _Exit(86);
-        }
-        sched_yield();
-    }
-    wf__par_join(frame);
-}
-
-__attribute__((destructor)) static void report(void) {
-    fprintf(stderr, "published=%u entered=%u completed=%u other_thread=%u\n",
-        atomic_load(&published), atomic_load(&entered),
-        atomic_load(&completed), atomic_load(&other_thread));
-}
-"#;
 
 /// Omitting cheap offers must preserve the last join site and the ordinary
 /// evaluation of every removed member, including members inside a mixed run.

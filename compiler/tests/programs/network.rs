@@ -166,13 +166,25 @@ fn tcp_calls_use_ordinary_linked_declarations() {
         "close_receive",
         "close_send",
     ] {
+        // A waiting host function is linked as its start and its finish, the
+        // two halves a waiting frame suspends between
+        // (design/compiler/waiting-contexts.md); nothing calls a
+        // blocking whole.
         assert!(
-            llvm.contains(&format!("call void @wf_std.net.{name}(")),
-            "missing ordinary call {name}"
+            llvm.contains(&format!("call i32 @wf_std.net.{name}.start(")),
+            "missing ordinary start {name}"
         );
         assert!(
-            llvm.contains(&format!("declare void @wf_std.net.{name}(")),
+            llvm.contains(&format!("call void @wf_std.net.{name}.finish(")),
+            "missing ordinary finish {name}"
+        );
+        assert!(
+            llvm.contains(&format!("declare i32 @wf_std.net.{name}.start(")),
             "missing ordinary declaration {name}"
+        );
+        assert!(
+            !llvm.contains(&format!("@wf_std.net.{name}(")),
+            "a blocking call of {name}"
         );
     }
     assert!(!llvm.contains("@wf__completion_"));
@@ -302,15 +314,16 @@ fn the_fanout_loop_has_only_ordinary_counted_permission() {
     //
     // The serve loop's `close_listener` expression statement is judged by its
     // call's row, exactly as a let-bound call is, so the loop is no longer
-    // refused for that spelling. It is refused for what it does: the first
-    // condition it fails is the reported one, the `outcome` it carries between
-    // iterations, and `serve_one` also writes the shared listener and factory.
+    // refused for that spelling. It is refused for what it does. Before
+    // v0.77 the reported condition was the `outcome` it carries between
+    // iterations; `serve_one` now waits [WAIT-1], and a body holding a waiting
+    // call is refused by that condition first [PAR-2].
     let ledger = program_permission_ledger("tcp_fanout.wf");
     assert!(
         ledger.iter().any(|line| line.starts_with("PAR loop")
             && line.contains("denied")
-            && line.contains("condition 1:")
-            && line.contains("set outcome = reported;")),
+            && line.contains("condition 5:")
+            && line.contains("the waiting call serve_one(")),
         "{ledger:?}"
     );
     assert!(
@@ -389,6 +402,59 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
     }
 }
 
+/// Each accepted connection is served by a context of its own [PAR-4], so a
+/// peer is answered while every peer accepted before it is still silent.
+/// The peers speak in the reverse of their acceptance order: a server that
+/// served one connection at a time would wait on the first, silent peer and
+/// never answer the last, and the read timeout would fail this case. Both
+/// routes are required: with no ring, a context's socket wait is a readiness
+/// wait rather than a blocking call on the one thread every context shares.
+/// There are more peers than the helper pool has threads, so a runtime that
+/// sent those waits to blocking helpers would hold only as many silent peers
+/// as it has helpers and fail here too (`WAITS.md`, the readiness route).
+#[cfg(unix)]
+#[test]
+fn every_connection_is_served_in_its_own_context_on_both_routes() {
+    const PEERS: u8 = 12;
+    let llvm = compile_program("tcp_contexts.wf");
+    assert!(
+        llvm.contains("@wf__context_launch("),
+        "the accept loop starts contexts"
+    );
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let count = PEERS.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), count.as_bytes()]);
+        let mut streams = (0..PEERS)
+            .map(|_| connect_when_ready(port))
+            .collect::<Vec<_>>();
+        for peer in (0..PEERS).rev() {
+            let stream = &mut streams[usize::from(peer)];
+            stream
+                .set_read_timeout(Some(Duration::from_secs(20)))
+                .expect("bound the wait for this peer's answer");
+            let sent = [peer, peer + 1, peer + 2];
+            stream.write_all(&sent).expect("send this peer's bytes");
+            stream
+                .shutdown(std::net::Shutdown::Write)
+                .expect("finish this peer's sending");
+            let mut returned = Vec::new();
+            stream.read_to_end(&mut returned).unwrap_or_else(|error| {
+                panic!(
+                    "peer {peer} was not answered while earlier peers were silent \
+                     (native ring: {native_ring}): {error}"
+                )
+            });
+            assert_eq!(returned, sent, "peer {peer} (native ring: {native_ring})");
+        }
+        drop(streams);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+    }
+}
+
 /// Ordinary PAR-2 body-shape rules leave this fanout loop sequential; no
 /// suspension classification decides which calls may be handed out.
 #[cfg(unix)]
@@ -433,7 +499,7 @@ const CROSSED_CONNECTIONS: &str = r#"fn cross(first: std::net::TcpConnection, se
   return move a, move b;
 }
 
-fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnection, receive_first: Bool) -> result: u8 writes(factory) {
+fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnection, receive_first: Bool) -> result: u8 writes(factory) waits {
   let std::net::TcpConnection(receive: receive, send: send) = move connection;
   let failed = 0_u8;
   if receive_first {
@@ -470,7 +536,7 @@ fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnect
   return failed;
 }
 
-fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) {
+fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) waits {
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
@@ -502,7 +568,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   return 0_u8;
 }
 
-fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) {
+fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) waits {
   let receive_first = True();
   let send_first = False();
   match std::net::tcp_connect(factory: factory, address: address) {
@@ -548,7 +614,7 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: handles, stdin: input) = move inputs;
   let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
   std::fs::close_directory(factory: &handles, directory: move cwd);

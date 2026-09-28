@@ -112,41 +112,63 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, Back
             .map_err(|_| BackendFailure::TextEmission)?;
         arguments.insert(0, "ptr %status".to_owned());
     }
-    let result_type = if status.is_some() { "void" } else { "i8" };
-    let unit_assignment = if status.is_some() { "" } else { "%unit = " };
     let callee = source_symbol(main.name());
-    output.symbol(&callee);
+    // A waiting entry [WAIT-1] is a resumable frame: the launcher makes it in
+    // the root context with the no-op coroutine as its parent, and the root
+    // context runs every context until that frame has finished
+    // (design/compiler/waiting-contexts.md). Its result is always
+    // constructed through a destination, a unit one included.
+    let waiting = main.waits();
+    if waiting {
+        if status.is_none() {
+            output.push_str("  %unit.slot = alloca i8, align 1\n");
+            arguments.insert(0, "ptr %unit.slot".to_owned());
+        }
+        arguments.insert(1, "ptr %wf.parent".to_owned());
+        output.instructions(
+            "  call void @wf__context_root_begin()\n  %wf.parent = call ptr @llvm.coro.noop()\n",
+            &["wf__context_root_begin", "llvm.coro.noop"],
+        );
+    }
+    let result_type = if status.is_some() { "void" } else { "i8" };
+    // One call of the selected entry or of its sequential clone, named apart
+    // by `suffix` where both are emitted.
+    let entry_call = |output: &mut FunctionBody, symbol: &str, suffix: &str| {
+        output.symbol(symbol);
+        if waiting {
+            output.symbol("wf__context_root_run");
+            writeln!(
+                output,
+                "  %wf.root{suffix} = call ptr @\"{symbol}\"({})\n  call void @wf__context_root_run(ptr %wf.root{suffix})",
+                arguments.join(", ")
+            )
+        } else {
+            let assignment = if status.is_some() {
+                String::new()
+            } else {
+                format!("%unit{suffix} = ")
+            };
+            writeln!(
+                output,
+                "  {assignment}call {result_type} @\"{symbol}\"({})",
+                arguments.join(", ")
+            )
+        }
+        .map_err(|_| BackendFailure::TextEmission)
+    };
     if let Some(sequential) =
         crate::backend::emitter::sequential_entry_symbol(program, main.name())?
     {
         output.instructions("  %par.pool = call i32 @wf__par_pool_active()\n  %par.active = icmp ne i32 %par.pool, 0\n  br i1 %par.active, label %parallel, label %sequential\n", &["wf__par_pool_active"]);
         output.open_block("parallel".to_owned());
-        let assignment = if status.is_some() { "" } else { "%unit.par = " };
-        writeln!(
-            output,
-            "  {assignment}call {result_type} @\"{callee}\"({})",
-            arguments.join(", ")
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        entry_call(&mut output, &callee, ".par")?;
         output.push_str("  br label %returned\n");
         output.open_block("sequential".to_owned());
-        let assignment = if status.is_some() { "" } else { "%unit.seq = " };
-        output.symbol(&sequential);
-        writeln!(
-            output,
-            "  {assignment}call {result_type} @\"{sequential}\"({})",
-            arguments.join(", ")
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        entry_call(&mut output, &sequential, ".seq")?;
         output.push_str("  br label %returned\n");
         output.open_block("returned".to_owned());
     } else {
-        writeln!(
-            output,
-            "  {unit_assignment}call {result_type} @\"{callee}\"({})",
-            arguments.join(", ")
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        entry_call(&mut output, &callee, "")?;
     }
     if status.is_some() {
         output.instructions("  %code = call i8 @wf__ordinary_exit_code(ptr %status)\n  %exit = zext i8 %code to i32\n  ret i32 %exit\n", &["wf__ordinary_exit_code"]);

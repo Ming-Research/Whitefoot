@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
+
+Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts
+
+Owner-approved: The owner approved all five decision cards for PR #144 ("approve all", written in Chinese), including the rewrites of the first decisions of language/parallelism and language/system-interface, and chose to keep `factory_share` as recommended ("factory_share as you recommend", written in Chinese), on 2026-09-28.
+
+Summary: Apply the five reviewed amendments unchanged apart from one relative link depth. Add language/waiting: waiting is a function kind declared with `waits`, and a waiting function compiles to a resumable frame rather than a stack of its own. Revise language/parallelism: a program means its sequential execution, an implementation may run a waiting call statement with value parameters and a droppable result as a context, `mustpar` asserts the PAR-1, PAR-2 or WAIT-2 permission in every form, and decision 1's refused alternative becomes a keyword that grants overlap. Revise language/system-interface: host functions that may suspend declare `waits`, and host effects are ordered only through shared state. Add `factory_share` to language/system-interface/handle-factory, keeping one budget: a refusal caused by another context's acquisitions is one more outcome of an acquisition the host may already refuse, where a fixed split would move one credit per accepted connection out of a server's budget for good. Add compiler/waiting-contexts for the one-driver runtime, coroutine lowering, host-region memory, start and finish, and the readiness route. The [waiting investigation](../research/investigations/io-model/WAITS.md) holds the grounds and Experiments 1 to 3. Remove the five accepted amendments and their directory. This ruling authorizes no merge.
+
 ## 2026-09-27 Use postfix caret for explicit reference access
 
 Nodes: language/ownership/reference-validity, language/surface-form/borrow-lexicon, language/data-model, compiler/checker-facts, compiler/rejection-payloads, language/ownership, language/surface-form/result-propagation

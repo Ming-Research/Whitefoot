@@ -47,7 +47,7 @@ fn spell(destination: &[u8], value: u64) -> result: u64 writes(destination) {
   return cursor;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let total = spine(depth: 4000_u64, v: 1.0009765625_f64);

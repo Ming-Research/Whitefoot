@@ -141,6 +141,7 @@ mod tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations,
             entailment: FunctionEntailment::default(),
         }

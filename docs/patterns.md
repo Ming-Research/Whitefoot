@@ -466,6 +466,11 @@ The maintained [stdin_echo.wf](../tests/programs/stdin_echo.wf) shows an inline
 window passed to `read_next` and `write_once`, with the invocation's owners
 consumed explicitly.
 
+Every host function that acquires, transfers or closes waits, so a function
+that calls one writes `waits` after its effect row, and so does each function
+that calls that one, up to an entry that waits [WAIT-1]. Keep the computation
+in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
+
 ## P12. Use fixed arrays for immutable tables
 
 A named const may contain primitives, const-eligible structs, and
@@ -497,6 +502,34 @@ Maintained examples live under
 [tests/programs/compute](../tests/programs/compute) and
 [tests/programs/parallel](../tests/programs/parallel); their source contracts
 and ordinary sequential behavior remain the authority.
+
+When the parallelism is the point, mark it: `mustpar` on a counted loop or on
+the call of a statement asserts the permission, and a denied permission becomes
+a rejection that names the refused condition instead of a sequential run
+[PAR-4]. The marker grants nothing and is erased before lowering:
+
+```whitefoot
+mustpar for (at in 0_u64..count) {
+  set total = total +wrap at;
+}
+```
+
+To serve independent peers at once, mark each waiting call that serves one.
+Its callee takes only value parameters, so it carries its own connection and
+a factory drawing on the shared budget, and nothing after it can depend on
+it; the program still means its sequential execution, and the compiler runs
+each marked call in a context of its own, which the marking activation waits
+for before it returns [PAR-4, WAIT-2]:
+
+```whitefoot
+let factory = std::io::factory_share(factory: &handles);
+mustpar serve(connection: move connection, factory: move factory);
+```
+
+The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
+connections and serves each one this way. Host operations of different
+contexts, and of independent statements, have no order between them; pass two
+operations through one owner when their order matters [HOST-1].
 
 ## P14. Keep branchless classifier state in `Bool`
 
