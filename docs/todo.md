@@ -704,6 +704,12 @@ rarely insert at the same place.
   code and cross-program performance; do not ship a benchmark-specific native
   edit. Digest handoff remains a separate unmeasured lead. Reopen it when its
   change can be isolated without compensating spills or changed call depth.
+  The [ordinary spill-splitting screen](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-spill-splitting-unchanged-target-rejected-before-execution)
+  changed Apple Clang's actual `speed` default to partition mode at O3, but
+  retained all seven saves and identical target MIR/native code. It is rejected
+  before correctness or timing; reopening this option requires changed code
+  evidence, not another measurement of the same target. A general lowering
+  route remains unresolved; this result says nothing about the driver's O2 path.
 
   The [save-placement preflight](../research/experiments/container-representation/ECOSYSTEM.md#next-discriminator-constructor-saves-on-the-growth-edge)
   also finds different inlining and allocation elision in timed and observed

@@ -347,6 +347,136 @@ selected. A screen-script false positive was corrected in a recorded bounded
 continuation using unchanged frozen objects, without rebuilding or retrying
 performance measurements.
 
+### Next discriminator: ordinary register-allocation spill splitting
+
+The native save-placement result permits one code-generation screen, not a
+compiler policy or another timing trial. Use the frozen `both` timed input
+under `/private/tmp/whitefoot-vector-actual-ablation`, derived from raw LLVM at
+pin `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`, and the same Apple clang at
+`/usr/bin/clang` with `-O3`. Change only the candidate's native option
+`-mllvm -split-spill-mode=default`. This spelling selects partition mode in
+upstream LLVM; the unflagged Apple compiler's actual choice must be read from
+its control option dump, not inferred from that spelling or upstream defaults.
+The ordinary Whitefoot driver currently uses `-O2`; this screen retains the
+ecosystem's `-O3` conditions and establishes nothing about the driver's default.
+
+The scratch home is `vector-library/.build/split-spill-default-screen/` in the
+actual-ablation tree. Its one-shot runner, assembly, objects and inspection
+outputs serve this screen and retire after its concise result and reproduction
+recipe are recorded here. No maintained tool, source, library, ABI or language
+change is introduced. Preserve all original source/native inputs and the prior
+save-edge artifacts with hashes before and after the command. Inspect the shared
+guard owner before execution; a busy guard stops the attempt without retry.
+
+From `/private/tmp/whitefoot-container-library-complete`, run exactly once:
+
+```sh
+perl .github/run-check.pl vector-split-spill-default-screen python3 /private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/split-spill-default-screen/run.py --code-screen
+```
+
+The runner's two LLVM-to-assembly commands, with working directory
+`/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library`, are:
+
+```sh
+/usr/bin/clang -O3 -Wno-override-module -mllvm -print-all-options -mllvm -print-before=greedy -mllvm -print-after=virtregrewriter -mllvm '-filter-print-funcs=wf_vector_library_tail_work$instance$c3abe4db44181f7a' -x ir -S .build/actual-ablation/both/ecosystem/whitefoot-timed.ll -o .build/split-spill-default-screen/control.s
+/usr/bin/clang -O3 -Wno-override-module -mllvm -print-all-options -mllvm -print-before=greedy -mllvm -print-after=virtregrewriter -mllvm '-filter-print-funcs=wf_vector_library_tail_work$instance$c3abe4db44181f7a' -mllvm -split-spill-mode=default -x ir -S .build/actual-ablation/both/ecosystem/whitefoot-timed.ll -o .build/split-spill-default-screen/candidate.s
+```
+
+The shared printing options are diagnostic only. Record whether this installed
+toolchain actually produces both requested machine-IR snapshots; absent dumps
+are an instrumentation limitation, not permission for another compilation.
+Record the control and candidate's printed option values. If the actual default
+cannot be established, or is already partition mode, stop without a performance
+inference. Assemble each unedited output with `/usr/bin/clang -O3
+-Wno-override-module -x assembler -c INPUT -o OUTPUT`. Link using the exact timed
+command in `actual-ablation/both-native-build.stdout`, replacing only its WF
+object and output path; all 15 other object/archive inputs, order and flags stay
+fixed. The linked outputs under the scratch home are `control/vector-costs-timed`
+and `candidate/vector-costs-timed`. The unflagged control must reproduce the
+frozen timed object and linked code, sections, relocation meaning, addresses,
+CFI and unwind data, with any
+UUID/path/signature-only differences explicitly explained. Stop on an unexplained
+control difference.
+
+Inspect the target and every changed WF body, reporting instruction sequences
+and counts, calls, frame sizes, section bytes/layout, relocations, CFI and unwind
+changes. The target passes only if its seven unconditional constructor-constant
+saves disappear, the growth path still preserves the constants correctly, its
+vectorized direct-to-backing payload and existing grow/truncate calls remain,
+and no record snapshot or target frame growth appears. Every restore must be
+dominated by a valid save, or its value must be correctly rematerialized; empty
+and spare paths must not read unwritten slots. This compiler-option screen does
+not presume that other functions or addresses remain identical: enumerate all
+collateral changes for review rather than claim the earlier assembly edit's
+isolation. A failed target criterion stops without correctness execution or
+timing, and no alternative option or fallback is tried. Even a passing code
+screen requires independent inspection and a separate next-step decision.
+Record direct process statuses and separate code-generation, assembly, link and
+inspection costs. Run no program, correctness matrix or performance measurement.
+
+The [completed screen](vector-library/RESULTS.md#ordinary-spill-splitting-unchanged-target-rejected-before-execution)
+confirms the installed `speed` default and explicit partition selection, but
+leaves the target and its seven unconditional saves unchanged. It is rejected
+without correctness execution, timing or another option trial; no policy follows.
+
+### Next discriminator: checked append into reserved capacity
+
+The next candidate is ordinary checked library source, not another native flag
+or a manual assembly edit. A provisional `grow_vector_append_reserved` requires
+`len < cap` and `len < ceiling`, calls `place_back`, and publishes length plus
+unchanged capacity through the same narrow next-slot/length effects as
+`deque_push_back`. Existing Vector append continues to handle growth. This
+would let reserved batch builders and bounded-memory processing loops exclude
+growth through a verified callable contract; it changes no language rule or
+compiler mechanism. It is a candidate for evaluation, not an adopted public API.
+
+The smallest source comparison changes only the suffix helper's append and the
+capacity precondition, postcondition and loop invariants that justify it. The
+existing reserve, prefix contents, constructor, ordered consumption, number of
+cycles, capacity policy, seeds, digest and cleanup stay fixed. Mixed and growing
+operation chains still use ordinary append. This differs from the earlier
+runtime spare-branch rewrite: the candidate has no growth branch because its
+caller proves room. It also differs from the historical LLVM-only reserved
+append patch by requiring a checked source implementation and call sites.
+
+Before native construction, verify scalar, wide and owning-element calls,
+exactly filling capacity, empty iteration and complete cleanup; a caller without
+sufficient capacity must fail the written requirement. Explicit finite proof
+steps are allowed under the existing rules. Any implementation defect exposed
+by this witness requires its own regression test; a new rule or primitive is
+outside this discriminator. The library is embedded in whitefootc, so construct
+one actual candidate compiler with the gate profile and two build jobs under
+the shared guard, preserving the frozen control compiler and native inputs.
+Do not replace the standard library through an unrecorded environment path.
+Record compilation separately from checked-source and native execution costs.
+
+Use the existing Vector O3 harness and frozen `both` control. The native screen
+requires the executed suffix path to lose growth calls and the associated
+constant-preservation stores, retaining direct backing construction and ordered
+consumption, with no new hot helper or owner-sized staging. Inventory changed
+bodies, calls, frames and linked placement instead of claiming instruction-only
+isolation. If this screen passes, both complete behavior matrices, exact
+instrumented ledgers and their checksum/cleanup negatives must pass before any
+timing. Instrumented allocation counts remain qualified separately from timed
+allocation traffic. A reduced exact-fit owning witness must also establish the
+new callable boundary independently of the scalar/wide timed payloads.
+
+Only after those screens may one complete control/candidate pair use the
+established work, repeats, cohorts and reducers. Retain every cell and raw
+sample; target passes, paired gains, overlaps and unstable cells are separate.
+A useful-cell regression prevents selection on that pair. A successful source
+variant still needs normal library tests, cross-family checks and a reviewed
+amendment before final adoption. No performance outcome is assumed.
+
+Native adapters retain Rust `with_capacity`/`push` and C++ `reserve`/`emplace_back`;
+they already reserve for the same trace. Do not add checks or artificial work to
+those controls. Rust's similarly named
+[`push_within_capacity`](https://doc.rust-lang.org/std/vec/struct.Vec.html#method.push_within_capacity)
+is an experimental fallible interface, not the stable comparator's proved
+operation. Report this comparison as a library/source variant using existing
+proofs, preserving the practical baseline, not as same-source compiler-only
+attribution or a result for unreserved callers.
+
 ### Final-code attribution before optimization
 
 The frozen baseline's O3 timed images, not just the emitted unoptimized LLVM,

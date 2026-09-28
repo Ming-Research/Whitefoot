@@ -4494,3 +4494,50 @@ The reproduction patch is
 `5a9954cdcbab5e81471081e88278d192036a1ad8e6e09924f5fe9802b2856267`;
 the retained witness ledger is
 `3eeb59d1360691ee9c9d7b0b122ffa3f62ad42c9b9512e32176c3815bf2d9cb9`.
+
+### Ordinary spill splitting: unchanged target, rejected before execution
+
+The [registered code-only screen](../ECOSYSTEM.md#next-discriminator-ordinary-register-allocation-spill-splitting)
+used frozen `both` timed IR at O3 with Apple Clang 21.0.0 (`clang-2100.3.34.2`).
+The installed option dumps establish control `speed (default: speed)` and
+candidate `default (default: speed)` for `-mllvm -split-spill-mode=default`.
+This tests the ecosystem's O3 build, not ordinary whitefootc's O2 default.
+
+The target fails the screen: wide `vector_library_tail_work` remains exactly
+108 instructions with a 288-byte frame and all seven unconditional saves.
+Its literal loads, vectorized direct-to-backing payload, grow/truncate calls,
+restores and CFI are unchanged. Both requested MIR snapshots were produced;
+the combined before-greedy/after-virtual-register-rewriter dumps are
+byte-identical between arms. Before greedy there are no spill-slot `STRQui`
+instructions; after rewriting, fourteen already occupy the loop preheader.
+This locates their introduction within that pass interval, not one exact pass.
+
+All 57 emitted WF definitions were inspected. Only wide `vector_library_work`
+changes: `lsr x19, x23, #1` moves before `str x23, [sp, #176]`, exchanging two
+adjacent instructions at linked addresses `0x10000cb50` and `0x10000cb54`.
+It retains 441 instructions, its 688-byte frame, calls and CFI. Section layouts,
+symbol addresses, relocation meanings and unwind records match; every other
+image byte matches after UUID/signature masking. The control object and image
+are byte-identical to frozen `both`, and all 15 non-WF link inputs are unchanged.
+
+All 11 subprocesses exit 0; the screen and global guard exit 1 for the failed
+target criterion. The guard reports 2.50 seconds. Recorded phase costs are:
+
+| Phase, both arms | Seconds |
+|---|---:|
+| Tool identity | 0.023153 |
+| LLVM code generation | 0.324445 |
+| Assembly | 0.114754 |
+| Linking | 0.127043 |
+| Native disassembly | 0.852760 |
+| Final code comparison | 0.065385 |
+
+No correctness execution, timing, retry or alternative option followed.
+The original 765 source inputs / 148 artifacts and prior save-edge 81 / 62 / 25
+artifact sets match before and after. The new 53-artifact freeze is under
+`vector-library/.build/split-spill-default-screen/` in
+`/private/tmp/whitefoot-vector-actual-ablation`; `option-evidence.json`,
+`assembly.diff`, `phase-times.json` and `result.json` retain the evidence.
+The criterion retains exact reproduction commands and linked output paths.
+Root independently confirmed the findings. This option is rejected for the
+requested mechanism; no compiler or language policy changes.
