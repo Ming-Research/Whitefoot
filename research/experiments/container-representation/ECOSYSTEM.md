@@ -151,7 +151,7 @@ five families on one revision. Their supported conclusions are:
 |---|---|
 | Vector | The [actual-compiler factor trial](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration) finds that function-actual hints change no native code. Terminal traversal lowers elapsed time 6.26–30.90% in eight qualified scalar cells and 4.02–10.65% in five wide cells. Adverse wide suffix-one medians and strict wide empty-control losses remain, so it selects no production policy. These are isolated factor results, not cumulative gains from every change. |
 | Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) lowers elapsed time 64.20–64.74% for scalar reverse churn at counts 16, 256 and 4096 in a matched pair. Other cells show no established improvement; scalar growth at 256 and 4096 remains below target. |
-| HashMap | The [occupancy series](map-library/RESULTS.md) has geometry and allocation observations, but no occupancy timing yet. Current lookup/find calls already inline; the fixed-eight result cannot attribute this map's remaining gap. |
+| HashMap | The [fixed-population occupancy sweep](map-library/RESULTS.md#frozen-source-occupancy-continuation) reduces missing-lookup complete-trace time by about 64% for scalar payloads and 72–74% for wide payloads when WF slots increase from 4096 to 8192. The preselected requested-memory comparisons retain substantial native deficits; wide replacement remains about 2.2 times direct C at 8192 slots. This establishes capacity sensitivity, not an adopted policy or an isolated probing cost. |
 | PriorityQueue | The [four-ary trial](priority-library/RESULTS.md) does not remove the wide-value deficit. Movement and result handling remain hypotheses, not measured cost shares. |
 | OrderedMap | [Node occupancy and wide cleanup](ordered-library/RESULTS.md) provide concrete code leads; their independent time costs and a successful production change remain unestablished. |
 
@@ -259,11 +259,11 @@ requirements, native-drift qualifications and refusal of any qualified
 useful-cell loss remain unchanged. This clarification precedes timing and
 does not select the candidate.
 
-In parallel, complete the already registered HashMap occupancy discriminator
-under the same source/compiler pin, with a fresh separate build and preserved
-practical samples. Its family report owns the capacity-sensitivity criterion
-and memory-pair selection; choose those pairs from fresh geometry before
-reading timing. No load-policy, layout or indexing change enters that sweep.
+The parallel HashMap occupancy discriminator used the same source/compiler
+pin, a fresh separate build and preserved practical samples. Its family
+report records the completed sweep, including memory pairs selected from
+fresh geometry before timing. No load-policy, layout or indexing change
+entered that sweep; it does not replace the practical matrix above.
 
 ### Actual compiler factor isolation: criterion and result
 

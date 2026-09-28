@@ -1054,3 +1054,62 @@ before timing. Compare both payloads, all five paths, all three populations
 and both cohorts under the [registered target criterion](../ECOSYSTEM.md#optimization-criterion).
 Preserve allocation observations and the original baseline; a local copy or
 comparison-count reduction alone does not complete a cell's performance target.
+
+### Prospective drained-node cleanup source trial
+
+This criterion precedes construction and measurement; no result or production
+change is selected. Freeze source at `7abd6bb34746b7b983b83103c68ee429b24859bb`
+and compiler SHA-256
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+First reproduce the drained-node copy in fresh ordinary std native code:
+the older measured image above is a lead, not evidence about this compiler.
+
+The sole library change detaches the leading link after the unchanged entry
+loop, then consumes the drained node with both member windows empty:
+
+```whitefoot
+let leading = slots_new::<Box<OrderedNode<K, V>>, 1>();
+append(destination: &leading, source: &node.inner.leading);
+let OrderedNode(leading: empty_leading, entries: empty_entries) = move node.inner;
+free_empty(window: move empty_leading);
+free_empty(window: move empty_entries);
+ordered_map_free_link::<K, V, F, fn consume>(link: move leading, env: env);
+```
+
+The new capacity-one link fits the zero-or-one child and receives its owner;
+the old link becomes empty. Entry callbacks and following-child recursion
+retain their order, and parent release still precedes leading-child recursion.
+No representation, allocation policy, public contract, proof or lowering changes.
+Predict removal of the 504/4,224-byte drained-node copies and the large wide
+cleanup frame. A surviving copy/frame, changed owner/order, or unchanged native
+code refuses this candidate before correctness execution or timing.
+
+`LIBRARY_SOURCE` is only a Make dependency/identity: the frozen compiler embeds
+std sources. Use identical ordinary `pkg::collections::ordered_map` carriers
+with the unchanged interface and callers, remapping only the import prefix.
+Before candidate attribution, require fresh pkg-baseline/std native equivalence
+for both trace bridges and every reachable map helper; normalize only stable
+symbol names, function ordering and relocation addresses. A material code
+difference refuses the carrier. Reuse verified identical native-peer objects.
+
+After the code screen, run the paired maintained
+[owner program](../../../../tests/programs/containers/ordered-map-program.wf)
+in both lowering modes with ordinary release and the existing
+[103-allocation observer](../../../../tests/programs/containers/container-allocation-observer.c).
+Keep its nested/nodrop, replacement/refusal, hostile-comparator and structural
+mutation coverage. Add an independent 16-key cleanup chronology witness:
+ascending insertion gives callbacks `7,15..8,6..0`, releasing the right node,
+then the parent between callbacks 8 and 6, then the left node. Distinct callback
+and release-order mutations must fail it. Existing unordered ledgers do not
+establish that chronology. Run existing normal/retained and structural checks,
+plus ecosystem timed/accounting oracles, checksum/cleanup fault controls and
+the complete allocation matrix; require paired allocation records to match.
+
+Then compare all 30 complete-trace cells at `ECO_SCALE=64`, with unchanged
+callers, compiler, flags, peers and five retained samples per cohort. Preserve
+both arms and every sample. A strict gain/loss requires disjoint paired ranges
+in the same direction in both cohorts, all paired samples at least 1 ms and
+cohort median-ratio spread at most 10%; overlap remains inconclusive. Selection
+requires a qualified useful-cell gain and no strict qualified useful-cell loss.
+The separate [standard-peer target](../ECOSYSTEM.md#optimization-criterion)
+still applies per cell; a cleanup gain alone does not complete that target.

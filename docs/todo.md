@@ -896,6 +896,15 @@ rarely insert at the same place.
   outcomes and fresh same-revision controls; do not regenerate old evidence
   merely to make a stale target pass. Defer that port because the practical
   Rust/C++ comparison does not select a historical candidate.
+  The OrderedMap Makefile's `LIBRARY_SOURCE` override also changes only
+  prerequisites and recorded identities: the current CLI embeds its `std`
+  records, so changing that path does not select a candidate implementation.
+  A current source experiment must use a rebuilt CLI or an explicit ordinary
+  package containing the selected body, with the same package transport in
+  both arms and a baseline code comparison. Otherwise an apparent A/B run can
+  silently compile the baseline twice. The drained-node experiment reopens
+  this issue; clarify the recipe and prove which source reached emission
+  before using an override for performance evidence.
 
 - **Runtime-content swap exchanges only headers, losing the allocation extent.**
   [OP-11 and TYPE-9](../spec/kernel-spec.md) admit the implicit `swap` instance
@@ -2036,11 +2045,16 @@ condition under which it is taken up.
   aligned-hash misses cost 7.17–14.65 times the three native maps, while WF
   is faster than direct sparse C (0.76–0.79 times). Native reserve semantics
   and capacity rounding differ; WF's wide steady backing uses 1,114,128
-  requested bytes versus about 2.17 MB for Rust/Abseil. First vary occupancy
-  in unchanged WF source and record each native capacity geometry, then test
-  a justified probing alternative. This can discriminate load policy from
-  probing/layout before choosing extra metadata, a second representation or
-  a compiler primitive. Keep requested memory and both hash series visible.
+  requested bytes versus about 2.17 MB for Rust/Abseil. The subsequent
+  [unchanged-source occupancy sweep](../research/experiments/container-representation/map-library/RESULTS.md#frozen-source-occupancy-continuation)
+  fixes 3584 entries and establishes complete-trace miss reductions of about
+  64% for scalar payloads and 72–74% for wide payloads at 8192 versus 4096
+  slots. Its six memory pairs were selected before timing; substantial native
+  deficits remain, and six of their 24 path comparisons are unstable. This
+  jointly changes placement, backing size and setup/cleanup, without isolating
+  a probing share. Next compare a justified ordinary-library probing/layout
+  candidate before choosing extra metadata, a second representation or a
+  compiler primitive. Keep requested memory and both hash series visible.
 
   Separately, wide replacement costs 1.95–2.25 times direct C across the
   measured populations/hash series, large wide fill/free 1.50–1.52 times,

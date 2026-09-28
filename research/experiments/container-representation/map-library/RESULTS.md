@@ -356,8 +356,9 @@ The new geometry and occupancy outputs use a separate build directory and,
 after review, remain beside the existing raw files with their source identity
 and qualifications. These modes and their data are retained with this capacity
 discriminator, or removed when a maintained successor preserves its evidence.
-The untimed geometry and accounting stages have passed; their observations
-and the memory-pair selection are recorded below before timing.
+The initial untimed geometry and accounting stages passed; their observations
+and memory-pair selection are recorded below. The subsequent frozen-source
+continuation supplies the occupancy timing without changing this criterion.
 
 Build and run these opt-in stages separately under the repository host guard,
 with a frozen baseline `WHITEFOOTC` and the pinned `ABSEIL_PREFIX`:
@@ -386,7 +387,7 @@ practical reducer's complete-matrix mode does not accept this separate
 capacity-sweep contract; reduce it by payload, request, path, variant and
 cohort while keeping all four requests visible.
 
-### Observed capacity geometry and selected memory pairs
+### Initial capacity geometry and selected memory pairs
 
 The guarded build used the frozen compiler from
 `c75520e9d59d74e19ba158e1cae5f394b3a2d874`, whose executable SHA-256 is
@@ -464,6 +465,151 @@ At `ECO_OCCUPANCY_WORK=1048576`, each row executes one trace with 292
 rounds; all implementations and capacities agree on each payload/path
 checksum. This validates the proposed timing workload without supplying a
 timing result.
+
+### Frozen-source occupancy continuation
+
+The single registered sweep ran on 2026-09-28, 10:00:16–10:01:08 UTC. It
+establishes sensitivity of missing lookup to capacity in both payloads;
+it does not select a load policy or explain all remaining native deficits.
+All library and harness inputs match
+`7abd6bb34746b7b983b83103c68ee429b24859bb`. Construction observed documentation
+revision `c8fd35d7b185935bdcef56c50962e480a066a131`; the before/after timing
+identity observed `22096b01dbd508d47643a1211a8feb950b26a3f1`, also without a
+production-input change. The copied compiler SHA-256 is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+The fresh build directory is
+`/private/tmp/whitefoot-map-occupancy-7abd6bb/build`, with
+`ABSEIL_PREFIX=/private/tmp/whitefoot-abseil-20260817.0-install`.
+
+The [raw samples](ecosystem-occupancy-samples.csv) contain all 3,520 expected
+rows, SHA-256
+`5846e907d2656f52a096c65c225d1de04dbca2e8cd483cc128ce9fa1db296dc3`.
+The [identity and reduction ledger](ecosystem-occupancy-identities.json)
+retains exact commands, direct exits and wall times, source/compiler/toolchain
+and object/image hashes, dependency recovery, all memory pairs and numerical
+reductions. Its SHA-256 is
+`a7af72337b27bbde197ee3a42de468fb547ba923eb2ea350bc97ad30c45cc85b`.
+These two artifacts belong to this discriminator and remain with it or an
+evidence-preserving successor; the older practical samples remain unchanged.
+
+The timed image SHA-256 is
+`63a4ba532f15aceb6d37e54c1f0cbf145d31ea85b91084b39e7526a17a51ee32`;
+the accounting image is
+`87fcd289557208ea247f588c0a93ee3b965e2bd7b7b4b88c1880036fccf56023`.
+The 56 recorded repository inputs, copied CLI, 29 construction artifacts,
+six recorded toolchain binaries and 718 installed dependency files matched
+their frozen hashes before and after timing. Apple Clang 21.0.0, Rust 1.98.1,
+libc++ `220106` and Abseil `20260817.0` retain the recorded flags. All ten
+fresh ecosystem object/archive files, including both WF objects, match the
+retained current-build counterparts byte for byte. Fresh geometry, ordinary
+accounting and occupancy accounting match the three existing CSV files
+exactly; no duplicate accounting dataset is added.
+
+Dependency recovery preceded construction. The retained Abseil installation
+lacked package metadata and most headers. Native CMake configuration of the
+exact release, with Release/C++20/tests-off/install-on settings, and its local
+install script supplied 373 missing include files and 216 generated `.pc`
+files from the original install inventory. The generated `options-pinned.h`
+was installed through that native script. Every one of the 129 existing
+installed files, including all 94 static libraries, remained byte-identical;
+no Abseil library was rebuilt or replaced. Recovered package Cflags, static
+libraries and version exactly match the retained configuration before the
+existing `-framework CoreFoundation` addition.
+
+The newly fetched official commit archive has SHA-256
+`7f4240fe135c0b0dcdd2efa664f1393b1da7e25031e17560515f452182aa0c5e`,
+which differs from the historical `db5de644…` construction record. The
+fresh tag archive and exact commit archive have identical 1,602 regular-file
+payloads, and all 35 surviving installed headers match that source. This
+establishes the recovery inputs without validating the absent historical
+archive or explaining its different checksum. The ledger retains both fresh
+archive identities and this qualification, along with the initial guard
+refusal, failed dependency check and failed sandbox network attempt.
+
+Each stage was separate, used the maintained target under the host guard,
+and returned status 0 after dependency recovery:
+
+| Target | Wall time, seconds | Observation |
+|---|---:|---|
+| `ecosystem-build` | 9.451 | Fresh ordinary and accounting images |
+| `ecosystem-check` | 1.584 | 18,390 traces per image; checksum, cleanup and eight omitted-reserve controls rejected |
+| `ecosystem-occupancy-check` | 0.962 | 1,440 traces per image; 140 geometry observations; seven geometry controls rejected |
+| `ecosystem-geometry` | 0.331 | 140 filled-map observations; memory pairs selected before timing |
+| `ecosystem-account`, work 262144 | 3.676 | 420 balanced allocation rows, zero final live bytes |
+| `ecosystem-occupancy-account`, work 1048576 | 2.521 | 160 balanced allocation rows, zero final live bytes |
+| `ecosystem-occupancy-measure`, work 1048576 | 51.879 | One sweep, both cohorts, no rerun |
+
+The measurement has 320 groups of eleven samples, with the required reversed
+capacity and implementation order. The existing independent key-ID/content/
+outcome oracle checked every warmup and timed trace; all 88 semantic checksum
+groups agree across implementations, capacities and cohorts. Sample zero
+also agrees with every occupancy-accounting row. Every duration exceeds
+1 ms; the minimum is 2.098 ms. Instrumented allocation/geometry ledgers remain
+separate observations and do not automatically establish timed allocation
+traffic. Different sample seeds change placement; within-group ranges are
+not an isolated measure of timing noise.
+
+Each pair below is cohort 0 / cohort 1. The first numeric column reports WF's
+4096-slot median in milliseconds; the other columns divide the same payload
+and path's larger-capacity WF median by that reference. A dagger marks cohort
+ratio spread above 10%, calculated as `100 * (max ratio / min ratio - 1)`;
+those comparisons remain descriptive. All four requested capacities are
+retained, with population fixed at 3584.
+
+| Payload | Path | WF 4096 median, ms | WF 5120 / 4096 | WF 6144 / 4096 | WF 8192 / 4096 |
+|---|---|---:|---:|---:|---:|
+| 8 B | `hit` | 12.573 / 11.489 | 0.805 / 0.618 † | 0.576 / 0.456 † | 0.380 / 0.428 † |
+| 8 B | `miss` | 34.279 / 34.329 | 0.541 / 0.471 † | 0.447 / 0.417 | 0.361 / 0.358 |
+| 8 B | `replace-old-value` | 12.912 / 12.637 | 0.707 / 0.724 | 0.599 / 0.583 | 0.510 / 0.496 |
+| 8 B | `edit-first-word` | 12.000 / 11.310 | 0.743 / 0.651 † | 0.573 / 0.570 | 0.465 / 0.475 |
+| 256 B | `hit` | 12.262 / 12.083 | 0.746 / 0.718 | 0.506 / 0.597 † | 0.434 / 0.405 |
+| 256 B | `miss` | 40.455 / 40.482 | 0.491 / 0.476 | 0.427 / 0.424 | 0.279 / 0.258 |
+| 256 B | `replace-old-value` | 75.372 / 76.889 | 1.007 / 0.993 | 0.973 / 0.994 | 0.963 / 0.980 |
+| 256 B | `edit-first-word` | 13.186 / 14.142 | 0.763 / 0.645 † | 0.714 / 0.510 † | 0.481 / 0.434 † |
+
+The primary scalar miss medians fall to 12.375 / 12.284 ms, reductions of
+63.899% / 64.217%, with 0.888% cohort-ratio spread. Wide miss medians fall to
+11.269 / 10.460 ms, reductions of 72.144% / 74.161%, with 7.806% spread.
+Both meet the registered reduction, duration and stability criterion. The
+change jointly affects occupancy, bucket placement, backing size and complete
+setup/cleanup work; these percentages cannot be assigned solely to probing
+or to emitted instructions. Nine of the 24 larger-capacity comparisons fail
+the spread screen. Wide replacement at 5120 also has mixed median direction;
+its 6144/8192 reductions remain below 4% in either cohort.
+
+Fresh geometry selected exactly the six requested-memory pairs above before
+timing: scalar WF 6144 for all three native peers; wide WF 8192 for Rust and
+Abseil, and WF 4096 for C++. Each native request remains 4096, and all six
+byte ratios remain within 1.10. The following table contains every path for
+those pairs, again cohort 0 / cohort 1 and with the same dagger qualification.
+It compares complete-trace medians, not an isolated lookup or allocation cost.
+
+| Payload | Path | WF / Rust | WF / C++ unordered | WF / Abseil |
+|---|---|---:|---:|---:|
+| 8 B | `hit` | 2.727 / 1.978 † | 1.494 / 1.122 † | 2.657 / 1.932 † |
+| 8 B | `miss` | 5.813 / 5.508 | 3.656 / 2.807 † | 5.999 / 5.555 |
+| 8 B | `replace-old-value` | 1.757 / 1.670 | 0.878 / 0.850 | 1.430 / 1.354 |
+| 8 B | `edit-first-word` | 2.397 / 2.207 | 1.272 / 1.124 † | 2.374 / 2.182 |
+| 256 B | `hit` | 1.677 / 1.544 | 2.234 / 2.222 | 1.849 / 1.704 |
+| 256 B | `miss` | 3.972 / 3.697 | 6.922 / 7.548 | 4.140 / 3.721 † |
+| 256 B | `replace-old-value` | 2.678 / 2.728 | 2.556 / 2.521 | 2.564 / 2.622 |
+| 256 B | `edit-first-word` | 1.775 / 1.676 | 1.764 / 1.846 | 2.017 / 1.919 |
+
+Six requested-memory comparisons fail the spread screen. The scalar C++
+replacement comparison has faster WF medians but does not separate every WF
+sample below every C++ sample in both cohorts; it is no strict target pass.
+The other 23 comparisons have slower WF medians in both cohorts, with the
+marked unstable magnitudes left unqualified. These points do not replace any
+losing or inconclusive cell in the ordinary practical matrix.
+
+Wide replacement remains a separate cost lead. At the same 8192 slots,
+WF/direct-C miss ratios are 1.020 / 0.962 (6.048% spread), while
+`replace-old-value` is 2.202 / 2.247 (2.054% spread). At 4096, the respective
+ratios are 0.789 / 0.789 (0.021% spread) and 1.920 / 1.964 (2.310% spread).
+Thus lowering occupancy greatly reduces misses without removing the wide
+replacement deficit. The next layout/probing discriminator and the next
+wide-value transport discriminator need separate hypotheses. This sweep
+changes no library, compiler, language rule or selected representation.
 
 ### Query dispatch and inlining in the practical image
 
