@@ -1130,16 +1130,19 @@ rarely insert at the same place.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
-  `waiting_echo --threads 1` at 64 connections with 64-byte messages in both
-  runs of Experiment 2, and the frame build 0.84 and 0.93 in the two runs of
-  Experiment 3, beside the stackful build's 0.84 and 0.97; the gap is not
-  attributed (`research/investigations/io-model/WAITS.md`). The candidates
-  are the park path, which waits in `epoll_wait` and then enters the ring
-  where the hand-written driver enters once, the ring locks taken on every
-  submit and reap pass, and the emitted receive and send path. Attribute with
-  a `perf` profile of both servers at 64 connections before changing the
-  runtime; reopen with the next change to the context scheduler or when a
-  program's rate depends on it.
+  `waiting_echo --threads 1` in Experiment 2, 0.84 and 0.93 in Experiment 3
+  and a median 0.81 in Experiment 4, whose server CPU per round trip was
+  9.80 against 7.93 microseconds with the same system calls
+  (`research/investigations/io-model/WAITS.md`, Experiment 4). About 0.55
+  microseconds is the ring's task-run mode: the reference built with the
+  runtime's `COOP_TASKRUN` instead of `SINGLE_ISSUER | DEFER_TASKRUN` loses
+  0.55. About 0.4 is the general completion engine's user-space work (about
+  650 instructions per round trip against the reference's 195). About 0.9
+  microseconds of kernel time is unattributed. A ring the driver owns and
+  waits on directly, as the reference's, removes the first and most of the
+  second; the multi-driver runtime needs one per driver anyway. Reopen with
+  that ring, and measure the unattributed kernel time against a smaller
+  working set.
 
 - **Frame memory for a context with small state is unmeasured.** Experiment 3
   measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window

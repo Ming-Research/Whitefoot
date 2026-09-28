@@ -383,6 +383,70 @@ What this does not establish:
 - anything on the helper route, on another host, or at more than one driver
   thread.
 
+## Experiment 4: attributing the gap at 64 connections
+
+### Design
+
+Directed by the owner on 2026-09-28. The frame server trails
+`waiting_echo --threads 1` at 64 connections with 64-byte messages
+(Experiment 3). The same release build of `tcp_contexts.wf` (the branch head
+after `943e6663`) and the same reference, one driver thread each, 64
+connections, 2,000 round trips per connection, on the development host.
+Three observations: system calls by kind (`strace -c`), user-space
+instructions by function (`valgrind --tool=callgrind`, 200 round trips per
+connection), and the server's user and system CPU seconds (`/usr/bin/time`).
+Then one same-source change: the reference's ring is created with
+`IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN`, which runs the
+kernel's completion work only when the driver enters the ring to wait,
+where the runtime's ring uses `IORING_SETUP_COOP_TASKRUN`. The reference is
+rebuilt with the runtime's flag (`waiting_coop`), and the three servers are
+measured in six interleaved rounds, alternating order.
+
+Criterion, stated before the interleaved runs: the ring flag is the cause if
+the reference built with the runtime's flag falls to within 0.03 of the
+frame server's median rate, and it is not a cause if it stays within the
+reference's own run-to-run spread.
+
+### Result
+
+- System calls per round trip are the same: 128,000 `sendto` (each send is
+  tried once before the ring) and about 2,070 `io_uring_enter` for both
+  servers over 128,000 round trips.
+- User-space instructions differ by about six times: 16.2 million against
+  2.7 million over 12,800 round trips, leaving aside the frame server's
+  one-time 64 KiB window fill (`memset`, 4.2 million, once per connection).
+  About 550 instructions per round trip are the general completion engine
+  (record completion, ring submit and progress under a mutex, staging, the
+  join and dispatch), about 100 are frame allocation and release, and the
+  rest is emitted code and the operation bodies. The server's user time was
+  0.07 to 0.14 seconds against 0.03 to 0.07 for the reference, about 0.4
+  microseconds per round trip.
+- The server thread is busy for the whole run, and the difference is mostly
+  kernel time.
+
+| Server | median rate (rt/s) | median server CPU per round trip | rates per round |
+|---|---:|---:|---|
+| `waiting_echo --threads 1` | 121,722 | 7.93 µs | 123,430 109,930 120,817 124,457 122,628 112,496 |
+| the same, ring made with `COOP_TASKRUN` | 112,787 | 8.48 µs | 111,216 119,631 116,617 106,318 95,346 114,357 |
+| frame server | 98,964 | 9.80 µs | 97,744 96,037 110,625 104,321 100,184 92,357 |
+
+The criterion's first clause does not hold: the reference with the
+runtime's flag falls to 0.93 of itself, not to the frame server's 0.81, so
+the ring's task-run mode causes part of the gap, about 0.55 of the 1.87
+microseconds per round trip, and not all of it. The user-space engine
+accounts for about 0.4 microseconds, and about 0.9 microseconds of kernel
+time per round trip is not attributed; the frame server's larger working
+set, which the kernel's copies share caches with, is the untested candidate.
+
+The converse change, the runtime's ring made single-issuer with deferred
+task running, was built and hung at the first connection: the runtime reads
+its completion queue without entering the ring and parks in `epoll_wait`,
+and with deferred task running a completion reaches the queue only when the
+thread enters the ring to wait. Adopting that mode means a ring the driver
+owns and waits on directly, as the reference's does, which is also what
+several driver threads need, one ring each; the multi-driver work takes it
+up and measures it.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
