@@ -1374,11 +1374,31 @@ rarely insert at the same place.
   and +14.7% for HashMap, with greater compiler memory and cache size. Thus the
   import amendment's cost condition remains unresolved. The compact-name,
   invocation-memo and identity-lookup trials gave no useful gain and were
-  removed. Reassess the remaining import representation with the owner before
-  selecting broader changes, targeting approximately 5% overhead without
+  removed. The owner directed further investigation under the same target.
+  [Feature omissions](../research/experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
+  isolate about 25 ms of HashMap compiler cost in body products and 14 ms in
+  lowering products; omitting both restores approximately the matched-main
+  cost. Further typed-input memos, deferred reference indexes, dense maps and
+  source-name memos failed their consumer criteria. A smaller
+  relocated-input encoding also failed its extended paired/null comparison
+  and was removed. The next bounded comparison is a shared identity/input
+  catalogue and grouped lowering reads, including cache-history and memory
+  costs as well as unchanged results, invalidation and library-work controls,
+  as described in the investigation. Target approximately 5% overhead without
   losing library reuse or current-input validation. Compare same-source paired
   timings, compiler-only cost and memory with equally optimized main; do not
   count the general hashing benefit as a module-product gain.
+  The lowering key currently serializes proof statements and loop invariants
+  that lowering itself erases. A runtime-input projection could reduce key
+  construction and false invalidation; its benefit is unmeasured, and a
+  duplicate partial encoder could omit a real dependency. Defer it until the
+  lowering-input representation is selected or its key cost limits that
+  experiment. Preserve proof-derived allocation bounds, body disposition,
+  permissions and physical inputs, which lowering does consume, and validate
+  accepted proof-only edits separately from changed runtime expressions and
+  permissions. Structural-body retention precedes installation of call
+  requirements and allocation bounds, so a retained-body token alone cannot
+  replace the lowering-input check.
   Finer invalidation within an edited module remains deferred; a cold build without
   a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with

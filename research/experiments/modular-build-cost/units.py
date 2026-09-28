@@ -99,7 +99,11 @@ def invoke(command, cwd):
     for name, elapsed in re.findall(rb"WF-STAGE (\w+) (\d+)", stderr):
         key = name.decode()
         stages[key] = stages.get(key, 0) + int(elapsed) / 1e6
-    return stdout, wall_ms, int(usage.ru_maxrss), stages
+    counts = {}
+    for name, count in re.findall(rb"WF-COUNT (\w+) (\d+)", stderr):
+        key = name.decode()
+        counts[key] = counts.get(key, 0) + int(count)
+    return stdout, wall_ms, int(usage.ru_maxrss), stages, counts
 
 
 def require_library_reuse(report, workload):
@@ -110,6 +114,37 @@ def require_library_reuse(report, workload):
             raise RuntimeError(f"{workload}: no observed library reuse in {field}")
         if any(row[walked] for row in libraries):
             raise RuntimeError(f"{workload}: unchanged library work in {field}: {libraries}")
+
+
+def ablate(tree, feature):
+    """Omit product adapters in an exported attribution control, never a candidate."""
+    tree = tree.resolve()
+    if tree == REPO:
+        raise ValueError("ablate an exported scratch tree, not the working source")
+    if feature not in ("bodies", "lowerings", "both"):
+        raise ValueError("choose bodies, lowerings or both")
+    path = tree / "compiler/src/driver.rs"
+    source = path.read_text()
+    edits = []
+    if feature in ("bodies", "both"):
+        edits.append((
+            """    let products =
+        receipts.map(|cache| products::CheckProducts::new(cache, &resolved, limits, reuse_proofs));
+    let outcome = match products.as_ref() {
+        Some(products) => crate::semantic::check_semantics_with_receipts(&resolved, products),
+        None => check_semantics(&resolved),
+    };""",
+            """    let outcome = match receipts.filter(|_| reuse_proofs) {
+        Some(cache) => crate::semantic::check_semantics_with_receipts(&resolved, cache),
+        None => check_semantics(&resolved),
+    };"""))
+    if feature in ("lowerings", "both"):
+        edits.append(("        receipts.map(|cache| (resolved, cache as &dyn crate::LoweringProducts)),", "        None,"))
+    for old, new in edits:
+        if source.count(old) != 1:
+            raise ValueError(f"product boundary is not unique: {old}")
+        source = source.replace(old, new)
+    path.write_text(source)
 
 
 def instrument(tree):
@@ -139,9 +174,14 @@ pub(crate) struct ExperimentStage(&'static str, std::time::Instant);
 std::thread_local! {
     static EXPERIMENT_STAGES: std::cell::RefCell<std::collections::BTreeMap<&'static str, u128>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+    static EXPERIMENT_COUNTS: std::cell::RefCell<std::collections::BTreeMap<&'static str, usize>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 impl ExperimentStage {
     pub(crate) fn new(name: &'static str) -> Self { Self(name, std::time::Instant::now()) }
+    pub(crate) fn count(name: &'static str, value: usize) {
+        EXPERIMENT_COUNTS.with(|counts| *counts.borrow_mut().entry(name).or_default() += value);
+    }
 }
 impl Drop for ExperimentStage {
     fn drop(&mut self) {
@@ -153,6 +193,11 @@ impl Drop for ExperimentStage {
                 for (name, elapsed) in std::mem::take(&mut *stages) {
                     eprintln!("WF-STAGE {name} {elapsed}");
                 }
+                EXPERIMENT_COUNTS.with(|counts| {
+                    for (name, count) in std::mem::take(&mut *counts.borrow_mut()) {
+                        eprintln!("WF-COUNT {name} {count}");
+                    }
+                });
             }
         });
     }
@@ -231,6 +276,47 @@ impl Drop for ExperimentStage {
         if source.count(old) != 1:
             raise ValueError("body payload boundary is not unique")
         source = source.replace(old, '        drop(_inputs);\n        let _payload = crate::driver::ExperimentStage::new("body_payload_import");\n' + old)
+        # Count repeated complete input encodings within one checking view,
+        # including its speculative forks. These observations are never reuse
+        # authority and add overhead; only the uninstrumented pair times cost.
+        for old, new in [
+            (
+                "    counts: std::cell::RefCell<BTreeMap<IdentityKind, usize>>,",
+                "    counts: std::cell::RefCell<BTreeMap<IdentityKind, usize>>,\n    observed_inputs: std::rc::Rc<std::cell::RefCell<BTreeSet<(Identity, Vec<u8>)>>>,\n    observing_staged: bool,",
+            ),
+            (
+                "            counts: Default::default(),\n        })",
+                "            counts: Default::default(),\n            observed_inputs: Default::default(),\n            observing_staged: false,\n        })",
+            ),
+            (
+                "            counts: Default::default(),\n        }",
+                "            counts: Default::default(),\n            observed_inputs: self.observed_inputs.clone(),\n            observing_staged: true,\n        }",
+            ),
+            (
+                "        if mapping.len() == entries.len() {",
+                '        crate::driver::ExperimentStage::count("body_import_attempts", 1);\n        crate::driver::ExperimentStage::count("body_retained_input_bytes", entries.iter().map(|entry| entry.inputs.len()).sum());\n        if mapping.len() == entries.len() {\n            crate::driver::ExperimentStage::count("body_existing_identity_imports", 1);',
+            ),
+            (
+                "            if inputs.canonical(|identity| self.identity_name(identity, identities))?\n                != entry.inputs\n            {",
+                '''            let current_inputs = inputs.canonical(|identity| self.identity_name(identity, identities))?;
+            crate::driver::ExperimentStage::count("body_input_records", 1);
+            crate::driver::ExperimentStage::count("body_input_bytes", current_inputs.len());
+            if identities.observing_staged {
+                crate::driver::ExperimentStage::count("body_staged_input_records", 1);
+            }
+            if !identities.observed_inputs.borrow_mut().insert((current, current_inputs.clone())) {
+                crate::driver::ExperimentStage::count("body_repeated_input_records", 1);
+                crate::driver::ExperimentStage::count("body_repeated_input_bytes", current_inputs.len());
+                if identities.observing_staged {
+                    crate::driver::ExperimentStage::count("body_staged_repeated_records", 1);
+                }
+            }
+            if current_inputs != entry.inputs {''',
+            ),
+        ]:
+            if source.count(old) != 1:
+                raise ValueError(f"body input count boundary is not unique: {old}")
+            source = source.replace(old, new)
         path.write_text(source)
 
     path = tree / "compiler/src/driver/cache.rs"
@@ -306,10 +392,10 @@ def main():
                             edited.write_text(after)
                         command = [compiler, "--graph", "modules.wfg", "--entry", entry, "--cache", str(cache)]
                         if args.compiler_only:
-                            llvm, wall_ms, peak, stages = invoke([*command, "--emit-llvm"], tree)
+                            llvm, wall_ms, peak, stages, counts = invoke([*command, "--emit-llvm"], tree)
                             report, observed, compiler_peak = {}, None, peak
                         else:
-                            stdout, wall_ms, peak, stages = invoke([*command, "--report", "-o", str(binary)], tree)
+                            stdout, wall_ms, peak, stages, counts = invoke([*command, "--report", "-o", str(binary)], tree)
                             report = json.loads(stdout.splitlines()[-1])["build"]
                             if args.require_reuse and mode == "candidate" and step == "entry-edit":
                                 require_library_reuse(report, workload)
@@ -318,7 +404,7 @@ def main():
                                 raise RuntimeError(f"{workload}/{mode}/{step}: program exited {run.returncode}: {run.stderr!r}")
                             observed = (run.returncode, run.stdout, run.stderr)
                             # This untimed check observes a warm emitted-module lookup.
-                            llvm, _, compiler_peak, _ = invoke([*command, "--emit-llvm"], tree)
+                            llvm, _, compiler_peak, _, _ = invoke([*command, "--emit-llvm"], tree)
                         key = (step, "runtime")
                         if key in observations and observations[key] != observed:
                             raise RuntimeError(f"{workload}/{step}: baseline/candidate runtime differs")
@@ -330,7 +416,7 @@ def main():
                         print(json.dumps({"kind": "sample", "workload": workload, "round": round_index,
                                           "mode": mode, "step": step, "wall_ms": wall_ms,
                                           "peak_rss_bytes": peak, "warm_emit_peak_rss_bytes": compiler_peak,
-                                          "compiler_only": args.compiler_only, "stages_ms": stages,
+                                          "compiler_only": args.compiler_only, "stages_ms": stages, "counts": counts,
                                           "cache_bytes": sum(p.stat().st_size for p in cache.rglob("*") if p.is_file()),
                                           "llvm_sha256": hashlib.sha256(llvm).hexdigest(),
                                           "runtime_stdout": observed[1].decode() if observed else None, "report": report}), flush=True)
@@ -340,5 +426,7 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--instrument":
         instrument(Path(sys.argv[2]))
+    elif len(sys.argv) == 4 and sys.argv[1] == "--ablate":
+        ablate(Path(sys.argv[3]), sys.argv[2])
     else:
         main()

@@ -555,6 +555,167 @@ shared verification guard. The raw local observations are named
 `final-{matched,null,actual-main}-{native,compiler}.jsonl`; the protocol and
 compiler/source hashes, rather than those temporary paths, identify the runs.
 
+### Continued import investigation
+
+The owner directed continued investigation under the same approximately 5%
+entry-edit target against equally optimized main. A separate counting probe
+ran one pair of the same instrumented candidate for each container (16
+compiler-only samples). Both labels reported identical counts and LLVM.
+Within one checking view, including its speculative import attempts, the
+probe counted complete input encodings and exact repetitions:
+
+| Workload | Input records | Repeated records | Encoded bytes | Repeated bytes | Records in staged imports |
+|---|---:|---:|---:|---:|---:|
+| grow-vector | 4,304 | 3,329 | 1,370,572 | 693,165 | 1,110 |
+| hash-map | 20,989 | 18,326 | 6,397,616 | 4,087,029 | 2,503 |
+
+These are operation/byte observations, not timing or proof that a repeated
+encoding remains valid after mutable input changes. The probe tracks complete
+encoded snapshots; it grants no cache authority. Parser controls distinguish
+integer counts from nanosecond stage durations, accumulate repeated labels
+and still reject a failed compiler process.
+
+A follow-up memo trial guarded canonical inputs by derived equality of the
+entire current typed function signature or nominal, including allocation
+effects and fields. Each speculative import kept independent memos. This
+avoided the earlier trial's serialization on every guard lookup. It passed
+97 driver/cache tests and 48 native samples with equal outputs and unchanged
+library-work coverage. In three alternating pairs GrowVector measured
+196.5 / 192.7 ms (-1.9%) and HashMap 337.8 / 335.3 ms (-0.7%). That small
+gain did not select the additional memo state; the trial was removed.
+
+To avoid treating short-helper instrumentation as recoverable invocation cost,
+`/usr/bin/sample PID 1 1 -mayDie -file TRACE` sampled eight entry edits per
+compiler, alternating the saved uninstrumented hash-only candidate and the
+equally optimized main. Each sample used a fresh HashMap fixture/cache, built
+the two entries first and then renamed the second entry's local binding.
+All compiler and sampler processes exited successfully. Sampling begins after
+process launch, so it does not cover every startup phase, and inlining obscures
+some helper boundaries. The traces still reach body-product decoding/identity
+handling and lowered-product key construction, alongside proof-receipt work
+already present on main. They select a cost hypothesis, not a before/after
+compiler timing result. In particular, the earlier per-identity timer totals
+include observation work and must not be read as a promised removable budget.
+
+A second local trial deferred the serializer's ordered unique-reference set
+until a caller requested it, deriving the same set from its already recorded
+identity positions. It passed 97 driver/cache and three semantic-product tests
+and 48 native samples with equal results and unchanged library-work coverage.
+The three-pair native entry-edit medians were 197.0 / 201.6 ms (+2.3%) for
+GrowVector and 344.2 / 351.6 ms (+2.1%) for HashMap. This failed its recorded
+criterion (more than 2% HashMap improvement without a GrowVector regression),
+so the trial was removed.
+
+### Feature omission controls
+
+Scratch builds from the unchanged candidate omit the body-product adapter,
+the lowering adapter, or both. Body omission routes checking directly through
+the same proof-receipt store, respecting its existing enable condition;
+lowering omission supplies no retained-product adapter to ordinary lowering.
+No language rule changes. These are attribution controls that repeat library
+work, so they cannot qualify the module-product implementation. Each row below
+has three alternating pairs on both containers, measured separately for pure
+compilation and native construction: 288 samples in total, all paired LLVM
+and native results equal. Compiler construction is excluded.
+
+Entry-edit medians in milliseconds:
+
+| Comparison | GrowVector compiler | HashMap compiler | GrowVector native | HashMap native |
+|---|---:|---:|---:|---:|
+| Full candidate / omit bodies | 117.5 / 112.1 | 260.9 / 235.9 | 200.7 / 199.9 | 355.5 / 326.6 |
+| Full candidate / omit lowerings | 120.5 / 114.1 | 267.0 / 253.5 | 198.9 / 179.5 | 346.7 / 329.2 |
+| Matched main / omit both | 105.3 / 102.5 | 221.9 / 219.7 | 182.9 / 188.1 | 305.3 / 306.3 |
+
+Body products add about 25.0 ms and lowering products about 13.5 ms to
+HashMap's compiler invocation in their respective pairs. Neither establishes
+the recorded two-thirds dominance criterion, so both remain investigation
+targets. Omitting both restores approximately the matched-main cost, supporting
+the hypothesis that the product adapters explain the regression. The distinct
+pair controls vary, and native child-process costs also vary; subtracting rows
+does not yield an exact additive phase decomposition. In the earlier final
+qualification's entry edits, full candidate and matched main reused the same
+proof-analysis counts and all 13 native objects on every workload. That control
+does not attribute the product loss to additional proof analysis or codegen.
+
+The three scratch executable hashes (bodies, lowerings, both omitted) are
+`80304db45e4061a50f7064e6690f80c6836d8d2969f0cdad0e84b23c9a3188f1`,
+`27a35dbe4f5601f7c633298b3a9f6f68bdf5818a71624832eaa418e0f95312a9`, and
+`663eba3dcb5b71b4140c671b814532e4ece56c751a4a8c6f2f95b1fd1078e211`.
+Reproduce each source change on a separate export of the candidate with
+`python3 -B research/experiments/modular-build-cost/units.py --ablate FEATURE TREE`,
+where `FEATURE` is `bodies`, `lowerings` or `both`; build the scratch compiler
+with its own target directory. Use the ordinary paired runner with
+`--rounds 3 --workloads grow-vector hash-map`, once with `--compiler-only`
+and once without. Omission controls intentionally cannot satisfy
+`--require-reuse`. The tested full candidate and matched-main hashes are the
+runtime-SHA controls recorded above.
+
+### Relocated-input and lookup trials
+
+A private input-encoding trial keeps raw typed bytes and the positions/kinds
+of their identity references. After resolving the existing complete identity
+table, import compares all literal segments and maps every retained reference
+to the current ordinal. It still reconstructs and compares every current
+input; neither a name alone nor a previously successful validation authorizes
+reuse. Its independent wire fixture distinguishes renumbering from changes
+to literal segments, reference kinds/positions/targets and missing mappings.
+The driver/cache suite and product tests passed. Three alternating native
+pairs preserved all outputs and unchanged-library reuse, measuring GrowVector
+at 195.7 / 191.1 ms (-2.3%) and HashMap at 344.8 / 336.5 ms (-2.4%). Native
+cache bytes fell from 5,021,135 to 4,708,037 and from 16,740,022 to 14,608,974.
+This passed the local screen, selecting the larger paired/null comparison
+reported below. The trial executable is
+`610faff8bf361de5dbd33bf8289940ced6c99a79ee511e01fedfcda263267eed`.
+
+Two subsequent candidates were tested against that saved executable, each
+passing the same focused tests and 48 native plus 48 compiler-only samples.
+Each preserved output equality and library work counts:
+
+| Additional change | GrowVector native ms | HashMap native ms | GrowVector compiler ms | HashMap compiler ms |
+|---|---:|---:|---:|---:|
+| Dense ordinal maps | 187.7 / 196.7 (+4.8%) | 335.7 / 330.4 (-1.6%) | 116.9 / 115.7 (-1.1%) | 257.4 / 258.0 (+0.2%) |
+| Source-name resolution memo | 195.0 / 200.2 (+2.7%) | 348.0 / 347.1 (-0.3%) | 116.4 / 116.7 (+0.2%) | 257.1 / 257.6 (+0.2%) |
+
+Both failed the recorded native-gain screen and were removed. The dense-map
+comparison's compiler RSS changed by -4.1% / -0.5% for the two containers;
+the source-name memo changed it by -1.1% / -0.3%. Memory did not select either
+trial. These results also caution against assigning the full instrumented
+identity-mapping duration to the individual lookup operation.
+
+The extended relocated-input comparison completed seven alternating pairs
+against the unchanged candidate (causal), the same trial executable (null)
+and equally optimized main (matched), in native and compiler-only modes.
+All 672 samples passed their paired output controls and every native trial
+entry edit preserved library reuse. The native entry-edit medians were:
+
+| Control / relocated-input trial | GrowVector ms | HashMap ms |
+|---|---:|---:|
+| Unchanged candidate | 192.1 / 195.2 (+1.6%) | 361.4 / 341.6 (-5.5%) |
+| Same trial executable | 194.6 / 196.3 (+0.9%) | 338.4 / 346.3 (+2.3%) |
+| Equally optimized main | 188.3 / 195.1 (+3.6%) | 298.9 / 344.6 (+15.3%) |
+
+The corresponding compiler-only medians were:
+
+| Control / relocated-input trial | GrowVector ms | HashMap ms |
+|---|---:|---:|
+| Unchanged candidate | 120.6 / 119.1 (-1.3%) | 265.1 / 266.4 (+0.5%) |
+| Same trial executable | 116.9 / 116.8 (-0.1%) | 254.5 / 257.9 (+1.3%) |
+| Equally optimized main | 106.0 / 117.4 (+10.8%) | 219.8 / 256.9 (+16.9%) |
+
+The causal native HashMap pair did improve, but the compiler-only pair did
+not reproduce a compiler gain, and GrowVector failed the no-native-loss
+criterion. The same-image observations are variability controls, not
+confidence bounds. The trial also left HashMap well outside the owner's
+approximately 5% matched-main target. Its smaller cache does not satisfy
+those cost criteria; the encoding change and its trial-only test were removed.
+No compiler optimization from this continuation remains. The production
+source and pending design amendments are unchanged from the earlier final
+qualification; its seven-workload results still describe the published
+implementation. Reproduce the extended trial comparisons with the paired
+runner's `--rounds 7 --workloads grow-vector hash-map`, native
+`--require-reuse`, and a separate `--compiler-only` sequence. The trial hash
+above and the recorded runtime-SHA control hashes identify these observations.
+
 ## Limits
 
 - The original backend comparison above used two small runtime loops on one

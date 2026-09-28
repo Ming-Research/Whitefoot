@@ -1685,6 +1685,183 @@ Any further representation trial must identify the import work it removes,
 preserve complete current-input validation and rollback, and use the matched
 main comparison and independent output/work controls again.
 
+#### Import repetition investigation
+
+The owner directed continued investigation after the cost review. Retain the
+approximately 5% edit-build target against equally optimized main; that
+direction does not approve a live-tree change or waive current-input checks.
+The next observation counts retained input bytes and repeated exact encodings
+within one checking view, separating imports that already have every identity
+from imports that form missing instances in a staged context. This tests
+whether the remaining import cost is dominated by repeated work that can be
+shared, rather than the necessary current-program checks. Counting uses a
+separate instrumented compiler and is not invocation timing evidence.
+
+Before choosing a representation, require that the counted repetitions explain
+a material share of the measured import work. An optimization must retain
+complete input equality, declaration/instance identity, successful publication
+and failed-import rollback; repeated bytes alone do not establish safe reuse
+across mutable signatures or separate checking views. Compare any selected
+trial with the saved uninstrumented hash-only candidate, then equally optimized
+main. Reject it if it fails current/fresh outputs, library-work coverage or the
+paired consumer cost criterion. The existing experiment driver owns these
+temporary observations and retires them with the retained-product comparison.
+
+The count probe found repeated exact encodings in 77% of GrowVector's checked
+input records and 87% of HashMap's, covering 51% and 64% of their encoded input
+bytes. Most validations already have every needed identity; staged formation
+accounts for 26% and 12% of those records. Revisit the prior callable memo only
+with a different guard: compare the complete typed signature or nominal value
+by derived equality before encoding anything. The earlier trial serialized the
+current signature on every lookup, retaining a substantial part of the work
+it aimed to save. Source headers and identity names remain fixed within the
+checking view; full typed equality includes mutable allocation effects and
+nominal fields. A fresh staged context keeps independent memos so failed
+formation cannot leave encodings attached to discarded identities. Keep the
+private product format, per-record input comparison and current judgments.
+Select this bounded adapter change only if its native causal comparison gains
+time with unchanged outputs and library work; a repeated record count alone
+is not sufficient evidence.
+
+That typed-equality trial passed the driver/cache suite and output/work
+controls, but its three-pair native screen improved GrowVector only 1.9% and
+HashMap 0.7%. It did not explain enough of the remaining cost to select the
+extra memo state, so it was removed. Use native stack sampling of the saved
+uninstrumented compiler next: per-identity timers add observer work to very
+short helpers, and repeated encoded bytes do not establish their share of
+uninstrumented execution. Sampling selects a cost hypothesis; only a subsequent
+same-source uninstrumented comparison may establish an optimization gain.
+
+Native samples still reach both product identity/record handling and lowering
+key construction. The common writer eagerly inserts every identity into an
+ordered set while also recording every identity occurrence for canonical
+encoding. Canonical-only consumers never read the set. Compare deriving the
+ordered unique inventory from those recorded occurrences only when a consumer
+requests it. This removes redundant index maintenance, keeps one reference
+inventory as the source of both views, and changes no record bytes, dependency
+closure or reader semantics. The cost is a later set construction for the few
+consumers that do need unique references. Require a HashMap native gain above
+2% in the diagnostic pair without a GrowVector regression, then the ordinary
+seven-pair qualification; otherwise remove the trial. Existing identity
+renumbering and cached/fresh controls must still pass.
+
+The deferred-index trial passed the driver/cache and semantic product tests,
+but the native pair was 2.3% slower on GrowVector and 2.1% slower on HashMap.
+It failed the recorded criterion and was removed. Neither repeated-input
+memoization nor local collection substitutions have justified more machinery
+in the current product adapters.
+
+Before another representation change, separate the two retained-product
+features with scratch-only ablations: omit the structural-body adapter, omit
+the lowering adapter, and omit both while preserving the proof-receipt cache.
+Compare each single omission with the unchanged candidate, and the double
+omission with equally hash-optimized main, in three alternating pairs for
+both containers. Measure compiler-only and native construction separately.
+Require equal LLVM and native results. These controls deliberately repeat
+library work and cannot qualify an implementation or relax the zero-unchanged-
+library-work requirement. If either adapter accounts for at least two thirds
+of HashMap's excess compiler cost, investigate that adapter first; otherwise
+retain the joint-cost hypothesis. The double omission tests whether these
+features actually explain the regression rather than merely appearing in a
+profile. Build time and attribution controls are excluded from qualification
+timings.
+
+The [three-pair omissions](../../experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
+remove 25.0 ms of HashMap compiler time for body products and 13.5 ms for
+lowering products. Omitting both puts this branch within 1.0% of equally
+optimized main. The pair controls differ slightly, so these are not additive
+stage timings; neither observation establishes the two-thirds dominance
+criterion. Keep both adapters in scope. Their joint cost explains the excess
+better than additional proof analysis or native object construction: the full
+candidate and matched main reuse the same proof analyses and native objects
+on the measured entry edits.
+
+The next local representation trial compares a body's current typed input
+bytes with retained bytes through the identity mapping already required for
+payload import. Retain reference positions and kinds beside the raw input;
+compare every literal byte and map every old reference to its current identity.
+Require identical reference positions and kinds before this comparison. Names
+still establish the mapping, all transitive inputs still join the retained
+closure, and every current input is reconstructed and checked. This replaces
+expanded structural names at every input reference, without a cross-body memo
+or a new validity lifetime. It fits the existing private product writer and
+body adapter; keys used outside an import continue to use canonical names.
+The uncertainty is whether rebinding an interface identity to its definition
+preserves existing hits; a conservative miss is correct but fails the selected
+reuse requirement. Compare the saved candidate in three alternating native
+pairs, requiring more than 2% HashMap improvement without a GrowVector loss and
+unchanged library work, then qualify any retained change with seven pairs and
+the same-image control. Unit controls must separate renumbering from changed
+literal bytes, reference kinds, positions, targets and incomplete mappings.
+
+That diagnostic trial passed its selection screen: 2.3% lower native entry-edit
+time for GrowVector and 2.4% for HashMap, with unchanged library reuse. This is
+not the final cost qualification. The remaining body and lowering readers both
+translate dense ordinals through a search tree at every reference. Compare a
+separate dense slot vector for each identity kind, keeping absence explicit
+and the mapping local to one imported product. This differs from the rejected
+hash-map trial by removing key search entirely. Its cost is space up to each
+kind's largest retained ordinal, rather than only its populated references.
+Keep this inside the existing identity-map owner; no cross-import state or
+new cache authority is needed. Compare against the saved relocated-input
+candidate, requiring more than 2% HashMap native improvement without a
+GrowVector loss, unchanged reuse and results, and no more than 5% compiler-RSS
+growth on either container before the final seven-pair qualification.
+
+The dense mapping failed that screen: GrowVector's native median increased
+4.8%, HashMap improved only 1.6%, and compiler-only time did not establish a
+gain. It was removed. A final local candidate caches decoding and resolution
+of source identity names, which are immutable for one resolved view and can
+therefore be shared with its speculative forks. The existing reverse catalogue
+covers semantic instances but repeatedly decodes source names. Keep the new
+catalogue beside that view's source identities, require matching identity
+kinds, and preserve all current-input comparisons. Unlike callable-input memos,
+this cache cannot outlive or bypass a mutable semantic input. Apply the same
+native-gain, reuse and compiler-memory screen against the relocated-input
+candidate; otherwise remove it and qualify only the surviving representation.
+
+The source-name memo also failed: GrowVector's native median increased 2.7%,
+HashMap improved only 0.3%, and both compiler-only medians increased 0.2%.
+It was removed. Extend the relocated-input candidate alone to seven alternating
+pairs against its unchanged-source control, itself and equally optimized main,
+for both containers in native and compiler-only modes. A three-pair gain that
+does not survive this control does not justify retaining the new encoding.
+
+The extended comparison completed all output/reuse controls, but the native
+GrowVector median increased 1.6% against the unchanged candidate. HashMap's
+native gain of 5.5% did not reproduce in compiler-only time (+0.5%); matched
+main still beat the trial by 15.3% native and 16.9% compiler-only. The null
+controls and complete medians are in the
+[trial result](../../experiments/modular-build-cost/RESULTS.md#relocated-input-and-lookup-trials).
+Remove the input-encoding trial too. No new compiler change survives this
+continuation, and the existing qualification and unresolved cost condition
+remain in force.
+
+The next representation question is how much work can be shared by a module
+or instance import before reconstructing its individual functions. The current
+per-function adapters add cost after main has already reused the expensive
+proof analyses; eliminating a body walk does not eliminate its identities,
+input comparisons, reconstruction or lowered-product lookup. The feature
+omissions establish that joint cost, while the local trials do not establish
+a profitable finer mechanism. A bounded next experiment would compare one
+shared identity/input catalogue and grouped lowering reads with the current
+adapters on these same two containers. It must retain complete per-consumer
+input equality, speculative rollback, current composition judgments and zero
+unchanged-library walks, and measure cold builds, edited builds, memory and
+cache history as well as the approximately 5% target. Sharing validity across
+mutable signatures or using a whole-module match to waive a consumed input
+would not qualify. This is an unmeasured alternative for reassessing the
+pending import representation, not an adopted tree revision or an assertion
+that batching will meet the target.
+
+A separate opportunity is the lowered-function key's inclusion of proof
+statements and loop invariants that the builder erases. Keep its possible
+runtime-input projection in the maintained TODO: its consumer must still see
+proof-derived allocation bounds, body disposition and permissions. The
+structural product is retained before call requirements and allocation bounds
+are installed, so reusing its identity alone as the final lowering key would
+skip current inputs. No such shortcut is selected by this investigation.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct
