@@ -608,6 +608,7 @@ fn operation_name_end(bytes: &[u8], base_end: usize) -> Option<usize> {
         b"strict".as_slice(),
         b"wrap".as_slice(),
         b"sat".as_slice(),
+        b"nearest".as_slice(),
     ] {
         let end = suffix_start.checked_add(suffix.len())?;
         if bytes.get(suffix_start..end) == Some(suffix)

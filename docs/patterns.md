@@ -660,3 +660,25 @@ the exact conversion's proof that the output equals the input. A contract may
 name the total wrapping operation in a definition; a branch proving the
 identical wrapped comparison can satisfy that requirement through ordinary
 goal identity [FN-8, ENT-2].
+
+Use `cvt.nearest::<Src, Dst>(value)` when a value is meant to become the
+nearest float of the destination format, such as an f64 color channel stored
+as f32 or a u64 count used as an f64 statistic. The destination must be a
+float type; the source may be any numeric type. It needs no proof and returns
+the exact value whenever `cvt` would, so switching a total or proved `cvt` to
+it changes no result. Otherwise it rounds to nearest with ties to even, gives
+a signed infinity past the largest finite value and a zero with the input's
+sign below the smallest subnormal, and narrows NaN to the canonical quiet NaN
+[OP-6]. Do not guard a narrowing with `cvt.defined` and a fallback value:
+almost no computed quotient is exact in f32, so the fallback is what runs.
+
+```whitefoot
+fn channel(component: u8) -> result: f32 pure {
+  let wide = cvt::<u8, f64>(component);
+  let ratio = fdiv.strict(wide, 255.0_f64);
+  return cvt.nearest::<f64, f32>(ratio);
+}
+```
+
+A rounded value supplies no proof about its input: comparing it with the
+input after widening does not discharge a later bare `cvt` of that input.

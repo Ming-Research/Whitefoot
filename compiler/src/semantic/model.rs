@@ -421,6 +421,7 @@ pub(crate) enum CheckedConversionMode {
     Checked,
     Defined,
     Wrap,
+    Nearest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

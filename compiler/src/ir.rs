@@ -503,6 +503,10 @@ pub enum IrConversionMode {
     Checked,
     Defined,
     Wrap,
+    /// Total rounding into a float destination [OP-6]. It shares the exact
+    /// conversion's instruction sequence, which rounds to nearest, ties to
+    /// even, in the default floating-point environment [OP-8].
+    Nearest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -702,6 +702,7 @@ pub fn is_operation_name(spelling: &[u8]) -> bool {
         b".checked",
         b".sat",
         b".strict",
+        b".nearest",
     ]
     .iter()
     .any(|suffix| spelling.strip_suffix(*suffix).is_some_and(lower_word))
@@ -950,6 +951,7 @@ mod tests {
             b"iadd.checked",
             b"iadd.sat",
             b"iadd.strict",
+            b"iadd.nearest",
         ] {
             assert!(is_operation_name(spelling));
         }

@@ -1,0 +1,14 @@
+fn narrowed(value: f64) -> result: f32 pure {
+  let rounded = cvt.nearest::<f64, f32>(value);
+  let widened = cvt::<f32, f64>(rounded);
+  let unchanged = feq(widened, value);
+  if unchanged {
+    return cvt::<f64, f32>(value);
+  }
+  return rounded;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let single = narrowed(value: 0.5_f64);
+  return std::process::exit_status(code: 0_u8);
+}

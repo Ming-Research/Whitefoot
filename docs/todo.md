@@ -25,16 +25,17 @@ rarely insert at the same place.
   from the modular conversion operation, which adds no proof family; reopen
   when a real caller needs this named-value form.
 
-- **Select direct rounded/saturated float conversion policies.** The
+- **Select a total float-to-integer conversion policy.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  identifies missing direct rounded-to-float semantics and cumbersome total
-  float-to-integer compositions. A rounded-to-float candidate needs explicit
-  ties, overflow, subnormal, signed-zero and NaN rules; saturation needs its own
-  NaN and rounding choice, including nonrepresentable i64 maxima. Defer from the
-  exact-conversion implementation because these select different results and
-  no concrete consumer has selected their complete surface. Reopen for a
-  float-heavy program or owner selection; compare source and emitted/native
-  behavior before choosing spellings or claiming an improvement.
+  identifies cumbersome total float-to-integer compositions; rounding into a
+  float destination is now `cvt.nearest` [OP-6], which deliberately admits no
+  integer destination. A saturating or rounding float-to-integer operation
+  needs its own NaN, rounding-direction and saturation choice, including
+  nonrepresentable i64 maxima, and `llvm.fptosi.sat` fixes only one of those
+  choices. Defer because no concrete consumer has selected the complete
+  surface; reopen for a program that converts computed floats to integers
+  (pixel coordinates, quantization), and compare source and emitted/native
+  behavior before choosing a spelling or claiming an improvement.
 
 - **Validate float and domain evidence through saved Results.** Exact
   conversions extend integer value relations only. A checked result
