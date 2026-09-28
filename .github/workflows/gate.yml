@@ -124,8 +124,11 @@ jobs:
           rustup component add clippy rustfmt
           cargo --version
 
-      # The active gate uses the dependency-free compiler crate and formal
-      # fixtures. Research instruments run only when explicitly requested.
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # The active gate runs offline against formal fixtures. Research
+      # instruments run only when explicitly requested.
 
       # A gate that proves programs die is a gate that makes the kernel run
       # `kernel.core_pattern` a few hundred times. On `ubuntu-24.04` that

@@ -346,10 +346,87 @@ optimization, not a replacement for the final seven-pair qualification.
 | GrowVector | 241.3 | 275.6 | +14.2% |
 | HashMap | 372.0 | 474.1 | +27.4% |
 
-The current-main result reproduces the cost problem. Separate stage probes
-will attribute it before selecting the next optimization. Previous exploratory
+The current-main result reproduces the cost problem. Three separately
+instrumented compiler-only pairs attribute the following entry-edit medians
+(milliseconds; nested rows are not additive):
+
+| Stage | GrowVector baseline / candidate | HashMap baseline / candidate | chain-32 baseline / candidate |
+|---|---:|---:|---:|
+| Source and input assembly | 33.51 / 46.02 | 51.98 / 95.47 | 121.67 / 146.24 |
+| Formation and checking | 67.50 / 73.77 | 178.63 / 213.23 | 136.58 / 182.35 |
+| Lowering | 1.07 / 17.41 | 3.10 / 48.82 | 0.68 / 9.45 |
+| Cache record validation, across phases | 6.97 / 19.36 | 16.20 / 66.68 | 9.70 / 23.77 |
+| Body-container loading | — / 8.96 | — / 39.19 | — / 16.53 |
+| Lowered-record loading | — / 10.30 | — / 31.08 | — / 2.39 |
+
+The candidate's source-identity setup is 1.12 ms for GrowVector and 2.01 ms
+for HashMap; declaration-read discovery is 1.08 and 2.00 ms respectively.
+These observations identify record validation/loading as material costs and
+do not support attributing the loss primarily to identity-table construction
+or declaration discovery. Instrumentation adds observations on every cache
+load, so these times select an experiment rather than replacing the native
+timing comparison. These observations selected a trial interning repeated
+structural names within canonical records, retaining full-input equality and
+unchanged reuse coverage.
+
+Previous exploratory
 observations from mixed instrumented and uninstrumented executables are not
 qualification evidence; the runner now rejects that pairing by default.
+
+### Rejected compact-name trial
+
+Interning structural names within each canonical record passed the focused
+identity and driver checks and all 48 native comparison samples, including
+the output and library-work assertions. Three alternating pairs against the
+pre-change candidate measured GrowVector at 259.0 versus 261.7 ms and HashMap
+at 470.1 versus 471.6 ms. Cache sizes fell from 5,021,135 to 4,809,829 bytes and
+16,740,022 to 15,948,076 bytes respectively. Fewer stored bytes did not yield a
+build-time gain, so the encoding change and its dedicated test were removed.
+The existing private encoding remains unchanged.
+
+### Runtime SHA-256 trial
+
+A separate native probe kept the SHA-256 algorithm and tested a fixed
+eight-round unrolling, with and without forced inlining. Published vectors and
+padding-boundary tests passed, but the scalar-loop gain was small: processing
+32 one-million-byte messages took median 152,160 microseconds in the existing
+implementation, 147,355 unrolled and 144,922 with inlining in five alternating
+observations. This is a kernel screen, not a compiler timing claim, and does
+not justify another hand-optimized implementation. This selected a comparison
+with a maintained runtime implementation before introducing a dependency.
+
+The same probe with RustCrypto `sha2` 0.11.0, default features disabled,
+measures median 152,589 microseconds for the scalar implementation and 14,500
+for the library in five alternating observations on this AArch64 host. Digest
+equality holds at the tested padding boundaries and one-million-byte input.
+The crate's [documented default dispatch](https://docs.rs/sha2/0.11.0/sha2/#backends)
+uses available host instructions and otherwise the software implementation.
+This screen justifies a whole-compiler trial, not a claim that all hosts gain
+equally. The trial changes runtime cache hashing only, retaining the original
+constant-evaluation implementation and exact SHA-256 bytes. Its main control
+receives the same runtime hashing change.
+
+Three alternating native pairs then compare the original candidate with the
+runtime-hash candidate: GrowVector falls from 259.7 to 196.7 ms and HashMap
+from 467.9 to 339.5 ms, reductions of 24.3% and 27.4%. Each comparison completes
+48 samples, including output equality and entry-edit library-work assertions.
+The same optimization applied to main gives a stricter control: GrowVector
+measures 176.3 versus 192.7 ms (+9.3%), and HashMap 303.1 versus 343.4 ms
+(+13.3%). The general hashing improvement is useful, but these three-pair
+diagnostics do not establish the owner's approximately 5% module-product target.
+The matched baseline binary is
+`fe2ea831d68e6a8e3a0206d34d8884428b7553574e81f065d5edfa990687381a`;
+the runtime-hash candidate is
+`17602078de46432740ef70e2f58e4f3abf6e399bd99ccd32bbe8bd317240cea0`.
+
+### Rejected invocation-local memo trial
+
+The trial retained lowering semantic names and callable canonical inputs within
+their current product adapters, comparing complete signature bytes before each
+callable-input reuse. The 97 driver/cache tests passed. Three alternating
+native pairs completed 48 samples with matching outputs and unchanged library
+work; GrowVector measured 198.4 versus 202.0 ms, and HashMap 337.4 versus
+339.3 ms. This did not support a build-time gain, so both memos were removed.
 
 ## Limits
 

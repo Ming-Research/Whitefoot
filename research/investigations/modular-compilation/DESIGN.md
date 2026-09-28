@@ -1587,6 +1587,68 @@ Keep build time outside invocation timing. If those observations reject the
 local approach, reassess the representation with the owner instead of claiming
 that avoided walks alone justify its cost.
 
+The current-main stage probe identifies record validation and retained-record
+loading as material costs; source-identity setup is small by comparison.
+Assess the existing canonical writer before changing storage authority: it
+repeats a complete structural identity spelling at every reference position.
+Try interning equal spellings within each canonical record, numbering them by
+first occurrence and retaining the ordered literal segments and references.
+The expected benefit is fewer repeated name constructions and fewer key/payload
+bytes to store and checksum. The cost is a small per-record lookup table.
+This changes only the private encoding under the compiler identity; existing
+module invalidation, complete-input equality and product consumers remain.
+Require invariance under dense renumbering and distinguish changed names,
+reference positions and literal bytes. Retain the change only if the paired
+consumer run reduces cost while preserving the existing falsifiers; use the
+uninstrumented pre-change binary as the ablation.
+
+That trial reduced retained bytes but did not reduce either container's build
+time in the paired diagnostic comparison, so it is rejected and its encoding
+change is removed. The next probe isolated the existing SHA-256 compression
+loop with the same algorithm, safe Rust and published test vectors. Its
+hypothesis was that a fixed eight-round unrolling could remove loop and
+state-shuffle overhead without changing key material, checksums, cache
+authority or dependencies. The native kernel probe was only a screen;
+selection required a same-source whole-compiler comparison, including the
+main compiler with the same hash optimization to distinguish a general
+compiler gain from reduced module-product overhead.
+
+The unrolled scalar kernel gave only a small improvement. This selected a
+comparison with the safe runtime API of the maintained RustCrypto `sha2`
+implementation, which can use the host's SHA instructions. The trial preserves
+SHA-256 bytes, published-vector results, complete record validation and the
+compiler crate's `forbid(unsafe_code)`. It keeps the constant-evaluation
+implementation for the specification/build identity and provisions the locked
+dependency set explicitly before offline checks. The native compiler
+comparison records a gain, including a main control with the same optimization.
+The runtime hashing dependency remains a pending design amendment rather than
+an implicit revision of the live tree.
+
+With matching runtime hashing on main, the three-pair container comparison
+still measures 9.3% and 13.3% entry-edit overhead. The next trial removes
+repeated canonical-name and callable-input construction within one invocation.
+Keep these memos inside their existing semantic and lowering product owners;
+no new cache family, codec, shared interface or acceptance path is needed.
+Lowering reads an immutable checked program, so its semantic identity names
+can be retained for that product adapter's lifetime. Checking can change a
+function's allocation effect, so reuse of its complete canonical input must
+first compare the complete current signature's encoded bytes. Normalized
+headers are immutable within the resolved source view. A speculative import
+gets an empty memo, so failed formation cannot publish entries for rolled-back
+identities. Other identity kinds retain their ordinary current-input check.
+Compare the trial with the saved runtime-hash binary and the equally optimized
+main control. Select it only for a measurable consumer gain with unchanged
+fresh/cached results, library work counts and complete input equality; include
+memory in final qualification. A cache keyed by the dense function ordinal
+alone is rejected because activation and heap closure can change its effects.
+
+The paired memo trial did not improve either container: medians were 1.8% and
+0.6% slower than the runtime-hash-only candidate. Both memos were removed.
+The next attribution splits retained-body import into record decoding, identity
+mapping, complete-input validation and typed payload import. Select any further
+change from that observed cost, retain the same cache guards, and compare it
+against the saved runtime-hash-only candidate before final qualification.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

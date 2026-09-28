@@ -69,6 +69,11 @@ branch. [AGENTS.md](../AGENTS.md#branch-and-main-boundary) holds the rules.
 
 Focused commands for a compiler change, before `make static`:
 
+Provision the locked compiler dependencies once with
+`cargo fetch --locked --manifest-path compiler/Cargo.toml` after checkout or a
+lockfile update. The checks below stay offline; CI performs the same fetch
+before entering the gate.
+
 ```sh
 make -C compiler format lint
 make -C compiler build        # optimized compiler only
