@@ -1,4 +1,4 @@
-# Kernel Specification v0.80
+# Kernel Specification v0.79
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -93,7 +93,7 @@ Every production not listed as line-bearing or block-bearing introduces no forma
 Its terminals stay on the current line unless a descendant line-bearing or block-bearing production introduces one of the boundaries prescribed above.
 No other LF or blank line is emitted.
 
-[FORM-3] Lexical classes: IDENT `[a-z][a-z0-9_]*` excluding every lowercase token spelling produced by exact fixed grammar atoms in the complete grammar; TYPEID `[A-Z][A-Za-z0-9]*`; LABEL `@[a-z][a-z0-9_]*`; OPNAME `[a-z][a-z0-9_]*\.(wrap|defined|checked|sat|strict|nearest)` (single token; the base has the raw lowercase-word shape used by IDENT and the mode suffix is a closed word set, so an OPNAME can never maximal-munch a valid field-access place `p.field`: all six suffix words are reserved from field binding [OP-1, GRAM-5]; e.g. `ineg.checked`).
+[FORM-3] Lexical classes: IDENT `[a-z][a-z0-9_]*` excluding every lowercase token spelling produced by exact fixed grammar atoms in the complete grammar; TYPEID `[A-Z][A-Za-z0-9]*`; LABEL `@[a-z][a-z0-9_]*`; OPNAME `[a-z][a-z0-9_]*\.(wrap|defined|checked|sat|strict)` (single token; the base has the raw lowercase-word shape used by IDENT and the mode suffix is a closed word set, so an OPNAME can never maximal-munch a valid field-access place `p.field`: all five suffix words are reserved from field binding [OP-1, GRAM-5]; e.g. `ineg.checked`).
 `program` and `no_heap` are exact fixed grammar atoms of `heap_decl` [GRAM-2], so both spellings leave IDENT by the exclusion above.
 
 [FORM-4] There are no comments.
@@ -136,7 +136,7 @@ At each cursor it takes exactly the following maximal form; no token or trivia c
 - One or more ASCII space bytes form one trivia item.
 One LF byte forms one trivia item.
 - A lower word starts with `[a-z]` and continues through the maximal `[a-z0-9_]*` suffix.
-If that complete base is followed immediately by `.` and exactly one of `wrap`, `defined`, `checked`, `sat`, `strict`, or `nearest`, and the suffix is not followed by an ASCII letter, ASCII digit, or `_`, the base, dot, and suffix instead form one operation-name token.
+If that complete base is followed immediately by `.` and exactly one of `wrap`, `defined`, `checked`, `sat`, or `strict`, and the suffix is not followed by an ASCII letter, ASCII digit, or `_`, the base, dot, and suffix instead form one operation-name token.
 Otherwise the lower word ends before the dot.
 - An upper word starts with `[A-Z]` and continues through the maximal `[A-Za-z0-9]*` suffix.
 - A label form starts with `@`; the sigil must be followed by `[a-z]`, after which the token continues through the maximal `[a-z0-9_]*` suffix.
@@ -408,14 +408,14 @@ A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it 
 A capability modifier and a generic parameter's capability bound are properties of a declaration and not components of a type name: two instances of one nominal have one name whether or not its declaration is marked, and no name spells a capability [PROV-6].
 
 [TYPE-4] There are no implicit conversions.
-Numeric value conversion uses the explicit `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `cvt.nearest` interfaces of [OP-6].
+Numeric value conversion uses the explicit `cvt`, `cvt.checked`, `cvt.defined`, and `cvt.wrap` interfaces of [OP-6].
 
 [TYPE-5] Statement-local typing; boundary-explicit facts.
 The factored `call` grammar denotes a construction exactly when its callee is an unqualified TYPEID application. A constructor writes any nominal arguments directly after that TYPEID, never with the function-call `::` introducer; writing the latter is a TYPE-5 error at the complete call. Its operands are named fields under GRAM-8, so a positional operand list is a GRAM-8 error there. Construction is an ordinary expression, not the callable occurrence required by an expression statement or a destructuring result-list let; either statement position rejects it under TYPE-5. These judgments preserve the constructor forms while sharing the strong-LL(2) prefix with qualified member calls.
 A `let` binder's mode and type are derived, never written: exactly the mode and type its selected right-hand side produces — an `ordinary_let_rhs` from its expression, which is always self-typed (operands are typed atoms, calls are typed by their [FN-1]/[OP-1] signatures, literals carry mandatory suffixes [FORM-5], constructions name their nominal and, when that nominal is generic, write its arguments); a `propagate_let_rhs` from the propagated Ok payload [ERR-3]; a `value_match` or `value_if` from the derived common delivery type [GIVE-1], whose delivering `give`s are inside the same `let_stmt`, so the derivation stays statement-local; and a parenthesized binder list from its `call`'s declared result ordinals, binder i at the mode and type determined by result ordinal i's declared `rtype` [GRAM-4, FN-1, CALL-4].
 A binder whose selected right-hand side is a reference instead takes that reference kind, by the same derivation and on the same statement-local ground [REF-1].
 This is unique reconstruction, not inference: no binder's type depends on a later statement, an expected type, or any use site, and no two derivations can disagree [FORM-1].
-Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, `cvt.nearest`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
+Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
 A constructor `call` of a generic nominal states that nominal's type, const, and function arguments on the same ground and in every position, mandatorily: the source nominals under [FN-2], and the prelude generic nominals `Option<T>` and `Result<T, E>` through their variant constructors `None`, `Some`, `Ok`, and `Err`.
 A nullary `None()` has no operand to supply anything, and construction never consults an expected nominal type [TYPE-6], so the written arguments are the only supply there is; their absence, or a count other than the named nominal's parameter list, is a hard error citing TYPE-5 at the complete constructor `call`.
 A non-generic prelude nominal [PRE-1] has no parameters and writes no type arguments.
@@ -892,7 +892,6 @@ The table below is the normative inventory (columns: op, type domain, signature,
 | `cvt.checked` | all numeric pairs [OP-6] | `(Src) -> own Result<Dst, NarrowError>` | pure |
 | `cvt.defined` | all numeric pairs [OP-6] | `(Src) -> own Bool` | pure |
 | `cvt.wrap` | all integer pairs [OP-6] | `(Src) -> own Dst` | pure |
-| `cvt.nearest` | all pairs with a float destination [OP-6] | `(Src) -> own Dst` | pure |
 | `iand` `ior` `ixor` | all int T | `(T, T) -> own T` | pure |
 | `inot` | all int T | `(T) -> own T` | pure |
 | `ishl.wrap` `ishr.wrap` | all int T | `(T, u32) -> own T` | pure |
@@ -920,7 +919,7 @@ The table below is the normative inventory (columns: op, type domain, signature,
 ```
 
 Let `DotlessOperationNames` be exactly the set of distinct individual operation spellings enumerated in this rule's normative `op` column whose complete spelling satisfies IDENT and contains no dot.
-Let `ModeWords` be exactly the suffix alternatives in FORM-3's active OPNAME formation rule together with the operator-form suffixes of [GRAM-1]; in this version their union is the closed set `{wrap, defined, checked, sat, strict, nearest}`.
+Let `ModeWords` be exactly the suffix alternatives in FORM-3's active OPNAME formation rule together with the operator-form suffixes of [GRAM-1]; in this version the two carriers share one closed set, `{wrap, defined, checked, sat, strict}`.
 `ReservedLowerNames` is exactly `DotlessOperationNames` union `ModeWords`.
 
 Each distinct complete spelling in the operation table declares one operation-family identity.
@@ -998,9 +997,8 @@ The table result type is exact, and the containing construct owns any later mode
 Mode membership is table data: add/subtract/multiply have exact, defined, wrap, checked, and sat; divide/remainder have exact, defined, and checked; negate/absolute have exact, defined, wrap, and checked; shifts have exact, defined, and wrap.
 All these rows are pure.
 
-[OP-3] Float arithmetic that ROUNDS carries `.strict` (IEEE 754, no reassociation, no contraction): `fadd.strict` `fsub.strict` `fmul.strict` `fdiv.strict` `fsqrt.strict` `ffma.strict`.
+[OP-3] Float ops that ROUND carry `.strict` (IEEE 754, no reassociation, no contraction): `fadd.strict` `fsub.strict` `fmul.strict` `fdiv.strict` `fsqrt.strict` `ffma.strict`.
 Float ops that are EXACT or exact-selection are dotless: `fneg` `fabs` `fcopysign` `fmin` `fmax` `ffloor` `fceil` `ftrunc` `froundeven` `frem` and the six comparisons.
-Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix names its rounding rule.
 
 [OP-4] A subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selected type must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, or the run of T elements a range reference `&[T]` names [TYPE-9, REF-4], a runtime-capacity form and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; a subscript whose base's final selected type is not one of those indexable types is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
@@ -1056,23 +1054,13 @@ Its endpoint domain is all 64 ordered integer pairs, including identities; each 
 It carries no ConversionDomain obligation.
 A pair outside that endpoint domain is an OP-1 rejection.
 
-The total rounding conversion `cvt.nearest::<Src, Dst>(x)` returns C where D is true and the rounded value R where D is false.
-Its endpoint domain is all 20 ordered pairs whose destination is a float format, including the two float identities; the source is one numeric primitive or one symbolic type parameter with the `Int` or `Float` bound, and the destination is `f32`, `f64`, or one symbolic type parameter with the `Float` bound.
-It carries no ConversionDomain obligation.
-A pair outside that endpoint domain is an OP-1 rejection.
-On this endpoint domain D is false only in the integer-to-float and finite distinct-float-format rows, whose input denotes a finite value v.
-R is selected from candidates: the destination's finite values together with `-2^(E+1)` and `2^(E+1)`, where E is the destination's largest exponent, 127 for `f32` and 1023 for `f64`.
-A candidate is even when the least significant bit of its binary encoding is zero, and `-2^(E+1)` and `2^(E+1)` are even.
-R is the candidate nearest v and, of two equally near candidates, the even one (IEEE 754 roundTiesToEven, with gradual underflow).
-A selected `-2^(E+1)` or `2^(E+1)` yields the infinity with v's sign, and a selected zero yields the zero with v's sign.
-
 [OP-7] Operation-name convention.
 An arithmetic, logic, bit, or compare op carries a domain prefix — `i` (integer), `f` (float), `b` (Bool logic), or `e` (tag-only enum comparison, including `Bool`) — whether or not a cross-domain twin exists; the conversion interfaces of [OP-6] and `reinterpret` carry no prefix.
 The integer arithmetic and integer comparison symbols of [GRAM-5] are the one prefix-free operation class: each is an integer-only table row, so `+` and `<` never denote a float or enum operation, and `fadd.strict`, `feq`, and `eeq` keep their prefixed names.
 `Bool` participates in the `b` family for boolean logic and the `e` family for tag-only equality; the operation name, not operand inference, selects the family.
 A respelled operation's token is its one constant spelling under the same one-spelling-per-operation discipline.
 Bare infix and dotless named integer spellings, and bare `cvt`, are proof-required exact operations; `.defined` is the distinct total Bool-valued domain query, not a result mode and not an execution of the partial primitive.
-The total value-result policies are `.wrap`, `.checked`, `.sat`, and `.nearest` where [OP-1] lists them, and float `.strict` is unchanged.
+The total value-result policies remain `.wrap`, `.checked`, and `.sat` where [OP-1] lists them, and float `.strict` is unchanged.
 Signedness-parametric lowering keyed on the operand-derived selected type [OP-2] (`ishr` is `ashr` for signed T and `lshr` for unsigned T; `imin` is `smin` or `umin`) is the same discipline as the `<` = `slt`/`ult` row, not overloading.
 Nominal enum identity is likewise checked from the operand-derived selected type before `eeq`/`ene` lowering; equal representation width never makes distinct enum types interchangeable.
 
@@ -1087,7 +1075,6 @@ A shift or rotate amount is `u32`; `ishl.wrap`/`ishr.wrap` mask the amount to `a
 `iabs.wrap`, exact `iabs`, and `iabs.checked` use `llvm.abs` with is-int-min-poison false; `.wrap` returns `iK::MIN` on that edge, exact `iabs` is emitted only after its domain proof excludes the edge, and `.checked` returns `Err(Overflow())` there.
 Every arithmetic `.defined` query computes only its total comparison or overflow predicate and never executes the corresponding exact primitive.
 An admitted bare `cvt` lowers without a validity guard; the result transformations required by [OP-6] remain part of its value semantics. A checked conversion and a conversion-domain query may evaluate total conversion primitives while deciding their answer, and may evaluate a partial primitive only on a path where its domain holds.
-`cvt.nearest` lowers exactly as a bare `cvt` of the same pair would: identical endpoints copy the representation, and the LLVM `sitofp`, `uitofp`, `fpext`, and `fptrunc` instructions, emitted without constrained-environment or fast-math flags, round an inexact value to [OP-6]'s R in the default floating-point environment, which no compiled program changes.
 `reinterpret` is the LLVM bitcast instruction for cross-domain pairs (int<->float; bit-preserving, all NaN payloads and sign bits preserved) and an identity bit-relabel for same-width int<->int resign (i8<->u8, i16<->u16, i32<->u32, i64<->u64); it is the bit-preserving counterpart of value-preserving `cvt`, giving bit-level resign a home distinct from cvt's value-preserving resign.
 `fneg` is the LLVM fneg instruction (a sign-bit flip, not `fsub(0.0, x)`); `fabs` is `llvm.fabs`; `fcopysign` is `llvm.copysign`.
 `fmin`/`fmax` are `llvm.minimum`/`llvm.maximum` (IEEE-2019, NaN-propagating, negative zero ordered below positive zero, deterministic); `llvm.minnum`/`maxnum` are not used, because their signed-zero tie result is unspecified and breaks the reproducibility FORM-1 requires.
@@ -1322,7 +1309,7 @@ Grammar fixes all definitions before all requirements and all requirements befor
 
 The definition scope initially contains the function parameters, named consts, and live type and const parameters, then each earlier definition after its complete initializer.
 Every definition and clause expression must consist only of non-consuming datums, measure place forms [OP-15], [ENT-2] clause (b) places, and operation-table forms that are pure and total for every value in their selected operand domain.
-Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `cvt.nearest` are admitted on their respective endpoint domains by their total rows.
+Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, and `cvt.wrap` are admitted on their respective endpoint domains by their total rows.
 Exact addition, subtraction, and multiplication are admitted and read as operations over the mathematical integers rather than as evaluations, exactly as an `affine_expr` is [INV-1]. A clause is erased before lowering and evaluates nothing, so a row whose meaning is total over the mathematical integers states a relation where it would otherwise request an operation, and no domain obligation arises to discharge.
 Function calls, construction, move, borrow, a subscript outside a clause (b) place, mutation, control flow, allocation, and every other partial operation are inadmissible even when another clause states their domain. Exact division, remainder, negation, absolute value, and the shifts remain partial under this judgment.
 Their corresponding `.defined` queries are total and admissible.
@@ -1817,7 +1804,7 @@ Its `spelling` is the complete declaration or result-candidate spelling.
 Its closed carrier roles are function, named-const, parameter, contract-definition, let, for-binder, match-binder, result-binding, route-result, field, and variant-field.
 `reserved_class` is dotless-operation or mode-word.
 A dotless-operation ordinal is the zero-based first occurrence among distinct operation-family spellings, scanning OP-1 rows top to bottom and each `op` cell left to right and skipping every later occurrence of the same spelling.
-A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`, `nearest`.
+A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`.
 Those two reserved sets are disjoint in this version.
 For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_live_lexical_ident_origins)`.
 Earlier binders and arm-entry origins are ordered by declaration-event key.
