@@ -273,9 +273,10 @@ if [ "$MODE" = memory ]; then
     fi
     for count in ${MEMORY_COUNTS:-1000 5000 19000}; do
         echo "$LINES" | while read -r name binary; do
-            case $name in wf|wfbase) ;; *) continue ;; esac
+            case $name in wf|wf1|wfbase) ;; *) continue ;; esac
             port=$(free_port)
-            "$binary" "$port" "$count" >"$OUT/server.out" 2>"$OUT/server.err" &
+            env $(line_environment "$name") "$binary" "$port" "$count" \
+                >"$OUT/server.out" 2>"$OUT/server.err" &
             server=$!
             wait_for_listener "$port" "$server" "$name.memory"
             line=$("$OUT/idleload" "$port" "$count" "$server")

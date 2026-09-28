@@ -1089,15 +1089,27 @@ rarely insert at the same place.
   sources. Reopen when the next parallel-lowering experiment has to change the
   split.
 
-- **Every waiting context runs on the one thread that runs the entry.**
-  The runtime keeps every context [WAIT-2] on the floor's thread with one
-  completion ring, so a server's I/O uses one core however many it has; the
-  [waiting runtime shape](../research/investigations/io-model/WAITS.md#experiment-1-the-waiting-runtime-shape-against-the-native-echo-servers)
-  that met the bar ran one ring and one set of contexts per core. Several
-  drivers need a ring each, a group count and a handle budget that another
-  thread can change, and a rule for which driver a started context joins.
-  Reopen when the echo comparison of a compiled context server against
-  `uring_echo` on the same cores shows the single driver as the limit.
+- **A short context costs about 1.5 microseconds on several drivers.** With
+  four drivers, a thousand batches of a thousand contexts that return at once
+  took 1.47 seconds against 0.15 on one driver, and 0.92 and 1.35 at two
+  and four drivers in Experiment 6
+  (`research/investigations/io-model/WAITS.md`, Experiments 5 and 6): idle drivers
+  take half of the starter's queue, and the contexts, their arenas and the
+  group count then move between cores for work of about 100 nanoseconds.
+  A start joined by the next statement stays on one driver and costs what it
+  does on one. A context that waits for the host amortizes this; one that
+  computes briefly does not. Keeping a context on the starter's driver until
+  it has run for a while, or stealing only from a queue longer than a
+  threshold, would bound it. Reopen when a program starts many contexts that
+  do little before they finish.
+
+- **Only Linux with a ring runs several drivers.** With no kernel ring (the
+  readiness route) and on Windows, every context still runs on the entry's
+  thread: the readiness route's poll list and the completion port's wait are
+  a single driver's. A second driver there needs a readiness registration per
+  driver (`epoll` or `kqueue`) and, on Windows, a completion port per driver
+  or one shared port whose completions carry their driver. Reopen when a
+  server on either route needs more than one core.
 
 - **A context's operation with no readiness form still blocks the thread
   every context shares.** With other contexts live, a socket receive, send
@@ -1140,9 +1152,12 @@ rarely insert at the same place.
   650 instructions per round trip against the reference's 195). About 0.9
   microseconds of kernel time is unattributed. A ring the driver owns and
   waits on directly, as the reference's, removes the first and most of the
-  second; the multi-driver runtime needs one per driver anyway. Reopen with
-  that ring, and measure the unattributed kernel time against a smaller
-  working set.
+  second. Since Experiment 5 every driver but the entry's has a ring only its
+  own thread submits to and reaps, which is the single-issuer condition; the
+  entry's ring is also the process's, which threads that are not drivers
+  submit to, so it would need a ring of its own first. Reopen with that
+  ring, and measure the unattributed kernel time against a smaller working
+  set.
 
 - **Frame memory for a context with small state is unmeasured.** Experiment 3
   measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window

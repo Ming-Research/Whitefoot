@@ -318,8 +318,11 @@ Safe, fast and small are the core. These are the other things worth knowing.
   so a context costs about what its own variables do and adds no kernel
   mapping. The compiled program carries out I/O through a completion runtime
   (io_uring on Linux, I/O completion ports on Windows). Computation that
-  `--par` overlaps never waits for I/O. Still open: running contexts on
-  more than one thread.
+  `--par` overlaps never waits for I/O. On Linux the contexts run on one
+  driver thread per CPU, each with its own ring; a context starts on its
+  starter's thread, and an idle driver takes ready contexts from a busy one.
+  Still open: more than one driver where the host has no ring, and on
+  Windows.
 
 ### Planned
 

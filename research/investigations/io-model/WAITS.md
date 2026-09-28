@@ -557,6 +557,123 @@ four drivers and 0.18 and 0.22 for the bound starts; that was observed
 before any criterion was written for it, so it is a result, not a test of
 one.
 
+### Result
+
+The revised runtime ran the protocol twice, medians of five recorded passes
+after one warm-up each, round trips per second (run 1 / run 2):
+
+| Case | uring | epoll | waiting | four drivers | one driver | previous build |
+|---|---|---|---|---|---|---|
+| 1 connection | 17,199 / 17,336 | 17,275 / 17,676 | 17,377 / 17,023 | 15,913 / 17,265 | 16,977 / 16,746 | 16,123 / 16,761 |
+| 64 connections | 229,016 / 202,068 | 201,373 / 204,288 | 210,920 / 224,830 | 194,570 / 192,684 | 110,368 / 112,664 | 107,673 / 116,347 |
+| 1024 connections | 226,342 / 248,442 | 227,024 / 246,744 | 233,092 / 226,771 | 170,912 / 197,559 | 80,754 / 92,634 | 82,520 / 85,230 |
+| 64 connections, 64 KiB | 43,993 / 45,705 | 61,938 / 61,567 | 51,886 / 57,921 | 53,319 / 55,112 | 29,576 / 30,204 | 29,424 / 29,851 |
+
+Against the criteria, run 1 and run 2:
+
+| Criterion | Bar | Run 1 | Run 2 |
+|---|---|---|---|
+| four drivers over one, 64 connections | at least 1.5 | 1.76 | 1.71 |
+| four drivers over one, 1024 connections | at least 1.5 | 2.12 | 2.13 |
+| four drivers over the best reference, 64 connections | at least 0.70 | 0.85 | 0.86 |
+| four drivers over the best reference, 1024 connections | at least 0.70 | 0.73 | 0.80 |
+| one driver over the previous build, 64 connections | within 0.05 | 1.03 | 0.97 |
+
+Every criterion holds in both runs. With 64 KiB messages four drivers moved
+0.86 and 0.90 of the best reference's bytes (epoll's, at one thread per
+CPU); at one connection four drivers held 0.94 and 1.03 of one, since a
+single connection has nothing to spread. At 64 connections the median
+round-trip latency fell from about 500 microseconds at one driver to about
+120 at four.
+
+The first placement's failure at 64 connections and the revision's pass
+have two changes between them, the placement and the end of a signal to
+every driver per operation; this experiment did not separate their shares,
+and the short-context program alone shows that the placement was needed.
+The load generator shares the four CPUs, so a host with more cores than the
+generator needs is where the drivers' own ceiling would show; Experiment 6
+maps the counts in between.
+
+## Experiment 6: what the several-driver runtime costs and where it scales
+
+### Design
+
+Directed by the owner on 2026-09-28 ("then add a task to measure performance
+properly"). Experiment 5 judged the runtime at four drivers against its
+criteria; this one maps the rest of the surface on the same host (four CPUs,
+the load generator sharing them), each point the median of five runs after
+one warm-up, interleaved across the configurations of one question:
+
+1. Scaling: `tcp_contexts.wf` at one, two, three and four drivers, 64 and
+   1024 connections with 64-byte messages.
+2. Efficiency: server CPU time per round trip at one and four drivers, 64
+   connections (`/usr/bin/time`), against `uring_echo` at its default.
+3. Memory: resident memory and mappings each idle connection adds at one and
+   four drivers, with Experiment 3's `idleload` at 1,000 and 5,000
+   connections.
+4. Start cost: `programs/context_starts.wf`, split into its batched and its
+   bound half, at one, two and four drivers.
+
+### What would distinguish the hypotheses, stated before measuring
+
+- The drivers scale with cores if each added driver up to four raises the
+  rate at 1024 connections, and the rate at four is at least 1.5 times one
+  (Experiment 5's bar); a rate that falls from three to four drivers says
+  the load generator's share of the four CPUs is the limit, not the runtime.
+- Taking work costs little if server CPU per round trip at four drivers is
+  within 1.3 times one driver's; above that, the moves between cores cost
+  more than the parallelism returns on this host.
+- Drivers cost no memory per connection if the resident memory each idle
+  connection adds at four drivers is within 10 percent of one driver's; the
+  fixed cost of a driver (its ring and run queue) is reported, not judged.
+- Start cost is reported, not judged: Experiment 5 already recorded it
+  before writing a criterion.
+
+### Result
+
+Medians of passes 2 to 6 of six, the first a warm-up; every server exited
+zero.
+
+Rate by driver count, round trips per second, with the ratio to one driver
+and the range of the five passes:
+
+| Drivers | 64 connections | 1024 connections |
+|---|---|---|
+| 1 | 105,271 (1.00; 99,108 to 113,879) | 84,119 (1.00; 70,888 to 88,254) |
+| 2 | 186,507 (1.77; 169,219 to 226,096) | 197,629 (2.35; 166,139 to 216,539) |
+| 3 | 192,127 (1.83; 169,571 to 215,693) | 177,563 (2.11; 156,301 to 201,941) |
+| 4 | 205,608 (1.95; 181,898 to 213,570) | 216,052 (2.57; 165,613 to 240,990) |
+
+Server CPU per round trip at 64 connections: 8.98 microseconds at one
+driver, 9.38 at four, and 8.28 for `uring_echo` at its default of four
+threads, whose rate in the same passes was 204,085 against the four-driver
+server's 204,225.
+
+Idle connections: each added 70.03 and 70.01 KiB of resident memory at one
+driver (1,000 and 5,000 connections) and 70.54 and 70.11 at four, and no
+mapping at either; the three added drivers cost 22 mappings and about half a
+megabyte in all, their rings and thread stacks.
+
+Short contexts, seconds of wall time for the batched and the bound half of
+`programs/context_starts.wf`: 0.15 and 0.16 at one driver, 0.92 and 0.20 at
+two, 1.35 and 0.18 at four.
+
+Against the expectations:
+
+- Scaling holds at 64 connections, each added driver raising the median, and
+  four drivers reached 2.57 times one at 1024; but at 1024 three drivers'
+  median fell below two drivers', so the stated test that every added driver
+  raises the rate does not hold. The five passes of two and three drivers
+  overlap across most of their range, and the load generator's four threads
+  share the four CPUs, so this host cannot say whether the third driver
+  costs anything; a host with CPUs to spare for the generator can.
+- Taking work costs little: four drivers used 1.04 times one driver's CPU
+  per round trip, under the 1.3 bar, and 1.13 times `uring_echo`'s.
+- Drivers cost no memory per connection: within 1 percent at both counts.
+- A batch of short contexts costs 6 to 9 times as much with more than one
+  driver, recorded in `docs/todo.md`; a bound start joined at once costs
+  what it does at one driver.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
@@ -607,8 +724,9 @@ code keeps it. A host operation that has not completed suspends the frame and
 returns to the driver; its completion makes the context ready, and the driver
 resumes the frame that suspended. A context [WAIT-2] is one chain of such
 frames. The root context runs the entry, and each context a `mustpar` start
-creates [PAR-4] runs its wrapper; one driver thread resumes every context, and
-compute tasks run on the compute workers and never wait [PAR-1, PAR-2].
+creates [PAR-4] runs its wrapper; driver threads resume the contexts (one in
+the first version, several since Experiment 5), and compute tasks run on the
+compute workers and never wait [PAR-1, PAR-2].
 
 The frame is LLVM's switched-resume coroutine: the frame starts suspended, a
 caller transfers into its callee and a finishing callee transfers back to its
@@ -728,9 +846,10 @@ Alternatives refused:
 - A reference to the factory in the marked call: refused by the value
   parameter condition above.
 
-The accounting stays a plain counter because every context runs on one driver
-thread and only a waiting host call writes the counter, and a waiting call
-never runs on a compute worker [PAR-1, PAR-2].
+The accounting was a plain counter while every context ran on one driver
+thread; with several drivers (Experiment 5) it is an atomic counter, still
+written only by waiting host calls, which never run on a compute worker
+[PAR-1, PAR-2].
 
 The split first proposed to replace this budget does not serve the server
 this work measures, and the owner kept the shared budget under the sharing
@@ -904,4 +1023,4 @@ addition to it, provided the first version keeps these properties:
 | Shutdown | an external signal as host input; pending operations complete as cancelled | none, given property 4 |
 | Select and timeouts | a host operation over several operations, and operations with a deadline | none |
 | Logging | each context writes its own output, or a record sink whose observation is a set of records | none |
-| Several driver threads | placement at the start of a context | none |
+| Several driver threads | a run queue per driver, starts placed on the starter's driver, idle drivers taking ready contexts (Experiment 5) | none |
