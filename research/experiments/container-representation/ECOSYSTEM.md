@@ -149,7 +149,7 @@ five families on one revision. Their supported conclusions are:
 
 | Family | Supported result and remaining question |
 |---|---|
-| Vector | The actual-compiler terminal traversal plus function-actual hint pair improved several scalar paths but regressed wide suffix-one and the empty-suffix controls. It does not select a production policy. The later append-only trial has mismatched accounting provenance and a false code premise; its claimed attribution is withdrawn in the [family report](vector-library/RESULTS.md). |
+| Vector | The [current actual-compiler factor trial](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration) finds that function-actual hints change no native code. Terminal traversal yields 13 qualified useful-cell gains but adverse wide suffix-one medians and strict wide empty-control losses, so it selects no production policy. The historical append-only trial's mismatched accounting and false code premise are corrected in the [family report](vector-library/RESULTS.md). |
 | Deque | [Reusing the computed front slot](deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot) removes duplicate descriptor work and improves scalar reverse churn in a matched pair. Scalar growth at 256 and 4096 remains below target. |
 | HashMap | The [occupancy series](map-library/RESULTS.md) has geometry and allocation observations, but no occupancy timing yet. Current lookup/find calls already inline; the fixed-eight result cannot attribute this map's remaining gap. |
 | PriorityQueue | The [four-ary trial](priority-library/RESULTS.md) does not remove the wide-value deficit. Movement and result handling remain hypotheses, not measured cost shares. |
@@ -163,13 +163,14 @@ the mixed accounting data unusable for candidate selection. The raw target
 reductions themselves replay from their sample files; replaying a reduction
 does not establish the identity or correctness of the image that produced it.
 
-### Next discriminator: separate the two actual compiler changes
+### Actual compiler factor isolation: criterion and result
 
-Before further Vector timing, integrate main's ownership-surface migration at
-`c84c4dd7ab46848f6a5b816fcf57fce32b98158e` and pin the resulting compiler,
-library and harness revision. Then construct a same-source two-factor ablation:
+The criterion recorded before construction was to integrate main's
+ownership-surface migration at
+`c84c4dd7ab46848f6a5b816fcf57fce32b98158e`, pin the resulting compiler,
+library and harness revision, and construct a same-source two-factor ablation:
 neither terminal consumption nor function-actual hints, terminal consumption
-only, hints only, and both. No arm has been built or measured under this plan.
+only, hints only, and both.
 The earlier four-arm diagnostic edited LLVM directly; the actual compiler pair
 measured both changes together. Neither attributes the current compiler's
 wide-value loss to an individual change or their interaction.
@@ -201,6 +202,60 @@ falsifies an interaction-only explanation; a loss confined to both supports
 one only under these measured conditions. Preserve adverse unstable samples
 and native drift. An overlapping range is not equivalence, target counts
 alone select no policy, and this discriminator changes no pending amendment.
+
+The experiment now pins `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`.
+All four constructions pass the correctness screens. Both hint pairs have
+identical native objects and loaded sections at identical addresses; only the
+two distinct traversal settings were timed. Hints therefore explain neither
+a gain nor an interaction in this build. The traversal rewrite has 13
+qualified useful-cell gains, 21 overlapping comparisons and two unstable
+comparisons, but all wide suffix-one medians are adverse and the three wide
+suffix-zero controls strictly regress. The latter include final draining of
+the retained prefix; they are not untouched code. Full observations and
+reproduction are in the [Vector report](vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration).
+This establishes a whole-build traversal effect, not separate costs for loop
+instructions and the changed code placement, and selects no production policy.
+
+### Next discriminator: remaining-count induction in actual lowering
+
+Keep that pinned compiler, source library, harness, callback ABI, allocation
+policy and ordinary hint settings. In a fresh local compiler variant, change
+only the recognized traversal's generated induction: after the existing
+nonempty guard, form `remaining = length - retained`; pass cursor and remaining
+through the loop; after the unchanged consumer, increment cursor and decrement
+remaining, continuing exactly when the latter is nonzero. Keep recognition,
+ordinary fallback, forward handoff order, address qualification and final
+length publication unchanged. No variant selector enters the work branch.
+
+The arithmetic ground is `cursor + remaining = length` over mathematical
+integers, with `retained <= cursor < length` and `remaining > 0` at each
+handoff. Thus subtraction cannot underflow and the final cursor increment is
+at most `u64::MAX`; zero-stride values impose no signed bound on logical
+coordinates. Callback divergence still prevents later handoffs and final
+publication. Extend the existing independent zero-stride oracle to a logical
+length of `u64::MAX` with empty and small removed suffixes, alongside the
+existing owner-order, release, observer and partial-exit cases.
+
+Before timing, require the actual wide O3 loop to replace its separate
+induction increment and `cmn` continuation with decrement-and-zero control,
+while preserving forward payload progression. Inspect both payload widths
+and reject the probe without timing if code is unchanged or adds a payload
+snapshot, spill, call or empty-path length store. The complete existing
+correctness/accounting matrix and fault controls must pass, account rows and
+all native inputs must agree, and source, compiler and output identities must
+be frozen. The historical `consumer-counter.patch` changed a whole LLVM body,
+including address and transfer spelling; it did not isolate this countdown.
+The new question is justified by the actual compiler's isolated traversal
+effect, not by treating that historical replacement package as this change.
+
+If the code and correctness screens pass, compare the frozen current `both`
+image with the new actual-compiler image using the unchanged complete
+`measure 1048576 7` protocol, all seven Vector samples, both cohorts, native
+drift and all six suffix-zero controls. No timing, selection or native-target
+success is implied by the smaller loop. Retain every adverse or inconclusive
+cell; do not repeat on a loss, relax qualification or infer instruction-only
+cost from changed code placement. This probe is not a claim that induction
+alone explains the remaining Vector deficits.
 
 ### Final-code attribution before optimization
 

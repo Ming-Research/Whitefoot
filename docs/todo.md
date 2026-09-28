@@ -460,11 +460,16 @@ rarely insert at the same place.
   Validate a fixed permutation-equivalence argument, structural positive and
   negative witnesses, owning cleanup and same-source timing before adopting a
   recognizer. No semantic impossibility or new primitive follows from the
-  current native gap. Keep the general transformation deferred until a
-  same-source forward-consumption probe establishes a complete-trace benefit;
-  removing relocation can also change inlining and add callback costs. Reopen
-  implementation when that measured tradeoff justifies the recognizer and its
-  full equivalence/fallback obligations.
+  current native gap. A conservative recognizer is now implemented on the
+  work branch under a pending amendment. Its
+  [actual-compiler factor isolation](../research/experiments/container-representation/vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration)
+  finds useful traversal gains but adverse wide suffix-one medians and strict
+  wide empty-control losses; ordinary function-actual hints produce identical
+  native code in both traversal settings. Keep this item open for the
+  remaining traversal/controller and code-placement costs, with the recorded
+  remaining-count experiment as the next discriminator. The recognizer's
+  existence neither settles that performance tradeoff nor justifies extending
+  its equivalence domain.
 
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)

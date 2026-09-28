@@ -1,0 +1,40 @@
+--- a/compiler/src/lowering/builder.rs
++++ b/compiler/src/lowering/builder.rs
+@@ -503,7 +503,7 @@
+     if let Some(body) = &function.body {
+         if uninhabited {
+             builder.terminate(IrTerminator::Unreachable)?;
+-        } else if !builder.lower_terminal_consumption(function, functions)? {
++        } else if true || !builder.lower_terminal_consumption(function, functions)? {
+             builder.lower_statements(body, None)?;
+         }
+     } else if compiler_owned {
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -660,7 +660,7 @@
+     let mut signature = Signature::new(source_symbol(function.name()), result, parameters);
+     signature.linkage = Linkage::Internal;
+     signature.references = references;
+-    if function.is_function_actual() {
++    if false && function.is_function_actual() {
+         signature.suffix.push_str(" inlinehint");
+     }
+     let mut output = FunctionBody::default();
+@@ -1551,7 +1551,7 @@
+         }
+         let mut signature = Signature::new(body_symbol.clone(), result, parameters);
+         signature.references = references;
+-        if !declaration && self.function.is_function_actual() {
++        if false && !declaration && self.function.is_function_actual() {
+             // This is the ordinary inliner's preference, including for a
+             // destination-form body. It requests no early mandatory inlining
+             // and preserves the existing body/entry structure and pipeline.
+@@ -1702,7 +1702,7 @@
+         }
+         let mut signature = Signature::new(symbol, result.clone(), parameters);
+         signature.references = references;
+-        if self.function.is_function_actual() {
++        if false && self.function.is_function_actual() {
+             signature.suffix.push_str(" inlinehint");
+         }
+         let mut output = FunctionBody::default();

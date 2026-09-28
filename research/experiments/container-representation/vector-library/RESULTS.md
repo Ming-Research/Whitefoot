@@ -2552,9 +2552,19 @@ the slower standard peer to near parity at `0.992–1.006`; all three are still
 inconclusive because the observed ranges overlap. The complete target summary
 moved from 18 passes, 7 deficits and 11 inconclusive cells to 17 passes, 6
 deficits and 13 inconclusive cells. Thus the tail boundary is a confirmed
-large contributor, but this candidate neither wins the required cells nor
-preserves the full target matrix as a production policy. It is rejected for
-selection; the remaining call/setup/placement and close-cell work stays open.
+large contributor, but the candidate does not win the required peer cells.
+Separately, the paired Whitefoot samples establish a regression in wide
+suffix-2 at population 16. Using all seven ranked samples, control medians
+`21.566 / 21.550 ms` become `22.318 / 22.140 ms`, candidate/control ratios
+`1.034869702 / 1.027378190`. Control ranges are
+`21.551–21.943 / 21.538–22.043 ms`; candidate ranges are
+`22.078–23.144 / 22.109–22.158 ms`. Both candidate minima exceed their
+control maxima. The contemporaneous Rust median ratios are
+`1.001112347 / 0.999444470`, and C++ ratios are
+`1.000741737 / 0.996946141`. This paired loss is distinct from the target
+counts, which compare each arm with its native peers. The candidate remains
+rejected for selection; the remaining call/setup/placement and close-cell
+work stays open.
 
 ### Counted consumer with wide tail and truncate `alwaysinline`: completed, improved but rejected
 
@@ -2786,16 +2796,18 @@ or storage type.
 
 The native A/B identifies the empty-header/first-growth pair, while a lazy
 enum would change the public storage shape and the source contracts. The next
-source-equivalent diagnostic therefore keeps `Box<Slots<T>>` and changes only
-`grow_vector_new`: for a positive caller ceiling it constructs capacity one;
-the `ceiling == 0` instance remains capacity zero. No caller, operation,
-growth formula, element order, allocator observer or public ABI changes. This
-eliminates the first `grow` edge without adding a new representation.
+initial-capacity policy diagnostic keeps the `Box<Slots<T>>` storage shape
+and public ABI, but changes `grow_vector_new`: for a positive caller ceiling
+it constructs capacity one; the `ceiling == 0` instance remains capacity
+zero. This is observable: `grow_vector_reserve` with `total: 0_u64` on a fresh
+positive-ceiling vector returns one instead of zero. Call sites, the growth
+formula and element order stay unchanged. The diagnostic eliminates the
+first `grow` edge without adding a new representation.
 
 The pre-construction criterion is that the diff contains only this conditional
 construction and its documentation; the zero-ceiling program remains
 unchanged. The complete correctness/accounting images must retain every
-checksum, cleanup refusal and owner ledger, with exactly one fewer allocation
+checksum and owner/release ledger, with exactly one fewer allocation
 and release at each positive-ceiling fresh growth trace and no change to
 reserved/reuse rows except their initial capacity. A useful-cell regression or
 an unexpected field/contract verdict stops without timing. If the candidate
@@ -2803,6 +2815,10 @@ removes the strict growth deficit without regressing another qualified cell,
 the changed initial-capacity policy is a production candidate; otherwise it is
 rejected and the remaining choice is a lazy-empty representation or a
 compiler/lowering optimization.
+
+The historical criterion called the cleanup fault a "cleanup refusal".
+The driver injects a missing release, not allocator exhaustion; its negative
+controls establish checksum and release accounting coverage only.
 
 The matched A/B was run with separately rebuilt gate compilers, because the
 standard library is embedded in `whitefootc`; the earlier stale-binary timing
@@ -2814,10 +2830,27 @@ cleanup fault injections. The candidate changed scalar growth at 16 from
 was nevertheless 18 passes / 4 deficits / 14 inconclusive cells (six
 unranked), versus the baseline's 18 / 5 / 13 (six unranked): scalar suffix-2
 at 4096 moved from inconclusive (`1.034401/1.062385`) to a strict deficit
-(`1.065974/1.065284`). The candidate therefore fails the preregistered
-no-regression criterion and is rejected as a production policy. Its ledger
-does confirm the intended causal change: scalar growth at 16 falls from 21 to
-18 requests and from 1,848 to 1,800 requested bytes per three-round trace,
+(`1.065974/1.065284`). That peer-status change does not establish a paired
+Whitefoot regression. With all seven recorded samples ranked, its control
+medians are `1.744 / 1.737 ms` and candidate medians are `1.745 / 1.746 ms`,
+ratios `1.000573394 / 1.005181347`; ranges overlap in both cohorts.
+
+A different cell does fail the preregistered no-regression criterion: wide
+reserved at population 16. Control medians `42.075 / 42.102 ms` become
+`43.426 / 43.464 ms`, candidate/control ratios `1.032109329 / 1.032350007`.
+Control ranges are `42.028–42.226 / 42.061–43.270 ms`, while candidate ranges
+are `43.393–44.013 / 43.382–43.621 ms`; both candidate minima exceed their
+control maxima. The contemporaneous Rust median ratios are
+`1.001203283 / 1.007866060`, and C++ ratios are
+`0.997776580 / 0.998899396`. This cell remains a peer pass in both saved
+target CSVs: its Whitefoot/slower-standard median ratios move from
+`0.944953510 / 0.945666090` to `0.977468656 / 0.977334053`. It can therefore
+still beat the native target while regressing against its paired Whitefoot
+control. The candidate remains rejected as a production policy on that
+paired-loss evidence.
+
+Its ledger does confirm the intended causal change: scalar growth at 16 falls
+from 21 to 18 requests and from 1,848 to 1,800 requested bytes per three-round trace,
 with the same 416-byte peak; non-growth traces retain two requests but carry
 one extra element slot in the initial header (scalar reserved-16: 504 to 528
 bytes, peak 168 to 176). The frozen patch and complete raw evidence are
@@ -2828,7 +2861,7 @@ bytes, peak 168 to 176). The frozen patch and complete raw evidence are
 [`baseline account`](ecosystem-initial-cap-baseline-account.csv) and
 [`candidate account`](ecosystem-initial-cap-candidate-account.csv).
 
-The source-equivalent initial-capacity trial does not make a lazy-empty
+The initial-capacity policy trial does not make a lazy-empty
 representation expressible under the current public shape. A minimal enum
 `Pending<T> { Empty; Full(storage: Box<Slots<T>>); }` can run a 16-append
 micro-witness, but the existing vector contracts reject the required facts:
@@ -4064,3 +4097,150 @@ scalar capacity work, a particular spill or code placement. The paired
 regression and incomplete peer target prevent selecting this diagnostic. No
 production inline policy or movement/result contract change follows from
 these trials.
+
+### Actual compiler factor isolation after ownership integration
+
+This bounded discriminator separates terminal-owned-consumption lowering (T)
+from function-actual `inlinehint` emission (H). It selects no production policy.
+The [criterion](../ECOSYSTEM.md#actual-compiler-factor-isolation-criterion-and-result) was recorded before construction and timing.
+The source pin is `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`.
+Four compiler variants were constructed from a fresh plain `git archive` snapshot:
+neither (T0H0), terminal (T1H0), hint (T0H1), and both (T1H1, current source).
+No production, specification, design-tree, helper, harness, or native flag changed.
+
+H has no native effect for this source, compiler, and toolchain. In both H pairs,
+raw LLVM differs only by four `inlinehint` tokens, on the word/record make/accept
+definitions. The timed and accounting WF objects are byte-identical within each
+pair; every linked section's bytes and layout and the full disassembly also match.
+Different whole-image hashes arise from UUIDs, six Rust archive debug object paths,
+string-table padding, corresponding LINKEDIT offsets/sizes, and code signatures.
+Semantic symbol entries and indirect-symbol bytes match after path normalization.
+Thus only neither and both were measured; hint and terminal are deduplicated,
+unmeasured equivalents, not extra timing observations.
+
+T changes exactly the scalar and wide `grow_vector_truncate` definitions in raw
+LLVM; all 62 definitions remain present and text outside definitions is unchanged.
+All 18 non-WF native inputs, including Rust/C++/driver and runtime objects, match
+across all four arms. Configuration contents match after only compiler-path
+normalization. The [account CSV](ecosystem-compiler-factor-accounting.csv) is byte-identical across arms (294 data rows).
+Each arm's timed and accounting checks passed 1,260 configurations / 8,820 executions;
+both checksum and cleanup fault controls failed with the required diagnostics.
+
+The T native delta includes scalar truncate 44→17 instructions and wide truncate
+168→65. Wide truncate remains frameless and call-free; the current forward loop
+reads owned backing storage directly and performs no replacement payload stores.
+Empty truncation skips payload, digest, and length writes in both images.
+The suffix-zero trace still drains its retained prefix at the end; it is not
+an untouched-code control. The suffix-one old first-half exchange is already
+bypassed, so removing its copies cannot explain that cell. No calls
+to either accept callback survive in either image. Wide trace/tail/mixed-work
+instruction counts and frames remain unchanged after relocation qualification;
+the wide mixed-work environment-pointer spill already exists in both images.
+WF object and linked text shrink by 996 bytes, shifting native peer entries by
+996 bytes. The wide tail still calls truncate, including on empty truncation.
+These observations do not isolate traversal/controller costs from code placement.
+
+The single timing attempt ran [neither](ecosystem-compiler-factor-neither-samples.csv) then [both](ecosystem-compiler-factor-both-samples.csv), each with
+`measure 1048576 7`, preserving the full matrix, two cohorts and native controls.
+Each CSV has 4,116 rows and 588 groups with samples 0–6. All seven samples enter
+the maintained `--complete` / `--targets` reductions and the paired reduction;
+Vector sample 0 is not warmup. Non-time columns and checksums match row for row.
+The 148 frozen construction artifacts and all 765 source inputs match before and
+after timing. There was no rerun, sample removal, rebuild, or threshold change.
+
+A strict paired gain/loss requires disjoint seven-sample ranges in the same
+direction in both cohorts. Qualification requires every paired WF sample ≥1 ms
+and cohort median-ratio spread ≤10%; the six suffix-0 controls remain unranked.
+Among 36 useful cells, raw outcomes are 13 gains, zero losses, and 23 overlaps.
+Qualified outcomes are 13 gains, 21 overlaps, and two unstable wide suffix-1 cells.
+The minimum useful WF sample is 1.214 ms. The 13 strict gains comprise eight
+scalar cells and five wide suffix-2/3 cells; all cells and native drift remain in
+the [complete paired CSV](ecosystem-compiler-factor-paired.csv), rather than selecting only improved cells.
+
+| Wide suffix-1 count | Both/neither median, cohort 0 | Cohort 1 | Paired qualification |
+|---|---:|---:|---|
+| 16 | 1.325313 | 1.573929 | Overlap; unstable |
+| 256 | 1.181342 | 1.330321 | Overlap; unstable |
+| 4096 | 1.365537 | 1.290925 | Qualified overlap |
+
+All six wide suffix-1 cohort medians are adverse, but none of these three cells
+has a strict paired range loss. Instability does not establish absence of loss.
+All three wide empty controls have strict losses meeting the duration/stability
+screens: median ratios at
+counts 16/256/4096 are respectively 1.167435/1.161914, 1.165732/1.162354, and
+1.154983/1.145972 (cohorts 0/1). Scalar empty controls overlap and include <1 ms
+samples, so remain unranked. The result rules out a native H interaction here:
+the T-only image already has the same executable code and layout as both.
+It attributes this whole-build contrast to T and its resulting placement changes,
+without assigning isolated loop-cost percentages or selecting a production policy.
+
+The maintained standard-peer target counts move from 12 pass / 8 deficit /
+16 inconclusive to 16 pass / 1 deficit / 19 inconclusive, with six unranked controls
+in each arm. These counts do not establish selection or target completion.
+The current qualified deficit remains wide suffix-1/count 4096: WF/slower-standard
+median ratios are 1.861924 and 1.780986 (C++ in both cohorts).
+Useful-cell native median drift (both/neither) spans Rust 0.943246–1.051724,
+C++ 0.935431–1.103050, reverse-C 0.943436–1.060588, direct-C 0.694860–1.768427,
+swap-take-C 0.937053–1.083481, and take-swap-C 0.953809–1.061672. Identical input
+objects do not make relocated native peers a timing-invariant reference.
+
+The tracked source/harness/Makefile/reducer at the pinned revision are reproducible
+inputs. Retained compilers, LLVM, objects, linked images, phase logs and inspection
+JSONs are scratch evidence under `vector-library/.build/actual-ablation/` in
+`/private/tmp/whitefoot-vector-actual-ablation`; they are not tracked repository files.
+The scratch files serve this discriminator and can retire after publication and
+reproducible input/sample retention in the existing vector-library experiment home.
+`base-source.json`, each arm's `source.patch`, `source.json`, `artifacts.json`, and
+`freeze.json` record exact source and artifact identity; `native/` records the screen.
+The scratch paired recipe is `analyze.py`; it groups the seven samples by
+payload/path/count/variant/cohort, takes the middle sample after sorting, and
+applies the range and qualification rules above. Raw samples, shared accounting
+and the complete paired CSV are retained beside this report; maintained outputs
+and the scratch analysis remain under `measurement-1/`. This distinction matters:
+reading the tracked CSVs reproduces the numeric reduction, not the prior binary
+execution or native-code inspection.
+
+The [factor switch patch](actual-compiler-factor-switches.patch) records every
+source difference from the pinned current compiler. Apply only its builder
+file for T0, only its emitter file for H0, both for neither, and neither for both.
+Reconstruction applies only these guarded condition changes to the pinned source:
+T0 prefixes `true || ` to `!builder.lower_terminal_consumption(function, functions)?`;
+H0 prefixes `false && ` to the three `is_function_actual()` condition sites in
+`backend/emitter.rs`, preserving the declaration condition where present. Each
+exact site must match once; the arm patches record the complete differences.
+Use a fresh archive of `compiler spec lib .github research/experiments/container-representation`.
+Build each arm sequentially with `cargo build --manifest-path compiler/Cargo.toml
+--target-dir compiler/target --profile gate --bin whitefootc --locked --offline -j2`,
+copying its compiler before switching. Run unchanged vector Make `ecosystem-build`,
+`ecosystem-check`, `ecosystem-account` with a fresh arm `BUILD`, its frozen `WHITEFOOTC`,
+`CLANG=/usr/bin/clang`, and `CXX=/usr/bin/clang++`, under `.github/run-check.pl`.
+Inspect code/layout before timing. From this family directory, reproduce
+the maintained reductions with `perl ../summarize-ecosystem.pl --complete
+vector=ecosystem-compiler-factor-neither-samples.csv` and `--targets`; substitute
+`both` for the second arm. Apply the explicit paired rules above to either the
+raw samples or the resulting minima/medians/maxima; `analyze.py` is the saved
+scratch implementation, not a new maintained runner.
+The one-shot guarded runners are `run.py --construct` and `measure.py`; their full
+commands, direct exit statuses and wall times are retained in both `phase-times.json` files.
+Toolchain: Apple clang 21.0.0 (clang-2100.3.34.2), arm64-apple-darwin25.6.0;
+rustc 1.98.1 (48a229cea, 2026-09-01), Rust LLVM 22.1.8; native optimization is O3.
+
+| Arm | Compiler build s | Native build s | Check s | Account s | Timing s |
+|---|---:|---:|---:|---:|---:|
+| neither | 61.897231 | 4.754754 | 1.743580 | 0.165880 | 81.453939 |
+| terminal | 38.336617 | 4.956677 | 1.749854 | 0.167498 | Unmeasured |
+| hint | 40.255096 | 5.010803 | 1.833778 | 0.174398 | Unmeasured |
+| both | 39.946627 | 4.967135 | 1.789267 | 0.167887 | 80.901394 |
+
+All direct phases exited 0. Four maintained reductions took 0.061–0.063 s each;
+guarded construction and measurement totals were 209.29 s and 163.18 s (exit 0).
+Primary SHA-256 evidence (all remaining identities are in the manifests):
+
+| Artifact | SHA-256 |
+|---|---|
+| neither samples | `9e1c32edb9c5db8d7bc5e577e8e4e7fadf17bbdddb8c729320eb8dc9aea390d7` |
+| both samples | `f8e19af7e6c57a8fe157de1c29dbdcddc713d181982c313c6e3e7fda8e8b3a88` |
+| paired `analyze.py` | `bcba28a09897910f13c0b632fb912814b5dab001b8e6c28cffb00cbb1ec7a144` |
+| account CSV, every arm | `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7` |
+| neither/hint timed WF object | `16522ed39dc4f6af947bf89108a8444d25839dd7aaa8db8a02316da55f3b2add` |
+| terminal/both timed WF object | `c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235` |
