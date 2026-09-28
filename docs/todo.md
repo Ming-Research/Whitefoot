@@ -1827,7 +1827,12 @@ condition under which it is taken up.
   full sparse-map loop still rejects its extent invariant when its
   length-preserving wrapper is inlined with an explicit extent bridge. Its
   normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. Reopen with contract-proof work: reduce the remaining
+  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
+  reduce a related refusal to two scalars incremented together under a branch
+  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
+  following from ENT-6's per-binding join images and INV-1's affine-only
+  conclusions rather than a compiler defect; Snowghost's line breaker keeps
+  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
   refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation

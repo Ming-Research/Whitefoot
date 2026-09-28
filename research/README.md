@@ -46,6 +46,9 @@ the work-branch and merge boundary.
 - [Result proof transport](investigations/result-proof-transport/DESIGN.md):
   compare verified result facts across direct matches, named outcomes and
   propagation, including capture, invalidation and composition boundaries.
+- [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
+  integer fields of struct results and routed Ok payloads as relation data,
+  the placement transport they need, and the separate lockstep-join limit.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.
