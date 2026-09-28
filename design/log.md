@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Approve runtime hashing and retain draft module imports
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/incremental-compilation
+
+Owner-approved: The owner agreed to all three PR #160 decision-card recommendations ("all agreed", written in Chinese): adopt the runtime SHA choice, correct the diagnostic dependency ground, and keep module-product import in Draft without merging while its cost condition remains unmet.
+
+Summary: Apply the reviewed runtime hashing decision to compiler and the reviewed diagnostic-rendering node revision unchanged, adjusting only the hashing evidence link for its live-node location. Runtime digests use the maintained safe SHA-256 API with locked dependency provisioning and the independent constant-evaluation specification identity retained; exhaustive handwritten diagnostic rendering stays selected on its actual schema-maintenance ground. Remove those two accepted amendments. The [paired cost evidence](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification) still does not establish the module-import cost condition, and the later catalogue screens select no new compiler change. Keep compiler/incremental-compilation unchanged and its import amendment pending under the owner's Draft disposition; this is neither adoption nor permanent rejection of that proposal. This tree update changes no language rule or compiler behavior and authorizes no merge.
+
 ## 2026-09-27 Use postfix caret for explicit reference access
 
 Nodes: language/ownership/reference-validity, language/surface-form/borrow-lexicon, language/data-model, compiler/checker-facts, compiler/rejection-payloads, language/ownership, language/surface-form/result-propagation

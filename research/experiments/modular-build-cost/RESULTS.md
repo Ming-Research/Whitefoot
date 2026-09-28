@@ -539,8 +539,10 @@ question of whether this PR currently slows an edit build:
 The complete PR is faster than unchanged main on these two workloads, but
 the matched control shows that the general hashing gain does not establish
 the module-import amendment's condition that importing costs less than the
-work saved. Keep that design finding open for the owner; do not infer approval
-or revise its condition from the overall speedup.
+work saved. The owner approved the independent runtime hashing choice and
+diagnostic-ground correction while retaining the Draft and the unresolved
+import-cost condition. That ruling changes design status, not these
+measurements; it does not adopt the import proposal or waive its criterion.
 
 Cold compiler-only wfgrep peak RSS is 364.61 / 377.62 MiB. Most of that
 memory already exists in the baseline; this experiment does not attribute it
@@ -708,10 +710,10 @@ criterion. The same-image observations are variability controls, not
 confidence bounds. The trial also left HashMap well outside the owner's
 approximately 5% matched-main target. Its smaller cache does not satisfy
 those cost criteria; the encoding change and its trial-only test were removed.
-No compiler optimization from this continuation remains. The production
-source and pending design amendments are unchanged from the earlier final
-qualification; its seven-workload results still describe the published
-implementation. Reproduce the extended trial comparisons with the paired
+No compiler optimization from this continuation remains. At that continuation's
+end, production source and pending design amendments were unchanged from the
+earlier final qualification; its seven-workload results still describe the
+compiler implementation. Reproduce the extended trial comparisons with the paired
 runner's `--rounds 7 --workloads grow-vector hash-map`, native
 `--require-reuse`, and a separate `--compiler-only` sequence. The trial hash
 above and the recorded runtime-SHA control hashes identify these observations.
@@ -766,8 +768,8 @@ were removed, including the trial-only test and storage-family adjustment.
 There was no seven-pair qualification or repeated-edit history extension
 because the initial consumer criterion failed. This rejects the measured
 storage-only implementation, not every possible batching design. The shared
-identity/input catalogue was left to the following trials. Production source, specification
-and pending amendments remain unchanged.
+identity/input catalogue was left to the following trials. At the end of
+that trial, production source, specification and pending amendments were unchanged.
 
 The raw `grouped-lowering-{native,compiler}.jsonl`, build/test log, saved
 executable and `grouped-lowering.patch` are in the same local audit directory

@@ -1621,8 +1621,10 @@ compiler crate's `forbid(unsafe_code)`. It keeps the constant-evaluation
 implementation for the specification/build identity and provisions the locked
 dependency set explicitly before offline checks. The native compiler
 comparison records a gain, including a main control with the same optimization.
-The runtime hashing dependency remains a pending design amendment rather than
-an implicit revision of the live tree.
+The owner approved the reviewed runtime hashing decision and the diagnostic
+dependency-ground correction; they are now recorded in the live compiler tree.
+The module-import proposal remains pending under the owner's decision to keep
+this PR in Draft while its separate import-cost condition is unmet.
 
 With matching runtime hashing on main, the three-pair container comparison
 still measures 9.3% and 13.3% entry-edit overhead. The next trial removes
@@ -1678,9 +1680,10 @@ build is 4.6% slower and HashMap's is 14.7% slower; compiler-only costs are
 62.48 MiB and its native cache from 6.20 to 15.96 MiB. The complete PR is
 faster than unchanged main on both containers, but the general hashing gain
 does not discharge the import amendment's cost condition. The small local
-trials above did not remove that remaining loss. Keep the amendment pending
-and present the cost finding for the owner's direction; avoid replacing its
-criterion with a count of avoided walks or with the unrelated hashing gain.
+trials above did not remove that remaining loss. The owner retained the Draft
+and the pending import amendment with this cost finding unresolved; do not
+replace its criterion with a count of avoided walks or with the unrelated
+hashing gain.
 Any further representation trial must identify the import work it removes,
 preserve complete current-input validation and rollback, and use the matched
 main comparison and independent output/work controls again.

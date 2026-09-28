@@ -1368,11 +1368,13 @@ rarely insert at the same place.
   unchanged library structural bodies and lowerings after entry edits while
   retaining current composition judgments. The current-main audit found no
   demonstrated correctness defect within scope and selected faster runtime
-  hashing. The [final qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  hashing, whose independent design choice the owner has approved. The
+  [final qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
   makes the complete PR faster than unchanged main, but against main with the
   same hashing optimization its entry-edit native cost is +4.6% for GrowVector
   and +14.7% for HashMap, with greater compiler memory and cache size. Thus the
-  import amendment's cost condition remains unresolved. The compact-name,
+  import amendment's cost condition remains unresolved, and the owner retained
+  the Draft without adopting or merging that proposal. The compact-name,
   invocation-memo and identity-lookup trials gave no useful gain and were
   removed. The owner directed further investigation under the same target.
   [Feature omissions](../research/experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
