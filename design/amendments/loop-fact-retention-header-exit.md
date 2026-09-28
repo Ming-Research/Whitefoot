@@ -1,0 +1,7 @@
+Node: language/checks-and-proofs/obligation-discharge/loop-fact-retention
+
+Decision: A proved loop-header invariant conclusion leaves its loop on every exit edge and survives the continuation join exactly as a local invariant conclusion does, while the invariant's name still leaves scope with the loop body, because the conclusion is a theorem over the immutable value images of the iteration that took the exit, so leaving the loop changes nothing it states, and removing it made writers restate a scan's `pos <= length` after every `break` or re-clamp the position after the loop, which accounts for 11 of the 23 clamp blocks of the URL parser measured in the [writer-lost-facts investigation](../../research/investigations/writer-lost-facts/DESIGN.md#shape-1-a-header-invariant-after-break), instead of removing header conclusions on every edge leaving their loop. This adds a decision to the node and replaces no existing one.
+
+Rejected:
+- Re-proving the header batch at every `break` as an obligation: rejected because a `break` taken after the loop's variables changed would turn accepted programs into rejections.
+- Re-proving the header batch at every `break` and publishing only the relations that succeed: rejected because every measured `break` leaves its variables unchanged since the head, where retaining the head theorem already suffices, and a judgment that fails silently would be new to invariant checking; reopen for a consumer that writes before its `break`.

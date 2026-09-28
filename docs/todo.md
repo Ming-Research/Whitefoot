@@ -411,6 +411,48 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **Three facts writers establish are not carried; amendments pending.** The
+  [writer-lost-facts investigation](../research/investigations/writer-lost-facts/DESIGN.md)
+  finds no compiler defect behind the Snowghost modules' re-clamps; each
+  loss follows v0.77. It proposes, in order: header invariant conclusions
+  leave the loop on every exit edge like local invariant conclusions
+  [ENT-5, ENT-6], which removes 11 of the URL parser's 23 clamp blocks
+  under emulation; a `give d;` edge delivers `x = d`, and admits literal and
+  named-const carriers [ENT-5, GIVE-1]; and `when Some(value: r):` routes
+  like `Ok` with `Option` joining the conditional transport [FN-9, ENT-5,
+  CALL-4]. Each awaits the owner's ruling on its amendment under
+  `design/amendments/`. Validate each with the investigation's probes as
+  conformance cases, its named negative controls, the listed unit tests
+  that change, and unchanged check time on the maintained programs; land
+  the `Some` route with or after PR #169, which rewrites the same FN-9
+  admission sentence. Reopen on the ruling.
+
+- **An affine bound is lost at a statement join where the binding's images
+  differ.** After a scan whose `pos <= length` is known only as an affine
+  invariant conclusion, `let result = pos; if result < start { set result = start; }`
+  cannot prove `result <= length`, although each edge satisfies it: the
+  then edge holds it in L0, the false edge only as an affine theorem, the L0
+  join drops it and [ENT-6] gives `result` a fresh atom. No local invariant
+  carries it, because the two edges' conclusions are different canonical
+  inequalities. The
+  [witness](../research/investigations/writer-lost-facts/DESIGN.md#shape-6-lockstep-arrays-and-struct-fields)
+  is the limit PR #169 records for lockstep counters. Impact: writers keep
+  both clamps or must add a header relation that makes the branch dead.
+  Candidate: at a join input, project a two-atom affine conclusion over two
+  live bindings' current images into L0 before the join; validate soundness
+  against replacement and alias controls and measure closure cost first.
+  Reopen when a consumer cannot avoid the branch.
+
+- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
+  for `ensures when Some(value: r):` names neither the admitted `Ok` route
+  nor the result types it applies to, and `InvisibleUse` for a header
+  invariant named after its loop does not say the name's scope ended with
+  the loop body [INV-1]; the Snowghost writers reported changing result
+  types and retrying certificates, which either repair would have shortened. Add a repair to each under
+  `compiler/diagnostic-repairs`, pinned with a program per alternative.
+  Found in the writer-lost-facts investigation; reopen with the next
+  diagnostics change or with the `Some` route.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
