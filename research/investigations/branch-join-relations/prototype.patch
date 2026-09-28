@@ -1,0 +1,330 @@
+diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/semantic/entailment/flow/domain.rs
+--- a/compiler/src/semantic/entailment/flow/domain.rs
++++ b/compiler/src/semantic/entailment/flow/domain.rs
+@@ -896,6 +896,13 @@
+         for state in &mut promoted {
+             self.vocabulary.promote_flow_contradiction(state);
+         }
++        if super::proto::join_a() && promoted.len() > 1 {
++            for state in &mut promoted {
++                if !state.facts.all_derivable {
++                    self.reasoning().project_affine_differences(state);
++                }
++            }
++        }
+         let contributing = promoted
+             .iter()
+             .filter(|state| !state.facts.all_derivable)
+@@ -941,6 +948,64 @@
+         }
+     }
+ }
++
++impl Reasoning<'_, '_, '_> {
++    /// Prototype (a): every affine premise whose coefficient vector is the
++    /// difference of two L0 candidates' current images becomes that L0
++    /// difference bound in this join input, so the ordinary L0 join keeps the
++    /// weakest common bound over the joined terms.
++    pub(super) fn project_affine_differences(&mut self, state: &mut ProofFlowState) {
++        let candidates = self.affine_l0_candidates(&state.affine);
++        let mut by_vector: HashMap<Vec<super::super::affine::AffineCoefficient>, Vec<(TermId, TermId, i128)>> =
++            HashMap::new();
++        for x in &candidates {
++            for y in &candidates {
++                if x.term == y.term {
++                    continue;
++                }
++                let Ok(difference) = x.value.subtract(&y.value, &mut AffineCheckState::new()) else {
++                    continue;
++                };
++                if difference.terms().is_empty() {
++                    continue;
++                }
++                by_vector
++                    .entry(difference.terms().to_vec())
++                    .or_default()
++                    .push((x.term, y.term, difference.constant_value()));
++            }
++        }
++        let premises = canonical_affine_facts(&state.affine.facts)
++            .into_iter()
++            .map(|fact| fact.inequality.clone())
++            .collect::<Vec<_>>();
++        let mut projected = Vec::new();
++        for inequality in premises {
++            let Some(pairs) = by_vector.get(inequality.terms()) else {
++                continue;
++            };
++            for (left, right, constant) in pairs {
++                let Some(bound) = inequality.upper().checked_add(*constant) else {
++                    continue;
++                };
++                projected.push(Relation::Bound {
++                    left: *left,
++                    right: *right,
++                    bound,
++                });
++            }
++        }
++        if projected.is_empty() {
++            return;
++        }
++        let event = self.vocabulary.proof_event(FlowEventKind::S4, None);
++        for relation in projected {
++            state
++                .facts
++                .establish(&relation, &mut self.vocabulary.derivations, event);
++        }
++    }
++}
+ 
+ /// Returns the one deterministic premise traversal used by every affine
+ /// consumer: insertion order with later occurrences of the same canonical
+diff -ruN a/compiler/src/semantic/entailment/flow/invariants.rs b/compiler/src/semantic/entailment/flow/invariants.rs
+--- a/compiler/src/semantic/entailment/flow/invariants.rs
++++ b/compiler/src/semantic/entailment/flow/invariants.rs
+@@ -460,6 +460,50 @@
+     }
+ }
+ 
++impl Reasoning<'_, '_, '_> {
++    /// Prototype (b): a proved invariant target whose source normalization is
++    /// one unit-coefficient difference bound over live bindings, measure terms
++    /// and constants is also established as that L0 relation over the current
++    /// place terms, with their ordinary support, as S4 does for a requirement.
++    pub(super) fn project_invariant_l0(
++        &mut self,
++        relation: &CheckedAffineRelation,
++        facts: &mut FactState,
++    ) {
++        let mut relations = Vec::new();
++        if let Some(first) = self.checked_affine_relation_l0(relation) {
++            relations.push(first);
++        }
++        if relation.equality {
++            let swapped = CheckedAffineRelation {
++                node_path: relation.node_path.clone(),
++                left: relation.right.clone(),
++                right: relation.left.clone(),
++                bound: 0,
++                equality: false,
++            };
++            if let Some(second) = self.checked_affine_relation_l0(&swapped) {
++                relations.push(second);
++            }
++        }
++        if relations.is_empty() {
++            return;
++        }
++        let event = self
++            .vocabulary
++            .proof_event(FlowEventKind::S4, Some(&relation.node_path));
++        for relation in relations {
++            if let Relation::Bound { left, right, .. } = relation
++                && left == ZERO
++                && right == ZERO
++            {
++                continue;
++            }
++            facts.establish(&relation, &mut self.vocabulary.derivations, event);
++        }
++    }
++}
++
+ impl Judging<'_, '_, '_> {
+     pub(super) fn record_loop_invariant_outcomes(
+         &mut self,
+@@ -497,9 +541,11 @@
+     loop_id: CheckedLoopId,
+     declarations: &[crate::DeclarationId],
+ ) {
+-    state
+-        .facts
+-        .retain(|fact| !fact.active_loops.contains(&loop_id));
++    if !super::proto::loop_exit() {
++        state
++            .facts
++            .retain(|fact| !fact.active_loops.contains(&loop_id));
++    }
+     for declaration in declarations {
+         state.published_invariants.remove(declaration);
+     }
+diff -ruN a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/src/semantic/entailment/flow/operation_facts.rs
+--- a/compiler/src/semantic/entailment/flow/operation_facts.rs
++++ b/compiler/src/semantic/entailment/flow/operation_facts.rs
+@@ -106,7 +106,7 @@
+         Self::new(self.low.min(other.low), self.high.max(other.high))
+     }
+ 
+-    fn intersect(self, other: Self) -> Option<Self> {
++    pub(super) fn intersect(self, other: Self) -> Option<Self> {
+         let low = self.low.max(other.low);
+         let high = self.high.min(other.high);
+         (low <= high).then_some(Self::new(low, high))
+@@ -420,7 +420,9 @@
+                 let part = hull2(a, divisor, i128::checked_div)?;
+                 hull = Some(hull.map_or(part, |hull| hull.join(part)));
+             }
+-            let relations = if a.low >= 0 && b.low >= 0 {
++            let relations = if a.low >= 1 && b.low >= 2 && super::proto::mid_div() {
++                vec![at_most(0, -1)]
++            } else if a.low >= 0 && b.low >= 0 {
+                 vec![at_most(0, 0)]
+             } else {
+                 Vec::new()
+@@ -529,7 +531,9 @@
+             let hull = hull2(a, amounts, |value, amount| {
+                 Some(value >> u32::try_from(amount).ok()?)
+             })?;
+-            let relations = if a.low >= 0 {
++            let relations = if a.low >= 1 && amounts.low >= 1 && super::proto::mid_div() {
++                vec![at_most(0, -1)]
++            } else if a.low >= 0 {
+                 vec![at_most(0, 0)]
+             } else {
+                 Vec::new()
+diff -ruN a/compiler/src/semantic/entailment/flow/sources.rs b/compiler/src/semantic/entailment/flow/sources.rs
+--- a/compiler/src/semantic/entailment/flow/sources.rs
++++ b/compiler/src/semantic/entailment/flow/sources.rs
+@@ -1162,13 +1162,43 @@
+             // the domain decision consumed; that decision is the parent.
+             parents = vec![*domain];
+         }
+-        let facts = operation_facts::facts(
++        let mut facts = operation_facts::facts(
+             shape.row,
+             Span::of(shape.operand),
+             Span::of(shape.result),
+             &intervals,
+             product.map(|(interval, _)| Interval::new(interval.minimum, interval.maximum)),
+         );
++        // Prototype S7 row: an exact difference `a - b` of two terms is also
++        // bounded by the operands' closed difference bounds.
++        if super::proto::mid_sub()
++            && matches!(shape.row, Row::Subtract { .. })
++            && let (Some(Some(a)), Some(Some(b)), Some(view)) =
++                (related.first(), related.get(1), closed.as_ref())
++            && !view.contradictory()
++        {
++            let (a, b) = (*a, *b);
++            let high = view.tight_bound(a, b);
++            let low = view.tight_bound(b, a).and_then(i128::checked_neg);
++            if high.is_some() || low.is_some() {
++                let difference = Interval::new(low.unwrap_or(i128::MIN), high.unwrap_or(i128::MAX));
++                if let Some(bounds) = facts.bounds {
++                    if let Some(tighter) = bounds.intersect(difference) {
++                        if tighter != bounds {
++                            if let Some(high) = high {
++                                parents.extend(view.bound_proof(a, b, high, &mut self.vocabulary.derivations));
++                            }
++                            if let Some(low) = low
++                                && let Some(negated) = low.checked_neg()
++                            {
++                                parents.extend(view.bound_proof(b, a, negated, &mut self.vocabulary.derivations));
++                            }
++                        }
++                        facts.bounds = Some(tighter);
++                    }
++                }
++            }
++        }
+         if facts.bounds.is_none() && facts.relations.is_empty() {
+             return None;
+         }
+@@ -1201,7 +1231,7 @@
+                 let proof = self
+                     .vocabulary
+                     .establish_operation_fact(state, result, term, high, event, &parents);
+-                if relation.operand == 0 && high == 0 {
++                if relation.operand == 0 && high <= 0 {
+                     dividend_order = Some(proof);
+                 }
+             }
+diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semantic/entailment/flow/walk.rs
+--- a/compiler/src/semantic/entailment/flow/walk.rs
++++ b/compiler/src/semantic/entailment/flow/walk.rs
+@@ -977,6 +977,10 @@
+                         .affine
+                         .published_invariants
+                         .insert(proof.declaration, target);
++                    if super::proto::join_b() {
++                        self.reasoning()
++                            .project_invariant_l0(&proof.target, &mut state.facts);
++                    }
+                 }
+                 self.output.source_proofs.push(SourceProofOutcome {
+                     node_path: proof.node_path.clone(),
+@@ -1264,6 +1268,12 @@
+                     base_batch,
+                     &mut state.affine,
+                 );
++                if base_batch && super::proto::join_b() {
++                    for invariant in invariants {
++                        self.reasoning()
++                            .project_invariant_l0(&invariant.relation, &mut state.facts);
++                    }
++                }
+                 let invariant_declarations = invariants
+                     .iter()
+                     .map(|invariant| invariant.declaration)
+@@ -1461,6 +1471,12 @@
+                     base_batch,
+                     &mut state.affine,
+                 );
++                if base_batch && super::proto::join_b() {
++                    for invariant in invariants {
++                        self.reasoning()
++                            .project_invariant_l0(&invariant.relation, &mut state.facts);
++                    }
++                }
+ 
+                 let head = state.clone();
+                 let invariant_declarations = invariants
+diff -ruN a/compiler/src/semantic/entailment/flow.rs b/compiler/src/semantic/entailment/flow.rs
+--- a/compiler/src/semantic/entailment/flow.rs
++++ b/compiler/src/semantic/entailment/flow.rs
+@@ -26,6 +26,44 @@
+ //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
+ //! canonical [`render`]ing.
+ 
++/// Research prototype switches for the branch-join investigation. Each reads
++/// one environment variable once; every switch off is the unmodified checker.
++pub(crate) mod proto {
++    use std::sync::OnceLock;
++    fn flag(cell: &'static OnceLock<bool>, name: &str) -> bool {
++        *cell.get_or_init(|| std::env::var_os(name).is_some_and(|value| value == "1"))
++    }
++    /// (b) a proved invariant's unit-coefficient target is also an L0 fact.
++    pub(crate) fn join_b() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_B")
++    }
++    /// (a) at every join input, project affine premises that are a difference
++    /// of two candidates' current images into L0 before the L0 join.
++    pub(crate) fn join_a() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_A")
++    }
++    /// S7: `/` and `ishr` publish `r < a` when a0 >= 1 and the divisor or
++    /// shift is at least 2 or 1.
++    pub(crate) fn mid_div() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_MID_DIV")
++    }
++    /// S7: exact `-` result bounds also read the operands' closed difference.
++    pub(crate) fn mid_sub() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_MID_SUB")
++    }
++    /// Emulation of the approved loop-exit ruling (v0.79): header invariant
++    /// conclusions are not removed on edges leaving their loop; only the
++    /// invariant names leave scope.
++    pub(crate) fn loop_exit() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_LOOP_EXIT")
++    }
++}
++
+ mod certificates;
+ mod conversions;
+ mod domain;

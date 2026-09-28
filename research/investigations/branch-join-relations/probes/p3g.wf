@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn step(a: u64, b: u64, keep: Bool) -> total: u64 pure contract {
+  requires a == b;
+  requires a <= 100_u64;
+} {
+  if keep {
+    set a = a + 1_u64;
+    set b = b + 1_u64;
+  }
+  invariant joined: a == b;
+  return a;
+}
+
+fn main() -> status: ExitStatus pure {
+  let keep = True();
+  let total = step(a: 1_u64, b: 1_u64, keep: keep);
+  let code = cvt.wrap::<u64, u8>(total);
+  return exit_status(code: code);
+}
