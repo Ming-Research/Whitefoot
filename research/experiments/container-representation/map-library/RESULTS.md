@@ -488,7 +488,7 @@ The [identity and reduction ledger](ecosystem-occupancy-identities.json)
 retains exact commands, direct exits and wall times, source/compiler/toolchain
 and object/image hashes, dependency recovery, all memory pairs and numerical
 reductions. Its SHA-256 is
-`a7af72337b27bbde197ee3a42de468fb547ba923eb2ea350bc97ad30c45cc85b`.
+`c637466e10102c59629d5847e20325a8dffc0bac86bde0233a5823c4af63ac39`.
 These two artifacts belong to this discriminator and remain with it or an
 evidence-preserving successor; the older practical samples remain unchanged.
 

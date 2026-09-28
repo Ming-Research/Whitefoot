@@ -299,7 +299,7 @@
       "clang": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
       "clang++": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
       "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8",
-      "rust_sysroot": "/Users/mbbill/.rustup/toolchains/stable-aarch64-apple-darwin",
+      "rust_sysroot": "${USER_HOME}/.rustup/toolchains/stable-aarch64-apple-darwin",
       "sdk_path": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
       "sdk_version": "27.0",
       "cmake": "cmake version 4.4.3\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
@@ -318,22 +318,22 @@
         "size": 118640
       },
       "rustc": {
-        "path": "/Users/mbbill/.cargo/bin/rustup",
+        "path": "${USER_HOME}/.cargo/bin/rustup",
         "sha256": "ec1b9233e7f72990ecd8e62063fa7f6c3dfc2bec8e97f88bff165f9100ac696a",
         "size": 11319056
       },
       "pkg-config": {
-        "path": "/Users/mbbill/.homebrew/Cellar/pkgconf/3.0.7/bin/pkgconf",
+        "path": "${USER_HOME}/.homebrew/Cellar/pkgconf/3.0.7/bin/pkgconf",
         "sha256": "882ccc750f4d1761ec4f79eab77cbee5d8bbd1414537aa3626c263d1dec39f8c",
         "size": 74616
       },
       "cmake": {
-        "path": "/Users/mbbill/.homebrew/Cellar/cmake/4.4.3/bin/cmake",
+        "path": "${USER_HOME}/.homebrew/Cellar/cmake/4.4.3/bin/cmake",
         "sha256": "01bb5214684f5390e96e0d6aef7aafd7415b77ecbcfd59f6b55b018d8de0d9a2",
         "size": 14076136
       },
       "actual_rustc": {
-        "path": "/Users/mbbill/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc",
+        "path": "${USER_HOME}/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc",
         "sha256": "766eda9d8f53afd6fc7f27b3cd2e444dd22afacb5afa710a5625fc8e45b8c941",
         "size": 412504
       }
@@ -8339,5 +8339,6 @@
     ],
     "source_observed_head_after": "22096b01dbd508d47643a1211a8feb950b26a3f1"
   },
-  "reduction_rule": "Group by cohort, payload bytes, requested capacity, path and implementation; median of all 11 samples. Ratios divide cohort medians; spread is 100*(max cohort ratio/min cohort ratio-1). No sample is removed. Sensitivity compares WF at each larger capacity to WF4096. Requested-memory comparisons use preselected WF capacity and native4096."
+  "reduction_rule": "Group by cohort, payload bytes, requested capacity, path and implementation; median of all 11 samples. Ratios divide cohort medians; spread is 100*(max cohort ratio/min cohort ratio-1). No sample is removed. Sensitivity compares WF at each larger capacity to WF4096. Requested-memory comparisons use preselected WF capacity and native4096.",
+  "published_path_notation": "${USER_HOME} stands for the measuring user home prefix in five toolchain paths. Raw scratch records and original published bytes at 262c662a46ffb06e7dc62a482ff02bfbb214e2e1 remain unchanged; content identities and measurements are unchanged."
 }
