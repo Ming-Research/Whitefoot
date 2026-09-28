@@ -89,7 +89,7 @@ fn malformed_prefixed_names_report_the_marker() {
 /// `'` opens a character form [GRAM-1]: a candidate with no closing quote is
 /// unterminated from its opening quote through end of source, and its
 /// interior follows the STRING interior's lexical clauses with `'` as its
-/// own quote [DIAG-1]. The v0.60 through v0.77 verdict, an unexpected byte
+/// own quote [DIAG-1]. The v0.60 through v0.78 verdict, an unexpected byte
 /// citing FORM-1, is rewritten rather than deleted because the inputs still
 /// have a defined verdict, a different one.
 #[test]
