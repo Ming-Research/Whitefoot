@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Bind marked waiting results and run contexts on several drivers
+
+Nodes: language/parallelism, compiler/waiting-contexts
+
+Owner-approved: The owner approved both decision cards for PR #165 ("approve all", written in Chinese) on 2026-09-28.
+
+Summary: Apply the two reviewed amendments unchanged. Add to language/parallelism that a waiting call in a `let` right-hand side whose callee takes only value parameters may execute alongside the statements after it, completing before its binding is next used and before the activation leaves, with `mustpar` asserting that permission (kernel-spec v0.78 WAIT-2, PAR-4). In compiler/waiting-contexts, add the bound start's result slot and its join before the first later statement whose footprint reaches the binding, and replace the decision that every context runs on the entry's thread with several driver threads, each with its own ring and run queue, starts made ready on the starter's driver and idle drivers taking ready contexts; the one-driver alternative and round-robin placement join the rejected list. The [waiting investigation](../research/investigations/io-model/WAITS.md) holds the grounds, Experiments 5 and 6 the measurements. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts
