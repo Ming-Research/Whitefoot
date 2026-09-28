@@ -411,6 +411,17 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **An instantiated goal spells a field-read range endpoint as `?`.** An
+  FN-8 goal over a range an argument formed at the call renders an endpoint
+  that is not a literal, const or binding as `?`, as in
+  `text^[?..?].len <= 16_u64` for `&text^[span.start..span.end]`, because the
+  entailment renderer has no source text for such a capture. The repair
+  already spells those endpoints from their source occurrence and says to
+  copy them into bindings; the `instantiated_goal` payload does not. Spell
+  the capture's source occurrence there too, through the same occurrence the
+  repair reads, and pin it with the field-endpoint pair in
+  `driver::pinned_repairs`. Reopen with the next change to goal rendering.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -1684,6 +1695,12 @@ each is resolved by a discussion and a tree change.
   states the identity, and with the new intervals the exact row is provable
   wherever the step would apply. Reopen when a proof needs the identity and
   the writer cannot use the exact row.
+  A width `end -wrap start` computed under the guard `start <= end` is outside
+  even that step: the guard is a relation between the operands, and the S7
+  row reads only their separate intervals, so the width stays unrelated to a
+  range length `end - start` (conformance case
+  `ref4-neg-a-wrapped-width-does-not-bound-the-range-length`); the exact
+  subtraction under the same guard is the admitted spelling.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
@@ -1723,6 +1740,14 @@ each is resolved by a discussion and a tree change.
   their order, and a result that the starter joins where it uses it (the
   entry above). Reopen when a context-serving program needs to log or
   report.
+- **ENT-3.S6 names only the bound range's length fact.** S6 establishes
+  `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
+  every range's one measure equals `hi - lo` and the value-image rule gives a
+  formation's length image without a binding. The checker establishes the
+  same S6 relation on the range an argument forms at its call (conformance
+  case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
+  REF-4 as the entitlement. Decide whether S6 should say so by naming every
+  formation, bound or not; reopen with the next amendment touching S6.
 
 ## Ownership redesign (candidate x1) follow-ups
 
