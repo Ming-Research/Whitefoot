@@ -996,6 +996,7 @@ needs one: an explicit shared object whose operations are whole atomic
 transactions in an unspecified order, and one whose transactions take effect
 in the order of the host completions that produced them. Both revise
 [CAP-1].
+[`SHARED.md`](SHARED.md) designs the first, at the owner's direction.
 
 ### What the first version keeps open
 
