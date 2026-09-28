@@ -5,7 +5,9 @@ revised with the owner on 2026-09-28: waiting functions compile to resumable
 frames instead of running on stacks of their own ([A waiting function is a
 resumable frame](#a-waiting-function-is-a-resumable-frame)), and a program
 means its sequential execution ([The program means its sequential
-execution](#the-program-means-its-sequential-execution)). Nothing in this file
+execution](#the-program-means-its-sequential-execution)); Experiment 3 found
+the frame server at the stackful server's throughput with a mapping count
+that does not grow with its connections. Nothing in this file
 is a design-tree decision yet; each choice it states becomes an amendment when
 it is proposed. It serves the concurrent I/O design and is superseded by the
 design-tree nodes that record its surviving decisions.
@@ -301,6 +303,83 @@ was found; the earlier text asked for N up to 100,000.
   Holding 100,000 connections is left to a host whose descriptor limit
   allows it.
 - One connection is reported but not judged, as in Experiments 1 and 2.
+
+### Result
+
+Measured 2026-09-28 with `linux-net-bench.sh measure`, `ROUNDS=5 WARMUP=1`,
+every line at one driver thread as in Experiment 2. The frame server is the
+release compiler at the commit that fixes the runtime probe (`0d2b2e753`), the
+stackful server the compiler at `4c0d413e1`. Each rate is the median of five
+recorded passes; the ratios are over `waiting_echo`'s rate in the same run.
+Every line, the references included, ran slower than in Experiment 2, so only
+ratios within a run compare.
+
+| Case | Run | uring rt/s | epoll rt/s | waiting rt/s | stackful rt/s | frames rt/s | stackful / waiting | frames / waiting |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 conn, 64 B | 1 | 17,177 | 19,157 | 18,314 | 17,360 | 17,848 | 0.95 | 0.97 |
+| 1 conn, 64 B | 2 | 17,726 | 17,523 | 18,741 | 17,399 | 16,662 | 0.93 | 0.89 |
+| 64 conns, 64 B | 1 | 91,627 | 88,247 | 138,316 | 116,437 | 115,673 | 0.84 | 0.84 |
+| 64 conns, 64 B | 2 | 92,782 | 84,421 | 122,004 | 118,736 | 113,959 | 0.97 | 0.93 |
+| 1024 conns, 64 B | 1 | 81,813 | 77,460 | 93,077 | 81,372 | 89,551 | 0.87 | 0.96 |
+| 1024 conns, 64 B | 2 | 77,544 | 80,991 | 102,244 | 89,803 | 97,539 | 0.88 | 0.95 |
+| 64 conns, 64 KiB | 1 | 20,801 | 29,541 | 30,096 | 29,292 | 30,694 | 0.97 | 1.02 |
+| 64 conns, 64 KiB | 2 | 22,840 | 28,800 | 32,913 | 28,183 | 31,674 | 0.86 | 0.96 |
+
+The throughput criterion is met: at 64 connections the frame server holds
+0.84 and 0.93 of `waiting_echo`, both at least 0.83, and 0.96 and 0.95 at
+1024 connections and 1.02 and 0.96 with 64 KiB messages, inside 0.80 to 1.10.
+The first run's 0.84 sits near the bar because `waiting_echo` itself ran 13
+percent faster in that run than in the second, and the stackful server
+measured beside it held the same 0.84; the frame and stackful servers are
+within 0.04 of each other at 64 connections in both runs, and the frame
+server is ahead at 1024 connections and with 64 KiB messages. At one thread
+each, the frame server is ahead of `uring_echo` and `epoll_echo` on every
+case with more than one connection; the stackful server trails one of them
+at 1024 connections in the first run and with 64 KiB messages in both.
+
+Idle connections, one run of `linux-net-bench.sh memory`:
+
+| N | frames RSS/conn | stackful RSS/conn | frames mappings | stackful mappings |
+|---:|---:|---:|---:|---:|
+| 1,000 | 70.03 KiB | 68.03 KiB | 37 | 2,036 |
+| 5,000 | 70.01 KiB | 68.01 KiB | 37 | 10,036 |
+| 19,000 | 70.01 KiB | 68.00 KiB | 37 | 38,036 |
+
+The mapping half of the ceiling criterion is met: the frame server's mapping
+count is the same at every N, and the stackful server adds two mappings per
+connection, 38,036 at 19,000 connections, which is 58 percent of the host's
+`vm.max_map_count` of 65,530. The resident half is not met: the frame server
+holds 70.0 KiB per idle connection, 2.0 KiB more than the stackful server's
+68.0 at every N. Both hold the program's 64 KiB echo window per connection,
+the stackful server on its stack and the frame server in the frame of
+`serve`, so the window decides nearly all of it and page rounding decides the
+rest. The frame server carves three pool blocks per connection in a row: the
+context record, 536 bytes in a 1 KiB block; the first arena chunk, 1 KiB,
+holding the argument block and the wrapper's frame; and a chunk whose first
+67,376 bytes are `serve`'s frame. That touches 69,456 bytes, 16.96 pages,
+and the connections' blocks follow each other every 130 KiB, so every other
+connection starts half way into a page and touches 18 pages instead of 17:
+17.5 pages, 70 KiB, on average. The stackful server's window and frames fit
+in 17 pages. No layout of this program's per-connection state goes below 17
+pages, so for this program frames can at best equal the stack's resident
+memory, and the criterion as stated could not have been met by any runtime
+change; what frames remove here is the two mappings per connection.
+
+The first memory run never finished. `idleload` waited for the server to hold
+N more descriptors than before, but a server started for exactly N
+connections closes its listener after its last accept, so both servers
+stayed one short forever. The tool now counts the server's descriptors that
+the kernel's TCP table lists as established on the server's port.
+
+What this does not establish:
+- that frames cost less resident memory than stacks for a context whose
+  state is small, where a stack still touches at least one 4 KiB page and a
+  frame only its own bytes; this program's per-connection state is its
+  64 KiB window;
+- holding more than 19,000 connections, which the host's descriptor limit
+  forbids;
+- anything on the helper route, on another host, or at more than one driver
+  thread.
 
 ## Design
 

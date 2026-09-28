@@ -1128,17 +1128,31 @@ rarely insert at the same place.
   run a context there. Add a context program to that job's runs; until then
   treat a Windows context server as unvalidated.
 
-- **The compiled context server trails the hand-written shape by 12 percent
-  at 64 connections.** At one driver thread each, `tcp_contexts.wf` holds
-  0.88 of `waiting_echo --threads 1` at 64 connections with 64-byte messages
-  in two full runs, below Experiment 2's 0.90 bar, and the gap is not
-  attributed (`research/investigations/io-model/WAITS.md`, Experiment 2).
-  The candidates are the park path, which waits in `epoll_wait` and then
-  enters the ring where the hand-written driver enters once, the ring locks
-  taken on every submit and reap pass, and the emitted receive and send path.
-  Attribute with a `perf` profile of both servers at 64 connections before
-  changing the runtime; reopen with the next change to the context scheduler
-  or when a program's rate depends on it.
+- **The compiled context server trails the hand-written shape at 64
+  connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
+  `waiting_echo --threads 1` at 64 connections with 64-byte messages in both
+  runs of Experiment 2, and the frame build 0.84 and 0.93 in the two runs of
+  Experiment 3, beside the stackful build's 0.84 and 0.97; the gap is not
+  attributed (`research/investigations/io-model/WAITS.md`). The candidates
+  are the park path, which waits in `epoll_wait` and then enters the ring
+  where the hand-written driver enters once, the ring locks taken on every
+  submit and reap pass, and the emitted receive and send path. Attribute with
+  a `perf` profile of both servers at 64 connections before changing the
+  runtime; reopen with the next change to the context scheduler or when a
+  program's rate depends on it.
+
+- **Frame memory for a context with small state is unmeasured.** Experiment 3
+  measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window
+  lives in `serve`'s frame, so frames and stacks both touched about 17 pages
+  per connection (70.0 and 68.0 KiB) and the comparison showed only the page
+  rounding around the window (`research/investigations/io-model/WAITS.md`,
+  Experiment 3). Where a stack still touches at least one page per context, a
+  frame should touch only its own bytes plus a 1 KiB context record and a
+  1 KiB first chunk, which the runtime could allocate as one block. Measure a
+  server whose per-connection state is a few hundred bytes, frames against
+  the stackful build, before claiming a memory advantage; reopen when a
+  program with small per-connection state, such as a proxy that shares its
+  buffers, is written.
 
 - **A 16-byte shift of a kernel's code changes its measured speed by 40
   percent.** The `records` compute kernel's hot function,
@@ -1146,8 +1160,9 @@ rarely insert at the same place.
   starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
   instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
   imported libc function adds a PLT entry before `.text`, which is enough to
-  move it. The waiting-context floor's `mprotect` did that, and so did an
-  unrelated `getpagesize` import linked beside the base runtime. The measured
+  move it. The stackful waiting-context floor's `mprotect`, since removed,
+  did that, and so did an unrelated `getpagesize` import linked beside the
+  base runtime. The measured
   times were 20.7 ms for the base, 29.5 ms for the base with the extra import
   and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
   Xeon. `compute-regression` then reports `records` as adverse at two widths
