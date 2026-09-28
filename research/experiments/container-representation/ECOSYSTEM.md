@@ -468,6 +468,14 @@ A useful-cell regression prevents selection on that pair. A successful source
 variant still needs normal library tests, cross-family checks and a reviewed
 amendment before final adoption. No performance outcome is assumed.
 
+The [completed comparison](vector-library/RESULTS.md#checked-append-within-reserved-capacity-useful-regressions-prevent-selection)
+passes the source and behavior screens but fails selection: six useful cells
+gain, four regress, twenty overlap, three are too short and three are unstable.
+The candidate source was restored after its exact patch and executable were
+preserved. Removing the growth path also exposed cross-record loop
+vectorization and new register saves; its elapsed-time contribution is not
+isolated. No reserved-append API or compiler policy is selected.
+
 Native adapters retain Rust `with_capacity`/`push` and C++ `reserve`/`emplace_back`;
 they already reserve for the same trace. Do not add checks or artificial work to
 those controls. Rust's similarly named

@@ -1,0 +1,568 @@
+diff --git a/lib/std/collections/vector/grow-vector.wf b/lib/std/collections/vector/grow-vector.wf
+index e2c283798..9f7a818b1 100644
+--- a/lib/std/collections/vector/grow-vector.wf
++++ b/lib/std/collections/vector/grow-vector.wf
+@@ -70,6 +70,18 @@ fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, va
+   return reached;
+ }
+
++fn grow_vector_append_reserved<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage.inner.next), writes(values.storage.inner.len) contract {
++  requires values^.storage.inner.len < values^.storage.inner.cap;
++  requires values^.storage.inner.len < ceiling;
++  ensures length == values^.storage.inner.len;
++  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
++  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
++} {
++  doc "Appends one value into proved existing capacity. The caller proves both a spare slot and the caller-selected length ceiling; the operation performs no growth and preserves references to the existing filled prefix.";
++  place_back(window: &values^.storage.inner, value: move value);
++  return values^.storage.inner.len;
++}
++
+ fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64, value: T) -> length: u64 writes(values.storage) contract {
+   requires index <= values^.storage.inner.len;
+   requires values^.storage.inner.len < ceiling;
+diff --git a/lib/std/collections/vector/module.wfm b/lib/std/collections/vector/module.wfm
+index 77ab48144..ca3bf2bbb 100644
+--- a/lib/std/collections/vector/module.wfm
++++ b/lib/std/collections/vector/module.wfm
+@@ -23,6 +23,14 @@ public fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceili
+   ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+ } doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty. The written length bound and the concrete ceiling discharge each allocation-size obligation [OP-9].";
+
++public fn grow_vector_append_reserved<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage.inner.next), writes(values.storage.inner.len) contract {
++  requires values^.storage.inner.len < values^.storage.inner.cap;
++  requires values^.storage.inner.len < ceiling;
++  ensures length == values^.storage.inner.len;
++  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
++  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
++} doc "Appends one value into proved existing capacity. The caller proves both a spare slot and the caller-selected length ceiling; the operation performs no growth and preserves references to the existing filled prefix.";
++
+ public fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64, value: T) -> length: u64 writes(values.storage) contract {
+   requires index <= values^.storage.inner.len;
+   requires values^.storage.inner.len < ceiling;
+diff --git a/research/experiments/container-representation/vector-library/vector-library.wf b/research/experiments/container-representation/vector-library/vector-library.wf
+index 58e91902e..3b6bbc77b 100644
+--- a/research/experiments/container-representation/vector-library/vector-library.wf
++++ b/research/experiments/container-representation/vector-library/vector-library.wf
+@@ -3,6 +3,7 @@ alias GrowVector = std::collections::vector::GrowVector;
+ alias VectorDrain = std::collections::vector::VectorDrain;
+ alias exit_status = std::process::exit_status;
+ alias grow_vector_append = std::collections::vector::grow_vector_append;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
+ alias grow_vector_drain = std::collections::vector::grow_vector_drain;
+ alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
+ alias grow_vector_insert = std::collections::vector::grow_vector_insert;
+@@ -115,17 +116,23 @@ fn vector_library_tail_work<interface VectorElement<T>>(values: &GrowVector<T, 8
+   requires values^.storage.inner.len >= retained;
+   requires values^.storage.inner.len <= retained;
+   requires retained + removed <= 8192_u64;
++  requires retained + removed <= values^.storage.inner.cap;
+   ensures values^.storage.inner.len == retained;
++  ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
+ } {
++  let capacity = values^.storage.inner.cap;
+   for @suffix (
+     index in 0_u64..removed,
+     invariant length_lo: values^.storage.inner.len >= retained + index,
+-    invariant length_hi: values^.storage.inner.len <= retained + index
++    invariant length_hi: values^.storage.inner.len <= retained + index,
++    invariant capacity_lo: values^.storage.inner.cap >= capacity,
++    invariant capacity_hi: values^.storage.inner.cap <= capacity
+   ) {
+     let base = seed +wrap retained;
+     let next = base +wrap index;
+     let value = VectorElement::make(seed: next);
+-    let length = grow_vector_append::<T, 8193>(values: values, value: move value);
++    invariant room: values^.storage.inner.len < values^.storage.inner.cap;
++    let length = grow_vector_append_reserved::<T, 8193>(values: values, value: move value);
+   }
+   grow_vector_truncate::<T, VectorDigest, fn VectorElement::accept, 8193>(values: values, retained: retained, env: digest);
+   return unit;
+@@ -153,7 +160,8 @@ fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, see
+     for @prefix (
+       index in 0_u64..retained,
+       invariant length_lo: values.storage.inner.len >= index,
+-      invariant length_hi: values.storage.inner.len <= index
++      invariant length_hi: values.storage.inner.len <= index,
++      invariant reserved_capacity: values.storage.inner.cap >= requested
+     ) {
+       let next = seed +wrap index;
+       let value = VectorElement::make(seed: next);
+@@ -161,7 +169,8 @@ fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, see
+     }
+     for @cycles (
+       round in 0_u64..rounds,
+-      invariant prefix_length: values.storage.inner.len == retained
++      invariant prefix_length: values.storage.inner.len == retained,
++      invariant reserved_capacity: values.storage.inner.cap >= requested
+     ) {
+       let next = seed +wrap round;
+       let digest = VectorDigest(value: next);
+diff --git a/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/acceptance.wf b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/acceptance.wf
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/acceptance.wf
+@@ -0,0 +1,207 @@
++alias ExitStatus = std::process::ExitStatus;
++alias exit_status = std::process::exit_status;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
++alias grow_vector_drain = std::collections::vector::grow_vector_drain;
++alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
++alias grow_vector_new = std::collections::vector::grow_vector_new;
++alias grow_vector_reserve = std::collections::vector::grow_vector_reserve;
++
++struct Seen {
++  total: u64;
++  count: u64;
++  failures: u64;
++}
++
++nocopy struct Record {
++  words: Array<u64, 32>;
++}
++
++nodrop struct Ticket {
++  payload: Box<u64>;
++}
++
++interface ReservedElement<T> {
++  fn make(seed: u64) -> value: T pure;
++  fn accept(env: &Seen, value: T) -> result: unit writes(env);
++}
++
++fn word_make(seed: u64) -> value: u64 pure {
++  return seed;
++}
++
++fn word_accept(env: &Seen, value: u64) -> result: unit writes(env) {
++  let expected = env^.count +wrap 1_u64;
++  if value != expected {
++    set env^.failures = env^.failures +wrap 1_u64;
++  }
++  set env^.total = env^.total +wrap value;
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn record_make(seed: u64) -> value: Record pure {
++  let words = array_filled::<u64, 32>(value: 0_u64);
++  for (index in 0_u64..32_u64) {
++    set words[index] = seed +wrap index;
++  }
++  return Record(words: words);
++}
++
++fn record_accept(env: &Seen, value: Record) -> result: unit writes(env) {
++  let seed = env^.count +wrap 1_u64;
++  for (index in 0_u64..32_u64) {
++    let word = value.words[index];
++    let expected = seed +wrap index;
++    if word != expected {
++      set env^.failures = env^.failures +wrap 1_u64;
++    }
++    set env^.total = env^.total +wrap word;
++  }
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn ticket_make(seed: u64) -> value: Ticket pure {
++  let payload = box_new::<u64>(value: seed);
++  return Ticket(payload: move payload);
++}
++
++fn ticket_accept(env: &Seen, value: Ticket) -> result: unit writes(env) {
++  let Ticket(payload: payload) = move value;
++  let number = payload.inner;
++  word_accept(env: env, value: number);
++  return unit;
++}
++
++binding WordElement : ReservedElement<u64> {
++  make = word_make;
++  accept = word_accept;
++}
++
++binding RecordElement : ReservedElement<Record> {
++  make = record_make;
++  accept = record_accept;
++}
++
++binding TicketElement : ReservedElement<Ticket> {
++  make = ticket_make;
++  accept = ticket_accept;
++}
++
++fn exercise<interface ReservedElement<T>>(count: u64) -> total: u64 pure contract {
++  requires count <= 3_u64;
++} {
++  let values = grow_vector_new::<T, 3>();
++  let seen = Seen(total: 0_u64, count: 0_u64, failures: 0_u64);
++  let failures = 0_u64;
++  let initial = values.storage.inner.len;
++  if initial == 0_u64 {
++    let capacity = grow_vector_reserve::<T, 3>(values: &values, total: count);
++    for @fill (
++      index in 0_u64..count,
++      invariant length_lo: values.storage.inner.len >= index,
++      invariant length_hi: values.storage.inner.len <= index,
++      invariant capacity_lo: values.storage.inner.cap >= capacity,
++      invariant capacity_hi: values.storage.inner.cap <= capacity
++    ) {
++      let seed = index + 1_u64;
++      let value = ReservedElement::make(seed: seed);
++      let length = grow_vector_append_reserved::<T, 3>(values: &values, value: move value);
++    }
++    if values.storage.inner.len != count {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner.cap != count {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner.cap != capacity {
++      set failures = failures +wrap 1_u64;
++    }
++  } else {
++    set failures = failures +wrap 1_u64;
++  }
++  grow_vector_drain::<T, Seen, fn ReservedElement::accept, 3>(values: &values, env: &seen);
++  grow_vector_free_empty::<T, 3>(values: move values);
++  if seen.count != count {
++    set failures = failures +wrap 1_u64;
++  }
++  if seen.failures != 0_u64 {
++    set failures = failures +wrap 1_u64;
++  }
++  if failures != 0_u64 {
++    return 18446744073709551615_u64;
++  }
++  return seen.total;
++}
++
++fn prefix_accept(env: &Seen, value: u64) -> result: unit writes(env) {
++  let ordinal = env^.count +wrap 1_u64;
++  let expected = ordinal *wrap 11_u64;
++  if value != expected {
++    set env^.failures = env^.failures +wrap 1_u64;
++  }
++  set env^.total = env^.total +wrap value;
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn prefix_reference() -> code: u64 pure {
++  let values = grow_vector_new::<u64, 2>();
++  let initial = values.storage.inner.len;
++  if initial != 0_u64 {
++    return 1_u64;
++  }
++  let capacity = grow_vector_reserve::<u64, 2>(values: &values, total: 2_u64);
++  let first_length = grow_vector_append_reserved::<u64, 2>(values: &values, value: 11_u64);
++  let prefix = &values.storage.inner[0_u64];
++  let second_length = grow_vector_append_reserved::<u64, 2>(values: &values, value: 22_u64);
++  let retained = prefix^;
++  let seen = Seen(total: 0_u64, count: 0_u64, failures: 0_u64);
++  grow_vector_drain::<u64, Seen, fn prefix_accept, 2>(values: &values, env: &seen);
++  grow_vector_free_empty::<u64, 2>(values: move values);
++  if retained != 11_u64 {
++    return 2_u64;
++  }
++  if seen.total != 33_u64 {
++    return 3_u64;
++  }
++  if seen.count != 2_u64 {
++    return 4_u64;
++  }
++  if seen.failures != 0_u64 {
++    return 5_u64;
++  }
++  return 0_u64;
++}
++
++fn main() -> status: ExitStatus pure {
++  let scalar_empty = exercise::<WordElement>(count: 0_u64);
++  let scalar_full = exercise::<WordElement>(count: 3_u64);
++  let wide_empty = exercise::<RecordElement>(count: 0_u64);
++  let wide_full = exercise::<RecordElement>(count: 3_u64);
++  let owning_empty = exercise::<TicketElement>(count: 0_u64);
++  let owning_full = exercise::<TicketElement>(count: 3_u64);
++  let prefix = prefix_reference();
++  if scalar_empty != 0_u64 {
++    return exit_status(code: 1_u8);
++  }
++  if scalar_full != 6_u64 {
++    return exit_status(code: 2_u8);
++  }
++  if wide_empty != 0_u64 {
++    return exit_status(code: 3_u8);
++  }
++  if wide_full != 1680_u64 {
++    return exit_status(code: 4_u8);
++  }
++  if owning_empty != 0_u64 {
++    return exit_status(code: 5_u8);
++  }
++  if owning_full != 6_u64 {
++    return exit_status(code: 6_u8);
++  }
++  if prefix != 0_u64 {
++    return exit_status(code: 7_u8);
++  }
++  return exit_status(code: 0_u8);
++}
+diff --git a/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-capacity.wf b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-capacity.wf
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-capacity.wf
+@@ -0,0 +1,9 @@
++alias GrowVector = std::collections::vector::GrowVector;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
++
++fn missing_room(values: &GrowVector<u64, 4>) -> result: unit writes(values.storage.inner.next), writes(values.storage.inner.len) contract {
++  requires values^.storage.inner.len < 4_u64;
++} {
++  let length = grow_vector_append_reserved::<u64, 4>(values: values, value: 1_u64);
++  return unit;
++}
+diff --git a/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-ceiling.wf b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-ceiling.wf
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/insufficient-ceiling.wf
+@@ -0,0 +1,9 @@
++alias GrowVector = std::collections::vector::GrowVector;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
++
++fn missing_ceiling(values: &GrowVector<u64, 4>) -> result: unit writes(values.storage.inner.next), writes(values.storage.inner.len) contract {
++  requires values^.storage.inner.len < values^.storage.inner.cap;
++} {
++  let length = grow_vector_append_reserved::<u64, 4>(values: values, value: 1_u64);
++  return unit;
++}
+diff --git a/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/invalid-row.wf b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/invalid-row.wf
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/invalid-row.wf
+@@ -0,0 +1,10 @@
++alias GrowVector = std::collections::vector::GrowVector;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
++
++fn missing_length_effect(values: &GrowVector<u64, 4>) -> result: unit writes(values.storage.inner.next) contract {
++  requires values^.storage.inner.len < values^.storage.inner.cap;
++  requires values^.storage.inner.len < 4_u64;
++} {
++  let length = grow_vector_append_reserved::<u64, 4>(values: values, value: 1_u64);
++  return unit;
++}
+diff --git a/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/wrong-record-order.wf b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/wrong-record-order.wf
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/checked-append-reserved-witness/wrong-record-order.wf
+@@ -0,0 +1,208 @@
++alias ExitStatus = std::process::ExitStatus;
++alias exit_status = std::process::exit_status;
++alias grow_vector_append_reserved = std::collections::vector::grow_vector_append_reserved;
++alias grow_vector_drain = std::collections::vector::grow_vector_drain;
++alias grow_vector_free_empty = std::collections::vector::grow_vector_free_empty;
++alias grow_vector_new = std::collections::vector::grow_vector_new;
++alias grow_vector_reserve = std::collections::vector::grow_vector_reserve;
++
++struct Seen {
++  total: u64;
++  count: u64;
++  failures: u64;
++}
++
++nocopy struct Record {
++  words: Array<u64, 32>;
++}
++
++nodrop struct Ticket {
++  payload: Box<u64>;
++}
++
++interface ReservedElement<T> {
++  fn make(seed: u64) -> value: T pure;
++  fn accept(env: &Seen, value: T) -> result: unit writes(env);
++}
++
++fn word_make(seed: u64) -> value: u64 pure {
++  return seed;
++}
++
++fn word_accept(env: &Seen, value: u64) -> result: unit writes(env) {
++  let expected = env^.count +wrap 1_u64;
++  if value != expected {
++    set env^.failures = env^.failures +wrap 1_u64;
++  }
++  set env^.total = env^.total +wrap value;
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn record_make(seed: u64) -> value: Record pure {
++  let words = array_filled::<u64, 32>(value: 0_u64);
++  for (index in 0_u64..32_u64) {
++    let reversed = 31_u64 - index;
++    set words[index] = seed +wrap reversed;
++  }
++  return Record(words: words);
++}
++
++fn record_accept(env: &Seen, value: Record) -> result: unit writes(env) {
++  let seed = env^.count +wrap 1_u64;
++  for (index in 0_u64..32_u64) {
++    let word = value.words[index];
++    let expected = seed +wrap index;
++    if word != expected {
++      set env^.failures = env^.failures +wrap 1_u64;
++    }
++    set env^.total = env^.total +wrap word;
++  }
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn ticket_make(seed: u64) -> value: Ticket pure {
++  let payload = box_new::<u64>(value: seed);
++  return Ticket(payload: move payload);
++}
++
++fn ticket_accept(env: &Seen, value: Ticket) -> result: unit writes(env) {
++  let Ticket(payload: payload) = move value;
++  let number = payload.inner;
++  word_accept(env: env, value: number);
++  return unit;
++}
++
++binding WordElement : ReservedElement<u64> {
++  make = word_make;
++  accept = word_accept;
++}
++
++binding RecordElement : ReservedElement<Record> {
++  make = record_make;
++  accept = record_accept;
++}
++
++binding TicketElement : ReservedElement<Ticket> {
++  make = ticket_make;
++  accept = ticket_accept;
++}
++
++fn exercise<interface ReservedElement<T>>(count: u64) -> total: u64 pure contract {
++  requires count <= 3_u64;
++} {
++  let values = grow_vector_new::<T, 3>();
++  let seen = Seen(total: 0_u64, count: 0_u64, failures: 0_u64);
++  let failures = 0_u64;
++  let initial = values.storage.inner.len;
++  if initial == 0_u64 {
++    let capacity = grow_vector_reserve::<T, 3>(values: &values, total: count);
++    for @fill (
++      index in 0_u64..count,
++      invariant length_lo: values.storage.inner.len >= index,
++      invariant length_hi: values.storage.inner.len <= index,
++      invariant capacity_lo: values.storage.inner.cap >= capacity,
++      invariant capacity_hi: values.storage.inner.cap <= capacity
++    ) {
++      let seed = index + 1_u64;
++      let value = ReservedElement::make(seed: seed);
++      let length = grow_vector_append_reserved::<T, 3>(values: &values, value: move value);
++    }
++    if values.storage.inner.len != count {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner.cap != count {
++      set failures = failures +wrap 1_u64;
++    }
++    if values.storage.inner.cap != capacity {
++      set failures = failures +wrap 1_u64;
++    }
++  } else {
++    set failures = failures +wrap 1_u64;
++  }
++  grow_vector_drain::<T, Seen, fn ReservedElement::accept, 3>(values: &values, env: &seen);
++  grow_vector_free_empty::<T, 3>(values: move values);
++  if seen.count != count {
++    set failures = failures +wrap 1_u64;
++  }
++  if seen.failures != 0_u64 {
++    set failures = failures +wrap 1_u64;
++  }
++  if failures != 0_u64 {
++    return 18446744073709551615_u64;
++  }
++  return seen.total;
++}
++
++fn prefix_accept(env: &Seen, value: u64) -> result: unit writes(env) {
++  let ordinal = env^.count +wrap 1_u64;
++  let expected = ordinal *wrap 11_u64;
++  if value != expected {
++    set env^.failures = env^.failures +wrap 1_u64;
++  }
++  set env^.total = env^.total +wrap value;
++  set env^.count = env^.count +wrap 1_u64;
++  return unit;
++}
++
++fn prefix_reference() -> code: u64 pure {
++  let values = grow_vector_new::<u64, 2>();
++  let initial = values.storage.inner.len;
++  if initial != 0_u64 {
++    return 1_u64;
++  }
++  let capacity = grow_vector_reserve::<u64, 2>(values: &values, total: 2_u64);
++  let first_length = grow_vector_append_reserved::<u64, 2>(values: &values, value: 11_u64);
++  let prefix = &values.storage.inner[0_u64];
++  let second_length = grow_vector_append_reserved::<u64, 2>(values: &values, value: 22_u64);
++  let retained = prefix^;
++  let seen = Seen(total: 0_u64, count: 0_u64, failures: 0_u64);
++  grow_vector_drain::<u64, Seen, fn prefix_accept, 2>(values: &values, env: &seen);
++  grow_vector_free_empty::<u64, 2>(values: move values);
++  if retained != 11_u64 {
++    return 2_u64;
++  }
++  if seen.total != 33_u64 {
++    return 3_u64;
++  }
++  if seen.count != 2_u64 {
++    return 4_u64;
++  }
++  if seen.failures != 0_u64 {
++    return 5_u64;
++  }
++  return 0_u64;
++}
++
++fn main() -> status: ExitStatus pure {
++  let scalar_empty = exercise::<WordElement>(count: 0_u64);
++  let scalar_full = exercise::<WordElement>(count: 3_u64);
++  let wide_empty = exercise::<RecordElement>(count: 0_u64);
++  let wide_full = exercise::<RecordElement>(count: 3_u64);
++  let owning_empty = exercise::<TicketElement>(count: 0_u64);
++  let owning_full = exercise::<TicketElement>(count: 3_u64);
++  let prefix = prefix_reference();
++  if scalar_empty != 0_u64 {
++    return exit_status(code: 1_u8);
++  }
++  if scalar_full != 6_u64 {
++    return exit_status(code: 2_u8);
++  }
++  if wide_empty != 0_u64 {
++    return exit_status(code: 3_u8);
++  }
++  if wide_full != 1680_u64 {
++    return exit_status(code: 4_u8);
++  }
++  if owning_empty != 0_u64 {
++    return exit_status(code: 5_u8);
++  }
++  if owning_full != 6_u64 {
++    return exit_status(code: 6_u8);
++  }
++  if prefix != 0_u64 {
++    return exit_status(code: 7_u8);
++  }
++  return exit_status(code: 0_u8);
++}

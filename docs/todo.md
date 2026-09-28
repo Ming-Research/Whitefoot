@@ -473,6 +473,19 @@ rarely insert at the same place.
   existence neither settles that performance tradeoff nor justifies extending
   its equivalence domain.
 
+  The [function-actual hint proposal](../design/amendments/function-actual-inlining.md)
+  also needs an owner ruling on its changed empirical ground. The old callback
+  threshold effect belongs to a combined raw-LLVM artifact; current compiler
+  hint pairs produce byte-identical native objects with or without terminal
+  consumption. Keeping that historical effect as evidence of a current benefit
+  would misattribute the traversal improvement and retain a heuristic without
+  its stated payoff. Recommend withdrawing the hint-specific implementation
+  and proposal, preserving unrelated call behavior; alternatively keep it
+  explicitly experimental until a real consumer separates hinted and unhinted
+  code and passes matched performance checks. The independent review requires
+  the owner's direction before changing the pending design choice. Reopen after
+  that ruling, or with a new consumer and discriminating native evidence.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -710,6 +723,19 @@ rarely insert at the same place.
   before correctness or timing; reopening this option requires changed code
   evidence, not another measurement of the same target. A general lowering
   route remains unresolved; this result says nothing about the driver's O2 path.
+
+  The checked-source [reserved-append comparison](../research/experiments/container-representation/vector-library/RESULTS.md#checked-append-within-reserved-capacity-useful-regressions-prevent-selection)
+  removes growth from the proved-capacity suffix path but regresses four useful
+  wide cells, so its provisional API and caller edits were restored. Six scalar
+  cells improve; all three wide one-element cells are unstable. The wide tail
+  now vectorizes across two records, with 32 lane-shuffle instructions, a
+  96-byte spill area and unconditional preservation of eight D registers. The
+  code change identifies a competing cost, not its isolated timing share.
+  Reopen with a loop-scoped discriminator that preserves within-record SIMD,
+  other helpers and the full correctness/performance matrix; do not select a
+  global no-vectorization policy or a benchmark-specific lowering rule. The
+  timed suffix batches contain only one to three records, so this result also
+  leaves the API's bulk-append performance unmeasured.
 
   The [save-placement preflight](../research/experiments/container-representation/ECOSYSTEM.md#next-discriminator-constructor-saves-on-the-growth-edge)
   also finds different inlining and allocation elision in timed and observed

@@ -4541,3 +4541,134 @@ artifact sets match before and after. The new 53-artifact freeze is under
 The criterion retains exact reproduction commands and linked output paths.
 Root independently confirmed the findings. This option is rejected for the
 requested mechanism; no compiler or language policy changes.
+
+### Checked append within reserved capacity: useful regressions prevent selection
+
+The [registered source comparison](../ECOSYSTEM.md#next-discriminator-checked-append-into-reserved-capacity)
+passes source, native and correctness screens but fails selection on its one
+complete timing pair. Four useful cells regress. The checked operation and
+suffix rewrite are not selected by this result; no language, compiler or public
+library policy changes.
+
+The [reproduction patch](checked-append-reserved.patch) changes three source
+files: a generic `grow_vector_append_reserved` requires `len < cap` and
+`len < ceiling`, uses ordinary `place_back`, and preserves capacity; suffix
+callers supply the capacity contract and loop invariants. Growing/mixed callers
+retain ordinary append. Compiler source changes are zero. The control is frozen
+`both` at `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`; the candidate applies the
+patch to `08bc92e88fe54c689022f075668c681443a40ef2`. Compiler and affected source
+paths have no committed difference between those revisions. Rebuilding the
+embedded library produced actual whitefootc `75df1f29fb618deb40cdab0d10fd29071bbd9851f58f757ea49bb7b10f3e8a5a`.
+
+The retained fixtures exercise scalar, 256-byte nocopy and owning nodrop values
+at counts zero and three (exact fit), independently check every payload word in
+order, and keep a prefix reference across append. Missing capacity and ceiling
+requirements each reject with `FN-8`; missing length effects reject with
+`EFF-2`. Reversed record words preserve the sum but make execution exit 4.
+The existing allocation observer records fourteen allocations and fourteen
+releases: six empty backings, three positive reserves, three boxed Tickets,
+and the prefix witness's empty backing plus reserve. Each observer fault exits 1;
+each missing source obligation also exits 1. One initially
+redundant explicit proof block was removed after `PRF-1 RedundantUseBlock`:
+AUTO already proved room. No rule or expected verdict changed.
+
+Apple Clang 21.0.0 (`clang-2100.3.34.2`) compiles the harness LLVM at O3. The
+candidate timed object exactly equals the object assembled from the independently
+inspected `.s`. Three existing global WF bodies change and two leaf definitions
+are added; the other 54 global bodies and two local resource helpers retain
+their normalized instruction streams. Scalar tail becomes a 66-instruction
+frameless leaf (previously 49 instructions, 64-byte frame). Wide tail loses
+growth and the seven old unconditional Q-pair saves, but grows 108→258
+instructions: its 176-byte frame includes 64 bytes of callee-save D registers
+and 96 bytes of spills on the vector path. Truncate remains. Scalar trace
+shrinks 229→206 instructions and 160→112 frame bytes, losing three static
+malloc calls and one memmove. The two new leafs contain 7/22 instructions.
+Timed/account WF text grows 692/436 bytes; 3,073/3,105 linked symbol addresses
+move. This is a source/library comparison with changed code placement, not
+isolated spill traffic; process ASLR and data addresses are not controlled.
+
+All fifteen non-WF inputs per image retain their exact frozen bytes. Both arms'
+timed/account matrices each pass 1,260 configurations / 8,820 executions.
+Four checksum negatives and two cleanup negatives exit 1 with the exact expected
+diagnostics. Both complete 294-row ledgers equal the existing
+[factor-accounting CSV](ecosystem-compiler-factor-accounting.csv), SHA-256
+`ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7`;
+these are instrumented lifecycle counts, not timed allocation traffic.
+The first linked screen mistakenly compared weak `_wf__floor_run` with its
+strong runtime replacement and stopped before checks. A preserved continuation
+verified that same singleton resolution in both arms, rejected a nonweak-function
+exception, and completed the checks without rebuilding or relinking.
+
+The [control samples](ecosystem-checked-append-reserved-control-samples.csv),
+[candidate samples](ecosystem-checked-append-reserved-candidate-samples.csv) and
+[complete paired cells](ecosystem-checked-append-reserved-paired.csv) retain both
+cohorts, all seven samples, all 42 cells and 4,116 rows per arm from exactly one
+control→candidate `measure 1048576 7` pair. No rows or outliers were removed.
+
+| Useful-cell outcome | Count | Cells |
+|---|---:|---|
+| Qualified gain | 6 | Scalar suffix-1 and suffix-3, all three counts |
+| Qualified loss | 4 | Wide suffix-2 at 16/256/4096; wide suffix-3 at 256 |
+| Overlap | 20 | Both widths' reserved/growth/reuse; wide suffix-3 at 16/4096 |
+| Sub-1-ms | 3 | Scalar suffix-2 at every count; raw gains remain unqualified |
+| Unstable | 3 | Wide suffix-1 at every count; maximum cohort spread 38.43% |
+
+Scalar suffix-1 candidate/control median ratios span 0.446–0.461; suffix-3
+spans 0.785–0.815. Wide suffix-2 losses span 1.055–1.069, and wide suffix-3
+at 256 spans 1.026–1.048. Useful target pass/deficit/inconclusive counts are
+15/5/16 for control and 17/3/16 for candidate. Among six unranked suffix-zero
+cells, the three scalar cells are short and all three wide cells lose, with
+ratios 1.526–1.652. Native useful-cell median drift ranges are reverse-C
+0.979–1.062, direct-C 0.547–1.038, swap-take-C 0.937–1.156, take-swap-C
+0.981–1.085, Rust 0.955–1.102 and C++ 0.976–1.164. These observations do not
+establish standard-container target completion or an unreserved-call result.
+
+Recorded stage costs: compiler build 9.725866 s; frontend emission 0.157408 s;
+native assembly emission 0.160205 s; three native object commands 0.430535 s;
+two links 0.121440 s; complete matrix checks 2.697221 s; harness faults
+0.026614 s; ledger runs 0.072479 s. The timing runs take 81.203787/82.559742 s,
+with 0.256440 s for four maintained reductions and 0.094822 s for paired
+reduction. Check wall times are not performance observations. Exact historical
+argv, statuses, costs and hashes remain in the local prototype audit at
+`/private/tmp/whitefoot-append-reserved-prototype/measurement/`. The original
+765 source / 148 native artifacts and the 47 construction, 32 continuation and
+24 timing artifacts match their recorded freezes before and after timing.
+
+To reconstruct inputs, use an isolated checkout of the candidate base, apply
+the replay patch from the repository root with `patch -p1 -F 0`, and rebuild
+`cargo build --manifest-path compiler/Cargo.toml --profile gate --locked
+--offline --bin whitefootc --jobs 2` under the shared guard. The patch also
+creates the five exact witnesses in this family's ignored
+`.build/checked-append-reserved-witness/`. Emit raw LLVM with that compiler's
+`--emit-llvm vector-library.wf -o vector-library.raw.ll`; use the existing
+[Makefile](Makefile)'s main/allocator substitutions for timed/account LLVM.
+Compile each with `/usr/bin/clang -O3 -Wno-override-module -x ir -c INPUT -o
+OUTPUT`; emit the inspected timed `.s` with `-S` instead of `-c`, then assemble
+it with `-x assembler -c` and require object equality. Reconstruct frozen
+`both` peers using the factor recipe above and the existing native Makefile
+rules, then preserve its exact clang++ link flags/order, substituting only each
+candidate WF object and output. The historical commands reused all fifteen
+non-WF inputs per image. Run `check` and `fail-checksum` in both modes for both arms,
+plus `account` and `fail-cleanup` in each accounting image. Any new performance
+execution needs its own authorization; the retained pair used
+`measure 1048576 7`, then `../summarize-ecosystem.pl --complete` and `--targets`
+on each raw CSV and the previously recorded paired-factor method. A paired
+direction requires disjoint observed ranges in both cohorts; qualification
+requires every paired WF sample at least 1 ms and cohort median-ratio spread
+at most 10%. Replaying CSV arithmetic does not replay past native execution.
+
+For the independent fixture observer, emit `acceptance.ll` and substitute
+`@malloc(` → `@wf_observe_allocate(`, `@free(` → `@wf_observe_release(` and
+`@main(` → `@wf_fixture_main(` everywhere, with no added allocation attributes.
+Compile that IR with the existing
+`tests/programs/containers/container-allocation-observer.c` using `/usr/bin/clang
+-O3 -std=c11 -Wall -Wextra -Werror -Wno-override-module -I compiler/src/backend`,
+the twelve `NATIVE_OBJECTS` from `compiler/runtime.mk`, and `-pthread -lm`.
+These are the same frozen runtime objects used by the ecosystem links; their
+reconstruction is owned by that Makefile. The executable with no arguments
+must print fourteen allocations, each released exactly once, and exit 0;
+`missing-release`, `double-release` and `foreign-release` must each exit 1 with
+their respective complete-release, duplicate-release and foreign-address
+diagnostics. Acceptance and the reversed-order fixture are also compiled by
+ordinary whitefootc (its O2 default), with exits 0 and 4 respectively. This
+separates the checked callable witness from the O3 timing harness.

@@ -518,8 +518,14 @@ frequent calls, termination nor a performance benefit from inlining.
 In that artifact the wide callback's observed cost remains 450 while the
 ordinary-hint threshold changes from 375 to 487; original-source F is unchanged.
 The combined forward-consumption/hint arm gains useful cells but regresses the
-three wide empty-suffix controls. Those diagnostic limitations remain part of
-the evidence; this implementation's cost is still unmeasured.
+three wide empty-suffix controls. F+hint alone has identical native images to
+F; the callback threshold observation belongs to the combined K+hint artifact.
+The subsequent [actual-compiler factor comparison](../../experiments/container-representation/vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration)
+finds no native effect from the hint with or without terminal consumption at
+its source and toolchain pin. The timed and accounting objects are
+byte-identical within each hint pair, and neither image retains an accept
+callback. That comparison establishes no current Vector benefit for the hint;
+the traversal gains cannot supply its separate selection ground.
 
 The physical call inventory reads the checked instance's `function_actuals`
 identities after group expansion, imported resolution and forwarding. Only
@@ -558,12 +564,17 @@ forwarded bindings, physical deduplication, structured fragments and cache
 selection. These results establish the tested metadata and linked-call behavior;
 they do not establish LLVM optimization order or performance.
 
-The compiled candidate still owes the complete Vector comparison and functional evidence
-from the other container families. Cross-family performance, code growth and
-large/recursive actuals remain open costs. Reject or revise the heuristic if
-the production comparison loses its claimed benefit or exposes material
-regressions; a successful Vector artifact alone does not settle that question.
+The complete Vector comparison has now run. The earlier
+[five-family construction](../../experiments/container-representation/ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
+also passed the other families' functional checks and found their native
+objects and linked sections unchanged at that pin. These observations do not
+establish a general benefit or a cost ceiling for large or recursive actuals.
 The pending [compiler amendment](../../../design/amendments/function-actual-inlining.md)
-records this provisional choice. A global threshold, forced inlining,
+still records the provisional preference. Independent review found that its
+historical callback ground does not establish a benefit in the current Vector
+compiler; whether to withdraw it or retain it for a different measured consumer
+awaits the owner's ruling. The provisional implementation remains on the work
+branch pending that ruling.
+A global threshold, forced inlining,
 name-based selection and changed export visibility are separate alternatives,
 not part of this candidate.
