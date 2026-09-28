@@ -578,8 +578,78 @@ Recorded before implementation. The implementation is accepted when:
 
 ## Where the decision goes
 
-The amendment adds the node `compiler/payload-enum-layout` under
-`design/compiler`. The [docs/todo.md](../../../docs/todo.md) Slab item points
-here, and a new item records the implementation and the deferred refinements
-(word carrier for register-sized enums, niches, tag width) with their
+The owner approved the amendment and both representation choices on
+2026-09-28; the decision is the node
+[compiler/payload-enum-layout](../../../design/compiler/payload-enum-layout.md).
+The [docs/todo.md](../../../docs/todo.md) Slab item points here, and the
+deferred refinements (word carrier for register-sized enums, niches, tag
+width) and the pending timing validation are recorded there with their
 reopening conditions.
+
+## Implementation results
+
+Measured on the implementing branch (x86-64 Linux, clang 18.1.3), with the
+same probe types as section 3. "Before" is section 3's product layout at
+`85e2c89bf`; "after" is LLVM's size of the emitted type, which the backend
+test `union_layouts_match_the_target_computation_and_the_emitted_types`
+compares with `target.rs` for every emitted enum value and view type.
+
+| Type | Before (bytes) | After (bytes) | Align | Layout |
+| --- | ---: | ---: | ---: | --- |
+| Snowghost `Component` | 168 | 40 | 8 | union |
+| DOM-shaped `NodeData` (this investigation's guess) | 84 | 28 | 4 | union |
+| `std::io::IoError` | 228 | 12 | 4 | union |
+| `std::io::ReadStop` | 232 | 16 | 4 | product (one payload variant) |
+| `Result<u64, IoError>` | 248 | 16 | 8 | union |
+| `Result<u64, ReadStop>` | 248 | 24 | 8 | union |
+| `Result<unit, IoError>` | 236 | 16 | 4 | union |
+| `Result<unit, ListStop>` | 240 | 20 | 4 | union |
+| `(Result<unit, ListStop>, u64, u64)` (`directory_next`) | 256 | 40 | 8 | struct |
+| `Result<ReadFile, IoError>` | 288 | 48 | 16 | union |
+| `Result<HostString, ArgError>` | 64 | 48 | 16 | union |
+| `Result<u64, CopyError>` | 32 | 24 | 8 | union |
+| `Result<TcpConnection, IoError>` | 320 | 80 | 16 | union |
+| `Result<AcceptedConnection, IoError>` | 352 | 112 | 16 | union |
+| `Result<SlabHandle, Record>` | 280 | 264 | 8 | union |
+| `Option<Record>` | 264 | 264 | 8 | product (one payload variant) |
+| `Option<u64>` | 16 | 16 | 8 | product (returns in registers) |
+| `Result<u64, u64>` | 24 | 24 | 8 | product (returns in registers) |
+| `Result<u64, Utf8Error>` | 24 | 24 | 8 | product (returns in registers) |
+
+The rows for `Result<HostString, ArgError>`, `Result<u64, CopyError>`,
+`Result<TcpConnection, IoError>`, `Result<AcceptedConnection, IoError>` and
+the directory result are the standard library's other linked results; their
+"before" sizes are the static assertions the host mirror
+`ordinary_values.h` carried at `85e2c89bf`, and for the first two, which had
+none, the product rule of section 1.
+
+Against the validation criterion:
+
+1. **Layout** — met. Every eligible enum has the union size, LLVM's size and
+   alignment of every emitted value and view type equal `target.rs`'s, no
+   enum exceeds its product size or changes its alignment, and non-eligible
+   enums keep their product declarations (the backend test above).
+2. **Correctness** — see the `make check` result recorded with the change;
+   no conformance case or verdict changed. The new backend tests execute a
+   program that constructs every variant, matches by value and through
+   references, copies, moves through calls, results, block edges and a loop
+   that exchanges two union values, writes through references into payloads,
+   and holds union values in a struct, an `Option`, a `Box`, boxed and inline
+   `Slots` and an `Array`, with `Box` and `Slots` owners in several variants;
+   an allocation observer confirms every owner is released exactly once,
+   under the ordinary and the overlap lowering.
+3. **Unchanged emission elsewhere** — met. The 81 standalone
+   `tests/programs` sources of section 3 were emitted by the base compiler
+   (`85e2c89bf`) and by this implementation: one is byte-identical, 47
+   differ only in the declarations of the eligible types they instantiate
+   (the standard library's I/O results), and in the other 33 every function
+   whose text changed names a memory-only type (a union enum or an aggregate
+   holding one inline, including frame structs that hold one).
+4. **Memory** — met. `box_slots_new::<Component>(capacity: 8000000)`
+   requests 320,000,016 bytes (16 header bytes and 40 per slot) where the
+   product layout requested 1,344,000,016 (backend test
+   `a_window_of_union_enums_requests_the_union_stride`).
+5. **Time** — not yet measured. The retained Slab and priority-queue
+   comparison harnesses still name library paths the standard library has
+   since moved (`lib/containers/`), so they cannot run unchanged; the
+   validation is recorded as pending in docs/todo.md.

@@ -469,16 +469,16 @@ rarely insert at the same place.
   separates the one-slot cell's extra word from its helper boundary: retained
   wide removal and consumption has three 256-byte transfers in WF versus one
   in C even though both `Option<Record>` results occupy 264 bytes. The separate
-  insertion `Result<SlabHandle, Record>` occupies 280 bytes in WF's product
-  layout versus 264 in C's union ABI. Keep these distinctions when interpreting
+  insertion `Result<SlabHandle, Record>` occupied 280 bytes in WF's former
+  product layout versus 264 in C's union ABI; the union layout of
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  now makes it 264 bytes, as in C, and leaves `Option<Record>` and the
+  transfer counts unchanged. Keep these distinctions when interpreting
   timing; a cell-layout change alone cannot remove these costs. Validate
   forwarding or result placement with
   the same owning return paths, failed insertion returning the offered owner,
   partial cleanup and alias controls, checking optimized transfers and
-  same-source timings on supported toolchains. Enum layout is now the
-  [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md):
-  its proposed layout makes the insertion result 264 bytes, as in C, and
-  leaves `Option<Record>` and the transfer counts unchanged. Defer call ABI
+  same-source timings on supported toolchains. Defer call ABI
   changes until the forwarding experiment establishes which transfer can be
   removed without changing ownership; reopen with the owning-map library or
   a workload dominated by wide Slab removal.
@@ -697,26 +697,29 @@ rarely insert at the same place.
   found into this stop; reopen when a writer report or a program meets the
   unlocated failure.
 
-- **Payload enums are laid out as products.** An enum's size is the sum of
-  every variant's payload: Snowghost's CSS `Component` takes 168 bytes per
-  slot where one variant needs at most 40, `std::io::IoError` 228 where 12
-  suffice, and every `IoError`-bearing result 236--352 bytes. The
-  [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md)
-  finds no specification change needed and proposes, as the pending
-  amendment `compiler/payload-enum-layout`, a per-variant union layout for
-  enums with two or more payload variants whose product does not return in
-  registers, handled as memory-only values in the backend. Implement it after
-  the owner's ruling and validate with that investigation's criterion
-  (layout equal to the target computation and never above the product,
-  `make check` green with no conformance change, emission unchanged apart
-  from the eligible type declarations elsewhere, exact allocation sizes, no slowdown on the
-  Slab, priority-queue and I/O programs). Deferred refinements, each to be
-  measured on its own: a first-class word carrier so register-sized
-  two-payload enums (at most 8 bytes saved in the maintained programs) could
-  also shrink, reopened by a workload storing many of them; niche encoding,
-  reopened with refined integer domains or a workload dominated by
-  `Option<Box<T>>`; and a narrower tag, reopened by a workload of enums whose
-  views are less than 4-aligned.
+- **Union-laid-out enums: pending timing and deferred refinements.**
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  is implemented: enums with two or more payload variants whose product does
+  not return in registers are unions of per-variant views and memory-only in
+  the backend (`Component` 168 to 40 bytes, `IoError` 228 to 12, the I/O
+  results 236--352 to 16--112; the
+  [results](../research/investigations/enum-union-layout/DESIGN.md#implementation-results)).
+  The investigation's timing criterion is not yet measured: the Slab and
+  priority-queue comparison harnesses under
+  `research/experiments/container-representation/` still name the retired
+  `lib/containers/` sources, so they need repair before they can time the
+  memory-only transfer and destination return; validate that no slowdown beyond run-to-run noise
+  appears on them and on the I/O programs, and investigate any path that
+  slows. Deferred refinements, each to be measured on its own: a first-class
+  word carrier so register-sized two-payload enums (at most 8 bytes saved in
+  the maintained programs) could also shrink, reopened by a workload storing
+  many of them; niche encoding, reopened with refined integer domains or a
+  workload dominated by `Option<Box<T>>`; a narrower tag, reopened by a
+  workload of enums whose views are less than 4-aligned; and an enum with one
+  payload variant that holds a union enum (`ReadStop`, `Option<IoError>`)
+  keeps the product form and is memory-only only because of that payload,
+  which is correct but copies it by memmove where its other fields alone
+  would be first-class, reopened if a measured path moves many of them.
 
 ## Parallel lowering and runtime
 
