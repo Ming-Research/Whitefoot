@@ -1559,6 +1559,34 @@ seven-pair indexed-container qualification preserves runtime/LLVM equality and
 zero unchanged-library walks, but remains slower than the merged baseline and
 therefore does not satisfy the cost condition for adopting the amendment.
 
+#### Current-main audit and cost attribution
+
+The owner requested a fresh audit before continuing optimization and set an
+approximately 5% entry-edit overhead as an acceptable target for HashMap and
+GrowVector. Earlier qualification remains evidence for its original compiler
+pair only. After integrating current main, validate the merged implementation
+and migrate the queue specimen to the current reference-access spelling before
+using it. Keep source fixtures identical between compared compilers.
+
+First measure the unmodified merged implementation against its main parent,
+using independently built, uninstrumented executables. Record the compiler
+hashes and reject stage-instrumented binaries in that timing pair. Then use
+separate instrumented copies to divide source-input assembly and lowering into
+dependency discovery, source-identity construction, product key construction,
+cache addressing/read/checksum, and payload import. Nested timers are subsets,
+not additional work. Broad stage differences alone do not attribute a loss to
+an individual helper.
+
+Choose a local optimization only after its measured component can explain the
+loss; compare the same sources before and after the change. The falsifiers are
+unchanged cached/fresh verdicts and LLVM, successful native results, and zero
+unchanged-library body/lowering walks. Removing product coverage or weakening
+an input guard does not meet the target. Final claims require seven alternating
+pairs, a same-binary null comparison and compiler-only memory observations.
+Keep build time outside invocation timing. If those observations reject the
+local approach, reassess the representation with the owner instead of claiming
+that avoided walks alone justify its cost.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

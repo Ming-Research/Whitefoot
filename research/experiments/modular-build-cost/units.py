@@ -102,6 +102,16 @@ def invoke(command, cwd):
     return stdout, wall_ms, int(usage.ru_maxrss), stages
 
 
+def require_library_reuse(report, workload):
+    entry_module = "pkg::tools::inspect" if workload == "queue" else "pkg"
+    for field, walked in (("module_bodies", "checked"), ("module_lowerings", "lowered")):
+        libraries = [row for row in report[field] if row["module"] not in (entry_module, "prelude")]
+        if not libraries or not any(row["reused"] for row in libraries):
+            raise RuntimeError(f"{workload}: no observed library reuse in {field}")
+        if any(row[walked] for row in libraries):
+            raise RuntimeError(f"{workload}: unchanged library work in {field}: {libraries}")
+
+
 def instrument(tree):
     """Add the same stage observations to an exported baseline or candidate."""
     tree = tree.resolve()
@@ -144,20 +154,48 @@ impl Drop for ExperimentStage {
             "write_body_product": "body_retention", "form_retained_identities": "missing_identity_formation",
         },
         "lowering/builder/products.rs": {
-            "key": "lowering_key", "read": "lowering_import", "write": "lowering_retention",
+            "new": "lowering_product_setup", "key": "lowering_key",
+            "read": "lowering_import", "write": "lowering_retention",
         },
+        "driver/products.rs": {"new": "body_container_setup", "open": "body_container_open"},
+        "semantic/products/identity.rs": {"new": "source_identity_setup"},
+        "driver/reads.rs": {"read_declarations": "declaration_reads"},
     }.items():
         path = tree / "compiler/src" / relative
         if not path.exists():
             continue
         source = path.read_text()
         for function, stage in functions.items():
-            marker = f"    fn {function}("
+            marker = f"fn {function}("
             if source.count(marker) != 1:
                 raise ValueError(f"product stage boundary is not unique: {marker}")
             begin = source.index("{", source.index(marker)) + 1
             source = source[:begin] + f'\n        let _stage = crate::driver::ExperimentStage::new("{stage}");' + source[begin:]
         path.write_text(source)
+
+    path = tree / "compiler/src/driver/cache.rs"
+    source = path.read_text()
+    old = '''        let scoped = self.scoped(material);
+        let bytes = std::fs::read(self.record_path(family, &scoped)).ok()?;
+        decode(&bytes, &scoped)'''
+    new = '''        let _load = crate::driver::ExperimentStage::new(match family {
+            "module-bodies" => "cache_body_load",
+            "lowered-functions" => "cache_lowering_load",
+            "proof-receipts" => "cache_proof_load",
+            _ => "cache_other_load",
+        });
+        let _address = crate::driver::ExperimentStage::new("cache_address");
+        let scoped = self.scoped(material);
+        let path = self.record_path(family, &scoped);
+        drop(_address);
+        let _read = crate::driver::ExperimentStage::new("cache_file_read");
+        let bytes = std::fs::read(path).ok()?;
+        drop(_read);
+        let _verify = crate::driver::ExperimentStage::new("cache_record_validation");
+        decode(&bytes, &scoped)'''
+    if source.count(old) != 1:
+        raise ValueError("cache load boundary is not unique")
+    path.write_text(source.replace(old, new))
 
 
 def main():
@@ -166,15 +204,23 @@ def main():
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--compiler-only", action="store_true", help="measure --emit-llvm instead of native construction; isolates compiler peak RSS")
+    parser.add_argument("--stages", action="store_true", help="allow instrumented binaries for attribution, separate from qualification timings")
+    parser.add_argument("--require-reuse", action="store_true", help="require the native candidate's edited entry to walk no unchanged library bodies or lowerings")
     parser.add_argument("--workloads", nargs="+", default=["queue", *PROGRAMS, "chain-8", "chain-32"])
     args = parser.parse_args()
+    if args.require_reuse and args.compiler_only:
+        parser.error("--require-reuse needs the native build report")
     if platform.system() != "Darwin":
         parser.error("this measurement uses Darwin wait4 RSS bytes")
     compilers = {"baseline": args.baseline.resolve(), "candidate": args.candidate.resolve()}
     compiler_hashes = {mode: digest(path) for mode, path in compilers.items()}
+    instrumented = {mode: b"WF-STAGE " in path.read_bytes() for mode, path in compilers.items()}
+    if any(instrumented.values()) and not args.stages:
+        parser.error("stage-instrumented compiler in timing pair; use --stages only for attribution")
     if compilers["baseline"] != compilers["candidate"] and len(set(compiler_hashes.values())) == 1:
         parser.error("different compiler paths contain identical bytes; use the same path explicitly for a null comparison")
     print(json.dumps({"kind": "conditions", "host": platform.platform(), "rounds": args.rounds,
+                      "instrumented": instrumented,
                       "compilers": {mode: {"path": str(path), "sha256": compiler_hashes[mode]} for mode, path in compilers.items()},
                       "programs": {name: {"path": path, "sha256": digest(REPO / path)} for name, path in PROGRAMS.items()}}), flush=True)
     with tempfile.TemporaryDirectory(prefix="whitefoot-units-") as scratch:
@@ -205,6 +251,8 @@ def main():
                         else:
                             stdout, wall_ms, peak, stages = invoke([*command, "--report", "-o", str(binary)], tree)
                             report = json.loads(stdout.splitlines()[-1])["build"]
+                            if args.require_reuse and mode == "candidate" and step == "entry-edit":
+                                require_library_reuse(report, workload)
                             run = subprocess.run([str(binary), *(["needle", data.name] if workload == "wfgrep" else [])], cwd=scratch, capture_output=True)
                             if run.returncode != 0:
                                 raise RuntimeError(f"{workload}/{mode}/{step}: program exited {run.returncode}: {run.stderr!r}")

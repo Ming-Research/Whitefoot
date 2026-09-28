@@ -1352,10 +1352,15 @@ rarely insert at the same place.
   on modules needs a library module checked once and reused by every program
   that names it), and instance units and fact-based entry checks wait until
   edit-build measurements show the composition's rerun to limit a current
-  experiment or a consumer needs them (a build of an edited entry now forms,
-  resolves and type-checks the whole closure and reuses only its proof
-  analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
-  build of a 32-module chain, growing with the program); a cold build without
+  experiment or a consumer needs them. The retained-product candidate imports
+  unchanged library structural bodies and lowerings after entry edits while
+  retaining current composition judgments. Its recorded qualification remains
+  slower than the baseline, so the pending import amendment's cost condition
+  is unresolved. Audit current-main correctness and attribute the extra work,
+  then target approximately 5% entry-edit overhead for HashMap and GrowVector
+  without losing library reuse or input validation; compare the same sources,
+  paired timings and compiler memory before selecting the representation.
+  Finer invalidation within an edited module remains deferred; a cold build without
   a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
   the earlier ones set aside; ThinLTO's import threshold, which decays along

@@ -169,7 +169,7 @@ function is for beyond its checked contract.
 `Queue` has its one complete definition in `.wfm`, and its ring is published
 as `public readonly storage: Ring<Job, capacity>`. Every module with an edge
 to the queue can read the ring in code and in contracts, for example
-`deref(queue).storage.len`, exactly as it reads any prelude window's length.
+`queue^.storage.len`, exactly as it reads any prelude window's length.
 Only the queue module writes it: outside the module the field is never a `set`
 target, never passed to a writing parameter such as `place_back`'s window, and
 never supplied by construction, so `new` remains the only way to build a
@@ -254,10 +254,10 @@ Inside the queue, `push` and `pop` name the published ring's length in
 requires/ensures and change it through the ordinary window operations. The
 external `run_two` interface and its function-kind formal repeat the same
 paths; this is ordinary access to a public field, not a special visibility
-rule. `batch.wf` reads `deref(queue).storage.len` directly for the report's
+rule. `batch.wf` reads `queue^.storage.len` directly for the report's
 `remaining` field. The `writes(queue.storage)` rows kill overlapping facts
 before the verified postconditions supply the new state's facts.
-`deref(entry(queue)).storage.len` is the frozen entry datum in an `ensures`,
+`entry(queue)^.storage.len` is the frozen entry datum in an `ensures`,
 with no runtime snapshot. `made.storage.len` describes the constructor's
 returned value and uses the proposed CALL-4 result-projection admission. In
 `new`, the helper's postcondition reaches `storage` at its result destination,
@@ -313,7 +313,7 @@ active specification's module grammar [GRAM-2, GRAM-3, GRAM-5].
 | File-local `alias` headers | Abbreviations with the original identities and direct-edge checks |
 | `public readonly storage` | A field every module with an edge may read, in code and annotations, and only the declaring module writes or constructs |
 | `reads(...)` / `writes(queue.storage)` | Exact structural effects over accessible paths, repeatable in external wrapper and formal rows |
-| `deref(entry(queue)).storage.len` | Frozen mathematical entry value, independent of later mutation |
+| `entry(queue)^.storage.len` | Frozen mathematical entry value, independent of later mutation |
 | `made.storage.len` | Result projection admitted by CALL-4, queried at the return and instantiated at the caller's result destination |
 
 Callers still cannot write, pass to a writing parameter or construct the

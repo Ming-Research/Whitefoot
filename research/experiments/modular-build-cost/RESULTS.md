@@ -207,6 +207,15 @@ using `--emit-llvm`, separating compiler memory from native tools. The ordinary
 mode's additional emitted-module check is warm and is labelled accordingly;
 it is not a cold-compiler memory estimate.
 
+Use `--require-reuse` for native qualification of the candidate: the entry-edit
+sample must report imported library bodies and lowerings with no unchanged
+library walks. The queue's second entry also requests generic instances absent
+from its first entry, so that transition can legitimately form new bodies;
+its counters are reported separately. The assertion accepts all 49 candidate
+entry-edit reports from the indexed-container qualification. Controls that
+replace either a body or lowering import with a walk, or remove the corresponding
+work observations, each fail the assertion.
+
 For stage attribution, export each revision to a disposable scratch tree,
 then run `python3 units.py --instrument TREE` and build that tree's compiler
 under the shared verification guard, with a distinct Cargo target directory
@@ -216,8 +225,13 @@ typed lowering and emission. These instrumented binaries are separate from
 the primary timing pair. The instrumentation refuses the working repository
 and nonunique insertion points; it lives in this experiment's driver and
 retires with this retained-product comparison. No timers enter the compiler's
-maintained acceptance path. Run the instrumented pair with `--compiler-only`;
-the raw stage observations are retained in `stages_ms`.
+maintained acceptance path. Run the instrumented pair with `--compiler-only --stages`;
+the raw stage observations are retained in `stages_ms`. Ordinary timing runs
+reject executables containing the stage probe; only `--stages` admits them.
+The probe also reports dependency discovery, source-identity setup, body
+container setup, cache addressing, file reads and record validation, so a
+source-input or lowering-stage difference alone cannot be mistaken for its
+cause.
 
 A first profiling setup shared one Cargo target directory between exported
 trees. Cargo reused its preceding binary; the two executable hashes exposed
@@ -308,11 +322,45 @@ amendment remains an owner decision with this cost condition; further
 optimization is a separate choice, not an implicit acceptance of the measured
 regression.
 
+## Current-main audit
+
+The fresh audit compares main `c84c4dd7ab46848f6a5b816fcf57fce32b98158e`
+with the merged module-product implementation
+`b46f2d79e62d810154d5713506bf9d461b59e178`. The latter passed the complete
+canonical `make check`. The queue specimen needed the current `queue^` and
+`entry(queue)^` reference-access spelling; both compilers consumed the same
+migrated specimen. No language rule changed in this work.
+
+The uninstrumented baseline executable is
+`85f00f45534f2b87a147e641b38acd68a40c2fe135170b06a8c1c2233aa5ae12`;
+the uninstrumented candidate is
+`1209668450623a9fbd20a42abea44ad740e95d9decb5c8a2be7ca5884793fc26`.
+Three alternating pairs for queue, GrowVector and HashMap completed all
+72 native samples and their LLVM/result comparisons. Entry-edit library body
+and lowering work assertions passed. These are diagnostic observations before
+optimization, not a replacement for the final seven-pair qualification.
+
+| Workload | Baseline entry-edit ms | Candidate entry-edit ms | Difference |
+|---|---:|---:|---:|
+| queue | 165.1 | 172.9 | +4.7% |
+| GrowVector | 241.3 | 275.6 | +14.2% |
+| HashMap | 372.0 | 474.1 | +27.4% |
+
+The current-main result reproduces the cost problem. Separate stage probes
+will attribute it before selecting the next optimization. Previous exploratory
+observations from mixed instrumented and uninstrumented executables are not
+qualification evidence; the runner now rejects that pairing by default.
+
 ## Limits
 
-- Composition granularity: every build of an edited entry forms, resolves
-  and type-checks the whole closure, which grows with the program; only the
-  proof analyses are reused per function.
-- The ThinLTO planning runs in full at every link, as the design's first step
-  selects; at these sizes the whole link is under 150 ms.
-- Two runtime workloads, both small loops; one host, one compiler build.
+- The original backend comparison above used two small runtime loops on one
+  host. Its link times and runtime conclusions apply to that compiler pair.
+- Module-product qualification uses seven workloads on one host. The candidate
+  still parses and resolves the selected closure and runs current composition
+  judgments. It imports unchanged library structural bodies and lowered
+  functions; proof analyses retain their separate input keys. Editing a
+  module's own source invalidates its grouped structural-body container, so
+  entry-edit reuse does not establish per-body invalidation within that module.
+- ThinLTO planning still runs at each link. Module-product timings measure
+  compilation and construction, with native output equality checked separately;
+  they do not measure the generated programs' runtime performance.
