@@ -1,0 +1,77 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const run_ceiling: u64 = 4_u64;
+
+fn measure_run(source: &[u8]) -> result: u64 reads(source) contract {
+  requires source^.len <= run_ceiling;
+} {
+  doc "Admits only a range of at most run_ceiling elements and returns its length.";
+  return source^.len;
+}
+
+fn bounded_runs(text: &[u8], start: u64, end: u64) -> result: u64 reads(text) {
+  doc "Checks the endpoints, bounds end - start with an exact subtraction, then passes the range once formed at the argument and once bound by a let. Returns 0 when the run is not admitted.";
+  let ordered = start <= end;
+  let within = end <= text^.len;
+  let located = band(ordered, within);
+  if located {
+    let span = end - start;
+    let small = span <= run_ceiling;
+    if small {
+      let inline = measure_run(source: &text^[start..end]);
+      let part = &text^[start..end];
+      let named = measure_run(source: part);
+      return inline +wrap named;
+    }
+  }
+  return 0_u64;
+}
+
+fn boxed_run(count: u64, start: u64, end: u64) -> result: u64 pure contract {
+  requires start <= end;
+  requires end <= count;
+  requires count <= 64_u64;
+  requires end <= start + run_ceiling;
+} {
+  doc "Forms the range over a boxed runtime-capacity window; the requirement bounds end - start through its affine image.";
+  let cell = box_array_filled::<u8>(count: count, value: 0_u8);
+  let n = measure_run(source: &cell.inner[start..end]);
+  return n;
+}
+
+fn last_of(text: &[u8], start: u64, end: u64) -> result: u8 reads(text) contract {
+  requires start < end;
+  requires end <= text^.len;
+} {
+  doc "Reads the last element of the named range; the offset end - start - 1 is below part^.len because that length is end - start.";
+  let part = &text^[start..end];
+  let span = end - start;
+  let last = span - 1_u64;
+  let value = part^[last];
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, MSR-1, ENT-3: a range reference's one measure is len, equal to hi - lo over the endpoint images its formation captured. A bound on end - start proves a requirement over the range's length for a range formed at the argument, a range bound by a let, and a range over a boxed window, and it bounds a subscript into the range.";
+  let bytes = array_filled::<u8, 8>(value: 0_u8);
+  set bytes[5_u64] = 9_u8;
+  let text = &bytes[0_u64..8_u64];
+  let both = bounded_runs(text: text, start: 2_u64, end: 5_u64);
+  if both != 6_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let refused = bounded_runs(text: text, start: 1_u64, end: 7_u64);
+  if refused != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let boxed = boxed_run(count: 10_u64, start: 3_u64, end: 7_u64);
+  if boxed != 4_u64 {
+    return exit_status(code: 3_u8);
+  }
+  let seen = last_of(text: text, start: 2_u64, end: 6_u64);
+  if seen != 9_u8 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

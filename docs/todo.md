@@ -411,6 +411,30 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **The repair for a requirement over a range formed at the call says no
+  fact names its length.** A goal over the measure of a range formed at its
+  use, such as `text^[start..end].len <= 16_u64`, is classified as reading a
+  value only its occurrence identifies, so its FN-8 repair says it "reads a
+  value no fact can name until a `let` binds it". REF-4, ENT-3.S6 and the
+  range-image rule give that length the captured `end - start`, and the
+  checker proves such calls from a bound on the endpoints; the goal is
+  unproved because the endpoint difference is not bounded. A Snowghost oracle
+  driver's author read the repair as the checker not relating the length to
+  `end - start` and switched to a `source^.len` guard; the original source was
+  not kept, and the drivers' own style, a width `stop -wrap start` computed
+  before the ordering guard, reproduces the rejection. The binding route the
+  repair gives still works, so this is wording, not a missing route. Say
+  instead that the
+  range's length is its endpoint difference and offer establishing that
+  difference's bound (an exact subtraction under the ordering guard) beside
+  the binding route; update the pinned pair
+  `call-requirement-over-a-range-formed-at-the-call.wf` in
+  `driver::pinned_repairs`. The same goal renders a range whose endpoint is a
+  field read, `&text^[span.start..span.end]`, as `text^[?..?]`, since such an
+  endpoint is an opaque capture with no binding spelling; rendering the
+  endpoint expression would name what the writer must bound. Reopen with the
+  next change to goal repairs or goal rendering.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -1680,6 +1704,12 @@ each is resolved by a discussion and a tree change.
   states the identity, and with the new intervals the exact row is provable
   wherever the step would apply. Reopen when a proof needs the identity and
   the writer cannot use the exact row.
+  A width `end -wrap start` computed under the guard `start <= end` is outside
+  even that step: the guard is a relation between the operands, and the S7
+  row reads only their separate intervals, so the width stays unrelated to a
+  range length `end - start` (conformance case
+  `ref4-neg-a-wrapped-width-does-not-bound-the-range-length`); the exact
+  subtraction under the same guard is the admitted spelling.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
