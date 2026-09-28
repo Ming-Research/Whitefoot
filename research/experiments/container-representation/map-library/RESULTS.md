@@ -611,6 +611,262 @@ replacement deficit. The next layout/probing discriminator and the next
 wide-value transport discriminator need separate hypotheses. This sweep
 changes no library, compiler, language rule or selected representation.
 
+### Prospective ordinary group-control comparison
+
+The next candidate adds eight packed control bytes per `u64` beside the
+existing owning enum slots. It keeps the same physical bucket count, home
+remainder, cyclic probe order, public capacity, ceiling, growth trigger,
+refusal result and owned-pair result interface. A private ordinary record
+holds one inline tail word and a `Slots<Box<Array<u64>>, 1>` metadata owner:
+the window is empty through eight buckets, otherwise it owns an array of
+`floor(C/8)` complete words. Vacant and Deleted use distinct bytes with the high bit set; filled
+bytes hold the hash's high seven bits. Ordinary integer word operations form
+candidate masks. Every payload access still matches the actual slot enum;
+metadata grants no extraction or owner-discard authority.
+
+This is a pending representation trial, not a selected policy. The control
+is the exact HashMap interface and implementation from
+`7abd6bb34746b7b983b83103c68ee429b24859bb`, copied into an ordinary local
+module. Both arms redirect only the fixture's map aliases to that module and
+use compiler SHA-256
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+Before candidate attribution, the carrier must reproduce the original
+concrete instances and native work after recorded symbol/namespace
+normalization. A material carrier difference stops that comparison. No
+compiler, result-transport or capacity-policy change belongs to this factor.
+
+Lookup and edit share the candidate's bounded group search. Equality calls
+become the matching-fingerprint subsequence of the old cyclic sequence; hash
+calls stay once per query or insertion attempt. The existing consistent-key
+protocol, including equal hashes for equal keys, remains necessary for map
+semantics. Inconsistent callbacks may change results but must preserve
+bounded probes, safe access and every owner. Insert remembers the first
+reusable bucket while searching for replacement; reuse updates its control.
+Remove writes Deleted after the actual slot exchange. Rebuild keeps the
+current descending owner migration, hashes each pending attempt and probes
+actual enum occupancy without equality, adding only fresh controls and their
+updates. Iteration and cleanup visit actual enum owners. Returned owners are
+forwarded completely in every exchange outcome.
+
+On the retained arm64 layout, predicted metadata allocation is zero for
+`C <= 8`, otherwise `8 + 8*floor(C/8)` bytes: 4,104 bytes at 4096 buckets and
+8,200 at 8192. Large construction gains one allocation; rebuild can hold four
+allocations across two owning-slot and two control backings. The ordinary
+control record predicts a 24-byte field, enlarging the map descriptor from 16
+to 40 bytes. These are predictions to check with fresh accounting, not timed
+allocation observations. Public function signatures and existing `cells`
+extent postconditions stay; external exhaustive destructuring gains `..`,
+and enclosing storage needs renewed layout qualification. Dividing by eight
+without rounding up proves the fixed `u64` allocation count fits for every
+`u64` input; the inline tail holds a partial final group. No smaller ceiling
+or additional caller requirement is proposed.
+Unused tail lanes are masked before selection and every array access proves
+its actual bound independently. Control reads and writes check their own
+runtime Array bound: a missing word reads as empty and an out-of-range update
+does nothing. These fallback branches do not assert an extent equality
+between the two backings; the native screen includes their retained cost.
+
+Before timing, require the unchanged complete ecosystem correctness, oracle,
+fault-control, geometry and allocation screens plus ordinary owning/extent
+consumers. Add discriminating mask/probe witnesses for capacities 0, 1, 7, 8,
+9, 15, 16 and 17, maximal arithmetic boundaries, full tables, wrap, tombstone-before-match, reuse,
+constant hashes, ceiling refusal and inconsistent callbacks. Native code must
+skip full-slot tag/key loads for nonmatching control lanes; retained per-slot
+probing or new hot helper/descriptor work that erases that mechanism refuses
+the form before measurement. The primary causal pair has identical physical
+capacity and inputs. Requested-memory pairs follow fresh geometry and keep
+their own labels. Then retain the complete practical operation/payload/size
+matrix, both cohorts, all samples and existing qualification: a repeatable
+useful-cell regression rejects the candidate, short or unstable cells stay
+inconclusive, and completion still requires every meaningful cell to separate
+strictly below the median-slower ordinary Rust/C++ peer. Dense owning entries
+are deferred: retaining the capacity floor still reserves their payloads,
+while the separate index and swap-last deletion add dependent loads and owner
+movement that this trial does not require.
+
+Initial source admission retained three refusals. Direct operation/conversion
+returns needed named local values to publish their result bounds, and the
+three-term span postcondition needed the already-computed suffix as an
+ordinary helper parameter. More materially, the first rounded-up word array
+failed OP-9 in its fixed-layout generic schema: at the full `u64` domain,
+`ceil(C/8)` exceeds the maximum `u64` element count by one. The owning-slot
+allocation does not publish that different stored type's numerical bound.
+The full-word array plus inline tail form above replaces that prototype,
+preserving the public domain. Its ecosystem source carrier was accepted by
+the frozen compiler. The repaired carrier retains all 131 original raw
+definitions and 36 types under an explicit symbol bijection; its 106 original
+native bodies have identical instructions, callees, constants and CFI. The
+separate cold entry preserves the original fixture main and all four ABI
+wrappers. Eighteen absent extern declarations are wholly unreferenced; no
+implementation body is omitted. The candidate's inlined hit/miss paths skip
+enum loads for nonmatching lanes, while metadata bounds/tail branches remain.
+Edit retains an out-of-line find and another enum test, and the scalar trace
+frame grows from 672 to 784 bytes. These costs remain falsifiers, not a
+predicted timing win. The untimed runtime screen below passes; the completed
+paired timing rejects the candidate under the registered no-loss criterion.
+An independent arithmetic oracle passed 5,439,488 byte and adjacent
+byte comparisons, covering every byte value/code in each lane and the
+selected boundary codes for every adjacent-byte pattern; omitting the
+original high-bit term and using an inexact borrowing mask each failed. This
+checks the packed arithmetic, not native compilation or container behavior.
+
+The candidate-only account image uses an explicit representation mode. Its
+independent ledger derives `E(C) = 16 + C*S + M(C)` and
+`Q(C) = 1 + (C > 8)` from source capacity transitions, with slot stride
+`S = 24` or `272` and metadata extent `M` given above. Fixed-capacity traces
+require exactly `Q` requests/releases, `E` total bytes and peak, and zero live
+bytes. Growth adds the new capacity's requests/bytes and overlaps both
+backings; positive-capacity rehash does so each round. Sequential batches
+multiply total counts/bytes, preserving peak. Baseline and native controls
+keep their existing assertions. Geometry decodes actual payload capacity
+separately from combined backing bytes. Wrong metadata extent and omitted
+recorded metadata release must each fail the exact ledger.
+
+An additional untimed owning witness fixes capacity schedules
+`8 -> 16 -> 17 -> 17` and `9 -> 9`, with 66 independently numbered child
+owners across replacement, full-capacity returned-owner retry, tail
+remove/reuse, rehash, edit and logical-ceiling refusal. Before execution, its
+expected baseline ledger is 72 allocations, 2,976 requested bytes and 1,408
+peak bytes; the candidate requires 77, 3,080 and 1,456, respectively. Both
+must release every exact allocation identity and each child owner once,
+finish with zero live bytes, and reject wrong extent/double/foreign/missing
+release controls. Existing owning and indexed consumers retain their 28 and
+129 allocation totals in sequential and parallel lowering. This checks
+normal-return ownership; [STOR-8] supplies no source-visible heap-exhaustion
+refusal or cleanup path to test.
+
+All four ecosystem images passed 18,390 practical and 1,440 occupancy traces,
+with 140 geometry, 420 practical-accounting and 160 occupancy-accounting rows
+per arm. All previous fault controls and both metadata faults were detected.
+The existing owning/indexed consumers preserved 28/129 allocation identities
+in both lowerings. The new witness matched the predicted sequential ledgers
+above; parallel lowering preserved exact identities, extents, counts, bytes
+and zero-live cleanup. Its observed peaks also were 1,408/1,456 bytes, but its
+separate observer mode does not assert a fixed parallel lifetime schedule.
+Concurrent observation passed; wrong extent/total/peak and double/foreign/
+missing release controls each failed. The 143 frozen construction inputs
+remained unchanged. These are instrumented allocation observations.
+
+The registered single timing pair uses work 1,048,576 throughout: practical
+cohort 0 runs baseline then candidate, cohort 1 candidate then baseline;
+the occupancy sweep then uses that same arm-order reversal. Each arm retains
+all 9,240 practical and 3,520 occupancy rows, eleven samples and two checked
+warmups per group, for 25,520 recorded rows in total. Ranked comparisons need
+every sample at least 1 ms and cohort median-ratio spread at most 10%.
+Report every frozen peer's inter-image drift; above 10% leaves source
+attribution in that cell inconclusive. A qualified range-separated loss in
+any useful cell rejects the general representation candidate; overlap,
+adverse median-only results, short samples and instability remain unresolved.
+No rerun or sample removal selects a preferred result. The full per-cell
+slower-standard-peer target remains unchanged.
+
+Fresh candidate geometry selects 5,120 WF buckets against scalar Rust and
+Abseil (128,024 versus 139,272/139,184 requested bytes), and 6,144 against
+C++ (153,624 versus 147,456). Wide pairs remain 8,192 against Rust/Abseil and
+4,096 against C++. All six satisfy the existing 10% requested-memory limit.
+They are selected before timing, separately from the primary comparison at
+identical physical capacities; the old representation's pair identities are
+not reused.
+
+#### Paired outcome and refusal
+
+The complete pair rejects this group-control representation. Of 116 useful
+same-capacity cells, 52 have qualified, range-separated regressions and seven
+have qualified gains. This result does not select a capacity-dependent
+fallback or a narrower operation interface. The production map and compiler
+remain unchanged by this trial; the pending amendment proposes refusal.
+
+| Matrix | Qualified gains | Qualified losses | Qualified overlaps | Inconclusive |
+|---|---:|---:|---:|---:|
+| Practical, 84 cells | 6 | 44 | 25 | 9 |
+| Occupancy, 32 cells | 1 | 8 | 6 | 17 |
+
+All 25,520 samples in 2,320 eleven-sample groups passed the explicit matrix,
+work and checksum checks, including both arms' 160 seed-101 occupancy-account
+outcomes. The shortest recorded sample is 1.399 ms. Thirteen inconclusive
+cells exceed only the peer-drift limit, six only the cohort-ratio limit and
+seven both; none are short. Before qualification, the raw ranges show 63
+losses, ten gains and 43 overlaps. Both medians are adverse in 83 cells.
+Unstable or overlapping results are retained rather than counted as wins or
+evidence of no loss. The largest unchanged-peer drift is C++'s scalar
+8192-bucket miss: 0.9499/1.8492 between images in cohorts 0/1, so that
+candidate comparison remains inconclusive.
+
+Representative same-capacity ratios below are candidate/baseline, retaining
+both cohorts. Every listed comparison passes duration, cohort and peer-drift
+qualification; the archive contains every cell, including the adverse
+unqualified ones.
+
+| Matrix / hash | Value bytes | Capacity / count | Path | Cohort 0 | Cohort 1 | Range result |
+|---|---:|---:|---|---:|---:|---|
+| Practical / aligned | 256 | 4096 / 3584 | miss | 0.7968 | 0.7891 | gain |
+| Practical / native | 256 | 4096 / 3584 | miss | 0.8164 | 0.7879 | gain |
+| Practical / aligned | 8 | 64 / 56 | fill-free | 0.9333 | 0.9369 | gain |
+| Practical / aligned | 8 | 4096 / 3584 | fill-free | 0.9226 | 0.9115 | gain |
+| Practical / aligned | 8 | 3 / 2 | edit-first-word | 2.6488 | 2.6596 | loss |
+| Practical / aligned | 256 | 64 / 56 | edit-first-word | 1.9143 | 1.8422 | loss |
+| Practical / aligned | 8 | 4096 / 3584 | reserve-more-entries | 1.0846 | 1.0841 | loss |
+| Occupancy / aligned | 256 | 8192 / 3584 | hit | 2.0135 | 2.0971 | loss |
+| Occupancy / aligned | 256 | 8192 / 3584 | edit-first-word | 2.8443 | 2.8158 | loss |
+| Occupancy / aligned | 8 | 8192 / 3584 | replace-old-value | 2.6378 | 2.5557 | loss |
+
+The six practical gains are the two wide-miss cells and scalar fill/free at
+64 and 4096 buckets in both hash series; the seventh gain is the separate
+4096-bucket wide occupancy miss (0.8247/0.7808). Filtering can help that dense
+miss workload, but the same representation loses on tiny maps, ordinary
+edits, reserve and lower-occupancy hits. Capacity and the owned-result
+interface are fixed within each primary pair: these are effects of the
+complete control representation and its emitted code, not isolated timings
+of a mask, a helper call or descriptor traffic.
+
+The unchanged practical target reducer reports 23 passes, 44 deficits and
+17 inconclusive cells for the fresh baseline, versus seven passes, 62
+deficits and 15 inconclusive cells for the candidate. Each target still
+selects the median-slower Rust/C++ peer separately in each cohort and demands
+strict sample separation. The candidate's fresh comparable-memory pairs
+have 20 qualified deficits and four unstable raw deficits among their 24
+operation/payload/peer comparisons. For example, scalar miss versus Rust at
+5120 WF buckets is 4.8349/4.8273, and wide miss versus Rust at 8192 is
+2.8681/2.9000, both qualified. Those resource comparisons do not replace the
+same-capacity causal pair. The complete memory and capacity-sensitivity
+tables preserve all four occupancy paths, both representations and all
+three native peers used for memory matching.
+
+The [evidence archive](ecosystem-group-control-evidence.tar.gz) retains the
+eight original raw timing CSVs; all 116 primary, 464 peer-drift, 928 peer,
+48 memory and 48 capacity-sensitivity rows; both 84-cell target tables;
+fresh geometry/accounting; source, arithmetic and ownership oracles; raw and
+native carrier qualification; and exact stage commands, exits, costs and
+input/image identities. Its SHA-256 is
+`d41ce58752d5c57c5f2c7f6709b7c426a714d02e80dc61fbd85ad8bc20d14541`.
+Metadata paths use documented portable placeholders, including
+`${USER_HOME}`; raw scratch evidence and every measured source/data/native
+byte remain unchanged. The archive index distinguishes raw and published
+metadata hashes. The [replay patch](ecosystem-group-control-replay.patch),
+SHA-256 `f460376036b71ddc35afd77e2ca7cc5e0d32d90ec22524a3733ae704ad55b931`,
+is a portable zero-context rendering. Applying it to the exact pinned source
+with `git apply --unidiff-zero --directory=lib/std/collections PATCH` reproduced
+all three measured candidate files byte for byte; reversing it restored the
+exact two-file baseline. The archive preserves the original measured patch
+and its distinct SHA-256
+`a57a18093694297bd672c70b5cb8269cb5a2677cdb8e40db8e50ad10a7c4709b`.
+
+The eight timing commands returned zero once, with 707.120160 seconds total
+guarded wall time, on observed Git head
+`6da90dba09db335c0ea9158fa075f3aecc27e309`. Production/harness inputs still
+match `7abd6bb34746b7b983b83103c68ee429b24859bb`; both images use the frozen
+compiler identified above. All 206 frozen input/generated-artifact entries
+rehash unchanged before and after timing. The timed images are
+`bdb973e95144ded2c1e5b6666c1c65543f0779d8fbd14328d348dcfac4b19e80`
+(baseline) and
+`ff414824f79e2bb2c9a9c79f4102e902c8b03067610b8558cde53c3146421974`
+(candidate). The controls reuse the preceding occupancy construction,
+including its documented authentic Abseil header/package-metadata recovery;
+no existing Abseil binary was replaced. Construction, correctness and
+instrumented accounting were completed separately before the one timing
+pair. Whole-command wall costs are not operation latencies. No sample was
+removed and no rescue rerun occurred.
+
 ### Query dispatch and inlining in the practical image
 
 Read-only inspection of the retained practical `map-timed` image, SHA-256
