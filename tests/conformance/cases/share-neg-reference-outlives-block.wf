@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 3_u8);
+  let local = 0_u8;
+  let view = &local;
+  atomic value = &cell {
+    set view = &value^;
+  }
+  let seen = view^;
+  return std::process::exit_status(code: seen);
+}

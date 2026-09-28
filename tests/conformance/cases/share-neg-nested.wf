@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  atomic outer = &first {
+    atomic inner = &second {
+      set inner^ = outer^;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

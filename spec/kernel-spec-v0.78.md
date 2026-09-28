@@ -1,4 +1,4 @@
-# Kernel Specification v0.79
+# Kernel Specification v0.78
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -239,7 +239,7 @@ Results follow [FN-1]'s value-only rule. In these rules, `own T` denotes a seman
 ```wf-ebnf GRAM-4
 stmt        := let_stmt | set_stmt | expr_stmt | return_stmt | loop_stmt
              | for_stmt | invariant_stmt | break_stmt
-             | if_stmt | match_stmt | give_stmt | atomic_stmt
+             | if_stmt | match_stmt | give_stmt
 let_stmt    := "let" ( IDENT "="
                ( ordinary_let_rhs | propagate_let_rhs
                | value_match | value_if )
@@ -268,7 +268,6 @@ affine_factor := atom | call | "(" affine_expr ")"
 affine_add_op := "+" | "-"
 break_stmt  := "break" LABEL? ";"
 give_stmt   := "give" expr ";"
-atomic_stmt := "atomic" IDENT "=" "&" place ("when" expr)? "{" stmt* "}"
 match_stmt  := "match" expr "{" arm+ "}"
 value_match := "match" expr "{" arm+ "}"
 arm            := TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")" "=>" "{" stmt* "}"
@@ -618,7 +617,7 @@ After any consuming use, the whole binding rooting `p` is dead (partial moves ki
 SET-1 rechecks its premises after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
 
 [REF-1] A reference is a local name for a path.
-A path starts at a local variable, a parameter, a named const [CONST-2], or the state of a shared object [SHARE-1] and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range step [REF-4], or an enum payload step [GRAM-5].
+A path starts at a local variable, a parameter, or a named const [CONST-2] and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range step [REF-4], or an enum payload step [GRAM-5].
 A payload step is available only under the refinement fact that the enum currently holds that variant, which a `match` arm establishes [ENT-3.S15] and which any write to the enum invalidates [REF-2].
 A reference variable denotes the reference, and the storage it names is reached only through `^` [TYPE-7]: every place expression, subscript, field selection, payload step, and measure read that goes through a reference variable `p` is written under that step — `p^`, `p^.field`, `part^[i]`, `part^.len`, and `p^.Some.value`.
 `let q = p;` where `p` is a reference variable makes `q` a reference to the same path — an alias, not a copy of the referent — and passing a bare reference variable where a `&T` or `&[T]` parameter is expected passes that reference.
@@ -1457,7 +1456,7 @@ An unmarked call carries no tail-transfer guarantee. The guarantee bounds only s
 [WAIT-1] Waiting functions.
 The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
 A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
-A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1]. An atomic statement [SHARE-2] counts as a waiting call for this rule, and one in the body of a function that does not wait is the same hard error at that `atomic_stmt`.
+A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
 A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1], which [WAIT-2] permits an implementation to execute in a context of its own.
 The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
@@ -2055,7 +2054,6 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 [CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
 The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
-A shared object's state [SHARE-1] belongs to no context, and the atomic statement [SHARE-2] is the only form that reaches it; it adds no overlap permission.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
 Read/read overlap is admitted.
@@ -2138,37 +2136,15 @@ A call of a waiting host-module function [PRE-2] completes once the host has pro
 An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1] alongside the statements that follow it in its activation exactly when every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1]; the call then completes and releases its result before the activation leaves by any edge [FN-1, ERR-3].
 An implementation may execute the `call` of the `ordinary_let_rhs` of a `let_stmt` whose callee waits alongside the statements that follow that `let_stmt` in its block exactly when every parameter of the callee is a value parameter; the call then completes, and the binding holds its result, before the binding is next read, written or released [OWN-1] and before the activation leaves by any edge.
 Such a call's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, its binding, so no statement it executes alongside overlaps it, and its host effects follow [HOST-1].
-A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on one shared object [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
+A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, and how the host effects of different contexts interleave, is an input of the execution: two executions that receive the same outcomes in the same order execute every context identically.
 Which calls execute as contexts, where a context executes, and whether one context proceeds while another waits for the host are not observable, and no rule of this specification is stated in terms of them; an implementation that executes every call in order conforms.
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
-
-[SHARE-1] Shared objects.
-A value of the prelude type `Shared<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
-`shared_new` moves its argument into a new shared object and returns a handle to it, and `shared_share` returns a further handle to the object its argument names.
-Releasing a handle [OWN-1, STOR-3] releases that handle, and releasing the last handle of an object releases its state.
-A shared object's state is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at the state itself [REF-1], and the binding of an atomic statement [SHARE-2] is the only form that forms one.
-
-[SHARE-2] Atomic statements.
-An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `IDENT`; a block; and optionally a guard, the `expr` after `when`.
-The target has type `Shared<T>`, and the statement reads the target place when it begins and again when its block ends by any edge, so a block that moves, writes or releases the target place is judged by the ordinary use rules at that end [OWN-1, LIV-1].
-The binding is a reference variable of kind `&T` whose path is the state of the object the target names [REF-1]. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
-An atomic statement counts as a waiting call for [WAIT-1], [PAR-1], [PAR-2] and [PAR-4]. Its guard and its block contain no waiting call and no atomic statement.
-The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
-A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt` or guard `expr`, with a repair [DIAG-1].
-The statement writes its object when its guard or block footprint writes a path rooted at the object's state, through [EFF-5] substitution included, and reads it otherwise.
-The statement's footprint is its target place, read, together with the footprint of its guard and block from which every path rooted at the object's state is removed.
-
-[SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
-Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
-The atomic statements on one object take effect in one order. The order in which the statements of different contexts take effect is an input of the execution [WAIT-2], and the statements of one context take effect in its source order.
-A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
-How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
 ## 14. Prelude and host modules (normative, counted)
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the three storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], and the shared-object handle `Shared` [SHARE-1]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the three storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2188,9 +2164,6 @@ opaque nocopy struct Ring<T, const n: u64> {
 
 opaque nocopy struct Box<T> {
   inner: T;
-}
-
-opaque nocopy struct Shared<T: drop> {
 }
 ```
 
@@ -2313,8 +2286,6 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
   ensures window^.head <= window^.cap;
 };
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
-fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
-fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };

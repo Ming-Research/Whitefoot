@@ -1,0 +1,26 @@
+fn bump(counter: Shared<u8>) -> result: unit pure waits {
+  atomic count = &counter {
+    set count^ = count^ +wrap 1_u8;
+  }
+  return unit;
+}
+
+fn bump_three(counter: &Shared<u8>) -> result: unit reads(counter) waits {
+  let first = shared_share::<u8>(shared: counter);
+  mustpar bump(counter: move first);
+  let second = shared_share::<u8>(shared: counter);
+  mustpar bump(counter: move second);
+  let third = shared_share::<u8>(shared: counter);
+  mustpar bump(counter: move third);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let counter = shared_new::<u8>(value: 4_u8);
+  bump_three(counter: &counter);
+  let total = 0_u8;
+  atomic count = &counter {
+    set total = count^;
+  }
+  return std::process::exit_status(code: total);
+}

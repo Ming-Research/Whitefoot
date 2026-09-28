@@ -239,6 +239,30 @@ void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *a
  * to resume `frame`, and returns nonzero, after which the frame suspends. */
 int wf__context_join_wait(uint64_t *group, void *frame);
 
+/* Shared objects [SHARE-1]: a header the runtime keeps, then the object's
+ * state at WF_SHARED_STATE_OFFSET, which the emitted code stores, reads and
+ * drops.  `wf__shared_new` returns an object with one handle and room for
+ * `state_bytes` of state; `wf__shared_share` adds a handle; and
+ * `wf__shared_release` removes one, returning nonzero when it was the last,
+ * after which the emitted code drops the state and calls `wf__shared_free`. */
+#define WF_SHARED_STATE_OFFSET 64u
+void *wf__shared_new(uint64_t state_bytes);
+void wf__shared_share(void *object);
+int wf__shared_release(void *object);
+void wf__shared_free(void *object);
+
+/* An atomic statement [SHARE-2, SHARE-3]: `wf__shared_acquire` returns zero
+ * when the running context now holds the object, for writing when `write` is
+ * nonzero and for reading otherwise, and nonzero when it waits, after which
+ * the frame suspends and resumes holding it.  `wf__shared_unlock` ends the
+ * hold.  `wf__shared_watch`, called holding the object after a guard read
+ * false, ends the hold and waits until a statement that writes the object
+ * ends; it returns nonzero, the frame suspends, and on resuming the statement
+ * acquires the object again and re-reads its guard. */
+int wf__shared_acquire(void *object, uint32_t write, void *frame);
+void wf__shared_unlock(void *object, uint32_t write);
+int wf__shared_watch(void *object, uint32_t write, void *frame);
+
 /* The root context runs the entry: `wf__context_root_begin` makes it the
  * running context, the launcher calls the entry's ramp, and
  * `wf__context_root_run` drives every context until that frame finishes,

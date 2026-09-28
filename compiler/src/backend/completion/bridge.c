@@ -1182,6 +1182,9 @@ struct wf_context {
     wf_context_chunk *spare;
     /* The pool block this record occupies, zero for the root's. */
     size_t pool_bytes;
+    /* While the context waits for a shared object: whether it asked to
+     * write it [SHARE-3]. */
+    uint32_t shared_write;
     /* The one host operation the context has pending. */
     union {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
@@ -1913,6 +1916,189 @@ static void wf_context_finish(wf_context *context) {
     atomic_fetch_sub_explicit(&wf_context_live, 1u, memory_order_release);
     wf_group_finish(group);
     wf_pool_give(context, context->pool_bytes);
+}
+
+/* ------------------------------------------------------ shared objects */
+
+/* A shared object [SHARE-1]: this header, then its state at
+ * WF_SHARED_STATE_OFFSET.  `holders` counts the atomic statements holding
+ * it: zero when it is free, the number of readers, or WF_SHARED_WRITER.
+ * Contexts that found it held wait in `waiting`, first come first served, so
+ * a writer is not passed over by later readers; contexts whose guard read
+ * false wait in `watching` until a statement that writes the object ends. */
+typedef struct wf_shared {
+    _Atomic uint64_t handles;
+    atomic_flag lock;
+    uint64_t holders;
+    wf_context *waiting_head;
+    wf_context *waiting_tail;
+    wf_context *watching;
+    size_t pool_bytes;
+} wf_shared;
+_Static_assert(
+    sizeof(wf_shared) <= WF_SHARED_STATE_OFFSET,
+    "a shared object's header must end before its state"
+);
+#define WF_SHARED_WRITER UINT64_MAX
+
+void *wf__shared_new(uint64_t state_bytes) {
+    size_t granted;
+    wf_shared *shared;
+    if (state_bytes > SIZE_MAX - WF_SHARED_STATE_OFFSET) {
+        wf_context_exhausted();
+    }
+    shared = (wf_shared *)wf_pool_take(
+        WF_SHARED_STATE_OFFSET + (size_t)state_bytes,
+        &granted
+    );
+    memset(shared, 0, sizeof(*shared));
+    atomic_store_explicit(&shared->handles, 1u, memory_order_relaxed);
+    atomic_flag_clear(&shared->lock);
+    shared->pool_bytes = granted;
+    return shared;
+}
+
+void wf__shared_share(void *object) {
+    wf_shared *shared = (wf_shared *)object;
+    atomic_fetch_add_explicit(&shared->handles, 1u, memory_order_relaxed);
+}
+
+int wf__shared_release(void *object) {
+    wf_shared *shared = (wf_shared *)object;
+    return atomic_fetch_sub_explicit(&shared->handles, 1u, memory_order_acq_rel) == 1u;
+}
+
+void wf__shared_free(void *object) {
+    wf_shared *shared = (wf_shared *)object;
+    wf_pool_give(shared, shared->pool_bytes);
+}
+
+/* Grants the object, in queue order, to the waiting contexts it can now
+ * serve: one writer, or every reader up to the next writer.  Called under
+ * the object's lock; returns them linked through `next`, to be made ready
+ * once the lock is released. */
+static wf_context *wf_shared_grant_locked(wf_shared *shared) {
+    wf_context *granted = NULL;
+    wf_context *granted_tail = NULL;
+    while (shared->waiting_head != NULL) {
+        wf_context *next = shared->waiting_head;
+        if (next->shared_write != 0u) {
+            if (shared->holders != 0u) {
+                break;
+            }
+            shared->holders = WF_SHARED_WRITER;
+        } else {
+            if (shared->holders == WF_SHARED_WRITER) {
+                break;
+            }
+            shared->holders += 1u;
+        }
+        shared->waiting_head = next->next;
+        if (shared->waiting_head == NULL) {
+            shared->waiting_tail = NULL;
+        }
+        next->next = NULL;
+        if (granted_tail != NULL) {
+            granted_tail->next = next;
+        } else {
+            granted = next;
+        }
+        granted_tail = next;
+        if (next->shared_write != 0u) {
+            break;
+        }
+    }
+    return granted;
+}
+
+static void wf_shared_ready_all(wf_context *list) {
+    while (list != NULL) {
+        wf_context *next = list->next;
+        wf_context_ready(list);
+        list = next;
+    }
+}
+
+int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+    wf_shared *shared = (wf_shared *)object;
+    wf_context *self = wf_context_current;
+    if (self == NULL || frame == NULL) {
+        wf_bridge_fail("an atomic statement ran outside every context");
+    }
+    wf_spin_lock(&shared->lock);
+    if (shared->waiting_head == NULL
+        && (write != 0u
+                ? shared->holders == 0u
+                : shared->holders != WF_SHARED_WRITER)) {
+        shared->holders = write != 0u ? WF_SHARED_WRITER : shared->holders + 1u;
+        wf_spin_unlock(&shared->lock);
+        return 0;
+    }
+    self->resume = frame;
+    self->shared_write = write;
+    self->next = NULL;
+    if (shared->waiting_tail != NULL) {
+        shared->waiting_tail->next = self;
+    } else {
+        shared->waiting_head = self;
+    }
+    shared->waiting_tail = self;
+    wf_spin_unlock(&shared->lock);
+    return 1;
+}
+
+/* Ends one hold under the object's lock and returns the contexts to make
+ * ready: those it now grants the object to, and, after a write, every
+ * context watching for one. */
+static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote) {
+    wf_context *ready = NULL;
+    wf_context *granted;
+    if (write != 0u) {
+        shared->holders = 0u;
+    } else {
+        shared->holders -= 1u;
+    }
+    if (wrote) {
+        ready = shared->watching;
+        shared->watching = NULL;
+    }
+    granted = wf_shared_grant_locked(shared);
+    if (granted != NULL) {
+        wf_context *tail = granted;
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = ready;
+        ready = granted;
+    }
+    return ready;
+}
+
+void wf__shared_unlock(void *object, uint32_t write) {
+    wf_shared *shared = (wf_shared *)object;
+    wf_context *ready;
+    wf_spin_lock(&shared->lock);
+    ready = wf_shared_end_hold_locked(shared, write, write != 0u);
+    wf_spin_unlock(&shared->lock);
+    wf_shared_ready_all(ready);
+}
+
+int wf__shared_watch(void *object, uint32_t write, void *frame) {
+    wf_shared *shared = (wf_shared *)object;
+    wf_context *self = wf_context_current;
+    wf_context *ready;
+    if (self == NULL || frame == NULL) {
+        wf_bridge_fail("an atomic statement ran outside every context");
+    }
+    wf_spin_lock(&shared->lock);
+    self->resume = frame;
+    self->next = shared->watching;
+    shared->watching = self;
+    /* The guard wrote nothing, so no watcher has a change to see. */
+    ready = wf_shared_end_hold_locked(shared, write, 0);
+    wf_spin_unlock(&shared->lock);
+    wf_shared_ready_all(ready);
+    return 1;
 }
 
 /* Runs this driver's contexts: resumes the next ready context, and with none
