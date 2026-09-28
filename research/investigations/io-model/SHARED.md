@@ -293,13 +293,21 @@ an object's state. The implementation:
   to read the context afterwards. The window was narrow for joins; objects
   make it common.
 
-Evidence on this host (programs in the session scratchpad, not in the
-repository): 16 contexts each adding one 20,000 times to one `Shared<u64>`
-reach 320,000 on 1, 2, 4 and 8 drivers, three runs each; with the acquire
-made to succeed without the lock, every 8-driver run fails. Four producers
-and four consumers passing 20,000 values through a guarded
-`Shared<Ring<u64, 8>>` deliver every value once on 1 to 8 drivers, and the
-consumer without its guard is refused (FN-8, `take_front`'s requirement).
+Evidence on this host. `tests/programs/shared_objects.wf` has 16 contexts
+each add one 20,000 times to one `Shared<u64>`, and four producers and four
+consumers pass 20,000 values through a guarded `Shared<Ring<u64, 8>>`; its
+program test runs it three times each on one driver and on four. Outside the
+repository, the same two workloads were run three times each on 1, 2, 4 and 8
+drivers and always reached their sums, and with the acquire made to succeed
+without the lock every 8-driver run of the counter failed. The consumer
+without its guard is refused (FN-8, `take_front`'s requirement).
+
+ThreadSanitizer finds no race in the program on 2, 4 and 8 drivers when both
+the runtime and the emitted module are instrumented. The emitted module needs
+the `sanitize_thread` attribute added to its functions: clang instruments only
+functions that carry it, so a module compiled from IR without it checks the
+runtime alone. With the lock removed, the instrumented build reports the
+write-write race on the counter's state, so the check can fail.
 
 ## Remaining questions
 

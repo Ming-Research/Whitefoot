@@ -918,6 +918,33 @@ fn validate_target_obligation(
                 ));
             }
         }
+        // [SHARE-1] an object is the runtime's header and then its state, in
+        // one block the runtime takes from its pool.
+        IrOperation::SharedNew { nominal } => {
+            if result_type != IrType::Nominal(*nominal) {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let IrNominalKind::Shared { state } = program
+                .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            let allocation = layouts
+                .layout(*state)
+                .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
+            if allocation
+                .size
+                .checked_add(crate::backend::SHARED_STATE_OFFSET)
+                .is_none_or(|size| size > layouts.target.runtime_allocation_max())
+                || allocation.align > crate::backend::SHARED_STATE_OFFSET
+            {
+                return Err(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ));
+            }
+        }
         IrOperation::ArrayFill { target_domain, .. }
             if *target_domain == IrTargetDomainObligation::ElementAddress => {}
         IrOperation::BufferFill {

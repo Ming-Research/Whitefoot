@@ -664,3 +664,40 @@ the exact conversion's proof that the output equals the input. A contract may
 name the total wrapping operation in a definition; a branch proving the
 identical wrapped comparison can satisfy that requirement through ordinary
 goal identity [FN-8, ENT-2].
+
+## P17. Share state between contexts through one object
+
+A context takes only value parameters [WAIT-2], so two contexts reach one piece
+of state only through a shared object [SHARE-1]. Move the state into it with
+`shared_new`, give each context its own handle made with `shared_share`, and
+change the state only inside an atomic statement, whose block has the object to
+itself [SHARE-2, SHARE-3]:
+
+```whitefoot
+let handle = shared_share::<u64>(shared: &counter);
+mustpar bump(counter: move handle);
+
+atomic count = &counter {
+  set count^ = count^ +wrap 1_u64;
+}
+```
+
+Put everything that must happen together in one block: two atomic statements
+in a row are two points, and another context's statement may take effect
+between them. Copy out what the rest of the function needs into a local; the
+binding and every reference formed from it end with the block [REF-2], and so
+does every fact about the state.
+
+The block cannot wait [SHARE-2], so do the waiting outside it: read or receive
+first, then change the object, then send. To wait for the state itself, write
+the condition as a guard; the statement takes effect only where the guard
+holds, and the block may rely on it as a proved fact:
+
+```whitefoot
+atomic items = &queue when items^.len > 0_u64 {
+  set got = take_front(window: items);
+}
+```
+
+The maintained [shared_objects.wf](../tests/programs/shared_objects.wf) counts
+from sixteen contexts and passes values through a guarded queue this way.

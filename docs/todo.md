@@ -1195,6 +1195,41 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
+- **Every atomic statement holds its object alone.** Statements whose
+  blocks only read could share the object; the runtime's queue already grants
+  readers together, but lowering always acquires for writing
+  (`design/amendments/language-waiting-shared-objects.md`, the provisional
+  read/write decision). Readers that contend then wait for one another.
+  Deciding it needs a measured workload where readers contend, compared with
+  a lowering that acquires for reading when the block writes no path rooted
+  at the binding. Reopen when a program's atomic statements that only read
+  are seen to queue.
+
+- **An atomic statement counts its own handle.** Each statement adds one to
+  the object's handle count before it acquires and releases it after it
+  unlocks, two atomic read-modify-writes on a shared cache line that keep the
+  object live whatever the block does with the target place [SHARE-2]. A
+  block that neither moves nor writes the target's root, which is the common
+  case and a fact the checker has, needs neither. Measure the uncontended
+  statement with and without them; reopen when atomic statements show in a
+  profile, as they may in the Redis subset.
+
+- **A shared object takes at least one 512-byte pool block.** The bridge's
+  pool serves blocks from 512 bytes up, so a `Shared<u64>` occupies 512
+  bytes. A program with one keyspace object does not notice; one with an
+  object per client or per key would. A smaller class for objects, or the
+  ordinary allocator, would fix it. Reopen when a program creates many small
+  objects.
+
+- **Permission treats an atomic statement as a form it does not compute.**
+  An atomic statement is refused as a waiting construct [PAR-1], and the
+  join plan for a bound context also treats it as a use, so a context bound
+  before an atomic statement is joined before it even when the statement
+  names nothing the context holds. Giving the statement its [SHARE-2]
+  footprint (the target read plus the guard's and block's, without the
+  state's paths) would let such a context run on. Reopen when a program
+  waits for a context it did not need at an atomic statement.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -1735,6 +1770,22 @@ each is resolved by a discussion and a tree change.
   kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
   whose starter can wait for it, not for an accept loop that never ends.
   Reopen when a context-serving program needs to log or report.
+
+- **An atomic statement over several objects.** `atomic a = &h1, b = &h2`
+  would change two objects at one point, as `MULTI`/`EXEC` across keyspaces
+  or a transfer between two accounts needs. Two handles may name one object,
+  and the checker takes `a` and `b` as disjoint roots, so two writable
+  references could reach one state. It needs either a form whose handles are
+  known distinct or a runtime rule for the aliasing case with a sound static
+  meaning (`research/investigations/io-model/SHARED.md`, "Why a statement").
+  Reopen when a program needs two objects changed together.
+
+- **A shared object's state must have drop, and cannot be taken back.**
+  `Shared<T: drop>` releases its state with its last handle; a `nodrop`
+  state, or a program that wants the value back when it holds the last
+  handle, needs a `shared_into` that returns the state and a way to state
+  that the caller's handle is the last. Reopen when a program keeps a linear
+  value in a shared object.
 
 ## Ownership redesign (candidate x1) follow-ups
 

@@ -323,6 +323,16 @@ Safe, fast and small are the core. These are the other things worth knowing.
   starter's thread, and an idle driver takes ready contexts from a busy one.
   Still open: more than one driver where the host has no ring, and on
   Windows.
+- **State that many contexts share.** A `Shared<T>` handle names one
+  object that several contexts may hold, and its value is reached only
+  inside `atomic s = &handle { … }`, whose block runs with the object to
+  itself and takes effect at one point. The block cannot wait, so no context
+  holds an object while it waits for the host or for another object, and
+  deadlock between objects cannot be written. `when` makes the statement wait
+  until a condition on the value holds, and the block may rely on it, as in a
+  queue whose consumer takes an item only when one is there
+  (`tests/programs/shared_objects.wf`). Still open: a statement over several
+  objects, and letting statements that only read run at the same time.
 
 ### Planned
 

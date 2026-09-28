@@ -1,0 +1,84 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn bump_many(counter: Shared<u64>) -> result: unit pure waits {
+  for @bump (index in 0_u64..20000_u64) {
+    atomic count = &counter {
+      set count^ = count^ +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn count_together(counter: &Shared<u64>) -> result: unit reads(counter) waits {
+  for @start (index in 0_u64..16_u64) {
+    let handle = shared_share::<u64>(shared: counter);
+    mustpar bump_many(counter: move handle);
+  }
+  return unit;
+}
+
+fn produce(queue: Shared<Ring<u64, 8>>) -> result: unit pure waits {
+  for @put (index in 0_u64..5000_u64) {
+    atomic items = &queue when items^.len < items^.cap {
+      place_back(window: items, value: index);
+    }
+  }
+  return unit;
+}
+
+fn consume(queue: Shared<Ring<u64, 8>>, total: Shared<u64>) -> result: unit pure waits {
+  for @get (index in 0_u64..5000_u64) {
+    let got = 0_u64;
+    atomic items = &queue when items^.len > 0_u64 {
+      set got = take_front(window: items);
+    }
+    atomic sum = &total {
+      set sum^ = sum^ +wrap got;
+    }
+  }
+  return unit;
+}
+
+fn pass_along(queue: &Shared<Ring<u64, 8>>, total: &Shared<u64>) -> result: unit reads(queue), reads(total) waits {
+  for @start (index in 0_u64..4_u64) {
+    let produced = shared_share::<Ring<u64, 8>>(shared: queue);
+    mustpar produce(queue: move produced);
+    let consumed = shared_share::<Ring<u64, 8>>(shared: queue);
+    let summed = shared_share::<u64>(shared: total);
+    mustpar consume(queue: move consumed, total: move summed);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Shared objects reached from many contexts at once: sixteen contexts add to one counter, and four producers and four consumers pass values through one guarded queue. Every order of their atomic statements gives the same sums, so the status is 0 on every driver count and names the first wrong sum otherwise.";
+  let counter = shared_new::<u64>(value: 0_u64);
+  count_together(counter: &counter);
+  let counted = 0_u64;
+  atomic count = &counter {
+    set counted = count^;
+  }
+  if counted != 320000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let empty = ring_new::<u64, 8>();
+  let queue = shared_new::<Ring<u64, 8>>(value: move empty);
+  let total = shared_new::<u64>(value: 0_u64);
+  pass_along(queue: &queue, total: &total);
+  let sum = 0_u64;
+  atomic seen = &total {
+    set sum = seen^;
+  }
+  if sum != 49990000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let left = 1_u64;
+  atomic items = &queue {
+    set left = items^.len;
+  }
+  if left != 0_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}
