@@ -266,6 +266,87 @@ variant nor its test edit is promoted. The [source patch and phase results](vect
 retain the negative result without restarting the experiment under a new
 criterion.
 
+### Next discriminator: constructor saves on the growth edge
+
+The [frozen wide-tail inspection](vector-library/RESULTS.md#wide-tail-setup-and-digest-handoff-deferred-discriminators)
+identifies seven paired saves of constructor constants on every nonempty tail
+call, although only its growth edge restores them. Test only their placement
+in a scratch native diagnostic: move those same seven instructions, in order,
+from entry to immediately before the existing growth call. Retain the literal
+loads, frame, both hot calls, payload work, consumer, restores and function size.
+The original and moved forms must have the same instruction multiset; only
+the target's necessary internal branch retargeting may accompany the move.
+This leaves local instruction placement as a possible timing contribution;
+it is not an isolated memory-traffic percentage or a production compiler fix.
+The earlier rejected inline packages changed several mechanisms together and
+are not reopened by this narrower discriminator.
+
+Preflight rejected the initial method before construction: the frozen timed
+tail has a 288-byte frame and an outlined growth call, while the ordinary
+accounting tail has a 368-byte frame and inlined growth. The same edit therefore
+cannot be applied to both. Redirecting the timed allocator calls after O3 also
+cannot reproduce the ordinary accounting ledger: the timed scalar suffix path
+already elides its initial 16-byte empty backing, while the accounting path
+retains it. For count 16, the disassembly implies one 152-byte request in the
+timed path, versus the observed two requests totaling 168 bytes in the
+accounting path. The former is a static prediction, not an observed ledger.
+No native construction or timing preceded this correction, and no observer
+events may be added to disguise that difference.
+
+Use only the frozen `both` timed IR, exact clang flags and unchanged native
+inputs from pin `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`. Before mutation,
+round-trip that IR through assembly and require the control object's sections,
+layout and relocation meaning, and linked sections/code/layout/unwind data,
+to reproduce the frozen image; explain all non-executable metadata differences.
+An unexplained difference stops construction. Candidate code must leave every
+other function and its address unchanged, preserve section layout and unwind
+data, and reverse textually to the exact control assembly. Verify the saved
+registers remain unchanged until growth and every restore is dominated by the
+relocated saves; empty/spare paths cannot read the unwritten private slots.
+
+The maintained matrix alone cannot establish this: its suffix traces reserve
+first, and its growth traces use a different helper. Add a scratch-only direct
+tail witness using that same post-O3 code, valid owner layouts and distinct digest storage:
+capacity/length/removed triples `(0,0,0)`, `(0,0,3)`, `(4,3,1)`, `(4,3,3)` and
+`(8191,8191,1)`, each at seeds 0, 17 and `UINT64_MAX`. Independently check ordered
+digest, retained prefix, final length/capacity, allocation count and cleanup.
+Only in its correctness images, redirect the optimized assembly's allocator
+calls to independent hooks without reoptimization. Cover malloc, free and
+calloc, preserving the latter's zero initialization. The direct witness's
+ledger follows its explicit initial backing and each actual growth, not the
+ordinary account driver's pre-optimization formula. Control and candidate
+must match this independently derived ledger exactly. Confirm that the WF
+object changes only allocator relocations between its ordinary and observed
+forms; all other instructions, layout and unwind data remain identical.
+A release hook deliberately clobbers the saved caller-saved registers; inspect
+that those clobbers reach the tail's restores. Placing the saves after growth
+must fail the digest check, making the new witness discriminate preservation.
+These instrumented witness images are never timed.
+
+Both primary timed images must pass the unchanged complete behavior matrix
+and checksum fault control, with unchanged native inputs and no observer hooks.
+The direct witness must reject a missing release as well as the misplaced saves.
+Earlier ordinary-account evidence remains a separate source-lifecycle check;
+it does not validate this native edit or count the timed image's allocations.
+Freeze source, patches, commands, direct statuses and artifacts.
+Stop on a failed code or correctness screen;
+timing needs a separate screen review. If admitted, use one full unchanged
+`measure 1048576 7` pair with both cohorts, all seven samples, native drift and
+all suffix-zero controls. No retries, threshold changes or selected-cell timing.
+The scratch home is `vector-library/.build/constructor-save-edge/` under the
+actual-ablation tree; its one-shot runner, growth witness and binaries retire
+after reproducible inputs and useful evidence are published in this experiment.
+
+The [completed single pair](vector-library/RESULTS.md#constructor-save-placement-native-code-discriminator)
+passes the code and correctness screens. Among 36 useful cells, two wide
+suffix-one cells have qualified gains, 32 overlap and two are unstable; all
+six empty controls stay unranked. Standard-peer comparisons do not establish
+parity or target completion. The exact native edit, witness and all samples
+are retained; no production compiler change or general placement policy is
+selected. A screen-script false positive was corrected in a recorded bounded
+continuation using unchanged frozen objects, without rebuilding or retrying
+performance measurements.
+
 ### Final-code attribution before optimization
 
 The frozen baseline's O3 timed images, not just the emitted unoptimized LLVM,
@@ -312,8 +393,13 @@ checks do not explain its deficit in this case.
 - Separate build time, correctness execution, allocation accounting, and
   timing. Practical timed builds use ordinary allocation without live
   accounting counters; separately instrumented executions report allocation
-  counts, requested bytes, and peak live requested bytes. A requested-byte
-  peak is not process RSS or allocator-resident memory.
+  counts, requested bytes, and peak live requested bytes for those instrumented
+  images. Instrumentation can change inlining and prevent allocation elision;
+  these counts are not automatically the timed image's allocation traffic.
+  The [constructor-save preflight](#next-discriminator-constructor-saves-on-the-growth-edge)
+  records a concrete difference. Verify optimized code or instrument after
+  optimization before using such counts to attribute timed allocation cost.
+  A requested-byte peak is not process RSS or allocator-resident memory.
 - Use warmup and repeated paired samples with rotating implementation order,
   including a reverse-order cohort. Preserve all samples. A short or unstable
   cell is inconclusive until a longer bounded run resolves it. Aim for at

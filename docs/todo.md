@@ -695,10 +695,23 @@ rarely insert at the same place.
   before choosing a change. Keep the zero-removal overhead control unranked.
 
   The [frozen wide-tail inspection](../research/experiments/container-representation/vector-library/RESULTS.md#wide-tail-setup-and-digest-handoff-deferred-discriminators)
-  adds deferred leads in per-cycle constructor-constant saves and digest
-  handoff through memory. Reopen each when a code screen can isolate its
-  change while retaining call depth and other work; require a paired result
-  before attributing a material cost.
+  identified per-cycle constructor-constant saves and digest handoff through
+  memory. The [native save-placement discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#constructor-save-placement-native-code-discriminator)
+  now gives two qualified short-wide-cycle gains while preserving call depth,
+  other functions and linked layout. Local instruction placement also changes;
+  the result does not isolate stack traffic or select a compiler policy.
+  Find a general source/IR/lowering route, then compare its actual generated
+  code and cross-program performance; do not ship a benchmark-specific native
+  edit. Digest handoff remains a separate unmeasured lead. Reopen it when its
+  change can be isolated without compensating spills or changed call depth.
+
+  The [save-placement preflight](../research/experiments/container-representation/ECOSYSTEM.md#next-discriminator-constructor-saves-on-the-growth-edge)
+  also finds different inlining and allocation elision in timed and observed
+  images. Existing observed ledgers establish their own lifecycle, not the
+  timed image's request count. Preserve this distinction in cost attribution;
+  reopen measurement of actual optimized allocations before selecting any
+  allocation policy on the basis of those ledgers. Whole-matrix post-O3
+  accounting is deferred while the narrower native-code discriminator runs.
 
   Separately, `grow_vector_new` does not publish its returned backing's empty
   length and zero capacity, although CALL-4 admits both owned descendant

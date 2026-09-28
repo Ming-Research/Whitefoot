@@ -4329,6 +4329,168 @@ Two separate future diagnostics could test whether either mechanism contributes:
    retaining call depth, constructor setup and consumer work, only if a code
    screen isolates removal of the handoff without compensating spills.
 
-Both are unmeasured diagnostic ideas, not adopted production ABI proposals.
-Each needs an isolated code change before a paired comparison; no qualified
-improvement would leave that mechanism without a demonstrated material cost.
+The first diagnostic is tested below; digest handoff remains unmeasured.
+Neither is an adopted production ABI proposal. Each needs an isolated code
+change before a paired comparison; no qualified improvement would leave that
+mechanism without a demonstrated material cost.
+
+### Constructor-save placement: native-code discriminator
+
+The [criterion](../ECOSYSTEM.md#next-discriminator-constructor-saves-on-the-growth-edge)
+tests the first lead above using the same frozen `both` timed IR, source pin
+and toolchain. This is a native attribution experiment, not a compiler change.
+Seven paired stores of constructor constants move from the nonempty tail's
+entry to immediately before its existing growth call. The literal loads,
+288-byte frame, two hot calls, constructor, consumer and restores remain.
+The 108-instruction multiset and 432-byte function extent are unchanged.
+Internal branch retargeting and local instruction placement change with the
+move; a timing difference would not isolate memory traffic alone.
+
+Preflight rejected applying the edit to the ordinary accounting body: its
+growth is inlined and its frame is 368 bytes. That observer also prevents
+allocation elision present in timed code. The count-16 scalar suffix-zero
+account row has two requests totaling 168 bytes; the timed disassembly has
+one 152-byte request. The latter is a static inference, not a measured count.
+The experiment therefore uses the optimized timed code as its only code
+authority, with allocator call targets redirected after optimization solely
+in the standalone correctness witness. No original account expectation or
+ledger was changed, and no observer events were invented.
+
+The IR-to-assembly-to-object control and its linked executable reproduce the
+frozen originals byte for byte. Candidate object and linked changes are
+confined to the target's instructions, plus linked UUID/signature metadata;
+every symbol address, other function, section layout and unwind record stays
+fixed. All 15 non-WF inputs to the timed link are reused (18 is the union of
+timed and accounting inputs). The observer copies preserve all section bytes,
+layout and unwind information, changing only allocator symbols and relocation
+targets: 21 malloc, 24 free and eight calloc calls. They never enter timing.
+
+A direct witness checks five capacity/length/removed triples at three seeds,
+including repeated zero-capacity growth, a spare append before growth and
+growth from 8191 to the 8193 ceiling. Its independent ordered digest, distinct
+retained-prefix pattern, final shape, allocation extents/order/count, peak
+and exact cleanup all agree between control and candidate. Root additionally
+recomputed all 15 digests as a modular polynomial and checked the ledgers
+against independently calculated extents. A release hook zeros q17–q30;
+the growth helper returns without overwriting those clobbers, so moving the
+saves after that call fails the ordered-digest check. Suppressing a growth
+release fails the ledger; skipping final cleanup fails its separate check.
+
+Both ordinary timed images pass the unchanged 1,260-configuration /
+8,820-execution matrix and reject the checksum fault. The 25 continuation
+phases have their expected statuses, including 14 deliberate fault exits.
+This makes no claim about allocation-refusal coverage.
+
+The first construction stopped on a screen-script false positive: its
+linear scan included diagnostic calls after the release hook's normal return.
+The actual successful continuation is fourteen clobbers followed by the GPR
+epilogue and `ret`; the error block is reached only by earlier validation
+branches. All 81 first-attempt artifacts, including that failure and runner,
+were frozen. A bounded continuation corrected only the screen, demonstrated
+rejection of an injected pre-return call, and completed the remaining links
+and checks using the same objects. No candidate rebuild or code change
+occurred. The continuation's 62 artifacts and the original 765 source inputs /
+148 artifacts are frozen as well. Independent GPT-6 sol review and root
+inspection passed these screens before admitting the single timing pair.
+
+The single full pair ran control then candidate with unchanged
+`measure 1048576 7`: [control samples](ecosystem-save-edge-control-samples.csv)
+and [candidate samples](ecosystem-save-edge-candidate-samples.csv) each retain
+4,116 rows, 588 groups and every sample 0–6. All non-time columns and checksums
+match row for row. There was no rebuild, retry, selected-cell timing or
+threshold change. Root independently recomputed all 42 paired cells' medians,
+ranges, qualifications and native drift from the raw samples. The
+[paired CSV](ecosystem-save-edge-paired.csv) uses the preceding factor trial's
+rules and retains every cell; only its line endings were normalized.
+
+Among 36 useful cells there are two qualified gains, 32 overlaps and two
+unstable cells, with no strict paired losses. Every useful WF sample is at
+least 1.219 ms. The unstable cells are scalar reserved/count 4096 and wide
+suffix-one/count 256. All six suffix-zero controls overlap and remain unranked;
+the three scalar controls have samples below 1 ms.
+
+| Wide suffix-one count | Candidate/control median, cohort 0 | Cohort 1 | Qualification |
+|---|---:|---:|---|
+| 16 | 0.577088 | 0.587223 | Disjoint-range gain; spread 1.7563% |
+| 256 | 0.564579 | 0.725420 | Unstable; spread 28.4885%, one cohort overlaps |
+| 4096 | 0.642367 | 0.592423 | Disjoint-range gain; spread 8.4304% |
+
+This identifies a material benefit from the bounded native placement change
+in two short wide cycles. It does not explain the effect solely by the 224
+stack bytes avoided: local instruction placement also changes. The suffix-two
+and suffix-three cells overlap, so the result is not a uniform wide-value gain.
+These are observations within one control/candidate execution pair, not
+replicated fresh-process runs. Identical linked addresses do not establish
+identical runtime ASLR or allocation addresses.
+
+Useful native median drift (candidate/control) spans Rust 0.920305–1.056712,
+C++ 0.907944–1.093898, reverse-C 0.915925–1.058361, direct-C 0.650017–1.570235,
+swap/take-C 0.889605–1.089258 and take/swap-C 0.927927–1.046996. The large direct-C
+extrema occur in scalar suffix-two/count 4096, in different cohorts. All these
+controls have unchanged linked code and placement; their observed variation
+must remain visible in interpretation.
+
+The maintained standard-peer target reduction is control 8 pass / 0 deficit /
+28 inconclusive and candidate 9 pass / 1 deficit / 26 inconclusive, with six
+unranked controls each. These are this pair's results, not a replacement for
+earlier trials or a current five-family total. Control's wide suffix-one cells
+are inconclusive through instability, not established successes. Candidate's
+wide suffix-one median ratios to the slower standard peer are respectively
+0.977263/0.985498, 1.021195/0.986741 and 0.976792/0.998163 (cohorts 0/1 at
+counts 16/256/4096), but every cell remains inconclusive by sample overlap.
+The candidate's qualified deficit is scalar suffix-two/count 4096; paired WF
+ranges overlap there, so that native-peer deficit is not an established
+regression from this change. No standard-container target completion or
+production optimization is selected. The next implementation question is a
+general source/IR/lowering route to obtain this benefit, with its own code
+screen and cross-program evidence, rather than shipping edited assembly or
+recognizing this benchmark.
+
+The [reproduction patch](native-constructor-save-edge.patch) retains the exact
+seven-store move and compiled witness source; its assembly context belongs to
+the pinned Apple Clang output. Reconstruct the frozen `both` arm using the
+factor recipe above. Produce control assembly with `/usr/bin/clang -O3
+-Wno-override-module -x ir -S whitefoot-timed.ll -o whitefoot-timed.s`, copy it
+to a separate candidate directory, and apply the patch there with `patch -p1
+-F 0`. Assemble both with the same flags and `-x assembler -c`; link each by
+substituting only its WF object into the original timed link command.
+For the witness copies only, replace `_malloc`, `_free` and `_calloc` BL targets
+by `_wf_probe_malloc`, `_wf_probe_free` and `_wf_probe_calloc`, then assemble
+without IR reoptimization. Compile `save-edge-witness.c` once with `-std=c11
+-O2 -Wall -Wextra -Werror`; link it with each observed WF object and the frozen
+runtime inputs, omitting the ordinary driver and Rust/C++ adapters. `check`
+must reproduce the [15-row witness ledger](save-edge-witness-accounting.csv).
+The source enumerates the individual fault modes; placing the same stores
+after the growth call supplies the preservation fault. Root replayed the
+tracked patch and recovered the screened assembly and witness byte for byte.
+These retained experimental inputs retire with this discriminator; they do
+not add a production assembler transform or a new maintained compiler path.
+
+Scratch evidence is under `vector-library/.build/constructor-save-edge/` in
+`/private/tmp/whitefoot-vector-actual-ablation`; the first and continuation
+`result.json`, `phase-times.json` and artifact manifests retain both outcomes.
+`measurement-1/` retains its command recipe, reducer, all reductions and
+25 frozen artifacts. The first 81 and continuation 62 artifacts, and original
+765 source inputs / 148 artifacts, still match after timing. Reading the
+tracked CSVs reproduces the arithmetic, not the prior native execution.
+
+| Phase | Seconds | Result |
+|---|---:|---|
+| First native construction | 0.985327 | All subprocesses exit 0 |
+| First native screen | 1.284286 | Script stops on the documented false positive |
+| Continuation linking | 0.173316 | Exit 0; no recompilation |
+| Continuation native screen | 0.124367 | Exit 0; pre-return-call falsifier rejects |
+| Correctness execution | 2.222965 | Both complete matrices and 15-case witnesses pass |
+| Fault controls | 0.353768 | All 14 expected failures observed |
+| Control timing | 84.928337 | Exit 0 |
+| Candidate timing | 83.163108 | Exit 0 |
+| Four maintained reductions | 0.251381 | All exit 0 |
+| Paired reduction | 0.088852 | Exit 0; independently recomputed |
+
+Primary raw sample SHA-256: control
+`1927002fdc6fa5b31eaf504b9b236734c9bc02ea887eabeb35319c751e3ff2e3`,
+candidate `5463f1f7367bbf62f7664aaabff914e9f09612877a0844e95a39631389a653ad`.
+The reproduction patch is
+`5a9954cdcbab5e81471081e88278d192036a1ad8e6e09924f5fe9802b2856267`;
+the retained witness ledger is
+`3eeb59d1360691ee9c9d7b0b122ffa3f62ad42c9b9512e32176c3815bf2d9cb9`.

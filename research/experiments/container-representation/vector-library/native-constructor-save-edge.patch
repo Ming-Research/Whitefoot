@@ -1,0 +1,180 @@
+--- a/whitefoot-timed.s
++++ b/whitefoot-timed.s
+@@ -1925,7 +1924,0 @@
+-	stp	q18, q17, [sp, #192]            ; 32-byte Folded Spill
+-	stp	q20, q19, [sp, #160]            ; 32-byte Folded Spill
+-	stp	q22, q21, [sp, #128]            ; 32-byte Folded Spill
+-	stp	q24, q23, [sp, #96]             ; 32-byte Folded Spill
+-	stp	q26, q25, [sp, #64]             ; 32-byte Folded Spill
+-	stp	q28, q27, [sp, #32]             ; 32-byte Folded Spill
+-	stp	q30, q29, [sp]                  ; 32-byte Folded Spill
+@@ -1975,0 +1969,7 @@
++	stp	q18, q17, [sp, #192]            ; 32-byte Folded Spill
++	stp	q20, q19, [sp, #160]            ; 32-byte Folded Spill
++	stp	q22, q21, [sp, #128]            ; 32-byte Folded Spill
++	stp	q24, q23, [sp, #96]             ; 32-byte Folded Spill
++	stp	q26, q25, [sp, #64]             ; 32-byte Folded Spill
++	stp	q28, q27, [sp, #32]             ; 32-byte Folded Spill
++	stp	q30, q29, [sp]                  ; 32-byte Folded Spill
+--- /dev/null
++++ b/save-edge-witness.c
+@@ -0,0 +1,159 @@
++/* Scratch direct-tail correctness oracle; never a timing input. */
++#include <inttypes.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define NOINLINE __attribute__((noinline))
++typedef struct { uint64_t words[32]; } Record;
++typedef struct { uint64_t length, capacity; Record data[]; } Block;
++_Static_assert(sizeof(Record) == 256 && offsetof(Block, data) == 16, "frozen owner ABI");
++extern uint8_t direct_tail(Block **owner, uint64_t retained, uint64_t removed,
++                           uint64_t seed, uint64_t *digest)
++    __asm__("_wf_vector_library_tail_work$instance$c3abe4db44181f7a");
++
++typedef struct { void *pointer; uint64_t bytes; int live; } Allocation;
++static Allocation allocations[16];
++static uint64_t requests, releases, requested_bytes, live_bytes, peak_bytes;
++static int suppress_growth_release;
++static void require(int condition, const char *message) {
++    if (!condition) {
++        fprintf(stderr, "constructor-save witness: %s\n", message);
++        exit(1);
++    }
++}
++
++NOINLINE void *wf_probe_malloc(uint64_t bytes) {
++    require(requests < 16, "allocation event bound");
++    void *pointer = malloc((size_t)bytes);
++    require(pointer != NULL, "host allocation");
++    allocations[requests++] = (Allocation){pointer, bytes, 1};
++    requested_bytes += bytes;
++    live_bytes += bytes;
++    if (live_bytes > peak_bytes) peak_bytes = live_bytes;
++    return pointer;
++}
++
++NOINLINE void *wf_probe_calloc(uint64_t count, uint64_t width) {
++    require(width == 0 || count <= UINT64_MAX / width, "calloc extent");
++    uint64_t bytes = count * width;
++    void *pointer = wf_probe_malloc(bytes);
++    memset(pointer, 0, (size_t)bytes);
++    return pointer;
++}
++
++NOINLINE void wf_probe_free(void *pointer) {
++    if (pointer == NULL) return;
++    size_t index = 0;
++    while (index < requests && (!allocations[index].live || allocations[index].pointer != pointer)) ++index;
++    require(index < requests, "release identity");
++    if (suppress_growth_release) {
++        suppress_growth_release = 0;
++        return;
++    }
++    allocations[index].live = 0;
++    live_bytes -= allocations[index].bytes;
++    ++releases;
++    free(pointer);
++    /* These caller-saved registers are deliberately wrong after release. */
++    __asm__ volatile(
++        "movi v17.16b, #0\n\t" "movi v18.16b, #0\n\t"
++        "movi v19.16b, #0\n\t" "movi v20.16b, #0\n\t"
++        "movi v21.16b, #0\n\t" "movi v22.16b, #0\n\t"
++        "movi v23.16b, #0\n\t" "movi v24.16b, #0\n\t"
++        "movi v25.16b, #0\n\t" "movi v26.16b, #0\n\t"
++        "movi v27.16b, #0\n\t" "movi v28.16b, #0\n\t"
++        "movi v29.16b, #0\n\t" "movi v30.16b, #0"
++        : : : "v17", "v18", "v19", "v20", "v21", "v22", "v23",
++                "v24", "v25", "v26", "v27", "v28", "v29", "v30", "memory");
++}
++
++static uint64_t extent(uint64_t capacity) { return 16 + capacity * 256; }
++static uint64_t prefix_word(uint64_t seed, uint64_t row, uint64_t word) {
++    return seed ^ ((row + 1) * UINT64_C(11400714819323198485)) ^ (word * UINT64_C(1099511628211));
++}
++
++static void one_case(uint64_t capacity, uint64_t length, uint64_t removed,
++                     uint64_t seed, const char *fault) {
++    require(live_bytes == 0, "case isolation");
++    requests = releases = requested_bytes = live_bytes = peak_bytes = 0;
++    memset(allocations, 0, sizeof allocations);
++    uint64_t expected_capacity = capacity, expected_count = 1;
++    uint64_t expected_sizes[16] = {extent(capacity)};
++    uint64_t expected_bytes = extent(capacity), expected_peak = expected_bytes;
++    for (uint64_t next = length; next < length + removed; ++next) {
++        if (next == expected_capacity) {
++            uint64_t old_bytes = extent(expected_capacity);
++            expected_capacity = expected_capacity == 0 ? 1 : expected_capacity * 2;
++            if (expected_capacity > 8193) expected_capacity = 8193;
++            uint64_t bytes = extent(expected_capacity);
++            expected_sizes[expected_count++] = bytes;
++            expected_bytes += bytes;
++            if (old_bytes + bytes > expected_peak) expected_peak = old_bytes + bytes;
++        }
++    }
++    uint64_t expected_digest = seed;
++    for (uint64_t row = 0; row < removed; ++row)
++        for (uint64_t word = 0; word < 32; ++word)
++            expected_digest = expected_digest * UINT64_C(131) + seed + length + row + word;
++
++    Block *owner = wf_probe_malloc(extent(capacity));
++    owner->length = length;
++    owner->capacity = capacity;
++    for (uint64_t row = 0; row < length; ++row)
++        for (uint64_t word = 0; word < 32; ++word)
++            owner->data[row].words[word] = prefix_word(seed, row, word);
++    uint64_t digest = seed;
++    suppress_growth_release = !strcmp(fault, "fail-growth-release");
++    uint8_t returned = direct_tail(&owner, length, removed, seed, &digest);
++    if (!strcmp(fault, "fail-digest")) digest ^= 1;
++    if (!strcmp(fault, "fail-prefix")) owner->data[0].words[31] ^= 1;
++    if (!strcmp(fault, "fail-length")) owner->length ^= 1;
++    if (!strcmp(fault, "fail-capacity")) owner->capacity ^= 1;
++    if (!strcmp(fault, "fail-allocation")) expected_count += 1;
++    if (!strcmp(fault, "fail-bytes")) expected_bytes += 1;
++    if (!strcmp(fault, "fail-peak")) expected_peak += 1;
++    require(returned == 0, "unit return");
++    require(digest == expected_digest, "ordered digest");
++    require(owner->length == length, "final length");
++    require(owner->capacity == expected_capacity, "final capacity");
++    for (uint64_t row = 0; row < length; ++row)
++        for (uint64_t word = 0; word < 32; ++word)
++            require(owner->data[row].words[word] == prefix_word(seed, row, word), "retained prefix word");
++    require(requests == expected_count && releases + 1 == expected_count, "allocation and release count");
++    for (uint64_t i = 0; i < requests; ++i)
++        require(allocations[i].bytes == expected_sizes[i], "allocation request order and extent");
++    require(requested_bytes == expected_bytes, "requested bytes");
++    require(peak_bytes == expected_peak, "peak live bytes");
++    require(live_bytes == extent(expected_capacity), "final live extent");
++    if (strcmp(fault, "fail-cleanup")) wf_probe_free(owner);
++    require(live_bytes == 0 && releases == requests, "complete cleanup");
++    for (uint64_t i = 0; i < requests; ++i) require(!allocations[i].live, "complete cleanup");
++    printf("%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
++           ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
++           capacity, length, removed, seed, digest, length, expected_capacity,
++           requests, releases, requested_bytes, peak_bytes);
++}
++
++int main(int argc, char **argv) {
++    require(argc == 2, "one command required");
++    const char *command = argv[1];
++    puts("initial_capacity,initial_length,removed,seed,digest,final_length,final_capacity,requests,releases,requested_bytes,peak_bytes");
++    if (!strcmp(command, "check")) {
++        const uint64_t triples[][3] = {{0,0,0},{0,0,3},{4,3,1},{4,3,3},{8191,8191,1}};
++        const uint64_t seeds[] = {0,17,UINT64_MAX};
++        for (size_t t = 0; t < sizeof triples / sizeof triples[0]; ++t)
++            for (size_t s = 0; s < sizeof seeds / sizeof seeds[0]; ++s)
++                one_case(triples[t][0], triples[t][1], triples[t][2], seeds[s], command);
++    } else {
++        require(!strcmp(command,"fail-cleanup") || !strcmp(command,"fail-growth-release") ||
++                !strcmp(command,"fail-digest") ||
++                !strcmp(command,"fail-prefix") || !strcmp(command,"fail-length") ||
++                !strcmp(command,"fail-capacity") || !strcmp(command,"fail-allocation") ||
++                !strcmp(command,"fail-bytes") || !strcmp(command,"fail-peak"), "unknown command");
++        one_case(4,3,3,17,command);
++    }
++    return 0;
++}
