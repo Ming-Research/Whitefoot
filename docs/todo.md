@@ -466,8 +466,10 @@ rarely insert at the same place.
   finds useful traversal gains but adverse wide suffix-one medians and strict
   wide empty-control losses; ordinary function-actual hints produce identical
   native code in both traversal settings. Keep this item open for the
-  remaining traversal/controller and code-placement costs, with the recorded
-  remaining-count experiment as the next discriminator. The recognizer's
+  remaining traversal/controller and code-placement costs. The remaining-count
+  spelling was rejected by its native-code screen; open constructor-constant
+  setup and digest-handoff leads are recorded under short Vector cycles below.
+  The recognizer's
   existence neither settles that performance tradeoff nor justifies extending
   its equivalence domain.
 
@@ -691,6 +693,12 @@ rarely insert at the same place.
   copies or select a new consumption primitive. Compare unchanged-source
   optimized loops, callback boundaries and surviving aggregate transfers
   before choosing a change. Keep the zero-removal overhead control unranked.
+
+  The [frozen wide-tail inspection](../research/experiments/container-representation/vector-library/RESULTS.md#wide-tail-setup-and-digest-handoff-deferred-discriminators)
+  adds deferred leads in per-cycle constructor-constant saves and digest
+  handoff through memory. Reopen each when a code screen can isolate its
+  change while retaining call depth and other work; require a paired result
+  before attributing a material cost.
 
   Separately, `grow_vector_new` does not publish its returned backing's empty
   length and zero capacity, although CALL-4 admits both owned descendant

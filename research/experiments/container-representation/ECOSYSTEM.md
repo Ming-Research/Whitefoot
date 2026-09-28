@@ -216,7 +216,7 @@ reproduction are in the [Vector report](vector-library/RESULTS.md#actual-compile
 This establishes a whole-build traversal effect, not separate costs for loop
 instructions and the changed code placement, and selects no production policy.
 
-### Next discriminator: remaining-count induction in actual lowering
+### Remaining-count induction: criterion and code-screen rejection
 
 Keep that pinned compiler, source library, harness, callback ABI, allocation
 policy and ordinary hint settings. In a fresh local compiler variant, change
@@ -256,6 +256,15 @@ success is implied by the smaller loop. Retain every adverse or inconclusive
 cell; do not repeat on a loss, relax qualification or infer instruction-only
 cost from changed code placement. This probe is not a claim that induction
 alone explains the remaining Vector deficits.
+
+The completed probe passed its correctness and accounting screens, but failed
+the registered code screen: both timed and accounting WF objects are
+byte-identical to the frozen current compiler's objects. Every linked section's
+bytes and layout match as well. The countdown source spelling therefore gives
+no native change on this toolchain. No timing was run, and neither the compiler
+variant nor its test edit is promoted. The [source patch and phase results](vector-library/RESULTS.md#remaining-count-probe-rejected-before-timing)
+retain the negative result without restarting the experiment under a new
+criterion.
 
 ### Final-code attribution before optimization
 

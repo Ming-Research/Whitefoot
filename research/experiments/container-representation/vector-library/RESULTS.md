@@ -1,8 +1,12 @@
 # Growable vector library costs
 
-Current production retains [source discriminator F](#f-paired-timing-useful-improvements-without-a-separated-regression).
-The [H1/H2 realloc probes](#h-realloc-for-runtime-slots-growth) are rejected;
-later diagnostic results describe experiments, not the current implementation.
+The current Vector library source retains [source discriminator F](#f-paired-timing-useful-improvements-without-a-separated-regression).
+The current compiler also includes provisional terminal-owned-consumption
+lowering and function-actual `inlinehint` emission; the
+[latest factor-isolation result](#actual-compiler-factor-isolation-after-ownership-integration)
+records their attribution and selection limits. The
+[H1/H2 realloc probes](#h-realloc-for-runtime-slots-growth) remain rejected.
+Earlier sections retain historical evidence under their recorded conditions.
 
 ## Current standard-container comparison
 
@@ -4244,3 +4248,87 @@ Primary SHA-256 evidence (all remaining identities are in the manifests):
 | account CSV, every arm | `ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7` |
 | neither/hint timed WF object | `16522ed39dc4f6af947bf89108a8444d25839dd7aaa8db8a02316da55f3b2add` |
 | terminal/both timed WF object | `c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235` |
+
+### Remaining-count probe: rejected before timing
+
+The [registered discriminator](../ECOSYSTEM.md#remaining-count-induction-criterion-and-code-screen-rejection)
+replaced only the terminal traversal's induction with cursor plus remaining
+count, keeping its recognizer, owner handoff, empty path and final publication.
+The [complete scratch patch](actual-countdown-probe.patch) also extends the
+independent zero-stride C oracle to logical length `UINT64_MAX`, removed counts
+0–5. It applies to the same pinned `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`
+source as the factor trial; the compiler variant and test edit remain unpromoted.
+
+Both focused tests pass, including 513 owner/prefix/head/zero-stride cases per
+overlap mode and
+the existing release, observer, different-consumer and partial-exit checks.
+Each timed/account image passes 1,260 configurations / 8,820 executions and
+the checksum/cleanup fault controls. All 18 non-WF inputs match the frozen
+`both` arm; its 294-row accounting CSV is byte-identical. Raw LLVM changes
+exactly the two truncate definitions among 62, with no other definition or
+module-text change. Yet both WF objects are byte-identical to `both`:
+timed SHA-256 `c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235`,
+account `414b22a0d3502f2236ef0a9d1b1e743d8130f84335b66d741e5b417fd0408c2b`.
+All 15 linked sections per image match in bytes, addresses, sizes and alignment;
+scalar/wide truncate remain 17/65 instructions, with the wide increment/`cmn`
+controller intact. This fails the registered code screen. No timing ran and
+no production performance conclusion follows from a source-only rewrite.
+
+| Phase | Seconds | Exit |
+|---|---:|---:|
+| Gate compiler build | 62.340 | 0 |
+| Gate library-test construction | 112.013 | 0 |
+| Two focused tests | 3.990 | 0 |
+| Native image construction | 2.654 | 0 |
+| Complete matrix and fault controls | 1.883 | 0 |
+| Accounting | 0.124 | 0 |
+
+Reproduction uses the previous factor trial's pinned archive and build/check
+commands after applying this patch, plus `cargo test --manifest-path
+compiler/Cargo.toml --target-dir compiler/target --profile gate --lib --no-run
+--locked --offline -j2` and the resulting binary's
+`backend::tests::terminal_consumption::` filter. Commands, direct statuses,
+source/artifact hashes and native inspection remain under
+`vector-library/.build/countdown-probe/` in the scratch tree
+`/private/tmp/whitefoot-vector-countdown-probe`; they are not tracked artifacts.
+Only the reproducible source patch is retained beside this report. The scratch
+runner and images can retire after publication; the rejected spelling can reopen
+only if a changed toolchain or lowering produces the required native difference.
+
+### Wide-tail setup and digest handoff: deferred discriminators
+
+At frozen pin `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`, the saved linked
+`native/both-timed.disassembly.txt` under
+`/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/`
+shows a 288-byte
+wide-tail frame at `c7dc`; short addresses use prefix `0x10000`. Fourteen
+Q-register literal loads at `c810–c87c` feed seven paired saves at `c880–c898`:
+224 stack bytes per nonempty cycle, reloaded only after `grow_full` at `c934`.
+These preserve constructor constants, not a record snapshot; append constructs
+256 bytes directly in backing. Trace-to-tail (`c0b8`) and tail-to-truncate
+(`c96c`) remain two hot calls. Truncate at `d3c8` consumes each record with
+sixteen paired loads and 32 `madd`s; the digest store/load/store/load handoff
+is at `c0a0`/`d3dc`/`d4bc`/`c0c0`. Source correspondence is in
+[make/accept/trace](vector-library.wf) and [append/truncate](../../../../lib/std/collections/vector/grow-vector.wf).
+[Rust](vector-ecosystem.rs) and [direct C](vector-costs.c) hoist constants
+outside the cycle and keep the digest in a register. [C++](vector-ecosystem.cpp)
+also hoists constant setup, but reloads constants and retains a zero-byte
+`memmove` per nonempty cycle. These are observations of the saved scratch dump.
+
+The same setup and handoff mechanisms occur in `native/neither-timed.disassembly.txt`;
+their presence does not attribute T's measured adverse results. No new timing
+was run. The [earlier inline packages](#counted-consumer-with-wide-tail-only-alwaysinline-completed-near-parity-but-rejected)
+changed multiple mechanisms and include a paired regression; finding these
+boundaries again does not revive those packages.
+
+Two separate future diagnostics could test whether either mechanism contributes:
+
+1. Move only the seven existing constant saves onto the cold growth edge,
+   retaining the frame, literal loads, hot calls, payload work and consumer loop.
+2. Pass the digest as a scalar value/result through the same two internal calls,
+   retaining call depth, constructor setup and consumer work, only if a code
+   screen isolates removal of the handoff without compensating spills.
+
+Both are unmeasured diagnostic ideas, not adopted production ABI proposals.
+Each needs an isolated code change before a paired comparison; no qualified
+improvement would leave that mechanism without a demonstrated material cost.
