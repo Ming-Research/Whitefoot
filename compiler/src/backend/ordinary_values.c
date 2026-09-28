@@ -294,8 +294,11 @@ static void wf_error(wf_io_error *error, int code, unsigned origin) {
  * factory `factory_share` relates to it name one process cell in their third
  * word, so an acquisition through any of them spends a credit of that one
  * budget; a factory built without one keeps its budget in its first word.
- * The cell is a plain counter: every acquisition and close is a waiting call,
- * and every context runs on the one thread that runs the entry [WAIT-2]. */
+ * The cell is updated atomically: every acquisition and close is a waiting
+ * call, and the contexts that make them may run on different drivers
+ * (`research/investigations/io-model/WAITS.md`, Experiment 5). A factory
+ * with its own budget belongs to one owner, and the same atomic updates
+ * serve it. */
 static uint64_t wf_handle_budget;
 
 static uint64_t *wf_factory_budget(wf_value *factory) {
@@ -306,18 +309,27 @@ static uint64_t *wf_factory_budget(wf_value *factory) {
 
 static int wf_factory_take(wf_value *factory, wf_io_error *error) {
     uint64_t *budget = wf_factory_budget(factory);
+    uint64_t credits = __atomic_load_n(budget, __ATOMIC_ACQUIRE);
     wf_transition(factory);
-    if (*budget == 0) {
-        wf_error_class(error, 21, 0, 0);
-        return 0;
+    for (;;) {
+        if (credits == 0) {
+            wf_error_class(error, 21, 0, 0);
+            return 0;
+        }
+        if (__atomic_compare_exchange_n(
+                budget, &credits, credits - 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            return 1;
+        }
     }
-    *budget -= 1;
-    return 1;
 }
 
 static void wf_factory_return(wf_value *factory) {
     uint64_t *budget = wf_factory_budget(factory);
-    if (*budget != UINT64_MAX) *budget += 1;
+    uint64_t credits = __atomic_load_n(budget, __ATOMIC_ACQUIRE);
+    while (credits != UINT64_MAX
+           && !__atomic_compare_exchange_n(
+               budget, &credits, credits + 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    }
 }
 
 #if defined(_WIN32)

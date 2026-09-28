@@ -1284,6 +1284,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // [PAR-4] a `mustpar` requires the permission the table just judged;
         // the table itself stays the same whichever markers are written.
         self.validate_mustpar(&functions, &permission.functions)?;
+        // [WAIT-2] each marked waiting `let` is joined where the table found
+        // its binding's first use; lowering reads the plan from the function.
+        for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
+            function
+                .waiting
+                .context_awaits
+                .clone_from(&permissions.context_awaits);
+        }
         // The ledger is rendered here because only the checker still holds the
         // syntax tree the citations name. It is pure presentation over the
         // table above and reaches no decision.

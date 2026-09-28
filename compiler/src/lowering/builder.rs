@@ -458,6 +458,12 @@ fn lower_function<'program>(
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
+    builder.context_awaits = function
+        .waiting
+        .context_awaits
+        .iter()
+        .map(|planned| (planned.statement.clone(), planned.before))
+        .collect();
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
@@ -687,6 +693,11 @@ struct IrBuilder<'program> {
     /// [PAR-4] the statements of this body that start a context. Empty in
     /// every synthesized function: a wrapper, chunk or splitter starts none.
     context_starts: Vec<NodePath>,
+    /// [WAIT-2] for each marked waiting `let`, how many statements after it
+    /// its context is awaited, or `None` for its block's end.
+    context_awaits: Vec<(NodePath, Option<u32>)>,
+    /// The bound contexts started and not yet awaited, innermost block last.
+    pending_contexts: Vec<contexts::PendingContext>,
 }
 
 #[derive(Clone)]
@@ -741,6 +752,8 @@ impl<'program> IrBuilder<'program> {
             synthesis,
             function_name,
             context_starts: Vec::new(),
+            context_awaits: Vec::new(),
+            pending_contexts: Vec::new(),
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -1005,11 +1018,22 @@ impl<'program> IrBuilder<'program> {
         statements: &[CheckedStatement],
         give_target: Option<GiveTarget>,
     ) -> Result<(), LoweringFailure> {
-        for statement in statements {
+        let outer_pending = self.pending_contexts.len();
+        for (index, statement) in statements.iter().enumerate() {
             if self.current.is_none() {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
+            self.await_contexts_before(outer_pending, index)?;
             match statement {
+                // [WAIT-2] a marked waiting `let`: its call runs as a context
+                // and its binding is defined where the plan awaits it.
+                CheckedStatement::Let {
+                    node_path,
+                    binding,
+                    value: expression,
+                } if self.starts_context(node_path) => {
+                    self.start_bound_context(node_path, *binding, expression, index)?;
+                }
                 CheckedStatement::Let {
                     binding,
                     value: expression,
@@ -1305,6 +1329,12 @@ impl<'program> IrBuilder<'program> {
                 }
             }
         }
+        // [WAIT-2] a context no later statement of its block used is joined
+        // at the block's end, before the block's releases and its successor.
+        if self.current.is_some() {
+            self.await_contexts_before(outer_pending, usize::MAX)?;
+        }
+        self.pending_contexts.truncate(outer_pending);
         Ok(())
     }
 

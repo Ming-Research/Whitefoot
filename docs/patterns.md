@@ -527,7 +527,20 @@ mustpar serve(connection: move connection, factory: move factory);
 ```
 
 The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
-connections and serves each one this way. Host operations of different
+connections and serves each one this way.
+
+To gather several answers, bind each marked call. The activation waits for
+each result only before the first statement that uses it, so the calls
+proceed together until then [PAR-4, WAIT-2]:
+
+```whitefoot
+let first = mustpar fetch(factory: move first_factory, address: move first_address, request: 1_u8);
+let second = mustpar fetch(factory: move second_factory, address: move second_address, request: 2_u8);
+let total = first +wrap second;
+```
+
+The maintained [tcp_gather.wf](../tests/programs/tcp_gather.wf) fetches from
+two servers this way. Host operations of different
 contexts, and of independent statements, have no order between them; pass two
 operations through one owner when their order matters [HOST-1].
 
