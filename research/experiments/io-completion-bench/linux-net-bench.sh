@@ -50,17 +50,19 @@ k64 64 2000 64
 k1024 1024 200 64
 k64.64k 64 200 65536"
 
-# The server lines to run, out of "uring epoll wf wfbase waiting", space
-# separated. `wfbase` is a second Whitefoot build of the same source, from an
-# earlier compiler, put in $OUT as wf_echo_base by whoever compares the two. The
+# The server lines to run, out of "uring epoll wf wf1 wfbase waiting", space
+# separated. `wf1` is the same binary as `wf` run with one driver thread.
+# `wfbase` is a second Whitefoot build of the same source, from an earlier
+# compiler, put in $OUT as wf_echo_base by whoever compares the two. The
 # default is every line whose binary is in $OUT, which is every line the build
 # above produced. Naming a subset is for the case where one server cannot
 # complete a run yet and the others still owe a table; the table says which
 # lines it holds.
 NET_LINES=${NET_LINES:-}
 
-# The Whitefoot line's environment: the shipped defaults.
+# The Whitefoot lines' environments: the shipped defaults, and one driver.
 WF_ENVIRONMENT=""
+WF1_ENVIRONMENT="WF_DRIVERS=1"
 
 # --- the pieces a run is made of ----------------------------------------
 
@@ -178,6 +180,14 @@ field() {
     echo "$1" | tr '\t' '\n' | sed -n "s/^$2=//p"
 }
 
+line_environment() {
+    case $1 in
+        wf) echo "$WF_ENVIRONMENT" ;;
+        wf1) echo "$WF1_ENVIRONMENT" ;;
+        *) echo "" ;;
+    esac
+}
+
 median_of() {
     awk -F'\t' -v want="$1" -v column="$2" '
         $1 == want { values[count++] = $column + 0 }
@@ -228,11 +238,11 @@ if [ ! -x "$OUT/netload" ]; then
 fi
 
 LINES=""
-for name in ${NET_LINES:-uring epoll wf wfbase waiting}; do
+for name in ${NET_LINES:-uring epoll wf wf1 wfbase waiting}; do
     case $name in
         uring) binary=$OUT/uring_echo ;;
         epoll) binary=$OUT/epoll_echo ;;
-        wf) binary=$OUT/wf_echo ;;
+        wf|wf1) binary=$OUT/wf_echo ;;
         wfbase) binary=$OUT/wf_echo_base ;;
         waiting) binary=$OUT/waiting_echo ;;
         *) echo "linux-net-bench: there is no $name line" >&2; exit 2 ;;
@@ -290,10 +300,7 @@ fi
 
 echo "$LINES" | while read -r name binary; do
     [ -n "$name" ] || continue
-    environment=""
-    if [ "$name" = wf ]; then
-        environment=$WF_ENVIRONMENT
-    fi
+    environment=$(line_environment "$name")
     run_case "$name.verify" "$binary" "$environment" 4 200 64 0
 done
 echo "every server echoes what netload sent, at 4 connections"
@@ -341,10 +348,7 @@ while [ "$pass" -lt "$passes" ]; do
     fi
     while IFS='	' read -r label name binary connections roundtrips bytes; do
         [ -n "$label" ] || continue
-        environment=""
-        if [ "$name" = wf ]; then
-            environment=$WF_ENVIRONMENT
-        fi
+        environment=$(line_environment "$name")
         run_case "$label" "$binary" "$environment" "$connections" "$roundtrips" "$bytes" \
             "$recording"
     done < "$order"

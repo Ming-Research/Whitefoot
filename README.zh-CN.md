@@ -220,7 +220,7 @@ tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: Undisch
 
 其他选项：
 
-- `--par` 构建并行版本，`--par-ledger` 打印每一个并行决定及其理由。运行时由 `WF_WORKERS` 设置使用多少个工作线程；
+- `--par` 构建并行版本，`--par-ledger` 打印每一个并行决定及其理由。运行时由 `WF_WORKERS` 设置使用多少个工作线程，由 `WF_DRIVERS` 设置用多少个驱动线程运行被标记的等待调用所启动的上下文，默认每个 CPU 一个；
 - `--stack-ledger` 报告每个函数的栈帧，以及每个递归环能容纳多少层；
 - `--emit-llvm` 输出 LLVM IR；
 - `--diagnostic-format json` 把每次拒绝输出为一行一个的 JSON 对象；

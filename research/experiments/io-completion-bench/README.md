@@ -235,9 +235,10 @@ time.
   the compiled runtime with the hand-written shape.
 - **`wf_echo`**: `tests/programs/tcp_contexts.wf`, the maintained context
   server, built with the default flags: the entry accepts and each connection
-  is served by a context of its own [PAR-4]. Every context runs on the entry's
-  thread, so the line has one driver where the C servers default to one thread
-  per CPU; their `--threads 1` runs are the matching comparison.
+  is served by a context of its own [PAR-4]. Its contexts run on one driver
+  thread per CPU, as the C servers default to one thread per CPU; `wf1` is the
+  same binary with `WF_DRIVERS=1`, which the C servers' `--threads 1` runs
+  match.
 
 What the io_uring reference does that a portable server cannot, which is what
 the ratio is against:

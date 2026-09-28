@@ -420,7 +420,8 @@ Other options:
 
 - `--par` builds the parallel version, and `--par-ledger` prints every
   parallelism decision with its reason. At run time, `WF_WORKERS` sets how
-  many workers it uses;
+  many workers it uses, and `WF_DRIVERS` how many driver threads run the
+  contexts that marked waiting calls start, one per CPU by default;
 - `--stack-ledger` reports each function's frame and how many levels each
   recursive cycle fits;
 - `--emit-llvm` prints the LLVM IR;

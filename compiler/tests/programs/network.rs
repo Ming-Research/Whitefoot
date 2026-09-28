@@ -376,7 +376,8 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
     for native_ring in [true, false] {
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route_with_workers(native_ring, Some("3"), &[text.as_bytes()]);
+        let child =
+            program.spawn_on_route_with(native_ring, &[("WF_WORKERS", "3")], &[text.as_bytes()]);
         let mut streams = (0..4_u8)
             .map(|_| connect_when_ready(port))
             .collect::<Vec<_>>();
@@ -452,6 +453,65 @@ fn every_connection_is_served_in_its_own_context_on_both_routes() {
         drop(streams);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "native ring: {native_ring}");
+    }
+}
+
+/// Contexts run on several driver threads where the host has a ring, each
+/// driver with a ring of its own: with four drivers pinned, 64 peers that all
+/// speak at once are each answered, and the server exits zero once every one
+/// has closed, which it does only when every context, on whichever driver it
+/// ran, has finished before the entry leaves. The last context's finish and
+/// the entry's exit happen on different threads, so the case runs several
+/// rounds. A host whose kernel refuses the ring runs one driver, and the case
+/// then checks only the answers and the exit.
+#[cfg(target_os = "linux")]
+#[test]
+fn contexts_on_four_drivers_serve_every_peer_and_finish_before_the_entry() {
+    const PEERS: usize = 64;
+    let program = build_program(&compile_program("tcp_contexts.wf"));
+    for round in 0..6 {
+        let port = free_port();
+        let text = port.to_string();
+        let count = PEERS.to_string();
+        let child = program.spawn_on_route_with(
+            true,
+            &[("WF_DRIVERS", "4")],
+            &[text.as_bytes(), count.as_bytes()],
+        );
+        let mut streams = (0..PEERS)
+            .map(|_| connect_when_ready(port))
+            .collect::<Vec<_>>();
+        for (peer, stream) in streams.iter_mut().enumerate() {
+            let sent = [round as u8, peer as u8, 7];
+            stream.write_all(&sent).expect("send this peer's bytes");
+        }
+        for (peer, stream) in streams.iter_mut().enumerate() {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(20)))
+                .expect("bound the wait for this peer's answer");
+            let mut returned = [0_u8; 3];
+            stream
+                .read_exact(&mut returned)
+                .unwrap_or_else(|error| panic!("peer {peer} of round {round}: {error}"));
+            assert_eq!(
+                returned,
+                [round as u8, peer as u8, 7],
+                "peer {peer} of round {round}"
+            );
+        }
+        let rings = std::fs::read_dir(format!("/proc/{}/fd", child.id()))
+            .expect("list the server's descriptors")
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.to_string_lossy().contains("io_uring"))
+            .count();
+        assert!(
+            rings == 0 || rings == 4,
+            "a server that has a ring runs four drivers with one ring each, \
+             and this one holds {rings} rings (round {round})"
+        );
+        drop(streams);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "round {round}");
     }
 }
 
