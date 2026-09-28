@@ -1,0 +1,11 @@
+--- /private/tmp/vector-wide-append-baseline.raw.ll	2026-09-27 21:03:29
++++ research/experiments/container-representation/vector-library/.build/vector-library.raw.ll	2026-09-27 21:00:36
+@@ -1530,7 +1530,7 @@
+   br label %bb1
+ }
+ 
+-define i64 @wf_std.collections.vector.grow_vector_append$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(8) %v0, ptr %wf.arg.v1) #0 {
++define i64 @wf_std.collections.vector.grow_vector_append$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(8) %v0, ptr %wf.arg.v1) #0 alwaysinline {
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.0, ptr %wf.arg.v1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)

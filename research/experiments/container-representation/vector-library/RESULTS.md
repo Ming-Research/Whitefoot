@@ -3919,3 +3919,50 @@ and specialize the zero-valued `box_slots_new` operation to return the global
 without a runtime zero test or phi. It is admitted only if the same complete
 matrix and accounting criterion passes and wide suffix-1 loses no qualified
 cell; otherwise the sentinel route is closed and Vector remains unresolved.
+
+### Next discriminator: wide append boundary
+
+The optimized IR still retains a call from the wide `tail_work` loop to the
+monomorphized `grow_vector_append`; that call passes a 256-byte owner through a
+temporary. The next source-equivalent trial adds `alwaysinline` only to that
+wide append definition. Scalar code, the truncate body, source contracts,
+allocation policy, native inputs and all other function attributes remain
+unchanged. This is a diagnostic of the append boundary, not a blanket inline
+policy.
+
+Before timing, the code criterion is that the wide `tail_work` body contains no
+append call or append helper body boundary, while its frame has no new
+256-byte snapshot or spill and scalar bodies are unchanged. If that criterion
+passes, both complete images must retain all checksums, refusal cleanup and
+the unchanged allocation ledger. A qualified useful-cell regression, or a
+failure to remove the boundary, rejects the trial without selecting a policy.
+The candidate is useful only if it removes the remaining wide `suffix-1`
+deficit without reintroducing the scalar losses recorded above.
+
+### Wide append `alwaysinline`: code win, timing rejected
+
+The raw candidate added `alwaysinline` only to the wide
+`grow_vector_append` instance. The optimized IR satisfies the code criterion:
+the wide `tail_work` loop has no append call or helper boundary and writes the
+constructed 256-byte value directly into the backing slot. Its frame gains no
+256-byte owner snapshot, and the scalar instance is unchanged. The exact
+frozen-IR edit is [`wide-append-inline.patch`](wide-append-inline.patch).
+
+Both arms passed the 1,260-configuration/8,820-execution timed and accounting
+checks, with identical checksums, refusal cleanup and allocation ledgers. The
+control and candidate matrix runs took 82.01 s and 80.75 s. Raw samples and
+target reductions are preserved as [`control samples`](ecosystem-wide-append-inline-control-samples.csv),
+[`candidate samples`](ecosystem-wide-append-inline-candidate-samples.csv),
+[`control targets`](ecosystem-wide-append-inline-control-targets.csv) and
+[`candidate targets`](ecosystem-wide-append-inline-candidate-targets.csv);
+the two ledgers are byte-identical.
+
+The target reduction moved only from 14 pass / 5 deficit / 17 inconclusive to
+17 / 5 / 14. Wide `suffix-1` remains a deficit at 256 (`2.157/2.177` times the
+slower peer); scalar growth at 16 and scalar `suffix-2` at 16, 256 and 4096
+also remain qualified deficits. The code change therefore removes a real
+boundary but does not supply its cost: it exposes `make_room` and its capacity
+path on every iteration, and the measured scalar regressions confirm that
+blindly inlining the wide append is not a production policy. The trial is
+rejected. The remaining Vector discriminator must change the movement/result
+contract or eliminate the repeated capacity and owner transfer together.
