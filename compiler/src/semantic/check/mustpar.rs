@@ -98,23 +98,27 @@ impl Checker<'_, '_> {
 
     /// [PAR-4] form 3, at a marked call whose selected callee waits: the
     /// [WAIT-2] permission to execute the call alongside the statements after
-    /// it, which holds when the call stands as an expression statement, takes
-    /// every argument by value and returns a droppable result, so the call
-    /// shares no storage with those statements. The compiler starts every
-    /// such call as a context of its own.
+    /// it, which holds when the call stands as an expression statement or an
+    /// ordinary `let` right-hand side and takes every argument by value, so
+    /// the call shares no storage with those statements. A discarded result
+    /// must also have the drop capability; a bound one is the binding's, and
+    /// the call completes before the binding is next read, written or
+    /// released. The compiler starts every such call as a context of its own.
     pub(super) fn check_waiting_mustpar(
         &mut self,
         check_context: &CheckContext<'_>,
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        let CallPosition::ExpressionStatement(statement) =
-            self.types.declarations.call_position(node)?
-        else {
-            return self.types.declarations.invalid_mustpar(
-                node,
-                "a mustpar call whose callee waits is the call of an expression statement",
-            );
+        let (statement, bound) = match self.types.declarations.call_position(node)? {
+            CallPosition::ExpressionStatement(statement) => (statement, false),
+            CallPosition::LetRightHandSide(statement) => (statement, true),
+            CallPosition::Other => {
+                return self.types.declarations.invalid_mustpar(
+                    node,
+                    "a mustpar call whose callee waits is the call of an expression statement or of an ordinary let right-hand side",
+                );
+            }
         };
         if let Some(parameter) = signature
             .parameters
@@ -129,14 +133,15 @@ impl Checker<'_, '_> {
                 ),
             );
         }
-        if self
-            .types
-            .linear_release_obligation(check_context, signature.result)?
-            .is_some()
+        if !bound
+            && self
+                .types
+                .linear_release_obligation(check_context, signature.result)?
+                .is_some()
         {
             return self.types.declarations.invalid_mustpar(
                 node,
-                "the result of a waiting callee marked mustpar has the drop capability",
+                "the discarded result of a waiting callee marked mustpar has the drop capability",
             );
         }
         let path = self.types.declarations.tree.path(statement)?.clone();

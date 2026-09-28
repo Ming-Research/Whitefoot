@@ -1089,15 +1089,27 @@ rarely insert at the same place.
   sources. Reopen when the next parallel-lowering experiment has to change the
   split.
 
-- **Every waiting context runs on the one thread that runs the entry.**
-  The runtime keeps every context [WAIT-2] on the floor's thread with one
-  completion ring, so a server's I/O uses one core however many it has; the
-  [waiting runtime shape](../research/investigations/io-model/WAITS.md#experiment-1-the-waiting-runtime-shape-against-the-native-echo-servers)
-  that met the bar ran one ring and one set of contexts per core. Several
-  drivers need a ring each, a group count and a handle budget that another
-  thread can change, and a rule for which driver a started context joins.
-  Reopen when the echo comparison of a compiled context server against
-  `uring_echo` on the same cores shows the single driver as the limit.
+- **A short context costs about 1.5 microseconds on several drivers.** With
+  four drivers, a thousand batches of a thousand contexts that return at once
+  took 1.47 seconds against 0.15 on one driver, and 0.92 and 1.35 at two
+  and four drivers in Experiment 6
+  (`research/investigations/io-model/WAITS.md`, Experiments 5 and 6): idle drivers
+  take half of the starter's queue, and the contexts, their arenas and the
+  group count then move between cores for work of about 100 nanoseconds.
+  A start joined by the next statement stays on one driver and costs what it
+  does on one. A context that waits for the host amortizes this; one that
+  computes briefly does not. Keeping a context on the starter's driver until
+  it has run for a while, or stealing only from a queue longer than a
+  threshold, would bound it. Reopen when a program starts many contexts that
+  do little before they finish.
+
+- **Only Linux with a ring runs several drivers.** With no kernel ring (the
+  readiness route) and on Windows, every context still runs on the entry's
+  thread: the readiness route's poll list and the completion port's wait are
+  a single driver's. A second driver there needs a readiness registration per
+  driver (`epoll` or `kqueue`) and, on Windows, a completion port per driver
+  or one shared port whose completions carry their driver. Reopen when a
+  server on either route needs more than one core.
 
 - **A context's operation with no readiness form still blocks the thread
   every context shares.** With other contexts live, a socket receive, send
@@ -1121,25 +1133,34 @@ rarely insert at the same place.
   many-context measurement on the helper or no-ring route attributes time to
   either pass.
 
-- **Windows contexts have not been run.** Waiting functions lower to
-  resumable frames on every target and the context driver is shared C, but
-  the Windows host job (`io-hosts.yml`) compiles it without starting a
-  context, so neither the completion port route nor the readiness route has
-  run a context there. Add a context program to that job's runs; until then
-  treat a Windows context server as unvalidated.
+- **Windows contexts run only on the completion port's route under test.**
+  The Windows host job (`io-hosts.yml`) runs the two context cases of
+  `compiler/tests/programs/network.rs`: twelve reverse-order peers each
+  served in its own context with the completion port required, and two bound
+  fetches on both routes. Without the port a Windows context's socket wait
+  is a blocking helper wait, because that host has no readiness wait, so a
+  server there holds only as many silent peers as the pool has helpers. A
+  `WSAPoll` readiness wait would give it the Linux readiness route's
+  behavior. Reopen when a Windows server has to run without the port.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
-  `waiting_echo --threads 1` at 64 connections with 64-byte messages in both
-  runs of Experiment 2, and the frame build 0.84 and 0.93 in the two runs of
-  Experiment 3, beside the stackful build's 0.84 and 0.97; the gap is not
-  attributed (`research/investigations/io-model/WAITS.md`). The candidates
-  are the park path, which waits in `epoll_wait` and then enters the ring
-  where the hand-written driver enters once, the ring locks taken on every
-  submit and reap pass, and the emitted receive and send path. Attribute with
-  a `perf` profile of both servers at 64 connections before changing the
-  runtime; reopen with the next change to the context scheduler or when a
-  program's rate depends on it.
+  `waiting_echo --threads 1` in Experiment 2, 0.84 and 0.93 in Experiment 3
+  and a median 0.81 in Experiment 4, whose server CPU per round trip was
+  9.80 against 7.93 microseconds with the same system calls
+  (`research/investigations/io-model/WAITS.md`, Experiment 4). About 0.55
+  microseconds is the ring's task-run mode: the reference built with the
+  runtime's `COOP_TASKRUN` instead of `SINGLE_ISSUER | DEFER_TASKRUN` loses
+  0.55. About 0.4 is the general completion engine's user-space work (about
+  650 instructions per round trip against the reference's 195). About 0.9
+  microseconds of kernel time is unattributed. A ring the driver owns and
+  waits on directly, as the reference's, removes the first and most of the
+  second. Since Experiment 5 every driver but the entry's has a ring only its
+  own thread submits to and reaps, which is the single-issuer condition; the
+  entry's ring is also the process's, which threads that are not drivers
+  submit to, so it would need a ring of its own first. Reopen with that
+  ring, and measure the unattributed kernel time against a smaller working
+  set.
 
 - **Frame memory for a context with small state is unmeasured.** Experiment 3
   measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window
@@ -1714,23 +1735,17 @@ each is resolved by a discussion and a tree change.
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
-- **Two waiting calls whose results are both used cannot overlap.** Minimal
-  witness: a waiting function makes `let a = read_at(…first file…);` and
-  then `let b = read_at(…second file…);` and combines `a` and `b`. The second
-  read starts only after the first has completed: a statement that contains
-  a waiting call has no overlap permission [PAR-1, PAR-2], and [WAIT-2]
-  lets a waiting call execute alongside later statements only as an
-  expression statement whose result it releases, so neither read can run
-  alongside the other. Before
-  kernel-spec v0.77, `--par` could hand such calls to two workers. Serving
-  independent connections does not need this; issuing several requests and
-  combining their answers does. The direction agreed with the owner
-  (`research/investigations/io-model/WAITS.md`, "The program means its
-  sequential execution") is `let a = mustpar f(…);` for a waiting `f`: run
-  the call as a context and join it where `a` is first used or where the
-  activation exits. That matches the join a `--par` call already has, and it
-  needs a result slot per context rather than one count per activation.
-  Reopen when a program needs to gather several I/O results.
+- **A loop or a non-call match ends a bound context's run early.** A
+  marked waiting `let` is joined before the first later statement of its
+  block that uses its binding or that the [PAR-1] footprint judgment refuses,
+  and the judgment refuses a loop and a match whose scrutinee is not a call
+  (`research/investigations/io-model/WAITS.md`, "A bound context is joined
+  where its result is first used"). Minimal witness: `let a = mustpar
+  fetch(…); for (i in 0_u64..n) { … } use(a);` joins `a` before the loop
+  even when the loop never names it. A footprint for those forms, the union
+  of their bodies' footprints with their exits, would let the call proceed
+  across them. Reopen when a program's gather has a loop between the call
+  and its use and its rate depends on it.
 
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
@@ -1745,9 +1760,10 @@ each is resolved by a discussion and a tree change.
   between concurrent activities"), because the order of their operations is
   observed. The admitted candidates are a context writing an output of its
   own, a record sink whose observation is the set of records rather than
-  their order, and a result that the starter joins where it uses it (the
-  entry above). Reopen when a context-serving program needs to log or
-  report.
+  their order, and a result that the starter joins where it uses it, which
+  kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
+  whose starter can wait for it, not for an accept loop that never ends.
+  Reopen when a context-serving program needs to log or report.
 
 ## Ownership redesign (candidate x1) follow-ups
 
