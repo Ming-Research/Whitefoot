@@ -360,6 +360,93 @@ impl Input<'_, '_> {
         }
     }
 
+    /// [REF-4, DIAG-1] every range an unproved call goal measures that the
+    /// call formed at an argument, in goal order.
+    ///
+    /// Such a range names no binding, so its `len` reads to a writer as a
+    /// value nothing names. Its length is the difference of its two captured
+    /// endpoints, and the repair names that difference, which is what the
+    /// requirement actually bounds.
+    pub(super) fn range_length_readings(&self, goal: &GoalExpression) -> Vec<RangeLengthReading> {
+        let mut ranges = Vec::new();
+        collect_measured_ranges(goal, &mut ranges);
+        let difference_goal = self.render_difference_goal(goal, true);
+        ranges
+            .into_iter()
+            .map(|(datum, range)| RangeLengthReading {
+                base: self.render_goal_datum(&range_base(datum)),
+                start: self.range_endpoint_reading(range.start),
+                end: self.range_endpoint_reading(range.end),
+                difference_goal: difference_goal.clone(),
+            })
+            .collect()
+    }
+
+    /// One endpoint as the repair spells it: a term the relation can name in
+    /// its source spelling, and otherwise the occurrence that evaluated it.
+    fn range_endpoint_reading(&self, endpoint: CapturedValue) -> RangeEndpointReading {
+        match endpoint.term {
+            CapturedTerm::Literal(value) => RangeEndpointReading::Spelled(format!("{value}_u64")),
+            CapturedTerm::Binding(binding) => {
+                RangeEndpointReading::Spelled(self.binding_name(binding))
+            }
+            CapturedTerm::Const(declaration) => {
+                RangeEndpointReading::Spelled(self.declaration_name(declaration))
+            }
+            // [REF-1] a later write made the binding's spelling name another
+            // value, so neither it nor the occurrence spells this one.
+            CapturedTerm::Superseded(_) => RangeEndpointReading::Unspelled(None),
+            CapturedTerm::Opaque => RangeEndpointReading::Unspelled(match endpoint.capture {
+                CaptureId::Source(occurrence) => Some(occurrence),
+                _ => None,
+            }),
+        }
+    }
+
+    /// The goal with every measured range's `len` written as its endpoint
+    /// difference [REF-4], parenthesized unless it is a comparison operand;
+    /// absent when some endpoint has no spelling.
+    fn render_difference_goal(&self, expression: &GoalExpression, bare: bool) -> Option<String> {
+        if let Some((_, range)) = measured_range(expression) {
+            let start = self.range_endpoint_reading(range.start);
+            let end = self.range_endpoint_reading(range.end);
+            let (RangeEndpointReading::Spelled(start), RangeEndpointReading::Spelled(end)) =
+                (start, end)
+            else {
+                return None;
+            };
+            return Some(if start == "0_u64" {
+                end
+            } else if bare {
+                format!("{end} - {start}")
+            } else {
+                format!("({end} - {start})")
+            });
+        }
+        match expression {
+            GoalExpression::Datum(datum) => Some(self.render_goal_datum(datum)),
+            GoalExpression::Operation { row, arguments, .. } => {
+                let comparison = matches!(
+                    row,
+                    GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::Equal
+                            | CheckedIntegerOperation::NotEqual
+                            | CheckedIntegerOperation::Less
+                            | CheckedIntegerOperation::LessEqual
+                            | CheckedIntegerOperation::Greater
+                            | CheckedIntegerOperation::GreaterEqual,
+                        ..
+                    }
+                );
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| self.render_difference_goal(argument, comparison))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(render_goal_row(row, &arguments, self.context.declarations))
+            }
+        }
+    }
+
     pub(super) fn render_goal_datum(&self, datum: &GoalDatum) -> String {
         match datum {
             // A concrete goal has no formal left in it, but a template
@@ -799,6 +886,62 @@ impl Reasoning<'_, '_, '_> {
 /// An operation whose [OP-1] spelling is a call name renders as a call; the
 /// arithmetic rows, whose only spelling is the infix operator [GRAM-6], render
 /// as the infix expression a writer would have to write.
+/// The range a goal node measures, when the node is the `len` of a range an
+/// argument formed at its call: a place whose last step is that range [REF-4].
+fn measured_range(expression: &GoalExpression) -> Option<(&GoalDatum, CapturedRange)> {
+    let GoalExpression::Operation {
+        row:
+            GoalOperation::ArrayMeasure { measure, .. }
+            | GoalOperation::BufferMeasure { measure, .. }
+            | GoalOperation::ContainerMeasure { measure, .. },
+        arguments,
+        ..
+    } = expression
+    else {
+        return None;
+    };
+    let [GoalExpression::Datum(datum)] = arguments.as_slice() else {
+        return None;
+    };
+    let (GoalDatum::Place { projections, .. } | GoalDatum::NamedConst { projections, .. }) = datum
+    else {
+        return None;
+    };
+    match projections.last() {
+        Some(GoalProjection::Range(range)) if *measure == CheckedMeasure::Length => {
+            Some((datum, *range))
+        }
+        _ => None,
+    }
+}
+
+/// The place a measured range was formed over: its datum without the final
+/// range step. Rendering reads the root's own type, never the datum's.
+fn range_base(datum: &GoalDatum) -> GoalDatum {
+    let mut base = datum.clone();
+    if let GoalDatum::Place { projections, .. } | GoalDatum::NamedConst { projections, .. } =
+        &mut base
+    {
+        projections.pop();
+    }
+    base
+}
+
+fn collect_measured_ranges<'goal>(
+    expression: &'goal GoalExpression,
+    ranges: &mut Vec<(&'goal GoalDatum, CapturedRange)>,
+) {
+    if let Some(range) = measured_range(expression) {
+        ranges.push(range);
+        return;
+    }
+    if let GoalExpression::Operation { arguments, .. } = expression {
+        for argument in arguments {
+            collect_measured_ranges(argument, ranges);
+        }
+    }
+}
+
 pub(super) fn render_goal_row(
     row: &GoalOperation,
     arguments: &[String],

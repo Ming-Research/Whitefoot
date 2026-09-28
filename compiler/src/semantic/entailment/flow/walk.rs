@@ -574,41 +574,13 @@ impl Analyzer<'_, '_> {
                         ..
                     } = value
                     {
-                        let destination = bound_place(*binding);
-                        let term = self.reasoning().establish_captured_range_length(
-                            destination,
+                        self.establish_range_length(
+                            bound_place(*binding),
                             *captured,
-                            &mut state.affine,
+                            (start, end),
+                            node_path,
+                            state,
                         );
-                        // [ENT-3.S6] the same formation establishes
-                        // `part^.len = hi - lo` as an ordinary fact, so
-                        // a requirement stated over the range's length is
-                        // judged against the length the range has and not
-                        // merely against an affine premise.
-                        if let Some(relation) = term.and_then(|term| {
-                            captured_range_length_image(*captured, &state.affine)
-                                .filter(|image| image.terms().is_empty())
-                                .map(|image| Relation::Equal {
-                                    left: term,
-                                    right: self
-                                        .vocabulary
-                                        .terms
-                                        .intern(TermKind::Constant(image.constant_value())),
-                                    difference: 0,
-                                })
-                                .or_else(|| {
-                                    self.reasoning().range_length_relation(term, start, end)
-                                })
-                        }) {
-                            let formation = self
-                                .vocabulary
-                                .proof_event(FlowEventKind::S6, Some(node_path));
-                            state.facts.establish(
-                                &relation,
-                                &mut self.vocabulary.derivations,
-                                formation,
-                            );
-                        }
                     }
                 }
                 true
@@ -1749,4 +1721,54 @@ impl Analyzer<'_, '_> {
 
 pub(super) fn expression_node_path(expression: &CheckedExpression) -> Option<&crate::NodePath> {
     expression.carrier()
+}
+
+impl Analyzer<'_, '_> {
+    /// [REF-4, MSR-1, ENT-3.S6] one formation's length, `hi - lo`, on one
+    /// place that names the formed range.
+    ///
+    /// A range's length depends on its two captured endpoints alone, so the
+    /// same equality holds whichever place names it: the binding a `let` or
+    /// `set` binds, and the anonymous range an argument forms, whose place is
+    /// its source extended by the formation's own range step. Both receive
+    /// the captured affine image and, where the difference is one
+    /// difference-bound relation [ENT-4], the ordinary L0 equality, so a
+    /// requirement relating two ranges formed at one call is judged as it is
+    /// for two named ranges.
+    pub(super) fn establish_range_length(
+        &mut self,
+        destination: ResolvedPlace,
+        captured: CapturedRange,
+        (start, end): (&CheckedExpression, &CheckedExpression),
+        node_path: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) {
+        let term = self.reasoning().establish_captured_range_length(
+            destination,
+            captured,
+            &mut state.affine,
+        );
+        let Some(term) = term else {
+            return;
+        };
+        let relation = captured_range_length_image(captured, &state.affine)
+            .filter(|image| image.terms().is_empty())
+            .map(|image| Relation::Equal {
+                left: term,
+                right: self
+                    .vocabulary
+                    .terms
+                    .intern(TermKind::Constant(image.constant_value())),
+                difference: 0,
+            })
+            .or_else(|| self.reasoning().range_length_relation(term, start, end));
+        if let Some(relation) = relation {
+            let formation = self
+                .vocabulary
+                .proof_event(FlowEventKind::S6, Some(node_path));
+            state
+                .facts
+                .establish(&relation, &mut self.vocabulary.derivations, formation);
+        }
+    }
 }

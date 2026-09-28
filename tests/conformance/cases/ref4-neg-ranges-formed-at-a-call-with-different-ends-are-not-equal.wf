@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn add_into(left: &[u64], right: &[u64]) -> result: u64 reads(left), reads(right) contract {
+  requires right^.len == left^.len;
+} {
+  doc "Adds left[k] and right[k] for every k below left^.len; the equality bounds right[k].";
+  let count = left^.len;
+  let total = 0_u64;
+  for (k in 0_u64..count) {
+    let l = left^[k];
+    let r = right^[k];
+    set total = total +wrap l;
+    set total = total +wrap r;
+  }
+  return total;
+}
+
+fn caller(first: &[u64], second: &[u64], n: u64, m: u64) -> result: u64 reads(first), reads(second) contract {
+  requires n <= first^.len;
+  requires m <= second^.len;
+} {
+  doc "Forms two ranges at the call whose ends are two unrelated parameters.";
+  let total = add_into(left: &first^[0_u64..n], right: &second^[0_u64..m]);
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, FN-8: the two ranges formed at the call have lengths n - 0 and m - 0, and nothing relates n to m, so the requirement right^.len == left^.len is unproved. With n = 3 and m = 2 the callee would read right[2] outside its range.";
+  let x = array_filled::<u64, 4>(value: 1_u64);
+  let total = caller(first: &x[0_u64..4_u64], second: &x[0_u64..4_u64], n: 3_u64, m: 2_u64);
+  return exit_status(code: 0_u8);
+}

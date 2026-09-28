@@ -411,29 +411,16 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
-- **The repair for a requirement over a range formed at the call says no
-  fact names its length.** A goal over the measure of a range formed at its
-  use, such as `text^[start..end].len <= 16_u64`, is classified as reading a
-  value only its occurrence identifies, so its FN-8 repair says it "reads a
-  value no fact can name until a `let` binds it". REF-4, ENT-3.S6 and the
-  range-image rule give that length the captured `end - start`, and the
-  checker proves such calls from a bound on the endpoints; the goal is
-  unproved because the endpoint difference is not bounded. A Snowghost oracle
-  driver's author read the repair as the checker not relating the length to
-  `end - start` and switched to a `source^.len` guard; the original source was
-  not kept, and the drivers' own style, a width `stop -wrap start` computed
-  before the ordering guard, reproduces the rejection. The binding route the
-  repair gives still works, so this is wording, not a missing route. Say
-  instead that the
-  range's length is its endpoint difference and offer establishing that
-  difference's bound (an exact subtraction under the ordering guard) beside
-  the binding route; update the pinned pair
-  `call-requirement-over-a-range-formed-at-the-call.wf` in
-  `driver::pinned_repairs`. The same goal renders a range whose endpoint is a
-  field read, `&text^[span.start..span.end]`, as `text^[?..?]`, since such an
-  endpoint is an opaque capture with no binding spelling; rendering the
-  endpoint expression would name what the writer must bound. Reopen with the
-  next change to goal repairs or goal rendering.
+- **An instantiated goal spells a field-read range endpoint as `?`.** An
+  FN-8 goal over a range an argument formed at the call renders an endpoint
+  that is not a literal, const or binding as `?`, as in
+  `text^[?..?].len <= 16_u64` for `&text^[span.start..span.end]`, because the
+  entailment renderer has no source text for such a capture. The repair
+  already spells those endpoints from their source occurrence and says to
+  copy them into bindings; the `instantiated_goal` payload does not. Spell
+  the capture's source occurrence there too, through the same occurrence the
+  repair reads, and pin it with the field-endpoint pair in
+  `driver::pinned_repairs`. Reopen with the next change to goal rendering.
 
 ## Containers and storage lowering
 
@@ -1749,6 +1736,14 @@ each is resolved by a discussion and a tree change.
   their order, and a result that the starter joins where it uses it (the
   entry above). Reopen when a context-serving program needs to log or
   report.
+- **ENT-3.S6 names only the bound range's length fact.** S6 establishes
+  `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
+  every range's one measure equals `hi - lo` and the value-image rule gives a
+  formation's length image without a binding. The checker establishes the
+  same S6 relation on the range an argument forms at its call (conformance
+  case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
+  REF-4 as the entitlement. Decide whether S6 should say so by naming every
+  formation, bound or not; reopen with the next amendment touching S6.
 
 ## Ownership redesign (candidate x1) follow-ups
 
