@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Add the total rounding conversion into float formats
+
+Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals
+
+Owner-approved: 2026-09-28, the owner approved the #171 decision cards (rounding-conversion, rounding-conversion-lowering) in the session handoff
+
+Summary: Apply the two reviewed amendments of PR #171 unchanged. language/numeric-conversion adds `cvt.nearest::<Src, Dst>`, total over the 20 pairs with a float destination, returning the exact conversion's value where its domain holds and otherwise the nearest destination value with ties to even, with no domain obligation and no fact about its input, and records five refused alternatives: a `.strict` suffix, an f64-to-f32 float-table row, a library rounding from the bits, a rounding bare `cvt`, and integer destinations. compiler/numeric-conversion-lowering keeps the rounding mode through checked expressions and IR and emits the exact conversion's float-destination sequence, which rounds to nearest with ties to even in the default floating-point environment compiled programs never leave, refusing a mapping to the exact mode before the IR. The [rounding comparison](../research/investigations/numeric-conversions/DESIGN.md#rounding-conversion-to-float) holds the criterion and candidates. `Nodes:` also names language/surface-form and language/surface-form/text-literals, which the entry below changes for PR #166, on which this pull request is stacked, because the newest entry names every node changed against main. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Read one spelling per construct and add character and byte-string text literals
 
 Nodes: language/surface-form, language/surface-form/text-literals
