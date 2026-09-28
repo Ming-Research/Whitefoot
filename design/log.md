@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Keep header conclusions past loop exits and deliver the give carrier equality
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts
+
+Owner-approved: 2026-09-28, the owner approved the writer-lost-facts amendments for loop exits and give carriers in the session handoff ("all the Whitefoot decisions are approved", written in Chinese).
+
+Summary: Apply two of the writer-lost-facts amendments unchanged apart from link depth. loop-fact-retention adds that a proved header invariant conclusion leaves its loop on every exit edge and survives the continuation join as a local invariant conclusion does, while the name still ends with the loop body, because the conclusion is a theorem over the exiting iteration's immutable value images; the removal accounted for 11 of the URL parser's 23 clamp blocks. automatic-facts adds that a `give d;` edge delivers the receiver's equality to d, or to the value of a literal or named-const carrier, beside the existing substitution, because `give length;` otherwise lost the bound `let bound = length; give bound;` delivers. The [investigation](../research/investigations/writer-lost-facts/DESIGN.md) holds the probes, soundness arguments and census. Specification v0.78 implements both [ENT-5, ENT-6, GIVE-1, INV-1]. The approved `Option` success route stays in its two amendments until it lands with PR #169. Remove the accepted loop-exit amendment and the carrier part of the automatic-facts amendment. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts
