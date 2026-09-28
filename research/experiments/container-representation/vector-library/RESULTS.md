@@ -3966,3 +3966,36 @@ path on every iteration, and the measured scalar regressions confirm that
 blindly inlining the wide append is not a production policy. The trial is
 rejected. The remaining Vector discriminator must change the movement/result
 contract or eliminate the repeated capacity and owner transfer together.
+
+### Tail and truncate `alwaysinline`: boundary removed, strict target still fails
+
+The previous append-only diagnostic left the wide `tail_work` to `truncate`
+boundary intact. This trial changed no Whitefoot source or compiler: from the
+same raw module, it marked only the 256-byte append instance and the 256-byte
+truncate instance `alwaysinline`. The frozen IR edit is
+[`tail-truncate-inline.patch`](tail-truncate-inline.patch). The scalar
+instances, contracts, allocation policy, native controls, seeds and the
+`ECO_WORK=1048576`, seven-sample harness were unchanged.
+
+Both images passed all 1,260 configurations and 8,820 executions, the checksum
+and refusal-cleanup faults, and the complete allocation ledger. The control
+and candidate wall times were 81.08 s and 80.94 s. Their account CSVs are
+byte-identical. The complete raw samples and target reductions are preserved
+as [`control samples`](ecosystem-tail-truncate-inline-control-samples.csv),
+[`candidate samples`](ecosystem-tail-truncate-inline-candidate-samples.csv),
+[`control targets`](ecosystem-tail-truncate-inline-control-targets.csv) and
+[`candidate targets`](ecosystem-tail-truncate-inline-candidate-targets.csv),
+with the corresponding [`control account`](ecosystem-tail-truncate-inline-control-account.csv)
+and [`candidate account`](ecosystem-tail-truncate-inline-candidate-account.csv).
+
+The code diagnostic did remove every optimized call to a `grow_vector_append`
+or `grow_vector_truncate` helper from the timed module. The wide
+`tail_work` body grew from 79 to 230 optimized IR lines; no new owner snapshot
+was introduced. The reduction moved from 17 pass / 4 deficit / 15 inconclusive
+useful cells in the control to 17 / 3 / 16 in the candidate. The remaining
+qualified deficits are wide `suffix-1` at 16 (1.867/1.963 times the slower
+standard peer), scalar `growth` at 16 (1.082/1.082), and scalar `suffix-2` at
+4096 (1.085/1.073). Since the target requires no qualified regression, the
+trial is rejected. Removing the call boundary alone is therefore insufficient;
+any selected change must reduce the repeated capacity/owner work without
+trading it for code expansion or scalar regressions.
