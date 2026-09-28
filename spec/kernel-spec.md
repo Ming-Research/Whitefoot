@@ -1457,7 +1457,7 @@ An unmarked call carries no tail-transfer guarantee. The guarantee bounds only s
 The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
 A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
 A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
-A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1] in the calling context unless [PAR-4] starts it in a context of its own.
+A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1], which [WAIT-2] permits an implementation to execute in a context of its own.
 The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
 ## 9. Effects
@@ -2053,7 +2053,7 @@ An implementation may report unavailable resources, trusted-computing-base failu
 ## 13. Execution overlap
 
 [CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
-The kernel defines no thread construct: a context [WAIT-2] other than the root is started only by [PAR-4], for a call whose footprint is its own arguments. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
+The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
 Read/read overlap is admitted.
@@ -2119,25 +2119,24 @@ This rule uses [CAP-1]'s ordinary ownership boundary directly; it introduces no 
 
 [HOST-1] Host effects are ordered through shared state and in no other way.
 Of two host operations that execute in one context, the earlier takes effect on the host before the later exactly when their footprints [PAR-1] overlap with at least one write [OWN-7]; an order between two host operations exists only through state both reach.
-Operations with disjoint footprints have no host order: an overlapped statement or iteration [PAR-1, PAR-2] and a context [PAR-4] may produce host effects interleaved in any way with an independent statement, including while an earlier independent statement has not completed or never completes.
+Operations with disjoint footprints have no host order: an overlapped statement or iteration [PAR-1, PAR-2] and a context [WAIT-2] may produce host effects interleaved in any way with an independent statement, including while an earlier independent statement has not completed or never completes.
 A program that needs two host operations ordered passes both through one owner whose state both reach [EFF-1, EFF-5].
 
 [PAR-4] The optional `mustpar` atom on a `for_stmt` [GRAM-4] or on a `call` [GRAM-5] states that the marked construct proceeds independently of what follows it, and the checker must prove that statement:
 
 1. On a `for_stmt`, [PAR-2]'s permission holds for that loop.
 2. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee does not wait [WAIT-1], a next statement of the same block follows the marked statement and [PAR-1]'s permission holds for the two.
-3. On the `call` of an `expr_stmt` whose callee waits, every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1].
+3. On the `call` of an `expr_stmt` whose callee waits, [WAIT-2]'s permission holds for that statement.
 
 A `mustpar` in any other position, and a marked construct whose stated condition does not hold, is a hard error citing PAR-4 at the marked `for_stmt` or `call`, carrying the failed condition or the denied permission [DIAG-1].
-In the first two forms the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, and whether an implementation overlaps the marked construct remains its choice [PAR-1, PAR-2].
-In the third form the statement evaluates its arguments and then starts a new context [WAIT-2] that executes the call and releases its result; the starting context continues with the next statement without waiting for the call.
-Every context an activation starts completes before that activation leaves by any edge [FN-1, ERR-3].
-The started call's footprint is the storage its arguments moved or copied into it [EFF-5], so no later statement of the starting context overlaps it, and its host effects follow [HOST-1].
+In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, and whether an implementation overlaps the marked construct remains its choice [PAR-1, PAR-2, WAIT-2].
 
-[WAIT-2] An execution runs in one or more contexts, each executing one sequential control flow in the order every construct defines.
-Program start runs the entry in the root context [PROG-3], and every other context is started by [PAR-4].
-A call of a waiting host-module function [PRE-2] may suspend its context until the host has produced the operation's outcome; while a context is suspended, every other context that is not waiting for a suspended outcome proceeds.
-Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, and how the host effects of different contexts interleave, is an input of the execution, as the bytes an operation delivers are: two executions that receive the same outcomes in the same order execute every context identically.
+[WAIT-2] The meaning of an execution is its sequential execution: one control flow that executes every construct in the order it defines, starting with the entry [PROG-3].
+A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
+An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1] alongside the statements that follow it in its activation exactly when every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1]; the call then completes and releases its result before the activation leaves by any edge [FN-1, ERR-3].
+Such a call's footprint is the storage its arguments moved or copied into it [EFF-5], so no later statement of the activation overlaps it, and its host effects follow [HOST-1].
+A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, and how the host effects of different contexts interleave, is an input of the execution: two executions that receive the same outcomes in the same order execute every context identically.
+Which calls execute as contexts, where a context executes, and whether one context proceeds while another waits for the host are not observable, and no rule of this specification is stated in terms of them; an implementation that executes every call in order conforms.
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
 
 ## 14. Prelude and host modules (normative, counted)
@@ -2307,7 +2306,7 @@ pkg::process: [pkg::io, pkg::text, pkg::fs];
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
-A host function that carries `waits` [WAIT-1] may suspend its calling context while the host completes it [WAIT-2]; a host function that does not wait completes without suspending.
+A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 

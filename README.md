@@ -304,17 +304,19 @@ Safe, fast and small are the core. These are the other things worth knowing.
   operation is an ordinary call. A function that makes one declares `waits`
   after its effect row, and only a waiting function may call it, so every
   place a program can pause is visible in its signatures. A waiting call
-  returns when its operation has completed; while it waits, the thread runs
-  other contexts. `mustpar` on a waiting call starts it in a context of its
-  own, so a server serves every connection at once
-  (`tests/programs/tcp_contexts.wf`), and every started context finishes
-  before the function that started it returns. A waiting function keeps its
-  state in a frame the size of what it holds across a wait, not in a stack
-  of its own, so a context costs about what its own variables do. The compiled program carries
-  out I/O through a completion runtime (io_uring on Linux, I/O completion
-  ports on Windows). Computation that `--par` overlaps never waits for I/O.
-  Still open: getting a result back from a started call, and running
-  contexts on more than one thread.
+  returns when its operation has completed, and a program means what it does
+  run in order. `mustpar` on a waiting call asserts that the call is
+  independent of the statements after it; the compiler then runs it in a
+  context of its own, and while one context waits the thread runs the
+  others, so a server serves every connection at once
+  (`tests/programs/tcp_contexts.wf`). The function that marked the call
+  returns only after it finishes. A waiting function keeps its state in a
+  frame the size of what it holds across a wait, not in a stack of its own,
+  so a context costs about what its own variables do and adds no kernel
+  mapping. The compiled program carries out I/O through a completion runtime
+  (io_uring on Linux, I/O completion ports on Windows). Computation that
+  `--par` overlaps never waits for I/O. Still open: getting a result back
+  from a marked call, and running contexts on more than one thread.
 
 ### Planned
 

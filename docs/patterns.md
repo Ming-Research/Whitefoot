@@ -514,10 +514,12 @@ mustpar for (at in 0_u64..count) {
 }
 ```
 
-To serve independent peers at once, start each waiting call in a context of
-its own. Its callee takes only value parameters, so it carries its own
-connection and a factory drawing on the shared budget, and the starting
-activation waits for every context it started before it returns [PAR-4]:
+To serve independent peers at once, mark each waiting call that serves one.
+Its callee takes only value parameters, so it carries its own connection and
+a factory drawing on the shared budget, and nothing after it can depend on
+it; the program still means its sequential execution, and the compiler runs
+each marked call in a context of its own, which the marking activation waits
+for before it returns [PAR-4, WAIT-2]:
 
 ```whitefoot
 let factory = std::io::factory_share(factory: &handles);

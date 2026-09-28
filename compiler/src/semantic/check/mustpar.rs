@@ -97,9 +97,11 @@ impl Checker<'_, '_> {
     }
 
     /// [PAR-4] form 3, at a marked call whose selected callee waits: the
-    /// call stands as an expression statement, takes every argument by value
-    /// and returns a droppable result, so the started context shares no
-    /// storage with the context that starts it.
+    /// [WAIT-2] permission to execute the call alongside the statements after
+    /// it, which holds when the call stands as an expression statement, takes
+    /// every argument by value and returns a droppable result, so the call
+    /// shares no storage with those statements. The compiler starts every
+    /// such call as a context of its own.
     pub(super) fn check_waiting_mustpar(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -122,7 +124,7 @@ impl Checker<'_, '_> {
             return self.types.declarations.invalid_mustpar(
                 node,
                 &format!(
-                    "every parameter of a waiting callee started by mustpar is a value parameter, and `{}` is a reference parameter",
+                    "every parameter of a waiting callee marked mustpar is a value parameter, and `{}` is a reference parameter",
                     parameter.name
                 ),
             );
@@ -134,7 +136,7 @@ impl Checker<'_, '_> {
         {
             return self.types.declarations.invalid_mustpar(
                 node,
-                "the result of a waiting callee started by mustpar has the drop capability",
+                "the result of a waiting callee marked mustpar has the drop capability",
             );
         }
         let path = self.types.declarations.tree.path(statement)?.clone();

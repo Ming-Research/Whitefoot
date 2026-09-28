@@ -479,11 +479,10 @@ Alternatives refused:
 - A host thread per context: one thread per connection is the design the
   echo references beat; its stack and scheduling cost grow with connections.
 
-### `mustpar` asserts independence and starts contexts
+### `mustpar` asserts independence
 
-This is the kernel-spec v0.77 text. The next revision makes the third form an
-assertion like the other two ([The program means its sequential
-execution](#the-program-means-its-sequential-execution)).
+This is the kernel-spec v0.77 text, which carries the revision agreed in [The
+program means its sequential execution](#the-program-means-its-sequential-execution).
 
 One marker states that a construct proceeds independently of what follows it,
 and the checker must prove it [PAR-4]:
@@ -491,31 +490,36 @@ and the checker must prove it [PAR-4]:
 1. On a counted loop, the loop's [PAR-2] permission.
 2. On the call of a statement whose callee does not wait, [PAR-1] permission
    with the next statement.
-3. On the call of an expression statement whose callee waits, a new context:
-   every parameter of the callee is a value parameter and its result can be
-   dropped, so the started call shares no storage with its starter; every
-   context an activation starts completes before the activation leaves.
+3. On the call of an expression statement whose callee waits, [WAIT-2]'s
+   permission to execute the call alongside the statements after it: every
+   parameter of the callee is a value parameter and its result can be
+   dropped, so the call shares no storage with those statements, and it
+   completes before the activation leaves.
 
-The first two forms are proof syntax: they grant nothing, are erased before
+All three forms are proof syntax: they grant nothing, are erased before
 lowering and leave overlap an implementation liberty, so a program that
 states them means what it meant without them. Their use is to make a lost
-parallelism a rejection instead of a silent sequential run. The third form is
-the only way to start a context.
+parallelism a rejection instead of a silent sequential run. The compiler's
+policy is that every call marked in the third form runs as a context of its
+own ([What the first version keeps open](#what-the-first-version-keeps-open));
+that is a property of this compiler, not of the language.
 
 Alternatives refused:
 
-- A separate `spawn` statement: the condition under which starting a context
-  is sound is the same independence the first two forms state, so a second
-  keyword would repeat one judgment under two names.
-- Starting a context for every independent waiting statement automatically:
-  an implementation would have to choose where a waiting call runs, and a
-  context outlives the statement that starts it, which is not an
-  implementation liberty.
+- A separate `spawn` statement: the condition under which running a call as
+  a context is sound is the same independence the first two forms state, so
+  a second keyword would repeat one judgment under two names.
 - Unstructured tasks with handles: a handle is a value that must be joined or
   dropped, which needs a new type and a new consuming rule; joining every
-  started context at the activation's exit needs neither.
-- Reference parameters for a started call: a reference cannot outlive the
-  statement under [REF-3], and a started call does.
+  context at the activation's exit needs neither.
+- Reference parameters for a call run as a context: a reference cannot
+  outlive the statement under [REF-3], and such a call does.
+
+Running a context for an unmarked independent waiting call was refused in the
+v0.76 text, because a context outlived its statement and so changed what the
+program did. Under the sequential meaning it changes only when the call's
+host effects happen, which [HOST-1] already leaves open, so v0.77 permits it;
+this compiler still runs only marked calls as contexts.
 
 ### Host effects are ordered through state, not through statement order
 
@@ -536,7 +540,7 @@ that no footprint states.
 
 ### A shared handle budget
 
-A started context takes its arguments by value, so it cannot borrow its
+A call run as a context takes its arguments by value, so it cannot borrow its
 starter's `HandleFactory`. `factory_share` returns a second factory drawing on
 the same budget: an acquisition through either spends a credit of the one
 budget and a close through either returns one.
@@ -545,14 +549,16 @@ Alternatives refused:
 
 - Splitting the credits between two factories: a fixed partition refuses an
   acquisition while the other factory holds unused credits.
-- A reference to the factory in the started call: refused by the value
+- A reference to the factory in the marked call: refused by the value
   parameter condition above.
 
 The accounting stays a plain counter because every context runs on one driver
 thread and only a waiting host call writes the counter, and a waiting call
 never runs on a compute worker [PAR-1, PAR-2].
 
-The next specification revision replaces this shared budget with a split
+The sharing rule below finds that this budget fails it, and the split first
+proposed to replace it does not serve the server this work measures; kernel-spec
+v0.77 keeps `factory_share` until the owner rules
 ([Sharing between concurrent activities](#sharing-between-concurrent-activities)).
 
 ### The program means its sequential execution
@@ -566,19 +572,18 @@ path-disjointness judgment [OWN-7, EFF-5] authorizes all of them. The writer
 reasons sequentially, and the concurrency obligation moves from every program
 into one trusted runtime.
 
-Consequences the next specification revision carries:
+Consequences, the first two carried by kernel-spec v0.77:
 
 - `mustpar` on a waiting call becomes an assertion like its other two forms.
   It states that the call is independent of every statement that follows it
   in the activation, is a rejection when that is not proved, and guarantees
   no overlap. The compiler's policy, recorded as a compiler decision rather
   than promised by the language, is that every marked waiting call runs as a
-  context of its own and its starter waits for it only where it first uses
-  its result or at the activation's exit.
+  context of its own and its starter waits for it at the activation's exit.
 - [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
   execution of the same program is a conforming one.
-- A marked waiting call may bind its result; the starter joins it where the
-  result is first used.
+- Later: a marked waiting call may bind its result, and the starter joins it
+  where the result is first used (`docs/todo.md`).
 
 Refused: a separate keyword whose meaning is that a context must start. The
 only difference it would make is a promise of progress, which the sequential
@@ -600,8 +605,40 @@ program is correct for every answer.
 
 `factory_share` fails the rule. Two factories drawing on one budget let one
 acquisition's refusal depend on what the other factory holds, so its result
-depends on the order of operations in two contexts. The next revision
-replaces it with a split that gives each part a fixed share of the credits.
+depends on the order of operations in two contexts.
+
+A split that gives each part a fixed share of the credits was proposed to
+replace it, and it does not serve the server this work measures. The accept
+loop acquires each connection through the listener's factory, so the credit
+leaves the listener's budget; `serve` closes the connection through the part
+it was given, so the credit returns to that part; and the part is dropped
+when `serve` finishes. Every connection therefore moves one credit out of the
+listener's budget for good, and the listener refuses every acquisition after
+as many connections as its budget held. Returning a dropped part's credits to
+the budget it came from restores the order dependence the split removes,
+because the listener's refusal then depends on when the other contexts
+finish. Returning them through the part's owner needs the starter to join
+the context and take the part back, which an accept loop that never ends
+cannot do.
+
+Two forms remain, and the choice is the owner's:
+
+- Keep one shared budget and state the sharing rule over what the interface
+  lets a program observe: parts may interact through an outcome the
+  interface already lets the host produce at any call. The interface already
+  lets the host refuse an acquisition the budget would fund, so a program
+  handles a refusal at every acquisition in every order, and a refusal caused
+  by another context's acquisitions becomes one more input of the execution,
+  like which of two operations completes first [WAIT-2]. Standard output and
+  a channel still fail the rule, because byte order and what a receive
+  returns are not outcomes a program must handle in every order.
+- Keep the rule as stated and split the budget, and give a context a way to
+  hand its part back to its starter. That needs the starter to join the
+  context and receive the part, which is the later `let a = mustpar f(…)`
+  form, and an accept loop that never ends still cannot join its contexts
+  before it runs out.
+
+Until the ruling, kernel-spec v0.77 keeps `factory_share` unchanged.
 
 Mutable state shared by several concurrent activities has no admitted form in
 this revision. A program keeps such state behind an external system, or in
@@ -628,7 +665,8 @@ addition to it, provided the first version keeps these properties:
    flight has completed or been cancelled and reaped.
 5. Join bookkeeping is dynamic: a loop may start any number of contexts.
 6. Every split host interface satisfies the sharing rule, and no program can
-   observe which calls ran as contexts.
+   observe which calls ran as contexts. `factory_share` is the one split
+   interface in question, pending the owner's ruling above.
 7. The footprint classification of [PAR-1] can take a new class, the one a
    shared object would need.
 

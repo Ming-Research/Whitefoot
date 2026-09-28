@@ -1699,31 +1699,36 @@ each is resolved by a discussion and a tree change.
   witness: a waiting function makes `let a = read_at(…first file…);` and
   then `let b = read_at(…second file…);` and combines `a` and `b`. The second
   read starts only after the first has completed: a statement that contains
-  a waiting call has no overlap permission [PAR-1, PAR-2], and `mustpar`
-  starts a waiting call only as an expression statement whose result is
-  dropped [PAR-4], so neither read can run alongside the other. Before
+  a waiting call has no overlap permission [PAR-1, PAR-2], and [WAIT-2]
+  lets a waiting call execute alongside later statements only as an
+  expression statement whose result it releases, so neither read can run
+  alongside the other. Before
   kernel-spec v0.77, `--par` could hand such calls to two workers. Serving
   independent connections does not need this; issuing several requests and
-  combining their answers does. One candidate is `let a = mustpar f(…);`
-  for a waiting `f`: start a context and join it where `a` is first used or
-  where the activation exits. That matches the join a `--par` call already
-  has, and it needs a result slot per started context rather than one
-  count per activation. Reopen when the owner rules on it, or when a
-  program needs to gather several I/O results.
+  combining their answers does. The direction agreed with the owner
+  (`research/investigations/io-model/WAITS.md`, "The program means its
+  sequential execution") is `let a = mustpar f(…);` for a waiting `f`: run
+  the call as a context and join it where `a` is first used or where the
+  activation exits. That matches the join a `--par` call already has, and it
+  needs a result slot per context rather than one count per activation.
+  Reopen when a program needs to gather several I/O results.
 
-- **A started context can neither log nor report back.** Minimal witness:
+- **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
   its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
-  `stdout`, so moving it into the first started `serve` leaves nothing to
+  `stdout`, so moving it into the first marked `serve` leaves nothing to
   move on the next iteration; a reference parameter is refused because a
-  started call outlives its statement [PAR-4]; and the started call's
-  result is dropped, so the starter cannot log on its behalf. Two
-  candidates: an `output_share` that, like `factory_share`, hands each
-  context its own stream on one host descriptor (lines from different
-  contexts then interleave as [HOST-1] allows); or a channel whose receive
-  is a waiting call, so one context owns the stream and the others send it
-  lines or results. Reopen when the owner rules on it, or when a
-  context-serving program needs to log or report.
+  call executing alongside later statements outlives its statement
+  [WAIT-2]; and the marked call's result is released in its context, so
+  the starter cannot log on its behalf. A second writer of one standard
+  output and the two ends of a channel both fail the sharing rule agreed
+  with the owner (`research/investigations/io-model/WAITS.md`, "Sharing
+  between concurrent activities"), because the order of their operations is
+  observed. The admitted candidates are a context writing an output of its
+  own, a record sink whose observation is the set of records rather than
+  their order, and a result that the starter joins where it uses it (the
+  entry above). Reopen when a context-serving program needs to log or
+  report.
 
 ## Ownership redesign (candidate x1) follow-ups
 
