@@ -448,8 +448,9 @@ rarely insert at the same place.
   nor the result types it applies to, and `InvisibleUse` for a header
   invariant named after its loop does not say the name's scope ended with
   the loop body [INV-1]; the Snowghost writers reported changing result
-  types and retrying certificates, which either repair would have shortened. Add a repair to each under
-  `compiler/diagnostic-repairs`, pinned with a program per alternative.
+  types and retrying certificates, which either repair would have
+  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
+  pinned with a program per alternative.
   Found in the writer-lost-facts investigation; reopen with the next
   diagnostics change or with the `Some` route.
 

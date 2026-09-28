@@ -348,9 +348,12 @@ when every non-contradictory edge holds it, so `x = pos` on one edge and
 `give value;` edge delivers `picked = value`, which proves no `< 128`.
 
 **Cost.** Specification: two sentences in [ENT-5]'s bounded relation delivery
-and the carrier list in [GIVE-1]. Conformance: three cases (an outer-term
-carrier, a literal carrier, and a negative case writing the outer carrier
-after the initializer). Compiler: about 40 to 80 lines in the three
+and the carrier list in [GIVE-1]. Conformance: four cases (an outer-term
+carrier, a literal carrier, a negative case writing the outer carrier after
+the initializer, and a negative case giving a branch-local binding with no
+relation of its own, `let tmp = f(); give tmp;`, whose `x = tmp` must not
+survive the edge that ends `tmp`'s scope; `ent5-neg-value-if-unbounded-delivery`
+stays rejected even if that equality leaked, so it does not cover this). Compiler: about 40 to 80 lines in the three
 `sources.rs` functions; the unit test
 `nonbare_carriers_and_branch_local_support_create_no_delivery_roots`
 (`compiler/src/semantic/tests/entailment.rs`) asserts that its `scoped`
