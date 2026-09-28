@@ -1383,8 +1383,20 @@ rarely insert at the same place.
   relocated-input encoding also failed its extended paired/null comparison
   and was removed. A separate grouped lowering-read trial also failed:
   HashMap compiler-only entry cost increased 0.6%, with a gain in only one of
-  three pairs; the trial was removed. The next representation question is a
-  shared identity/input catalogue, whose benefit remains unmeasured. Include
+  three pairs; the trial was removed. A version-guarded current-input memo
+  reduced HashMap compiler-only entry cost by 3.6%, but native cost by only
+  0.8%, with gains in three of five native pairs; it too failed its screen
+  and was removed. A shared stored-identity catalogue then reduced native
+  HashMap cache size by 18.3%, but entry time by only 1.3% native / 1.2%
+  compiler-only, while second-entry compiler RSS rose 7.5%. It too failed
+  and was removed. These screens leave no measured gain for the tested
+  local caches. Before another implementation, reassess the original import
+  boundary: a module-owned checked result shared through composition might
+  avoid rebuilding per-function metadata, but broadens checked-model and
+  composition interfaces and could increase ordinary lookup costs. Its
+  benefit is unverified; reopen with a concrete consumer-boundary experiment
+  and complete current-input/rollback controls rather than repeating the
+  failed local mechanisms. Include
   cache-history and memory costs as well as unchanged results, invalidation
   and library-work controls, as described in the investigation. Target
   approximately 5% overhead without
@@ -1394,7 +1406,10 @@ rarely insert at the same place.
   The lowering key currently serializes proof statements and loop invariants
   that lowering itself erases. A runtime-input projection could reduce key
   construction and false invalidation; its benefit is unmeasured, and a
-  duplicate partial encoder could omit a real dependency. Defer it until the
+  duplicate partial encoder could omit a real dependency. The historical
+  instrumented HashMap observation puts the entire lowering-key stage at
+  6.30 ms, including observer cost; the erased subset and downstream loading
+  effect are not isolated, so this is no measured saving. Defer it until the
   lowering-input representation is selected or its key cost limits that
   experiment. Preserve proof-derived allocation bounds, body disposition,
   permissions and physical inputs, which lowering does consume, and validate

@@ -766,7 +766,7 @@ were removed, including the trial-only test and storage-family adjustment.
 There was no seven-pair qualification or repeated-edit history extension
 because the initial consumer criterion failed. This rejects the measured
 storage-only implementation, not every possible batching design. The shared
-identity/input catalogue remains unmeasured. Production source, specification
+identity/input catalogue was left to the following trials. Production source, specification
 and pending amendments remain unchanged.
 
 The raw `grouped-lowering-{native,compiler}.jsonl`, build/test log, saved
@@ -778,6 +778,129 @@ it applies to investigation revision
 runner's `--rounds 3 --workloads grow-vector hash-map`, native
 `--require-reuse`, and a separate `--compiler-only` invocation under the
 verification guard. Do not treat the omitted history qualification as passed.
+
+### Versioned current-input trial
+
+The [screen](../../investigations/modular-compilation/DESIGN.md#versioned-current-input-catalogue-screen)
+shares complete callable/nominal input encodings while private per-entry
+revision tokens remain equal. Mutable access replaces the token before
+returning a borrow; clones diverge on mutation, and speculative imports use
+fresh memos. Every consumer still compares its complete expected bytes.
+The candidate SHA-256 is
+`483cb02f4661de26ec2be50de5f99702c195a67e8bb348cea67d39a66f473c07`;
+the control is the qualified runtime-SHA candidate
+`17602078de46432740ef70e2f58e4f3abf6e399bd99ccd32bbe8bd317240cea0`.
+
+Three revision/current-input controls and all 97 driver/cache tests passed;
+the latter ran in 4.47 s. Compiler construction took 56.68 s, excluded from
+the measurements. Five alternating pairs per mode completed 160 samples
+with identical paired LLVM/runtime observations and unchanged-library reuse
+on every native entry edit. Median elapsed milliseconds, control / trial:
+
+| Step | GrowVector native | HashMap native | GrowVector compiler-only | HashMap compiler-only |
+|---|---:|---:|---:|---:|
+| Cold | 1217.0 / 1252.0 | 1767.2 / 1735.5 | 357.6 / 357.9 | 718.7 / 705.4 |
+| Warm | 81.0 / 89.4 | 88.9 / 88.3 | 11.7 / 12.3 | 13.0 / 13.2 |
+| Second entry | 310.2 / 317.4 | 669.7 / 646.4 | 100.4 / 101.0 | 252.3 / 248.2 |
+| Entry edit | 199.8 / 198.0 (-0.9%) | 349.7 / 347.0 (-0.8%) | 122.1 / 121.0 (-0.9%) | 280.2 / 270.0 (-3.6%) |
+
+HashMap native paired changes were -1.6%, +0.1%, +6.6%, -2.8% and -0.4%:
+only three improved, failing both the 3% native median gain and four-pair
+direction criteria. Its compiler-only pairs were +1.4%, -3.8%, -2.2%, -2.2%
+and -2.0%. The first native GrowVector entry pair was a +46.5% outlier;
+the full five-pair medians above retain it. These observations do not justify
+a claim of stable native gain.
+
+Compiler-only median peak-RSS changes for cold, warm, second entry and entry
+edit were -0.4%, +0.8%, +3.1%, -0.2% for GrowVector and +1.3%, +0.3%, +2.0%,
++4.8% for HashMap. Individual pairs exceeded 5%: GrowVector cold +6.6% and
+second entry +8.0%; HashMap second entry +5.2% and entry edits +8.3%, +7.6%,
++5.1%. Native HashMap entry RSS rose 2.6% by medians, with one +6.8% pair.
+Cache sizes were unchanged at every step. Neither the RSS medians nor the
+compiler-only gain rescues the failed native screen.
+
+All four compiler/test file changes were removed. There was no broader
+qualification or mutation campaign because the screen failed. Raw
+`versioned-input-{native,compiler}.jsonl`, the screen log, saved executable
+and `versioned-input.patch` remain in the local audit directory. The patch
+SHA-256 is `dd66254018d15fe7a39266548410cf1c0031aace05e32c3dd9bad833089f3332`
+and applies to `28fc400b436ac2f42e5ca06f1feba8e5061d7607`.
+Reproduce with the paired runner's `--rounds 5 --workloads grow-vector hash-map`,
+native `--require-reuse`, and a separate `--compiler-only` invocation under
+the verification guard. The shared stored-identity catalogue is a separate
+representation experiment; this rejected memo is not part of that trial.
+
+### Shared retained-identity trial
+
+The [screen](../../investigations/modular-compilation/DESIGN.md#shared-retained-identity-catalogue-screen)
+interns complete stored identity records in their module source-input
+container. Bodies reference slots; one checking view shares typed record
+decoding and successful name resolution, while speculative formation keeps
+its own resolution map. Old ordinals alone never identify a shared record,
+and every consumer still reconstructs and compares all current inputs. The
+rejected revision memo and lowering storage changes are absent.
+
+The candidate executable SHA-256 is
+`199d0523200d58f0a382d08111ef47df7b258ea3237853c23bd00bd29b07bc97`;
+the control is the same qualified runtime-SHA candidate as above. All 99
+driver/cache tests passed in 4.38 s, including exact-record deduplication,
+equal old-ordinal separation, module isolation, reload, missing-slot and
+malformed-container controls. Compiler construction took 55.97 s and is
+excluded below. Five alternating pairs per mode completed 160 samples with
+identical paired LLVM/runtime observations and unchanged-library body and
+lowering reuse on every native entry edit. Median elapsed milliseconds,
+control / trial:
+
+| Step | GrowVector native | HashMap native | GrowVector compiler-only | HashMap compiler-only |
+|---|---:|---:|---:|---:|
+| Cold | 1210.8 / 1231.2 | 1736.8 / 1752.3 | 351.2 / 358.9 | 711.4 / 696.6 |
+| Warm | 87.1 / 88.7 | 81.0 / 84.6 | 11.8 / 11.9 | 12.6 / 12.6 |
+| Second entry | 309.3 / 317.9 | 634.5 / 633.9 | 99.4 / 101.0 | 248.4 / 244.1 |
+| Entry edit | 197.5 / 200.5 (+1.5%) | 351.4 / 346.7 (-1.3%) | 120.5 / 122.1 (+1.3%) | 269.3 / 266.1 (-1.2%) |
+
+HashMap native paired changes were -1.2%, +2.2%, -0.8%, -1.3% and -0.6%;
+compiler-only changes were -1.5%, -1.5%, +0.4%, -1.4% and +2.8%. Neither
+mode met the 3% median-gain criterion, and only three compiler-only pairs
+improved. Native GrowVector cold pairs included +17.5% and +8.3%; its
+compiler cold pairs included +5.9%. The medians retain those samples.
+
+Compiler-only median peak-RSS changes for cold, warm, second entry and entry
+edit were +0.7%, +0.2%, +0.3%, -0.4% for GrowVector and -5.3%, +0.3%, +7.5%,
++4.4% for HashMap. HashMap second-entry memory therefore also failed the 5%
+median ceiling. Individual HashMap second-entry pairs rose 9.3%, 8.3%, 10.0%
+and 7.5%; entry pairs rose 11.1%, 5.1% and 5.9%. Native HashMap second-entry
+and entry-edit RSS medians rose 5.5% and 5.9%, with pair maxima of 9.6% and
+11.3%. A shared decoded catalogue can retain more live memory while storing
+fewer bytes on disk; the smaller cache alone is not a latency or memory gain.
+
+Native entry-edit cache sizes fell from 5,021,135 to 4,648,087 bytes (-7.4%)
+for GrowVector and from 16,740,022 to 13,670,330 bytes (-18.3%) for HashMap.
+Both compiler file changes and the two dedicated tests were removed after
+the screen failed. There was no seven-pair qualification, mutation campaign
+or repeated-edit history extension. The ordinary current-input checks were
+unchanged; passing these controls is not proof of every possible import.
+
+Raw `shared-catalogue-{native,compiler}.jsonl`, the controls/screen logs,
+saved executable and `shared-catalogue.patch` remain in the local audit
+directory. The patch SHA-256 is
+`e8aaabc39971fb4ded980c548864ec2e69be33e9b2c79414f6e4d1d730e5648a`
+and applies to `28fc400b436ac2f42e5ca06f1feba8e5061d7607`.
+Repeat with `--rounds 5 --workloads grow-vector hash-map`, native
+`--require-reuse`, and separately `--compiler-only`, under the verification
+guard. No production optimization or tree/specification change survives
+these two catalogue screens.
+
+The source review also revisited the separate lowering-key projection
+opportunity. `body-import-aggregate.jsonl` already records a three-pair
+same-image instrumented observation with executable
+`df088685cfdcae8a3d4c31af453092f1cfe4ca5350986e034ab835c63e55f525`.
+Its candidate HashMap entry-edit medians were 6.30 ms for complete lowering
+key construction, 6.23 ms for lowering cache loads and 19.60 ms for the whole
+lowering stage. These are historical nested observations with observer cost,
+not a new causal run or additive savings. Inspection confirms erased Proof
+payloads and loop invariants in the key, but does not measure their share.
+No runtime-input projection is selected; its required guards and reopening
+condition remain in the investigation and TODO.
 
 ## Limits
 
