@@ -629,16 +629,28 @@ Against the validation criterion:
    alignment of every emitted value and view type equal `target.rs`'s, no
    enum exceeds its product size or changes its alignment, and non-eligible
    enums keep their product declarations (the backend test above).
-2. **Correctness** — see the `make check` result recorded with the change;
-   no conformance case or verdict changed. The new backend tests execute a
-   program that constructs every variant, matches by value and through
-   references, copies, moves through calls, results, block edges and a loop
-   that exchanges two union values, writes through references into payloads,
-   and holds union values in a struct, an `Option`, a `Box`, boxed and inline
-   `Slots` and an `Array`, with `Box` and `Slots` owners in several variants;
-   an allocation observer confirms every owner is released exactly once,
-   under the ordinary and the overlap lowering.
-3. **Unchanged emission elsewhere** — met. The 81 standalone
+2. **Correctness** — met on the branch after it merged specification v0.78:
+   the repository's static checks, conformance structure and coverage,
+   clippy with warnings denied, the gate build, the library and binary tests
+   with the backend native tests, the corpus with the complete conformance
+   adapter, and the completion runtime group pass, and no conformance case
+   or verdict changed. Three corpus cases whose fixtures are mode-000 files
+   fail when the tests run as root, which can read them, and pass as an
+   unprivileged user. The new backend tests execute a program that
+   constructs every variant, matches by value and through references,
+   copies, moves through calls, results, block edges and a loop that
+   exchanges two union values, exchanges two with `swap`, overwrites one
+   with another variant as a whole binding and as a struct field, writes
+   through references into payloads, and holds union values in a struct, an
+   `Option`, a `Box`, boxed and inline `Slots`, a `Ring` whose elements wrap
+   around its end and an `Array`, with `Box` and `Slots` owners in several
+   variants; and a waiting program that passes union values to and from
+   waiting calls, bound `mustpar` starts, whose awaits move the result into
+   the binding by memmove, and an unbound start that takes one by value. An
+   allocation observer confirms every owner is released exactly once, under
+   the ordinary and the overlap lowering.
+3. **Unchanged emission elsewhere** — met, measured before the merge of
+   specification v0.78. The 81 standalone
    `tests/programs` sources of section 3 were emitted by the base compiler
    (`85e2c89bf`) and by this implementation: one is byte-identical, 47
    differ only in the declarations of the eligible types they instantiate
