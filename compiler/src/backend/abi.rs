@@ -137,6 +137,18 @@ impl FunctionAbi {
         self.result
     }
 
+    /// The ABI a waiting function [WAIT-1] is defined and called under: its
+    /// ordinary parameters, and every result constructed through a
+    /// destination, because a resumable frame returns its frame and
+    /// constructs its result in the caller's storage before it transfers
+    /// back (design/compiler/waiting-contexts.md).
+    pub(crate) fn waiting(&self) -> Self {
+        Self {
+            parameters: self.parameters.clone(),
+            result: ResultAbi::Destination(self.result.ty()),
+        }
+    }
+
     /// The ABI a definition's body is emitted under. A register-returned
     /// result is constructed through a destination pointer inside the body,
     /// as a larger result is, and only the definition's public entry

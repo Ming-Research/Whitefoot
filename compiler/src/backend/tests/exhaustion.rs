@@ -716,7 +716,7 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
   return a +wrap b;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let count = 0_u64;

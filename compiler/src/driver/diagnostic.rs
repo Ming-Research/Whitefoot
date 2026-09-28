@@ -874,6 +874,8 @@ impl Report for SemanticIssueKind {
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };
             ReturnMismatch;
+            WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
+            InvalidMustpar { condition };
             InvalidMusttail { condition, subject };
             PolymorphicRecursion { cycle, mechanical_fix };
             UnreachableStatement;

@@ -1866,6 +1866,7 @@ mod indexed_goal_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
         };
@@ -2091,6 +2092,7 @@ mod range_argument_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
         };

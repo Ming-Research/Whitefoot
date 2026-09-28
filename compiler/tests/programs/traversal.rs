@@ -32,9 +32,10 @@ fn the_traversal_program_walks_a_real_tree_and_publishes_it_sorted() {
     // C2 deletes QUAL-1 and the compiler-owned native wrapper. All three
     // operations use the ordinary callable ABI; the native engine is linked
     // separately and contributes no compiler declaration or permission.
-    assert!(llvm.contains("@wf_std.fs.open_directory_source("));
-    assert!(llvm.contains("@wf_std.fs.directory_next("));
-    assert!(llvm.contains("@wf_std.fs.open_directory("));
+    // Each is a waiting host function, linked as its start and its finish.
+    assert!(llvm.contains("@wf_std.fs.open_directory_source.start("));
+    assert!(llvm.contains("@wf_std.fs.directory_next.start("));
+    assert!(llvm.contains("@wf_std.fs.open_directory.start("));
     assert!(!llvm.contains("@wf__completion_directory_next_submit("));
 
     let program = build_program(&llvm);

@@ -6,14 +6,14 @@ alias close_directory = std::fs::close_directory;
 alias close_read = std::fs::close_read;
 alias exit_status = std::process::exit_status;
 
-fn close_twice(factory: &HandleFactory, file: ReadFile) -> result: unit writes(factory) {
+fn close_twice(factory: &HandleFactory, file: ReadFile) -> result: unit writes(factory) waits {
   doc "OWN-1: an acquired linear owner is consumed exactly once, and after a consuming use the whole binding is dead. The second consumption is the rejection; the factory state is referenced, not consumed or duplicated.";
   close_read(factory: factory, file: move file);
   close_read(factory: factory, file: move file);
   return unit;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The caller closes the initial directory exactly once.";
   let Inputs(cwd: root, handles: factory, ..) = move inputs;
   close_directory(factory: &factory, directory: move root);

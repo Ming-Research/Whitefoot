@@ -214,6 +214,31 @@ wf_file_result wf_file_execute_direct(wf_file_request *request);
  * for an engine that can wait on it. */
 int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result);
 
+/* One descriptor a waiting context needs ready before it retries a socket
+ * operation without waiting [WAIT-2].  With no kernel completion ring, a
+ * context whose receive, send or accept would wait is parked on this instead
+ * of blocking the one thread every context shares. */
+typedef struct wf_file_readiness {
+    int descriptor;
+    unsigned events;
+    unsigned ready;
+} wf_file_readiness;
+
+#define WF_FILE_READABLE 1u
+#define WF_FILE_WRITABLE 2u
+/* The most descriptors one wait names. */
+#define WF_FILE_READINESS_BATCH 4096u
+
+/* Waits until one entry's descriptor is ready for one of its events, or until
+ * timeout_ms passes (negative: without bound), and sets each entry's `ready`
+ * to what it is ready for; an error or hang-up counts as both.  Answers the
+ * number of ready entries, zero on timeout, and -1 when this leaf cannot wait
+ * on descriptors, which a platform whose sockets always have a ring answers. */
+int wf_file_wait_readiness(wf_file_readiness *entries, size_t count, int timeout_ms);
+
+/* Whether this leaf can wait on descriptors' readiness at all. */
+int wf_file_readiness_supported(void);
+
 /* Whether one typed request's shape is one this ABI can mean at all.  It is
  * the adapter's own check rather than a host's, so it is shared; the leaf runs
  * it before it makes any host call. */

@@ -1576,7 +1576,7 @@ impl Options {
             }
             cursor += 1;
         }
-        if graph.is_some() == !sources.is_empty() {
+        if graph.is_some() != sources.is_empty() {
             return Err(USAGE.to_owned());
         }
         if check_module.is_some() && (graph.is_none() || entry.is_some() || function.is_some()) {

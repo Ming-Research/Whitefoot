@@ -95,8 +95,10 @@ macro_rules! operation_operands {
         match $operation {
             IrOperation::Constant(_)
             | IrOperation::ConstantAddress { .. }
-            | IrOperation::Window => Vec::new(),
+            | IrOperation::Window
+            | IrOperation::ContextJoin => Vec::new(),
             IrOperation::Call { arguments, .. }
+            | IrOperation::ContextStart { arguments, .. }
             | IrOperation::Integer { arguments, .. }
             | IrOperation::Float { arguments, .. }
             | IrOperation::Boolean { arguments, .. } => arguments.$iter().map($value).collect(),

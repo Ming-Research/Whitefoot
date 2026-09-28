@@ -155,6 +155,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .functions()
             .get(function as usize)
             .ok_or(BackendFailure::InvalidIr)?;
+        // A waiting callee is a resumable frame [WAIT-1], called by a
+        // transfer or a host operation's start and finish (`frames`).
+        if target.waits() {
+            return self.emit_waiting_call(result, ty, function, arguments);
+        }
         let abi = FunctionAbi::build(self.program, target)?;
         if abi.result().ty() != ty || abi.parameters().len() != arguments.len() {
             return Err(BackendFailure::InvalidIr);

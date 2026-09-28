@@ -155,7 +155,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
         ),
         "{detail}"
     );
-    let host = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) {
+    let host = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
   match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {
     Ok(value: handle) => {
       std::fs::close_read(factory: factory, file: move handle);
@@ -294,7 +294,7 @@ fn a_grammar_rejection_quotes_the_expected_terminals_and_the_token_it_found() {
         r#"suffix.wf:2:11: error[FORM-5]: UnexpectedToken
   source:   let a = 42;
   marker:           ^^
-  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "match", literal, "musttail", OPNAME]
+  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "mustpar", "match", literal, "musttail", OPNAME]
   found: "42""#
     );
 }

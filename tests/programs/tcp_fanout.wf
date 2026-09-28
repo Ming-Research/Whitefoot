@@ -152,7 +152,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -192,7 +192,7 @@ fn zero_fill(vector: &Slots<u8, 256>) -> result: unit writes(vector) contract {
   return unit;
 }
 
-fn serve_one(listener: &TcpListener, handles: &HandleFactory) -> result: u8 writes(listener), writes(handles) {
+fn serve_one(listener: &TcpListener, handles: &HandleFactory) -> result: u8 writes(listener), writes(handles) waits {
   doc "Accepts one peer through two reference parameters whose declared rows the call site proves disjoint, echoes its first chunk, and explicitly closes both halves. Its scratch is one inline Slots window of this call's own frame [EFF-5, TYPE-9].";
   let outcome = 0_u8;
   let scratch = slots_new::<u8, 256>();
@@ -243,7 +243,7 @@ fn serve_one(listener: &TcpListener, handles: &HandleFactory) -> result: u8 writ
   return outcome;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Listens on the invocation port and serves four peers in order. Each ordinary call takes the same listener and factory as two reference parameters until return.";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

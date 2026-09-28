@@ -529,16 +529,19 @@ chain: $(BUILD)/chain $(BUILD)/gen
 # the pieces and hand it this repository's paths, so the container, this host
 # and the runner all execute the same bytes.
 #
-#   make net-tools    build the three C tools
+#   make net-tools    build the five C tools
 #   make uring-check  the io_uring reference's own deterministic traces
 #   make net-verify   every server against netload at 4 connections
 #   make linux-net    the protocol, here
 NET_OUT := $(WORK)/net
 NET_ROUNDS ?= 5
 NET_WARMUP ?= 1
-WF_ECHO_SOURCE := $(wildcard programs/tcp_echo_server.wf)
+# The Whitefoot line is the maintained context server, one context per
+# connection [PAR-4]; the bundle's earlier echo program is kept as evidence.
+WF_ECHO_SOURCE := $(ROOT)/tests/programs/tcp_contexts.wf
 
-net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload
+net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload $(BUILD)/waiting_echo \
+	$(BUILD)/idleload
 
 $(BUILD)/uring_echo: uring_echo.c | prepare
 	$(CLANG) $(CFLAGS) -pthread $< -o $@
@@ -569,12 +572,17 @@ $(BUILD)/epoll_echo: epoll_echo.c | prepare
 $(BUILD)/netload: netload.c | prepare
 	$(CLANG) $(CFLAGS) -pthread $< -o $@
 
-$(BUILD)/wf_echo: programs/tcp_echo_server.wf $(WFC) Makefile | prepare
-	$(WFC) --par -o $@ $<
+$(BUILD)/waiting_echo: waiting_echo.c | prepare
+	$(CLANG) $(CFLAGS) -pthread $< -o $@
 
-# The Whitefoot line joins this check when its program is in the bundle; the
-# two references are always in it.
-net-verify: net-tools $(if $(WF_ECHO_SOURCE),$(BUILD)/wf_echo)
+$(BUILD)/idleload: idleload.c | prepare
+	$(CLANG) $(CFLAGS) $< -o $@
+
+$(BUILD)/wf_echo: $(WF_ECHO_SOURCE) $(WFC) Makefile | prepare
+	$(WFC) -o $@ $<
+
+# Every line, the Whitefoot one included, answers the load generator first.
+net-verify: net-tools $(BUILD)/wf_echo
 	@env ROOT=$(ROOT) OUT=$(BUILD) sh linux-net-bench.sh verify
 
 linux-net:

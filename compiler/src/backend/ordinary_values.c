@@ -290,19 +290,76 @@ static void wf_error(wf_io_error *error, int code, unsigned origin) {
 #endif
 }
 
+/* The handle budget a factory draws on. The invocation's factory and every
+ * factory `factory_share` relates to it name one process cell in their third
+ * word, so an acquisition through any of them spends a credit of that one
+ * budget; a factory built without one keeps its budget in its first word.
+ * The cell is a plain counter: every acquisition and close is a waiting call,
+ * and every context runs on the one thread that runs the entry [WAIT-2]. */
+static uint64_t wf_handle_budget;
+
+static uint64_t *wf_factory_budget(wf_value *factory) {
+    return factory->words[2] != 0
+        ? (uint64_t *)(uintptr_t)factory->words[2]
+        : &factory->words[0];
+}
+
 static int wf_factory_take(wf_value *factory, wf_io_error *error) {
+    uint64_t *budget = wf_factory_budget(factory);
     wf_transition(factory);
-    if (factory->words[0] == 0) {
+    if (*budget == 0) {
         wf_error_class(error, 21, 0, 0);
         return 0;
     }
-    factory->words[0]--;
+    *budget -= 1;
     return 1;
 }
 
 static void wf_factory_return(wf_value *factory) {
-    if (factory->words[0] != UINT64_MAX) factory->words[0]++;
+    uint64_t *budget = wf_factory_budget(factory);
+    if (*budget != UINT64_MAX) *budget += 1;
 }
+
+#if defined(_WIN32)
+#define WF_COMPONENT_BYTES 510u
+#define WF_OPEN_DIRECTORY_FLAGS 0
+#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
+#define WF_OPEN_COMPONENT_FILE_FLAGS 1
+#elif defined(__APPLE__)
+#define WF_COMPONENT_BYTES 1023u
+#define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
+#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
+#define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
+#else
+#define WF_COMPONENT_BYTES 255u
+#define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
+#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
+#define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
+#endif
+
+/* The block a waiting context keeps for its one pending host operation
+ * (`wf__context_operation`): the completion record, then what an operation's
+ * finish reads besides the record.  Every waiting body below is a start,
+ * which submits into it or answers at once, and a finish, which reads it once
+ * the record is complete; the frame that calls them suspends between the two
+ * (design/compiler/waiting-contexts.md).  A start answers 0 when
+ * it wrote the result itself and submitted nothing, 1 when it submitted an
+ * operation that has already completed, and 2 when the operation is still
+ * pending; only 2 makes the frame wait, and 1 and 2 are read by the finish.
+ * The blocking bodies the probes call are the two with a join between them. */
+typedef struct wf_host_operation {
+    wf_completion_record record;
+    /* A directory read's cursor, which the host may write at completion. */
+    int64_t position;
+    /* An open's path component, which the host reads until completion. */
+    alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
+} wf_host_operation;
+_Static_assert(offsetof(wf_host_operation, record) == 0,
+               "a context's operation block begins with its record");
+_Static_assert(sizeof(wf_host_operation) <= WF_CONTEXT_OPERATION_BYTES,
+               "the host operation must fit the block a context keeps");
+_Static_assert(_Alignof(wf_host_operation) <= WF_CONTEXT_OPERATION_ALIGN,
+               "the host operation must not out-align the block a context keeps");
 
 static void wf_read_result_value(wf_read_result *result, int64_t amount,
                                  int error, uint64_t start, uint64_t extent) {
@@ -330,98 +387,165 @@ static void wf_write_result_value(wf_write_result *result, int64_t amount,
     } else result->value = start + (uint64_t)amount;
 }
 
-void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
-                wf_view *destination, uint64_t file_offset,
-                uint64_t start, uint64_t end) {
-    wf_completion_record record;
+static void wf_transfer_read(wf_read_result *result, wf_host_operation *operation,
+                             uint64_t start, uint64_t end) {
     int64_t amount;
     int error;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    wf_read_result_value(result, amount, error, start, end - start);
+}
+
+static void wf_transfer_write(wf_write_result *result, wf_host_operation *operation,
+                              uint64_t start, uint64_t end) {
+    int64_t amount;
+    int error;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    wf_write_result_value(result, amount, error, start, end - start);
+}
+
+int wf__body_read_at_start(wf_read_result *result, wf_value *factory, wf_value *file,
+                           wf_view *destination, uint64_t file_offset,
+                           uint64_t start, uint64_t end, wf_host_operation *operation) {
+    (void)result;
     wf_transition(factory);
     wf_transition(file);
     wf__completion_file_pread_submit(wf_descriptor(file),
-        wf_window(destination, start), end - start, file_offset, &record);
-    wf__completion_file_join(&record, &amount, &error);
-    wf_read_result_value(result, amount, error, start, end - start);
+        wf_window(destination, start), end - start, file_offset, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_read_at_finish(wf_read_result *result, wf_value *factory, wf_value *file,
+                             wf_view *destination, uint64_t file_offset,
+                             uint64_t start, uint64_t end, wf_host_operation *operation) {
+    (void)factory;
+    (void)file;
+    (void)destination;
+    (void)file_offset;
+    wf_transfer_read(result, operation, start, end);
+}
+
+void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
+                wf_view *destination, uint64_t file_offset,
+                uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_read_at_start(result, factory, file, destination, file_offset,
+                               start, end, &operation))
+        wf__body_read_at_finish(result, factory, file, destination, file_offset,
+                                start, end, &operation);
+}
+
+int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value *input,
+                             wf_view *destination, uint64_t start, uint64_t end,
+                             wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(input);
+    wf__completion_file_read_submit(wf_descriptor(input),
+        wf_window(destination, start), end - start, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_read_next_finish(wf_read_result *result, wf_value *factory, wf_value *input,
+                               wf_view *destination, uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    (void)factory;
+    (void)input;
+    (void)destination;
+    wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input,
                   wf_view *destination, uint64_t start, uint64_t end) {
-    wf_completion_record record;
-    int64_t amount;
-    int error;
+    wf_host_operation operation;
+    if (wf__body_read_next_start(result, factory, input, destination, start, end, &operation))
+        wf__body_read_next_finish(result, factory, input, destination, start, end, &operation);
+}
+
+int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_value *output,
+                              const wf_view *source, uint64_t start, uint64_t end,
+                              wf_host_operation *operation) {
+    (void)result;
     wf_transition(factory);
-    wf_transition(input);
-    wf__completion_file_read_submit(wf_descriptor(input),
-        wf_window(destination, start), end - start, &record);
-    wf__completion_file_join(&record, &amount, &error);
-    wf_read_result_value(result, amount, error, start, end - start);
+    wf_transition(output);
+    wf__completion_file_write_submit(wf_descriptor(output),
+        wf_window(source, start), end - start, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_write_once_finish(wf_write_result *result, wf_value *factory, wf_value *output,
+                                const wf_view *source, uint64_t start, uint64_t end,
+                                wf_host_operation *operation) {
+    (void)factory;
+    (void)output;
+    (void)source;
+    wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output,
                    const wf_view *source, uint64_t start, uint64_t end) {
-    wf_completion_record record;
-    int64_t amount;
-    int error;
-    wf_transition(factory);
-    wf_transition(output);
-    wf__completion_file_write_submit(wf_descriptor(output),
-        wf_window(source, start), end - start, &record);
-    wf__completion_file_join(&record, &amount, &error);
-    wf_write_result_value(result, amount, error, start, end - start);
+    wf_host_operation operation;
+    if (wf__body_write_once_start(result, factory, output, source, start, end, &operation))
+        wf__body_write_once_finish(result, factory, output, source, start, end, &operation);
+}
+
+int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
+                                wf_view *destination, uint64_t start, uint64_t end,
+                                wf_host_operation *operation) {
+    (void)result;
+    wf_transition(receive);
+    wf__completion_socket_receive_submit(wf_descriptor(receive),
+        wf_window(destination, start), end - start, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_receive_next_finish(wf_read_result *result, wf_value *receive,
+                                  wf_view *destination, uint64_t start, uint64_t end,
+                                  wf_host_operation *operation) {
+    (void)receive;
+    (void)destination;
+    wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_receive_next(wf_read_result *result, wf_value *receive,
                      wf_view *destination, uint64_t start, uint64_t end) {
-    wf_completion_record record;
-    int64_t amount;
-    int error;
-    wf_transition(receive);
-    wf__completion_socket_receive_submit(wf_descriptor(receive),
-        wf_window(destination, start), end - start, &record);
-    wf__completion_file_join(&record, &amount, &error);
-    wf_read_result_value(result, amount, error, start, end - start);
+    wf_host_operation operation;
+    if (wf__body_receive_next_start(result, receive, destination, start, end, &operation))
+        wf__body_receive_next_finish(result, receive, destination, start, end, &operation);
+}
+
+int wf__body_send_once_start(wf_write_result *result, wf_value *send,
+                             const wf_view *source, uint64_t start, uint64_t end,
+                             wf_host_operation *operation) {
+    (void)result;
+    wf_transition(send);
+    wf__completion_socket_send_submit(wf_descriptor(send),
+        wf_window(source, start), end - start, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_send_once_finish(wf_write_result *result, wf_value *send,
+                               const wf_view *source, uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    (void)send;
+    (void)source;
+    wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_send_once(wf_write_result *result, wf_value *send,
                   const wf_view *source, uint64_t start, uint64_t end) {
-    wf_completion_record record;
-    int64_t amount;
-    int error;
-    wf_transition(send);
-    wf__completion_socket_send_submit(wf_descriptor(send),
-        wf_window(source, start), end - start, &record);
-    wf__completion_file_join(&record, &amount, &error);
-    wf_write_result_value(result, amount, error, start, end - start);
+    wf_host_operation operation;
+    if (wf__body_send_once_start(result, send, source, start, end, &operation))
+        wf__body_send_once_finish(result, send, source, start, end, &operation);
 }
 
-#if defined(_WIN32)
-#define WF_COMPONENT_BYTES 510u
-#define WF_OPEN_DIRECTORY_FLAGS 0
-#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
-#define WF_OPEN_COMPONENT_FILE_FLAGS 1
-#elif defined(__APPLE__)
-#define WF_COMPONENT_BYTES 1023u
-#define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
-#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
-#define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
-#else
-#define WF_COMPONENT_BYTES 255u
-#define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
-#define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
-#define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
-#endif
-
-static void wf_open(wf_open_result *result, wf_value *factory,
-                    const wf_value *root, const void *path, int flags,
-                    unsigned expected_kind, unsigned descriptor_class) {
-    wf_completion_record record;
-    int64_t descriptor;
-    int error;
-    unsigned outcome;
+static int wf_open_start(wf_open_result *result, wf_value *factory,
+                         const wf_value *root, const void *path, int flags,
+                         unsigned expected_kind, unsigned descriptor_class,
+                         wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->error)) {
         result->tag = 1;
-        return;
+        return 0;
     }
 #if !defined(_WIN32)
     (void)descriptor_class;
@@ -431,8 +555,17 @@ static void wf_open(wf_open_result *result, wf_value *factory,
 #if defined(_WIN32)
         descriptor_class,
 #endif
-        &record);
-    wf__completion_file_open_join(&record, &descriptor, &error, &outcome);
+        &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+static void wf_open_finish(wf_open_result *result, wf_value *factory,
+                           wf_host_operation *operation) {
+    int64_t descriptor;
+    int error;
+    unsigned outcome;
+    wf__completion_file_open_join(&operation->record, &descriptor, &error, &outcome);
+    memset(result, 0, sizeof(*result));
     if (outcome != WF_FILE_OPEN_SUCCEEDED) {
         wf_factory_return(factory);
         result->tag = 1;
@@ -447,10 +580,26 @@ static void wf_open(wf_open_result *result, wf_value *factory,
     wf_descriptor_value(&result->value, (int)descriptor);
 }
 
+int wf__body_open_read_start(wf_open_result *result, wf_value *factory,
+                             const wf_value *root, const wf_value *path,
+                             wf_host_operation *operation) {
+    return wf_open_start(result, factory, root, wf_value_pointer(path), 0,
+                         WF_FILE_EXPECT_REGULAR, 1, operation);
+}
+
+void wf__body_open_read_finish(wf_open_result *result, wf_value *factory,
+                               const wf_value *root, const wf_value *path,
+                               wf_host_operation *operation) {
+    (void)root;
+    (void)path;
+    wf_open_finish(result, factory, operation);
+}
+
 void wf__body_open_read(wf_open_result *result, wf_value *factory,
                   const wf_value *root, const wf_value *path) {
-    wf_open(result, factory, root, wf_value_pointer(path), 0,
-            WF_FILE_EXPECT_REGULAR, 1);
+    wf_host_operation operation;
+    if (wf__body_open_read_start(result, factory, root, path, &operation))
+        wf__body_open_read_finish(result, factory, root, path, &operation);
 }
 
 static int wf_component(unsigned char *component, const wf_view *name,
@@ -477,36 +626,79 @@ static int wf_component(unsigned char *component, const wf_view *name,
     return 1;
 }
 
-static void wf_open_component(wf_open_result *result, wf_value *factory,
-                              const wf_value *root, const wf_view *name,
-                              uint64_t start, uint64_t end, unsigned directory) {
-    alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
-    if (!wf_component(component, name, start, end)) {
+/* The component is copied into the operation block, where it stays until
+ * the open completes: the host may read the path after the submit returns. */
+static int wf_open_component_start(wf_open_result *result, wf_value *factory,
+                                   const wf_value *root, const wf_view *name,
+                                   uint64_t start, uint64_t end, unsigned directory,
+                                   wf_host_operation *operation) {
+    if (!wf_component(operation->component, name, start, end)) {
         wf_transition(factory);
         memset(result, 0, sizeof(*result));
         result->tag = 1;
         wf_error_class(&result->error, 9, 0, 0);
-        return;
+        return 0;
     }
-    wf_open(result, factory, root, component,
+    return wf_open_start(result, factory, root, operation->component,
         directory ? WF_OPEN_COMPONENT_DIRECTORY_FLAGS : WF_OPEN_COMPONENT_FILE_FLAGS,
         directory ? WF_FILE_EXPECT_DIRECTORY : WF_FILE_EXPECT_REGULAR,
-        directory ? 2 : 1);
+        directory ? 2 : 1, operation);
+}
+
+int wf__body_open_directory_start(wf_open_result *result, wf_value *factory,
+                                  const wf_value *root, const wf_view *name,
+                                  uint64_t start, uint64_t end,
+                                  wf_host_operation *operation) {
+    return wf_open_component_start(result, factory, root, name, start, end, 1, operation);
+}
+
+void wf__body_open_directory_finish(wf_open_result *result, wf_value *factory,
+                                    const wf_value *root, const wf_view *name,
+                                    uint64_t start, uint64_t end,
+                                    wf_host_operation *operation) {
+    (void)root;
+    (void)name;
+    (void)start;
+    (void)end;
+    wf_open_finish(result, factory, operation);
 }
 
 void wf__body_open_directory(wf_open_result *result, wf_value *factory,
                        const wf_value *root, const wf_view *name,
                        uint64_t start, uint64_t end) {
-    wf_open_component(result, factory, root, name, start, end, 1);
+    wf_host_operation operation;
+    if (wf__body_open_directory_start(result, factory, root, name, start, end, &operation))
+        wf__body_open_directory_finish(result, factory, root, name, start, end, &operation);
+}
+
+int wf__body_open_file_start(wf_open_result *result, wf_value *factory,
+                             const wf_value *root, const wf_view *name,
+                             uint64_t start, uint64_t end,
+                             wf_host_operation *operation) {
+    return wf_open_component_start(result, factory, root, name, start, end, 0, operation);
+}
+
+void wf__body_open_file_finish(wf_open_result *result, wf_value *factory,
+                               const wf_value *root, const wf_view *name,
+                               uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    (void)root;
+    (void)name;
+    (void)start;
+    (void)end;
+    wf_open_finish(result, factory, operation);
 }
 
 void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_value *root,
                   const wf_view *name, uint64_t start, uint64_t end) {
-    wf_open_component(result, factory, root, name, start, end, 0);
+    wf_host_operation operation;
+    if (wf__body_open_file_start(result, factory, root, name, start, end, &operation))
+        wf__body_open_file_finish(result, factory, root, name, start, end, &operation);
 }
 
-void wf__body_open_directory_source(wf_open_result *result, wf_value *factory,
-                              const wf_value *directory) {
+int wf__body_open_directory_source_start(wf_open_result *result, wf_value *factory,
+                                         const wf_value *directory,
+                                         wf_host_operation *operation) {
 #if defined(_WIN32)
     /* NtCreateFile does not normalize the Win32 spelling ".". An empty
      * relative object name reopens the supplied directory itself, producing
@@ -515,22 +707,42 @@ void wf__body_open_directory_source(wf_open_result *result, wf_value *factory,
 #else
     static const char self[] = ".";
 #endif
-    wf_open(result, factory, directory, self, WF_OPEN_DIRECTORY_FLAGS,
-            WF_FILE_EXPECT_DIRECTORY, 3);
+    return wf_open_start(result, factory, directory, self, WF_OPEN_DIRECTORY_FLAGS,
+                         WF_FILE_EXPECT_DIRECTORY, 3, operation);
 }
 
-static void wf_close(wf_close_result *result, wf_value *factory,
-                     const wf_value *owner, int direction) {
-    wf_completion_record record;
-    int64_t amount;
-    int error;
+void wf__body_open_directory_source_finish(wf_open_result *result, wf_value *factory,
+                                           const wf_value *directory,
+                                           wf_host_operation *operation) {
+    (void)directory;
+    wf_open_finish(result, factory, operation);
+}
+
+void wf__body_open_directory_source(wf_open_result *result, wf_value *factory,
+                              const wf_value *directory) {
+    wf_host_operation operation;
+    if (wf__body_open_directory_source_start(result, factory, directory, &operation))
+        wf__body_open_directory_source_finish(result, factory, directory, &operation);
+}
+
+static int wf_close_start(wf_close_result *result, wf_value *factory,
+                          const wf_value *owner, int direction,
+                          wf_host_operation *operation) {
     wf_transition(factory);
     memset(result, 0, sizeof(*result));
     if (direction < 0)
-        wf__completion_file_close_submit(wf_descriptor(owner), &record);
+        wf__completion_file_close_submit(wf_descriptor(owner), &operation->record);
     else wf__completion_socket_shutdown_submit(wf_descriptor(owner),
-                                               (unsigned)direction, &record);
-    wf__completion_file_join(&record, &amount, &error);
+                                               (unsigned)direction, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+static void wf_close_finish(wf_close_result *result, wf_value *factory, int direction,
+                            wf_host_operation *operation) {
+    int64_t amount;
+    int error;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    memset(result, 0, sizeof(*result));
     /* A close consumes its owner even when the host reports an error. An
      * interrupted close is never retried against a possibly reused number.
      * A half-close returns credit only on the actual descriptor-close attempt. */
@@ -541,37 +753,59 @@ static void wf_close(wf_close_result *result, wf_value *factory,
     }
 }
 
-void wf__body_close_read(wf_close_result *result, wf_value *factory, const wf_value *file) {
-    wf_close(result, factory, file, -1);
-}
-void wf__body_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory) {
-    wf_close(result, factory, directory, -1);
-}
-void wf__body_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source) {
-    wf_close(result, factory, source, -1);
-}
-void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener) {
-    wf_close(result, factory, listener, -1);
-}
-void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive) {
-    wf_close(result, factory, receive, WF_SOCKET_DIRECTION_RECEIVE);
-}
-void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send) {
-    wf_close(result, factory, send, WF_SOCKET_DIRECTION_SEND);
+#define WF_CLOSE_BODY(name, direction)                                                     \
+    int wf__body_##name##_start(wf_close_result *result, wf_value *factory,                \
+                                const wf_value *owner, wf_host_operation *operation) {     \
+        return wf_close_start(result, factory, owner, direction, operation);               \
+    }                                                                                      \
+    void wf__body_##name##_finish(wf_close_result *result, wf_value *factory,              \
+                                  const wf_value *owner, wf_host_operation *operation) {   \
+        (void)owner;                                                                       \
+        wf_close_finish(result, factory, direction, operation);                            \
+    }                                                                                      \
+    void wf__body_##name(wf_close_result *result, wf_value *factory,                       \
+                         const wf_value *owner) {                                          \
+        wf_host_operation operation;                                                       \
+        if (wf__body_##name##_start(result, factory, owner, &operation))                   \
+            wf__body_##name##_finish(result, factory, owner, &operation);                  \
+    }
+
+WF_CLOSE_BODY(close_read, -1)
+WF_CLOSE_BODY(close_directory, -1)
+WF_CLOSE_BODY(close_directory_source, -1)
+WF_CLOSE_BODY(close_listener, -1)
+WF_CLOSE_BODY(close_receive, WF_SOCKET_DIRECTION_RECEIVE)
+WF_CLOSE_BODY(close_send, WF_SOCKET_DIRECTION_SEND)
+
+/* [PRE-2] a second factory on the same budget. A factory with no budget cell
+ * is only ever built by hand in a probe; a source program's factories all
+ * descend from the invocation's. */
+void wf__body_factory_share(wf_value *result, const wf_value *factory) {
+    memset(result, 0, sizeof(*result));
+    result->words[2] = factory->words[2] != 0
+        ? factory->words[2]
+        : (uint64_t)(uintptr_t)&factory->words[0];
 }
 
-void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
-    wf_completion_record record;
-    int64_t descriptor;
-    int error;
+int wf__body_tcp_listen_start(wf_open_result *result, wf_value *factory,
+                              const wf_value *address, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->error)) {
         result->tag = 1;
-        return;
+        return 0;
     }
     wf__completion_socket_listen_submit(address->words[0], address->words[1],
-                                        (uint32_t)address->words[2], &record);
-    wf__completion_file_join(&record, &descriptor, &error);
+                                        (uint32_t)address->words[2], &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_tcp_listen_finish(wf_open_result *result, wf_value *factory,
+                                const wf_value *address, wf_host_operation *operation) {
+    int64_t descriptor;
+    int error;
+    (void)address;
+    wf__completion_file_join(&operation->record, &descriptor, &error);
+    memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
@@ -579,18 +813,31 @@ void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_val
     } else wf_descriptor_value(&result->value, (int)descriptor);
 }
 
-void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address) {
-    wf_completion_record record;
-    int64_t descriptor;
-    int error;
+void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
+    wf_host_operation operation;
+    if (wf__body_tcp_listen_start(result, factory, address, &operation))
+        wf__body_tcp_listen_finish(result, factory, address, &operation);
+}
+
+int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
+                               const wf_value *address, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->error)) {
         result->tag = 1;
-        return;
+        return 0;
     }
     wf__completion_socket_connect_submit(address->words[0], address->words[1],
-                                         (uint32_t)address->words[2], &record);
-    wf__completion_file_join(&record, &descriptor, &error);
+                                         (uint32_t)address->words[2], &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
+                                 const wf_value *address, wf_host_operation *operation) {
+    int64_t descriptor;
+    int error;
+    (void)address;
+    wf__completion_file_join(&operation->record, &descriptor, &error);
+    memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
@@ -601,20 +848,34 @@ void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf
     }
 }
 
-void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener) {
-    wf_completion_record record;
-    int64_t descriptor;
-    int error;
-    uint64_t low, high;
-    uint32_t tag;
+void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address) {
+    wf_host_operation operation;
+    if (wf__body_tcp_connect_start(result, factory, address, &operation))
+        wf__body_tcp_connect_finish(result, factory, address, &operation);
+}
+
+int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
+                              wf_value *listener, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     wf_transition(listener);
     if (!wf_factory_take(factory, &result->error)) {
         result->tag = 1;
-        return;
+        return 0;
     }
-    wf__completion_socket_accept_submit(wf_descriptor(listener), &record);
-    wf__completion_socket_accept_join(&record, &descriptor, &error, &low, &high, &tag);
+    wf__completion_socket_accept_submit(wf_descriptor(listener), &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
+                                wf_value *listener, wf_host_operation *operation) {
+    int64_t descriptor;
+    int error;
+    uint64_t low, high;
+    uint32_t tag;
+    (void)listener;
+    wf__completion_socket_accept_join(&operation->record, &descriptor, &error,
+                                      &low, &high, &tag);
+    memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
@@ -626,6 +887,12 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
         result->value.peer.words[1] = high;
         result->value.peer.words[2] = tag;
     }
+}
+
+void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener) {
+    wf_host_operation operation;
+    if (wf__body_tcp_accept_start(result, factory, listener, &operation))
+        wf__body_tcp_accept_finish(result, factory, listener, &operation);
 }
 
 #if !defined(_WIN32)
@@ -669,7 +936,8 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     if (cwd < 0) return 0;
     wf_descriptor_value(&inputs->cwd, cwd);
     wf_text(&inputs->args, argv, argc > 0 ? (uint64_t)(unsigned)argc : 0);
-    inputs->handles.words[0] = capacity;
+    wf_handle_budget = capacity;
+    inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;
     return 1;
 }
 
@@ -694,17 +962,27 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
 #endif
 #endif
 
-void wf__body_directory_next(wf_list_result *result, wf_value *source,
-                        wf_view *destination, uint64_t start, uint64_t end) {
-    wf_completion_record record;
-    int64_t amount, position = 0;
+int wf__body_directory_next_start(wf_list_result *result, wf_value *source,
+                                  wf_view *destination, uint64_t start, uint64_t end,
+                                  wf_host_operation *operation) {
+    (void)result;
+    wf_transition(source);
+    operation->position = 0;
+    wf__completion_directory_next_submit(wf_descriptor(source),
+                                         wf_window(destination, start), end - start,
+                                         &operation->position, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
+                                    wf_view *destination, uint64_t start, uint64_t end,
+                                    wf_host_operation *operation) {
+    int64_t amount;
     int error;
     uint64_t cursor = 0, written = 0, entries = 0;
     unsigned char *window = wf_window(destination, start);
-    wf_transition(source);
-    wf__completion_directory_next_submit(wf_descriptor(source), window,
-                                         end - start, &position, &record);
-    wf__completion_file_join(&record, &amount, &error);
+    (void)source;
+    wf__completion_file_join(&operation->record, &amount, &error);
     memset(result, 0, sizeof(*result));
     result->next = start;
     if (amount < 0) {
@@ -763,4 +1041,11 @@ void wf__body_directory_next(wf_list_result *result, wf_value *source,
     }
     result->next = start + written;
     result->entries = entries;
+}
+
+void wf__body_directory_next(wf_list_result *result, wf_value *source,
+                        wf_view *destination, uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_directory_next_start(result, source, destination, start, end, &operation))
+        wf__body_directory_next_finish(result, source, destination, start, end, &operation);
 }

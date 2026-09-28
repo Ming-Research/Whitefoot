@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::target::TargetLayout;
 
 mod buffers;
+mod contexts;
 mod loops;
 mod prelude;
 mod probe;
@@ -457,6 +458,9 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    builder
+        .context_starts
+        .clone_from(&function.waiting.context_starts);
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
@@ -512,6 +516,7 @@ fn lower_function<'program>(
     }
     let overlaps = builder.overlaps();
     let mut lowered = builder.finish(symbol.to_owned(), overlaps, None)?;
+    lowered.waits = function.waiting.waits;
     lowered.source_signature = Some(IrSourceSignature {
         parameters: function
             .parameters
@@ -683,6 +688,9 @@ struct IrBuilder<'program> {
     synthesis: &'program SynthesisCell,
     /// The source function this body belongs to, for the actualization ledger.
     function_name: &'program str,
+    /// [PAR-4] the statements of this body that start a context. Empty in
+    /// every synthesized function: a wrapper, chunk or splitter starts none.
+    context_starts: Vec<NodePath>,
 }
 
 #[derive(Clone)]
@@ -736,6 +744,7 @@ impl<'program> IrBuilder<'program> {
             overlap,
             synthesis,
             function_name,
+            context_starts: Vec::new(),
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -805,6 +814,7 @@ impl<'program> IrBuilder<'program> {
             overlaps,
             counted_ranges: self.counted_ranges,
             synthesis,
+            waits: false,
         })
     }
 
@@ -1107,6 +1117,19 @@ impl<'program> IrBuilder<'program> {
                 // A discarded result has no use, so the call may be handed out
                 // exactly as a `let` binding it may.
                 CheckedStatement::Evaluate {
+                    node_path,
+                    value: expression,
+                } if self.starts_context(node_path) => {
+                    self.start_context(expression, &[])?;
+                }
+                CheckedStatement::DropExpression {
+                    node_path,
+                    value: expression,
+                    drops,
+                } if self.starts_context(node_path) => {
+                    self.start_context(expression, drops)?;
+                }
+                CheckedStatement::Evaluate {
                     value: expression, ..
                 } => {
                     let value = self.expression(expression)?;
@@ -1148,6 +1171,9 @@ impl<'program> IrBuilder<'program> {
                         let target = self
                             .tail_entry
                             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                        // A self transfer replaces this activation, which is
+                        // an exit [PAR-4].
+                        self.join_contexts()?;
                         self.terminate(IrTerminator::Jump {
                             target,
                             arguments,
@@ -1157,6 +1183,7 @@ impl<'program> IrBuilder<'program> {
                     }
                     let value = self.expression(value)?;
                     let drops = self.lower_drops(drops)?;
+                    self.join_contexts()?;
                     self.terminate(IrTerminator::Return { value, drops })?;
                 }
                 CheckedStatement::Give { value, drops, .. } => {

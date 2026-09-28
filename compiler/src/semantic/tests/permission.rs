@@ -305,22 +305,23 @@ fn two_writes_of_one_scalar_deny_overlap() {
     assert_eq!(*sides, (PairSide::First, PairSide::Second));
 }
 
+/// Two opens through one factory never overlap. Before v0.77 the reason was
+/// the one factory both calls write; since then opening waits [WAIT-1], and
+/// a statement holding a waiting call has no overlap permission with any
+/// statement [PAR-1], which the judgment reports before comparing the two
+/// footprints.
 #[test]
-fn two_opens_through_one_factory_are_ordinary_conflicting_calls() {
+fn two_opens_through_one_factory_never_overlap() {
     let table = permission_of(include_bytes!(
         "../../../../tests/conformance/cases/accept-sysfile-two-permits-shared-directory.wf"
     ));
     let pair = only_pair(&table, "open_two");
     assert_eq!(pair.first.callee_name, "open_directory_source");
     assert_eq!(pair.second.callee_name, "open_directory_source");
-    let Denial::Footprint { kind, .. } = denial(pair, 1) else {
-        panic!("expected a footprint conflict, got {:?}", pair.verdict);
+    let Denial::WaitingCall { side, .. } = denial(pair, 3) else {
+        panic!("expected a waiting-call denial, got {:?}", pair.verdict);
     };
-    assert_eq!(
-        kind.halves(),
-        ("write", "write"),
-        "both calls write the one factory the writer handed each of them"
-    );
+    assert_eq!(*side, PairSide::First);
 }
 
 #[test]

@@ -8,6 +8,7 @@ pub(in crate::semantic) mod floats;
 mod generics;
 mod inventory;
 mod linearity;
+mod mustpar;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -136,6 +137,9 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
+    /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
+    /// whose calls are admitted only in the body of another waiting function.
+    waits: bool,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -578,6 +582,9 @@ struct BodyChecker {
     /// syntax could not settle, handed to the entailment fragment with the
     /// finished body.
     call_separations: Vec<super::model::CheckedCallSeparation>,
+    /// [WAIT-1, PAR-4] the waiting calls and `mustpar` markers of the function
+    /// being checked, published with its finished body.
+    waiting: super::model::CheckedWaiting,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
     /// the function driver clears this scratch state on every retry.
@@ -1086,6 +1093,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         check_context: &CheckContext<'_>,
     ) -> Result<CheckedProgramData, CheckStop> {
         self.check_musttail_positions()?;
+        self.check_mustpar_positions()?;
         let items = self.types.declarations.item_declarations()?;
         self.types.collect_behavior_groups(check_context, &items)?;
         self.types
@@ -1272,6 +1280,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
         let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        // [PAR-4] a `mustpar` requires the permission the table just judged;
+        // the table itself stays the same whichever markers are written.
+        self.validate_mustpar(&functions, &permission.functions)?;
         // The ledger is rendered here because only the checker still holds the
         // syntax tree the citations name. It is pure presentation over the
         // table above and reaches no decision.
@@ -1734,6 +1745,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
+        self.collect_mustpar_markers(signature)?;
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
@@ -1869,6 +1881,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 separations
             },
             permission_separation_queries: Vec::new(),
+            waiting: super::model::CheckedWaiting {
+                waits: signature.waits,
+                ..std::mem::take(&mut self.body.waiting)
+            },
             obligations: Vec::new(),
             entailment: super::entailment::FunctionEntailment::default(),
         };

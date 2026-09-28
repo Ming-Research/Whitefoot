@@ -245,6 +245,8 @@ pub(crate) enum LoopDenial {
     BodyForm { form: &'static str },
     /// Condition 4: an edge leaves the loop.
     Exit { edge: &'static str },
+    /// Condition 5: the body contains a waiting call [WAIT-1].
+    WaitingCall { call: NodePath },
 }
 
 impl LoopDenial {
@@ -258,6 +260,7 @@ impl LoopDenial {
             Self::SharedWrite { .. } | Self::BodyForm { .. } => 2,
             Self::UnresolvedWrite { .. } => 3,
             Self::Exit { .. } => 4,
+            Self::WaitingCall { .. } => 5,
         }
     }
 }
@@ -280,6 +283,7 @@ pub(crate) fn judge_loops<'check>(
         program,
         places,
         &function.entailment.obligations,
+        &function.waiting.calls,
         function.body.as_deref().unwrap_or_default(),
         &mut judged,
     );
@@ -298,6 +302,7 @@ fn collect<'check>(
     program: &Program<'check>,
     places: &PlaceMap,
     obligations: &'check [ObligationOutcome],
+    waiting: &'check [NodePath],
     statements: &'check [CheckedStatement],
     judged: &mut Vec<LoopPermission>,
 ) {
@@ -310,7 +315,7 @@ fn collect<'check>(
             ..
         } = statement
         {
-            judged.push(judge(
+            let mut loop_permission = judge(
                 program,
                 places,
                 obligations,
@@ -318,10 +323,21 @@ fn collect<'check>(
                 *id,
                 *binder,
                 body,
-            ));
+            );
+            // [PAR-2] a body that waits has no overlap to offer whatever else
+            // it does, so this refusal replaces any other. Every call node
+            // lies inside the node of the loop holding it, so the body holds
+            // exactly the waiting calls below the loop's node.
+            if let Some(call) = waiting.iter().find(|call| encloses(node_path, call)) {
+                loop_permission.verdict =
+                    LoopVerdict::Denied(LoopDenial::WaitingCall { call: call.clone() });
+                loop_permission.advises_split = false;
+                loop_permission.actualization = None;
+            }
+            judged.push(loop_permission);
         }
         for nested in nested_bodies(statement) {
-            collect(program, places, obligations, nested, judged);
+            collect(program, places, obligations, waiting, nested, judged);
         }
     }
 }

@@ -102,7 +102,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) waits {
   doc "The ordinary read_at implementation returns Ok(end) when the file fills the requested range; a later call observes Err(ReadEnd). Exact byte and endpoint observations are retained.";
   let page = box_array_filled::<u8>(count: 8_u64, value: 0_u8);
   let window = &page.inner[0_u64..8_u64];
@@ -173,7 +173,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once, with the rest marker covering the fields this program does not name; the referenced operation chain returns before the initial directory is explicitly closed.";
   let Inputs(args: arguments, cwd: root, handles: files, ..) = move inputs;
   let outcome = exercise(args: &arguments, cwd: &root, files: &files);

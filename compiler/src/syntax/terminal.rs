@@ -68,6 +68,8 @@ pub enum FixedTerminal {
     Fn,
     /// `->`.
     ThinArrow,
+    /// `waits`.
+    Waits,
     /// `contract`.
     Contract,
     /// `define`.
@@ -144,6 +146,8 @@ pub enum FixedTerminal {
     Return,
     /// `loop`.
     Loop,
+    /// `mustpar`.
+    Mustpar,
     /// `for`.
     For,
     /// `in`.
@@ -227,7 +231,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 101] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -251,6 +255,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 101] = [
     FixedTerminal::Comma,
     FixedTerminal::Fn,
     FixedTerminal::ThinArrow,
+    FixedTerminal::Waits,
     FixedTerminal::Contract,
     FixedTerminal::Define,
     FixedTerminal::Requires,
@@ -289,6 +294,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 101] = [
     FixedTerminal::Set,
     FixedTerminal::Return,
     FixedTerminal::Loop,
+    FixedTerminal::Mustpar,
     FixedTerminal::For,
     FixedTerminal::In,
     FixedTerminal::Invariant,
@@ -358,6 +364,7 @@ impl FixedTerminal {
             Self::Comma => ",",
             Self::Fn => "fn",
             Self::ThinArrow => "->",
+            Self::Waits => "waits",
             Self::Contract => "contract",
             Self::Define => "define",
             Self::Equal => "=",
@@ -397,6 +404,7 @@ impl FixedTerminal {
             Self::Set => "set",
             Self::Return => "return",
             Self::Musttail => "musttail",
+            Self::Mustpar => "mustpar",
             Self::Loop => "loop",
             Self::For => "for",
             Self::In => "in",
@@ -828,7 +836,9 @@ mod tests {
         // `std` qualifier [MOD-10] first occurs beside `pkg` in that header. The graph
         // productions close [GRAM-2], so `entry` now first occurs there, before
         // the primitive type atoms, and a call's `musttail` first occurs in
-        // [GRAM-5] after the comparison atoms.
+        // [GRAM-5] after the comparison atoms. v0.77's `waits` [WAIT-1]
+        // follows the declaration's `->` and `mustpar` [PAR-4] first occurs on
+        // `for_stmt` [GRAM-4], just before `for`.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -843,23 +853,25 @@ mod tests {
         assert_eq!(FixedTerminal::Nodrop as u8, 11);
         assert_eq!(FixedTerminal::Readonly as u8, 15);
         assert_eq!(FixedTerminal::Colon as u8, 16);
-        assert_eq!(FixedTerminal::Ensures as u8, 26);
-        assert_eq!(FixedTerminal::Is as u8, 28);
-        assert_eq!(FixedTerminal::Copy as u8, 35);
-        assert_eq!(FixedTerminal::Drop as u8, 36);
-        assert_eq!(FixedTerminal::Ampersand as u8, 37);
-        assert_eq!(FixedTerminal::Entry as u8, 40);
-        assert_eq!(FixedTerminal::DotDot as u8, 53);
-        assert_eq!(FixedTerminal::For as u8, 61);
-        assert_eq!(FixedTerminal::In as u8, 62);
-        assert_eq!(FixedTerminal::Invariant as u8, 63);
-        assert_eq!(FixedTerminal::Use as u8, 64);
-        assert_eq!(FixedTerminal::Times as u8, 65);
-        assert_eq!(FixedTerminal::Musttail as u8, 95);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 90);
-        assert_eq!(FixedTerminal::Writes as u8, 100);
-        assert_eq!(TerminalPredicate::Identifier.index(), 101);
-        assert_eq!(TerminalPredicate::Digits.index(), 107);
+        assert_eq!(FixedTerminal::Ensures as u8, 27);
+        assert_eq!(FixedTerminal::Is as u8, 29);
+        assert_eq!(FixedTerminal::Copy as u8, 36);
+        assert_eq!(FixedTerminal::Drop as u8, 37);
+        assert_eq!(FixedTerminal::Ampersand as u8, 38);
+        assert_eq!(FixedTerminal::Entry as u8, 41);
+        assert_eq!(FixedTerminal::DotDot as u8, 54);
+        assert_eq!(FixedTerminal::For as u8, 63);
+        assert_eq!(FixedTerminal::In as u8, 64);
+        assert_eq!(FixedTerminal::Invariant as u8, 65);
+        assert_eq!(FixedTerminal::Use as u8, 66);
+        assert_eq!(FixedTerminal::Times as u8, 67);
+        assert_eq!(FixedTerminal::Musttail as u8, 97);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 92);
+        assert_eq!(FixedTerminal::Writes as u8, 102);
+        assert_eq!(FixedTerminal::Waits as u8, 23);
+        assert_eq!(FixedTerminal::Mustpar as u8, 62);
+        assert_eq!(TerminalPredicate::Identifier.index(), 103);
+        assert_eq!(TerminalPredicate::Digits.index(), 109);
     }
 
     /// The inventory holds every predicate, once.
