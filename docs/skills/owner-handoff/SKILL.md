@@ -12,10 +12,11 @@ the investigation. Write in the owner's language; repository artifacts stay
 English.
 
 Keep the handoff compact. Each part below starts with its name in bold on a
-line of its own. Under it, every point is a bullet that opens with its gist in
-bold and continues on the same line, with any detail in bullets indented
-beneath it. Never use headings or tables: headings spread one point over a
-screen, and a table's narrow columns bury the reasoning.
+line of its own, so none reads as part of the card before it. Under it, every
+point is a bullet that opens with its gist in bold and continues on the same
+line, with any detail in bullets indented beneath it. Never use headings or
+tables: headings spread one point over a screen, and a table's narrow columns
+bury the reasoning.
 
 1. **Decision cards.** One card for each amendment awaiting a ruling, each
    finding awaiting direction and each other choice the owner must make, or
