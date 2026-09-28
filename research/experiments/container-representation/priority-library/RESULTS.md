@@ -648,6 +648,33 @@ cost that loses the target cells, or a residual gap to the slower standard
 peer rejects the candidate. Any successful candidate remains a measured
 algorithm alternative until the owner revisits the binary-heap decision.
 
+### Four-ary sift result: rejected
+
+The scratch source was measured after the preregistration above and then
+restored; no production source or compiler code changed. It passed the same
+`make check`-equivalent PriorityQueue build and execution screen: 1,440 native
+trace executions, 2,160 scalar/owning WF executions in each image, four
+refusal chains per image, and the complete ecosystem screen of 3,600 traces
+plus eight refusal chains. Checksums and release ledgers agreed. The preserved
+candidate files are [ecosystem-fourary-replay-samples.csv](ecosystem-fourary-replay-samples.csv)
+and [ecosystem-fourary-accounting.csv](ecosystem-fourary-accounting.csv); their
+SHA-256 values are respectively
+`07ce82eb26a3050f0858c5a4cbb6921c7cd903da0b072293c22652dc322b39a6` and
+`ed77d5bf20c8c3c0a120b052de682e7e49d5692705b1933707ff8dd16cc667fc`.
+
+The target reducer classified 12 pass, 10 deficit and two inconclusive useful
+cells (six setup/cleanup controls remain unranked). The candidate did not
+remove the wide movement deficit: pop/push at 16/256/4096 was respectively
+1.68–1.71, 2.06–2.12 and 2.21–2.28 times the slower standard peer; growing
+fill/pop was 1.43–1.50 at 256/4096, and heapify/pop was 1.28–1.39 at
+256/4096. Four-ary arithmetic reduced the number of levels but retained the
+three full-owner transfers per exchange and added child comparisons. A paired
+same-source comparison against the recorded binary image shows only a
+2–4% median reduction in the wide cells (and no uniform scalar gain), so this
+candidate cannot meet the owner target. The binary-heap design remains in
+force; the next PriorityQueue discriminator must change movement or result
+boundaries, not only fanout.
+
 **Design suitability.** The boxed prefix supports arbitrary consumption,
 growth and bottom-up construction without another storage mechanism.
 Whole-slot sifting has a measured wide movement cost against hole C.
