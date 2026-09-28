@@ -412,19 +412,20 @@ rarely insert at the same place.
   opaque struct with fields, or with the next change to nominal kinds.
 
 - **Land the approved `Option` success route with PR #169.** The
-  [writer-lost-facts investigation](../research/investigations/writer-lost-facts/DESIGN.md#shape-4-option-results)
-  proposed `when Some(value: r):` routing like `Ok`, with `Option` joining
-  the conditional transport [FN-9, ENT-5, CALL-4]; the owner approved it on
+  [writer-lost-facts
+  investigation](../research/investigations/writer-lost-facts/DESIGN.md#shape-4-option-results)
+  proposed `when Some(value: r):` routing like `Ok`, with `Option` joining the
+  conditional transport [FN-9, ENT-5, CALL-4]; the owner approved it on
   2026-09-28 to land together with PR #169, which rewrites the same FN-9
-  admission sentence for struct payloads. Its two amendments stay under
-  `design/amendments/` until then. The investigation's other two approved
-  changes, header conclusions leaving the loop and the `give` carrier
-  equality, have landed. Validate with the investigation's `Some` probe
-  as conformance cases (a routed `Some` with a caller match, a forwarded
-  `Option`, a rejected `when None(...)`, an unproved `Some` payload, a `None`
-  arm selecting nothing) and unchanged check time on the maintained
-  programs. Reopen when PR #169 is ready to land.
-
+  admission sentence for struct payloads; that implementation applies its two
+  approved revisions to the tree, and they are not pending amendments
+  meanwhile. The investigation's other two approved changes, header
+  conclusions leaving the loop and the `give` carrier equality, have landed.
+  Validate with the investigation's `Some` probe as conformance cases (a
+  routed `Some` with a caller match, a forwarded `Option`, a rejected `when
+  None(...)`, an unproved `Some` payload, a `None` arm selecting nothing) and
+  unchanged check time on the maintained programs. Reopen when PR #169 is
+  ready to land.
 - **An affine bound is lost at a statement join where the binding's images
   differ.** After a scan whose `pos <= length` is known only as an affine
   invariant conclusion, `let result = pos; if result < start { set result = start; }`

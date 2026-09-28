@@ -352,7 +352,7 @@ GIVE-1 still owns delivery completeness and exact mode/type agreement; only afte
 
 For that additional fact-carrier judgment, a bare-atom carrier must be one tracked own-value binding of the exact receiving type: its root resolves to a body `let_stmt` binding, `for_stmt` binder, parameter, or match binder, and it carries no suffix.
 A const-generic constant, Z, counted capture, contract definition, symbolic result datum, projected place, consuming atom, or any other atom may still be admitted in its own grammar role but carries no relation through a value initializer.
-Replace every occurrence of the delivered binding d with the receiver x (`d ↦ x`); no receiver fact is read and no inverse substitution is formed.
+Delivery replaces every occurrence of the delivered binding d with the receiver x (`d ↦ x`) and delivers the carrier equality, exactly as [ENT-5] defines.
 
 [GRAM-8] Named construction.
 A constructor `call` of struct or enum-variant type K writes every declared field of K exactly once as `IDENT ":" atom`, the IDENTs equal to K's declared field names in declared order.
