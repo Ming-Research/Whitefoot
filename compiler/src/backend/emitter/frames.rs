@@ -17,9 +17,9 @@
 //!
 //! A call of a waiting host function is its `.start`, which submits the
 //! operation into the running context's operation block or answers at once,
-//! then, only for a submitted operation, `wf__context_wait` and a suspension
-//! until the record is complete, and its `.finish`, which reads the record
-//! into the result.
+//! then, only for an operation still pending, `wf__context_wait` and a
+//! suspension until the record is complete, and for any submitted operation
+//! its `.finish`, which reads the record into the result.
 //!
 //! Every suspension returns to the context driver in the completion bridge,
 //! which resumes the frame a context parked when the context is ready.
@@ -362,11 +362,13 @@ impl FunctionEmitter<'_, '_> {
         ]);
         self.output.symbol(start.clone());
         self.output.symbol(finish.clone());
+        // The start answers 0 when it wrote the result itself, 1 when its
+        // operation has already completed, and 2 when it is still pending.
         writeln!(
             self.output,
             "  %{prefix}.operation = call ptr @wf__context_operation()\n  \
-             %{prefix}.started = call i1 @{start}({arguments})\n  \
-             br i1 %{prefix}.started, label %{prefix}.wait, label %{prefix}.done\n\
+             %{prefix}.started = call i32 @{start}({arguments})\n  \
+             switch i32 %{prefix}.started, label %{prefix}.wait [ i32 0, label %{prefix}.done i32 1, label %{prefix}.finish ]\n\
              {prefix}.wait:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
              %{prefix}.parked = call i32 @wf__context_wait(ptr %{prefix}.operation, ptr {HANDLE})\n  \
@@ -440,13 +442,14 @@ pub(super) fn waiting_signature(symbol: String, mut parameters: Vec<Parameter>) 
     signature
 }
 
-/// A waiting host function's two declarations.
+/// A waiting host function's two declarations, which keep their parameter
+/// names in whole-module output as every linked declaration does.
 pub(super) fn host_declarations(symbol: &str, parameters: &[Parameter]) -> Module {
     let (start, finish) = host_entry_symbols(symbol);
     let mut with_operation = parameters.to_vec();
-    with_operation.push(Parameter::unnamed("ptr"));
+    with_operation.push(Parameter::named("ptr", "%wf.operation"));
     let mut module = Module::default();
-    module.declare(Signature::new(start, "i1", with_operation.clone()));
-    module.declare(Signature::new(finish, "void", with_operation));
+    module.declare_named(Signature::new(start, "i32", with_operation.clone()));
+    module.declare_named(Signature::new(finish, "void", with_operation));
     module
 }

@@ -47,6 +47,10 @@
 #include "../windows_runtime.h"
 #endif
 
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#endif
+
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -946,6 +950,147 @@ __attribute__((weak)) int wf__coro_done(void *frame) {
     wf_bridge_fail("contexts need the ordinary library, which this build does not link");
 }
 
+/* The memory contexts and their frames come from: blocks of host regions
+ * this section reserves itself, never the program's allocator, which the
+ * runtime every build links does not call [STOR-8].  A frame is the resumable
+ * form of a stack, and stacks were always the host's, reserved by the floor.
+ *
+ * A region is one 64 MiB reservation, so thousands of contexts share one
+ * kernel mapping, and only the pages a frame touches become resident.  Blocks
+ * are powers of two from 512 bytes to 2 MiB, carved from the current region
+ * in order and kept on a free list per size once released; every block is
+ * aligned to at least its smallest size.  A larger request gets a reservation
+ * of its own, released with it.  Only the driver thread takes and gives
+ * blocks, so the lists need no lock. */
+#define WF_POOL_SMALLEST_SHIFT 9u
+#define WF_POOL_CLASSES 13u
+#define WF_POOL_LARGEST ((size_t)1u << (WF_POOL_SMALLEST_SHIFT + WF_POOL_CLASSES - 1u))
+#define WF_POOL_REGION_BYTES ((size_t)64u * 1024u * 1024u)
+#define WF_POOL_LARGE_GRAIN ((size_t)64u * 1024u)
+
+typedef struct wf_pool_block wf_pool_block;
+struct wf_pool_block {
+    wf_pool_block *next;
+};
+
+static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
+static unsigned char *wf_pool_cursor;
+static size_t wf_pool_remaining;
+
+/* A frame no memory can hold ends the program: no source outcome can refuse
+ * a waiting call, exactly as none can refuse an ordinary call's stack frame
+ * [SCOPE-3]. */
+static _Noreturn void wf_context_exhausted(void) {
+    wf_bridge_fail("no memory could be reserved for a waiting function's frame");
+}
+
+static void *wf_pool_host_reserve(size_t bytes) {
+#if defined(_WIN32)
+    return VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#if defined(MAP_NORESERVE)
+    flags |= MAP_NORESERVE;
+#endif
+    void *region = mmap(NULL, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
+    return region == MAP_FAILED ? NULL : region;
+#endif
+}
+
+static void wf_pool_host_release(void *block, size_t bytes) {
+#if defined(_WIN32)
+    (void)bytes;
+    (void)VirtualFree(block, 0, MEM_RELEASE);
+#else
+    (void)munmap(block, bytes);
+#endif
+}
+
+static unsigned wf_pool_class_of(size_t size) {
+    unsigned index = 0;
+    while (((size_t)1u << (WF_POOL_SMALLEST_SHIFT + index)) < size) {
+        index += 1u;
+    }
+    return index;
+}
+
+/* Hands what is left of the current region to the free lists, largest
+ * blocks first, so a new region wastes none of the old one. */
+static void wf_pool_retire_region(void) {
+    unsigned index = WF_POOL_CLASSES;
+    while (index > 0u) {
+        size_t size;
+        index -= 1u;
+        size = (size_t)1u << (WF_POOL_SMALLEST_SHIFT + index);
+        while (wf_pool_remaining >= size) {
+            wf_pool_block *block = (wf_pool_block *)(void *)wf_pool_cursor;
+            block->next = wf_pool_released[index];
+            wf_pool_released[index] = block;
+            wf_pool_cursor += size;
+            wf_pool_remaining -= size;
+        }
+    }
+    wf_pool_cursor = NULL;
+    wf_pool_remaining = 0;
+}
+
+/* A block of at least `bytes`; its whole size is stored in `granted`. */
+static void *wf_pool_take(size_t bytes, size_t *granted) {
+    unsigned index;
+    size_t size;
+    void *block;
+    if (bytes > WF_POOL_LARGEST) {
+        if (bytes > SIZE_MAX - WF_POOL_LARGE_GRAIN) {
+            wf_context_exhausted();
+        }
+        size = (bytes + WF_POOL_LARGE_GRAIN - 1u) / WF_POOL_LARGE_GRAIN * WF_POOL_LARGE_GRAIN;
+        block = wf_pool_host_reserve(size);
+        if (block == NULL) {
+            wf_context_exhausted();
+        }
+        *granted = size;
+        return block;
+    }
+    index = wf_pool_class_of(bytes);
+    size = (size_t)1u << (WF_POOL_SMALLEST_SHIFT + index);
+    *granted = size;
+    if (wf_pool_released[index] != NULL) {
+        wf_pool_block *reused = wf_pool_released[index];
+        wf_pool_released[index] = reused->next;
+        return reused;
+    }
+    if (wf_pool_remaining < size) {
+        unsigned char *region;
+        wf_pool_retire_region();
+        region = (unsigned char *)wf_pool_host_reserve(WF_POOL_REGION_BYTES);
+        if (region == NULL) {
+            wf_context_exhausted();
+        }
+        wf_pool_cursor = region;
+        wf_pool_remaining = WF_POOL_REGION_BYTES;
+    }
+    block = wf_pool_cursor;
+    wf_pool_cursor += size;
+    wf_pool_remaining -= size;
+    return block;
+}
+
+static void wf_pool_give(void *block, size_t granted) {
+    wf_pool_block *released;
+    unsigned index;
+    if (block == NULL) {
+        return;
+    }
+    if (granted > WF_POOL_LARGEST) {
+        wf_pool_host_release(block, granted);
+        return;
+    }
+    index = wf_pool_class_of(granted);
+    released = (wf_pool_block *)block;
+    released->next = wf_pool_released[index];
+    wf_pool_released[index] = released;
+}
+
 /* One chunk of a context's frame arena.  Frames are allocated and released
  * last in, first out, because a caller releases its callee's frame before it
  * continues and a context's outermost frame is released last. */
@@ -990,6 +1135,8 @@ struct wf_context {
      * chunk kept for the next call that needs more than the current one. */
     wf_context_chunk *arena;
     wf_context_chunk *spare;
+    /* The pool block this record occupies, zero for the root's. */
+    size_t pool_bytes;
     /* The one host operation the context has pending. */
     union {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
@@ -1207,13 +1354,6 @@ static int wf_context_harvest(void) {
     return moved;
 }
 
-/* A frame no allocation can hold ends the program: no source outcome can
- * refuse a waiting call, exactly as none can refuse an ordinary call's stack
- * frame. */
-static _Noreturn void wf_context_exhausted(void) {
-    wf_bridge_fail("no memory could be reserved for a waiting function's frame");
-}
-
 static void *wf_context_allocate(wf_context *context, uint64_t bytes) {
     wf_context_chunk *chunk = context->arena;
     size_t rounded;
@@ -1223,21 +1363,21 @@ static void *wf_context_allocate(wf_context *context, uint64_t bytes) {
     }
     rounded = ((size_t)bytes + 15u) / 16u * 16u;
     if (chunk == NULL || chunk->capacity - chunk->used < rounded) {
-        size_t capacity = rounded + WF_CONTEXT_CHUNK_SLACK;
+        size_t wanted = rounded + WF_CONTEXT_CHUNK_SLACK;
         wf_context_chunk *fresh = context->spare;
-        if (chunk == NULL && rounded <= WF_CONTEXT_FIRST_CHUNK) {
-            capacity = WF_CONTEXT_FIRST_CHUNK;
+        if (chunk == NULL && rounded <= WF_CONTEXT_FIRST_CHUNK - WF_CONTEXT_CHUNK_HEADER) {
+            wanted = WF_CONTEXT_FIRST_CHUNK - WF_CONTEXT_CHUNK_HEADER;
         }
         if (fresh != NULL && fresh->capacity >= rounded) {
             context->spare = NULL;
         } else {
-            free(fresh);
-            context->spare = NULL;
-            fresh = (wf_context_chunk *)malloc(WF_CONTEXT_CHUNK_HEADER + capacity);
-            if (fresh == NULL) {
-                wf_context_exhausted();
+            size_t granted;
+            if (fresh != NULL) {
+                wf_pool_give(fresh, WF_CONTEXT_CHUNK_HEADER + fresh->capacity);
             }
-            fresh->capacity = capacity;
+            context->spare = NULL;
+            fresh = (wf_context_chunk *)wf_pool_take(WF_CONTEXT_CHUNK_HEADER + wanted, &granted);
+            fresh->capacity = granted - WF_CONTEXT_CHUNK_HEADER;
         }
         fresh->used = 0;
         fresh->previous = chunk;
@@ -1262,18 +1402,22 @@ static void wf_context_release(wf_context *context, void *frame) {
     chunk->used = (size_t)((unsigned char *)frame - base);
     if (chunk->used == 0 && chunk->previous != NULL) {
         context->arena = chunk->previous;
-        free(context->spare);
+        if (context->spare != NULL) {
+            wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+        }
         context->spare = chunk;
     }
 }
 
-static void wf_context_free_arena(wf_context *context) {
+static void wf_context_release_arena(wf_context *context) {
     while (context->arena != NULL) {
         wf_context_chunk *previous = context->arena->previous;
-        free(context->arena);
+        wf_pool_give(context->arena, WF_CONTEXT_CHUNK_HEADER + context->arena->capacity);
         context->arena = previous;
     }
-    free(context->spare);
+    if (context->spare != NULL) {
+        wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+    }
     context->spare = NULL;
 }
 
@@ -1347,15 +1491,17 @@ int wf__context_wait(void *operation, void *frame) {
 
 /* [PAR-4] reserves a new context and returns the block its call's arguments
  * are stored in; `wf__context_launch` starts it.  No source outcome can
- * refuse a start, so memory the host will not give ends the program. */
+ * refuse a start, so memory the host will not reserve ends the program. */
 void *wf__context_prepare(uint64_t bytes) {
     wf_context *context;
     if (wf_context_prepared != NULL) {
         wf_bridge_fail("a context was prepared while another waited to start");
     }
-    context = (wf_context *)calloc(1, sizeof(*context));
-    if (context == NULL) {
-        wf_context_exhausted();
+    {
+        size_t granted;
+        context = (wf_context *)wf_pool_take(sizeof(*context), &granted);
+        memset(context, 0, sizeof(*context));
+        context->pool_bytes = granted;
     }
     wf_context_prepared = context;
     return wf_context_allocate(context, bytes);
@@ -1408,7 +1554,7 @@ static void wf_context_finish(wf_context *context) {
     wf_context_current = context;
     wf__coro_destroy(context->root);
     wf_context_current = previous;
-    wf_context_free_arena(context);
+    wf_context_release_arena(context);
     group[0] -= 1u;
     if (group[0] == 0u && group[1] != 0u) {
         wf_context *waiter = (wf_context *)(uintptr_t)group[1];
@@ -1416,7 +1562,7 @@ static void wf_context_finish(wf_context *context) {
         wf_context_ready(waiter);
     }
     wf_context_live -= 1u;
-    free(context);
+    wf_pool_give(context, context->pool_bytes);
 }
 
 /* Runs contexts until the root's outermost frame has finished: resumes the
@@ -1485,7 +1631,7 @@ void wf__context_root_run(void *frame) {
     }
     wf_context_current = &wf_context_root;
     wf__coro_destroy(frame);
-    wf_context_free_arena(&wf_context_root);
+    wf_context_release_arena(&wf_context_root);
     wf_context_current = NULL;
 }
 
@@ -1618,6 +1764,14 @@ static void wf_bridge_join(wf_completion_record *record) {
             wf_bridge_park(epoch);
         }
     }
+}
+
+int wf__completion_pending(const void *record) {
+    if (record == NULL) {
+        wf_bridge_fail("a pending test was given no record");
+    }
+    return wf_bridge_record_state((const wf_completion_record *)record)
+        != WF_COMPLETION_DONE;
 }
 
 static wf_completion_record *wf_bridge_record_of(const void *record) {

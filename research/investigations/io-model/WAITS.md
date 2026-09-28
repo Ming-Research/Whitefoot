@@ -342,7 +342,11 @@ produced.
 Each waiting function compiles to a resumable frame. An activation's frame is
 allocated when it is entered, from the arena of the context that runs it, and
 released when its caller has read its result, so a context's frames are
-allocated and released last in, first out. The values that live across a
+allocated and released last in, first out. The arenas and the contexts
+themselves take their memory from host regions the driver reserves, never
+from the program's allocator: the runtime every build links does not call it
+[STOR-8], and one 64 MiB region serves thousands of contexts with one kernel
+mapping. The values that live across a
 suspension point are kept in the frame; everything else stays where ordinary
 code keeps it. A host operation that has not completed suspends the frame and
 returns to the driver; its completion makes the context ready, and the driver

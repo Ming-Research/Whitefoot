@@ -171,7 +171,7 @@ fn tcp_calls_use_ordinary_linked_declarations() {
         // (design/amendments/compiler-waiting-contexts.md); nothing calls a
         // blocking whole.
         assert!(
-            llvm.contains(&format!("call i1 @wf_std.net.{name}.start(")),
+            llvm.contains(&format!("call i32 @wf_std.net.{name}.start(")),
             "missing ordinary start {name}"
         );
         assert!(
@@ -179,7 +179,7 @@ fn tcp_calls_use_ordinary_linked_declarations() {
             "missing ordinary finish {name}"
         );
         assert!(
-            llvm.contains(&format!("declare i1 @wf_std.net.{name}.start(")),
+            llvm.contains(&format!("declare i32 @wf_std.net.{name}.start(")),
             "missing ordinary declaration {name}"
         );
         assert!(

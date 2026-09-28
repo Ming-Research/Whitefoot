@@ -667,6 +667,13 @@ void wf_test_close_submit(int descriptor, void *record) {\n\
                     WF_TEST_OPEN_SUCCEEDED);\n\
 }\n\
 \n\
+/* Every scripted submit above publishes before it returns, so no record is\n\
+   ever pending and a waiting frame reads its outcome without suspending. */\n\
+int wf_test_pending(const void *record) {\n\
+    (void)record;\n\
+    return 0;\n\
+}\n\
+\n\
 void wf_test_file_join(const void *record, int64_t *value, int *error_code) {\n\
     wf_test_completion completion;\n\
     memcpy(&completion, record, sizeof completion);\n\
@@ -737,6 +744,7 @@ pub(super) fn run_emitted_on_deterministic_host(
         "wf__completion_file_close_submit=wf_test_close_submit",
         "wf__completion_file_join=wf_test_file_join",
         "wf__completion_file_open_join=wf_test_file_open_join",
+        "wf__completion_pending=wf_test_pending",
     ]
     .map(str::to_owned);
     let executable = build_linked_executable_with_library_defines(
@@ -1082,7 +1090,9 @@ fn substituting_linked_closes_keeps_one_ordinary_call_in_optimized_ir() {
     let optimized = host_optimized_module(&emit_for_deterministic_target(RELEASES_ONE_DIRECTORY));
     // The optimized WF body calls its ordinary declaration; linked internals
     // are neither copied into this module nor selected by the compiler.
-    assert!(optimized.contains("@wf_std.fs.close_directory("));
+    // A waiting host function is linked as its start and its finish.
+    assert!(optimized.contains("@wf_std.fs.close_directory.start("));
+    assert!(optimized.contains("@wf_std.fs.close_directory.finish("));
     assert!(!optimized.contains("@wf_test_close_submit"));
     assert!(!optimized.contains("@malloc"));
 }
@@ -1305,12 +1315,13 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     let module = emit_for_deterministic_target(source);
     // The record loop reaches native write through its EINTR retry helper.
     // Both edges must remain independent of the substituted library call.
-    assert!(module.contains("declare void @wf_std.io.write_once(ptr %wf.result,"));
+    assert!(module.contains("declare i32 @wf_std.io.write_once.start(ptr %wf.result,"));
     assert!(module.contains("declare i64 @write(i32, ptr, i64)"));
     assert!(module.contains("%written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)"));
     assert!(module.contains("%written = call i64 @write(i32 2, ptr %bytes, i64 %length)"));
     assert!(module.contains("call void @wf_resource_record_abort("));
-    assert!(module.contains("call void @wf_std.io.write_once("));
+    assert!(module.contains("call i32 @wf_std.io.write_once.start("));
+    assert!(module.contains("call void @wf_std.io.write_once.finish("));
     assert!(!module.contains("@wf_test_write_submit"));
 
     // And the native target still declares exactly one `@write` for both.

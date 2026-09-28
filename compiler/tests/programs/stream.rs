@@ -35,7 +35,7 @@ fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
     // calling frame suspends between (design/amendments/compiler-waiting-contexts.md).
     for (caller, callee) in [("main", "read_next"), ("publish_all", "write_once")] {
         let body = emitted_function(&llvm, caller);
-        for (result, half) in [("i1", "start"), ("void", "finish")] {
+        for (result, half) in [("i32", "start"), ("void", "finish")] {
             assert_eq!(
                 body.matches(&format!("call {result} @wf_std.io.{callee}.{half}("))
                     .count(),

@@ -342,8 +342,11 @@ static void wf_factory_return(wf_value *factory) {
  * finish reads besides the record.  Every waiting body below is a start,
  * which submits into it or answers at once, and a finish, which reads it once
  * the record is complete; the frame that calls them suspends between the two
- * (design/amendments/compiler-waiting-contexts.md).  The blocking bodies the
- * probes call are the two with a join between them. */
+ * (design/amendments/compiler-waiting-contexts.md).  A start answers 0 when
+ * it wrote the result itself and submitted nothing, 1 when it submitted an
+ * operation that has already completed, and 2 when the operation is still
+ * pending; only 2 makes the frame wait, and 1 and 2 are read by the finish.
+ * The blocking bodies the probes call are the two with a join between them. */
 typedef struct wf_host_operation {
     wf_completion_record record;
     /* A directory read's cursor, which the host may write at completion. */
@@ -408,7 +411,7 @@ int wf__body_read_at_start(wf_read_result *result, wf_value *factory, wf_value *
     wf_transition(file);
     wf__completion_file_pread_submit(wf_descriptor(file),
         wf_window(destination, start), end - start, file_offset, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_read_at_finish(wf_read_result *result, wf_value *factory, wf_value *file,
@@ -439,7 +442,7 @@ int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value
     wf_transition(input);
     wf__completion_file_read_submit(wf_descriptor(input),
         wf_window(destination, start), end - start, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_read_next_finish(wf_read_result *result, wf_value *factory, wf_value *input,
@@ -466,7 +469,7 @@ int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_val
     wf_transition(output);
     wf__completion_file_write_submit(wf_descriptor(output),
         wf_window(source, start), end - start, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_write_once_finish(wf_write_result *result, wf_value *factory, wf_value *output,
@@ -492,7 +495,7 @@ int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
     wf_transition(receive);
     wf__completion_socket_receive_submit(wf_descriptor(receive),
         wf_window(destination, start), end - start, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_receive_next_finish(wf_read_result *result, wf_value *receive,
@@ -517,7 +520,7 @@ int wf__body_send_once_start(wf_write_result *result, wf_value *send,
     wf_transition(send);
     wf__completion_socket_send_submit(wf_descriptor(send),
         wf_window(source, start), end - start, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_send_once_finish(wf_write_result *result, wf_value *send,
@@ -553,7 +556,7 @@ static int wf_open_start(wf_open_result *result, wf_value *factory,
         descriptor_class,
 #endif
         &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 static void wf_open_finish(wf_open_result *result, wf_value *factory,
@@ -731,7 +734,7 @@ static int wf_close_start(wf_close_result *result, wf_value *factory,
         wf__completion_file_close_submit(wf_descriptor(owner), &operation->record);
     else wf__completion_socket_shutdown_submit(wf_descriptor(owner),
                                                (unsigned)direction, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 static void wf_close_finish(wf_close_result *result, wf_value *factory, int direction,
@@ -793,7 +796,7 @@ int wf__body_tcp_listen_start(wf_open_result *result, wf_value *factory,
     }
     wf__completion_socket_listen_submit(address->words[0], address->words[1],
                                         (uint32_t)address->words[2], &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_tcp_listen_finish(wf_open_result *result, wf_value *factory,
@@ -825,7 +828,7 @@ int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
     }
     wf__completion_socket_connect_submit(address->words[0], address->words[1],
                                          (uint32_t)address->words[2], &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
@@ -860,7 +863,7 @@ int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
         return 0;
     }
     wf__completion_socket_accept_submit(wf_descriptor(listener), &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
@@ -968,7 +971,7 @@ int wf__body_directory_next_start(wf_list_result *result, wf_value *source,
     wf__completion_directory_next_submit(wf_descriptor(source),
                                          wf_window(destination, start), end - start,
                                          &operation->position, &operation->record);
-    return 1;
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,

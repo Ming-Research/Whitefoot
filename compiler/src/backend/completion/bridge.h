@@ -193,6 +193,11 @@ uint64_t wf__completion_native_ring_submission_enters(void);
 uint64_t wf__completion_wait_announcements(void);
 uint64_t wf__completion_wait_signals(void);
 
+/* Whether a submitted record has not completed yet: what a waiting host
+ * operation's start answers, so the frame that called it waits only for an
+ * operation that is still pending. */
+int wf__completion_pending(const void *record);
+
 /* ------------------------------------------------------ waiting contexts */
 
 /* Contexts [WAIT-2], each a chain of resumable frames

@@ -14,8 +14,9 @@
 ; A waiting host function [WAIT-1] is defined as two entries, `.start` and
 ; `.finish`, each with the function's own parameters and then the running
 ; context's operation block: the start submits the operation into that block
-; or answers at once, returning whether it submitted, and the finish reads the
-; completed record into the result. The waiting function that calls them
+; or answers at once, returning 0 when it wrote the result, 1 when its
+; operation has already completed and 2 when it is still pending, and the
+; finish reads the completed record into the result. The waiting function that calls them
 ; suspends between the two (design/amendments/compiler-waiting-contexts.md).
 
 declare void @wf__body_host_copy_bytes(ptr, ptr, ptr, i64, i64)
@@ -44,15 +45,14 @@ entry:
 
 declare i32 @wf__body_read_at_start(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
 
-define i1 @wf_std.fs.read_at.start(ptr %result, ptr %factory, ptr %file, ptr %destination.data, i64 %destination.len, i64 %offset, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.fs.read_at.start(ptr %result, ptr %factory, ptr %file, ptr %destination.data, i64 %destination.len, i64 %offset, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_read_at_start(ptr %result, ptr %factory, ptr %file, ptr %view, i64 %offset, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_read_at_start(ptr %result, ptr %factory, ptr %file, ptr %view, i64 %offset, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_read_at_finish(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
@@ -69,15 +69,14 @@ entry:
 
 declare i32 @wf__body_write_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_write_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
@@ -94,15 +93,14 @@ entry:
 
 declare i32 @wf__body_open_directory_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.fs.open_directory.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.fs.open_directory.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %name.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %name.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_open_directory_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_open_directory_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_open_directory_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
@@ -119,15 +117,14 @@ entry:
 
 declare i32 @wf__body_directory_next_start(ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.fs.directory_next.start(ptr %result, ptr %source, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.fs.directory_next.start(ptr %result, ptr %source, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_directory_next_start(ptr %result, ptr %source, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_directory_next_start(ptr %result, ptr %source, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_directory_next_finish(ptr, ptr, ptr, i64, i64, ptr)
@@ -144,15 +141,14 @@ entry:
 
 declare i32 @wf__body_open_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.fs.open_file.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.fs.open_file.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %name.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %name.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_open_file_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_open_file_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_open_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
@@ -169,15 +165,14 @@ entry:
 
 declare i32 @wf__body_read_next_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_read_next_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
@@ -194,15 +189,14 @@ entry:
 
 declare i32 @wf__body_receive_next_start(ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_receive_next_finish(ptr, ptr, ptr, i64, i64, ptr)
@@ -219,15 +213,14 @@ entry:
 
 declare i32 @wf__body_send_once_start(ptr, ptr, ptr, i64, i64, ptr)
 
-define i1 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %pending = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_send_once_finish(ptr, ptr, ptr, i64, i64, ptr)
@@ -304,11 +297,10 @@ entry:
 
 declare i32 @wf__body_open_read_start(ptr, ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.fs.open_read.start(ptr %result, ptr %factory, ptr %root, ptr %path, ptr %operation) {
+define i32 @wf_std.fs.open_read.start(ptr %result, ptr %factory, ptr %root, ptr %path, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_open_read_start(ptr %result, ptr %factory, ptr %root, ptr %path, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_open_read_start(ptr %result, ptr %factory, ptr %root, ptr %path, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_open_read_finish(ptr, ptr, ptr, ptr, ptr)
@@ -321,11 +313,10 @@ entry:
 
 declare i32 @wf__body_open_directory_source_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.fs.open_directory_source.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
+define i32 @wf_std.fs.open_directory_source.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_open_directory_source_start(ptr %result, ptr %factory, ptr %directory, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_open_directory_source_start(ptr %result, ptr %factory, ptr %directory, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_open_directory_source_finish(ptr, ptr, ptr, ptr)
@@ -338,11 +329,10 @@ entry:
 
 declare i32 @wf__body_close_read_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.fs.close_read.start(ptr %result, ptr %factory, ptr %file, ptr %operation) {
+define i32 @wf_std.fs.close_read.start(ptr %result, ptr %factory, ptr %file, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_read_start(ptr %result, ptr %factory, ptr %file, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_read_start(ptr %result, ptr %factory, ptr %file, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_read_finish(ptr, ptr, ptr, ptr)
@@ -355,11 +345,10 @@ entry:
 
 declare i32 @wf__body_close_directory_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.fs.close_directory.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
+define i32 @wf_std.fs.close_directory.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_directory_start(ptr %result, ptr %factory, ptr %directory, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_directory_start(ptr %result, ptr %factory, ptr %directory, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_directory_finish(ptr, ptr, ptr, ptr)
@@ -372,11 +361,10 @@ entry:
 
 declare i32 @wf__body_close_directory_source_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.fs.close_directory_source.start(ptr %result, ptr %factory, ptr %source, ptr %operation) {
+define i32 @wf_std.fs.close_directory_source.start(ptr %result, ptr %factory, ptr %source, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_directory_source_start(ptr %result, ptr %factory, ptr %source, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_directory_source_start(ptr %result, ptr %factory, ptr %source, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_directory_source_finish(ptr, ptr, ptr, ptr)
@@ -405,11 +393,10 @@ entry:
 
 declare i32 @wf__body_tcp_listen_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.tcp_listen.start(ptr %result, ptr %factory, ptr %address, ptr %operation) {
+define i32 @wf_std.net.tcp_listen.start(ptr %result, ptr %factory, ptr %address, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_tcp_listen_start(ptr %result, ptr %factory, ptr %address, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_tcp_listen_start(ptr %result, ptr %factory, ptr %address, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_tcp_listen_finish(ptr, ptr, ptr, ptr)
@@ -422,11 +409,10 @@ entry:
 
 declare i32 @wf__body_tcp_accept_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
+define i32 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_tcp_accept_finish(ptr, ptr, ptr, ptr)
@@ -439,11 +425,10 @@ entry:
 
 declare i32 @wf__body_tcp_connect_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %operation) {
+define i32 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_tcp_connect_finish(ptr, ptr, ptr, ptr)
@@ -456,11 +441,10 @@ entry:
 
 declare i32 @wf__body_close_listener_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.close_listener.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
+define i32 @wf_std.net.close_listener.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_listener_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_listener_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_listener_finish(ptr, ptr, ptr, ptr)
@@ -473,11 +457,10 @@ entry:
 
 declare i32 @wf__body_close_receive_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.close_receive.start(ptr %result, ptr %factory, ptr %receive, ptr %operation) {
+define i32 @wf_std.net.close_receive.start(ptr %result, ptr %factory, ptr %receive, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_receive_start(ptr %result, ptr %factory, ptr %receive, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_receive_start(ptr %result, ptr %factory, ptr %receive, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_receive_finish(ptr, ptr, ptr, ptr)
@@ -490,11 +473,10 @@ entry:
 
 declare i32 @wf__body_close_send_start(ptr, ptr, ptr, ptr)
 
-define i1 @wf_std.net.close_send.start(ptr %result, ptr %factory, ptr %send, ptr %operation) {
+define i32 @wf_std.net.close_send.start(ptr %result, ptr %factory, ptr %send, ptr %operation) {
 entry:
-  %pending = call i32 @wf__body_close_send_start(ptr %result, ptr %factory, ptr %send, ptr %operation)
-  %started = icmp ne i32 %pending, 0
-  ret i1 %started
+  %state = call i32 @wf__body_close_send_start(ptr %result, ptr %factory, ptr %send, ptr %operation)
+  ret i32 %state
 }
 
 declare void @wf__body_close_send_finish(ptr, ptr, ptr, ptr)
