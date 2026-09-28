@@ -236,6 +236,29 @@ prevents selection. Overlap or unstable results do not complete the target.
 A success selects only the ordinary source composition, not a general
 inliner policy or a language amendment.
 
+The first native screen found an ambiguity in "comparable hot spills" before
+any linking, correctness execution or timing. The old nonempty tail prepares
+14 literal vectors and stores seven pairs on every call; the expanded trace
+prepares them once, then reloads seven pairs after every truncate. Thus 224
+bytes of stack traffic remain per cycle, but the repeated literal preparation,
+stack stores and tail call disappear. Counting residual stack bytes alone
+does not compare the complete replaced work. An independent code review
+confirmed this distinction; neither reading of the screen establishes a
+timing result.
+
+For the bounded continuation, compare the complete repeated setup, not only
+its remaining stack traffic. Keep this qualification visible rather than
+claiming an unequivocal pass of the original wording. The candidate may
+advance to the unchanged correctness and single-pair timing stages because
+the observed repeated work falls, within-record SIMD and direct backing
+stores remain, and no owner-sized snapshot or new hot helper appears. The
+wide trace frame grows from 352 to 400 bytes while the 288-byte tail frame
+disappears; inspect final linked placement and preserve every changed branch
+as a possible source of regressions. All prior falsifiers, full-matrix
+requirements, native-drift qualifications and refusal of any qualified
+useful-cell loss remain unchanged. This clarification precedes timing and
+does not select the candidate.
+
 In parallel, complete the already registered HashMap occupancy discriminator
 under the same source/compiler pin, with a fresh separate build and preserved
 practical samples. Its family report owns the capacity-sensitivity criterion
