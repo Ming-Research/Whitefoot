@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-28 Name a call-formed range's length by its endpoints in repairs
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (range-length repair) in the session handoff
+
+Summary: Apply the reviewed amendment for PR #167 unchanged. The second decision of compiler/diagnostic-repairs now gives the unproved goal over the `len` of a range an argument forms at the call its own routes: the length is written as the difference of the range's endpoints [REF-4], guarded when that difference is one binding, bounded by a width with the exact subtraction and then guarded when it is a subtraction, re-sliced from zero by that width when the goal equates such a subtraction, and preceded by a `let` for an endpoint that is not a binding. Its grounds are that such a range has the length its endpoints give it, so naming it as a value only its occurrence identifies hid the missing bound on the difference, and that a `-wrap` width carries no relation to the endpoints [ENT-3]; the refused occurrence-local classification is added to `Rejected:`. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 
 Nodes: language/waiting, language/parallelism, language/system-interface, language/system-interface/handle-factory, compiler/waiting-contexts
