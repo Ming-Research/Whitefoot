@@ -4,15 +4,15 @@ alias exit_status = std::process::exit_status;
 const ipv4_header: Array<u8, 20> =[69_u8, 0_u8, 0_u8, 84_u8, 0_u8, 0_u8, 64_u8, 0_u8, 64_u8, 1_u8, 0_u8, 0_u8, 192_u8, 168_u8, 0_u8, 1_u8, 192_u8, 168_u8, 0_u8, 199_u8];
 
 fn ipv4_checksum(header: &[u8]) -> result: u16 reads(header) contract {
-  define length = deref(header).len;
+  define length = header^.len;
   define odd = iand(length, 1_u64);
   requires odd == 0_u64;
 } {
   doc "The header arrives as a range reference, whose one measure is len, and the clause reads that measure as an ordinary place [REF-4, MSR-5].";
-  let length = deref(header).len;
+  let length = header^.len;
   let sum = 0_u32;
   for (offset in 0_u64..length) {
-    let byte = deref(header)[offset];
+    let byte = header^[offset];
     let wide = cvt::<u8, u32>(byte);
     let parity = iand(offset, 1_u64);
     if parity == 0_u64 {
@@ -33,7 +33,7 @@ fn ipv4_checksum(header: &[u8]) -> result: u16 reads(header) contract {
 fn main() -> status: ExitStatus pure {
   doc "The same header is summed twice: once over a const run reached by a range reference, and once over a frame-resident window filled from it.";
   let view = &ipv4_header[0_u64..20_u64];
-  let view_length = deref(view).len;
+  let view_length = view^.len;
   let view_odd = iand(view_length, 1_u64);
   if view_odd == 0_u64 {
   } else {
@@ -55,7 +55,7 @@ fn main() -> status: ExitStatus pure {
     place_back(window: &runtime_header, value: byte);
   }
   let copied = &runtime_header[0_u64..20_u64];
-  let copied_length = deref(copied).len;
+  let copied_length = copied^.len;
   let copied_odd = iand(copied_length, 1_u64);
   if copied_odd == 0_u64 {
   } else {

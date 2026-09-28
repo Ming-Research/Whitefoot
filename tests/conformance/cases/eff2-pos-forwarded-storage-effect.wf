@@ -3,10 +3,10 @@ alias exit_status = std::process::exit_status;
 
 fn write(out: &Slots<u8, 8>) -> result: unit writes(out) {
   doc "Writes one element behind its reference parameter; writes(out) states every access at or below out, so the length read needs no reads entry [EFF-1].";
-  let spare = deref(out).len;
+  let spare = out^.len;
   let ok = 0_u64 < spare;
   if ok {
-    set deref(out)[0_u64] = 1_u8;
+    set out^[0_u64] = 1_u8;
   }
   return unit;
 }

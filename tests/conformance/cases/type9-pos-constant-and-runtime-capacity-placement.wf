@@ -3,13 +3,13 @@ alias exit_status = std::process::exit_status;
 
 fn window_length(window: &Slots<u64, 4>) -> result: u64 reads(window.len) {
   doc "TYPE-9: a constant-capacity Slots<T, N> is a nameable type whose capacity is the type constant N and whose storage is inline in the owner or the stack frame.";
-  let n = deref(window).len;
+  let n = window^.len;
   return n;
 }
 
 fn boxed_length(cell: &Box<Slots<u64>>) -> result: u64 reads(cell.inner.len) {
   doc "TYPE-9: a runtime-capacity Slots<T> exists only as the content of a Box, reached by the ordinary field step inner, and Box<T> owns exactly one heap object of any nameable T.";
-  let n = deref(cell).inner.len;
+  let n = cell^.inner.len;
   return n;
 }
 

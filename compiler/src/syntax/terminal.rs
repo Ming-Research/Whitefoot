@@ -214,10 +214,10 @@ pub enum FixedTerminal {
     GreaterEqual,
     /// `musttail`.
     Musttail,
-    /// `deref`.
-    Deref,
     /// `.`.
     Dot,
+    /// `^`.
+    Caret,
     /// `pure`.
     Pure,
     /// `reads`.
@@ -324,8 +324,8 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 101] = [
     FixedTerminal::LessEqual,
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
-    FixedTerminal::Deref,
     FixedTerminal::Dot,
+    FixedTerminal::Caret,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
     FixedTerminal::Writes,
@@ -432,7 +432,7 @@ impl FixedTerminal {
             Self::BangEqual => "!=",
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
-            Self::Deref => "deref",
+            Self::Caret => "^",
             Self::Entry => "entry",
             Self::Dot => ".",
             Self::Pure => "pure",

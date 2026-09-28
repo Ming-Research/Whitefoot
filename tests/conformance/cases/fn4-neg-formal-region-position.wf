@@ -11,7 +11,7 @@ interface FirstValue {
 
 fn second_value(first: &Cell, second: &Cell) -> result: u8 reads(second.value) {
   doc "The row names the second parameter ordinal where the formal names the first.";
-  return deref(second).value;
+  return second^.value;
 }
 
 binding Wrong : FirstValue {

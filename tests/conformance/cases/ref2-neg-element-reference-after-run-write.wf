@@ -2,11 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn bump(part: &[u64], at: u64) -> result: unit writes(part) contract {
-  requires at < deref(part).len;
+  requires at < part^.len;
 } {
   doc "Adds 10 to element at of the run part names. Its row writes the whole run.";
-  let old = deref(part)[at];
-  set deref(part)[at] = old +wrap 10_u64;
+  let old = part^[at];
+  set part^[at] = old +wrap 10_u64;
   return unit;
 }
 
@@ -15,6 +15,6 @@ fn main() -> status: ExitStatus pure {
   let v = array_filled::<u64, 4>(value: 1_u64);
   let e = &v[1_u64];
   bump(part: &v[0_u64..2_u64], at: 1_u64);
-  let seen = deref(e);
+  let seen = e^;
   return exit_status(code: 0_u8);
 }

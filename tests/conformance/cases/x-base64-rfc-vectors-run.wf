@@ -25,10 +25,10 @@ fn require_index(index: u64, limit: u64) -> result: Result<u64, IndexError> pure
 
 fn read_index(values: &[u8], index: u64) -> result: Result<u8, IndexError> reads(values) {
   doc "Reads one element of a range reference after the bound is published.";
-  let spare = deref(values).len;
+  let spare = values^.len;
   match require_index(index: index, limit: spare) {
     Ok(value: admitted) => {
-      let value = deref(values)[admitted];
+      let value = values^[admitted];
       return Ok<u8, IndexError>(value: value);
     }
     Err(error: problem) => {
@@ -39,10 +39,10 @@ fn read_index(values: &[u8], index: u64) -> result: Result<u8, IndexError> reads
 
 fn write_index(values: &[u8], index: u64, value: u8) -> result: Result<unit, IndexError> writes(values) {
   doc "Writes one element of a range reference after the bound is published; writes subsumes reads for one path [EFF-1].";
-  let spare = deref(values).len;
+  let spare = values^.len;
   match require_index(index: index, limit: spare) {
     Ok(value: admitted) => {
-      set deref(values)[admitted] = value;
+      set values^[admitted] = value;
       return Ok<unit, IndexError>(value: unit);
     }
     Err(error: problem) => {
@@ -52,15 +52,15 @@ fn write_index(values: &[u8], index: u64, value: u8) -> result: Result<unit, Ind
 }
 
 fn encode(out: &[u8], input: &[u8]) -> function_result: Result<u64, IndexError> reads(input), writes(out) contract {
-  define required_out_length = deref(out).len;
-  define required_input_length = deref(input).len;
+  define required_out_length = out^.len;
+  define required_input_length = input^.len;
   define required_out_groups = ishr.wrap(required_out_length, 2_u32);
   define required_covered_input = required_out_groups *wrap 3_u64;
   requires required_input_length <= required_covered_input;
 } {
   doc "The complete scalar base64 encoder over two range references with different roots.";
-  let out_room = deref(out).len;
-  let input_length = deref(input).len;
+  let out_room = out^.len;
+  let input_length = input^.len;
   let input_offset = 0_u64;
   let output_offset = 0_u64;
   loop @full_groups {
@@ -171,8 +171,8 @@ fn main() -> status: ExitStatus pure {
   let man_output = array_filled::<u8, 4>(value: 0_u8);
   let man_source = &man_input[0_u64..3_u64];
   let man_window = &man_output[0_u64..4_u64];
-  let man_required_out_length = deref(man_window).len;
-  let man_required_input_length = deref(man_source).len;
+  let man_required_out_length = man_window^.len;
+  let man_required_input_length = man_source^.len;
   let man_required_out_groups = ishr.wrap(man_required_out_length, 2_u32);
   let man_required_covered_input = man_required_out_groups *wrap 3_u64;
   let man_capacity = man_required_input_length <= man_required_covered_input;
@@ -201,8 +201,8 @@ fn main() -> status: ExitStatus pure {
   let m_output = array_filled::<u8, 4>(value: 0_u8);
   let m_source = &m_input[0_u64..1_u64];
   let m_window = &m_output[0_u64..4_u64];
-  let m_required_out_length = deref(m_window).len;
-  let m_required_input_length = deref(m_source).len;
+  let m_required_out_length = m_window^.len;
+  let m_required_input_length = m_source^.len;
   let m_required_out_groups = ishr.wrap(m_required_out_length, 2_u32);
   let m_required_covered_input = m_required_out_groups *wrap 3_u64;
   let m_capacity = m_required_input_length <= m_required_covered_input;
@@ -233,8 +233,8 @@ fn main() -> status: ExitStatus pure {
   let ma_output = array_filled::<u8, 4>(value: 0_u8);
   let ma_source = &ma_input[0_u64..2_u64];
   let ma_window = &ma_output[0_u64..4_u64];
-  let ma_required_out_length = deref(ma_window).len;
-  let ma_required_input_length = deref(ma_source).len;
+  let ma_required_out_length = ma_window^.len;
+  let ma_required_input_length = ma_source^.len;
   let ma_required_out_groups = ishr.wrap(ma_required_out_length, 2_u32);
   let ma_required_covered_input = ma_required_out_groups *wrap 3_u64;
   let ma_capacity = ma_required_input_length <= ma_required_covered_input;

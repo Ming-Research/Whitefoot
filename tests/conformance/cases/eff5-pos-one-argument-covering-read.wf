@@ -8,17 +8,17 @@ struct Stats {
 
 fn record(stats: &Stats) -> result: unit reads(stats), writes(stats.count) {
   doc "EFF-5: the row reads all of stats and writes stats.count; one argument supplies both entries, whose overlap holds at every position, so a call does not compare them.";
-  let whole = deref(stats);
-  set deref(stats).count = whole.count +wrap whole.total;
+  let whole = stats^;
+  set stats^.count = whole.count +wrap whole.total;
   return unit;
 }
 
 fn push_first(window: &Slots<u64, 4>) -> result: unit reads(window), writes(window.next), writes(window.len) contract {
-  requires 0_u64 < deref(window).len;
-  requires deref(window).len < deref(window).cap;
+  requires 0_u64 < window^.len;
+  requires window^.len < window^.cap;
 } {
   doc "EFF-5: a whole-window read beside writes of window.next and window.len, all supplied by one argument.";
-  let first = deref(window)[0_u64];
+  let first = window^[0_u64];
   place_back(window: window, value: first);
   return unit;
 }

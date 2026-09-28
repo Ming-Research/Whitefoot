@@ -4,16 +4,16 @@ alias exit_status = std::process::exit_status;
 const fixed_bytes: Array<u8, 3> =[7_u8, 13_u8, 19_u8];
 
 fn second_byte(part: &[u8]) -> value: u8 reads(part) contract {
-  requires 1_u64 < deref(part).len;
+  requires 1_u64 < part^.len;
 } {
   doc "Reads the original const bytes through the range reference its caller formed.";
-  return deref(part)[1_u64];
+  return part^[1_u64];
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A range reference over immutable const storage is formed by the reader that uses it: a reference is never a result [REF-3, REF-4], so the caller writes `&fixed_bytes[0..3]` and hands it to the callee, whose own measure `deref(part).len` discharges the requirement [MSR-1].";
+  doc "A range reference over immutable const storage is formed by the reader that uses it: a reference is never a result [REF-3, REF-4], so the caller writes `&fixed_bytes[0..3]` and hands it to the callee, whose own measure `part^.len` discharges the requirement [MSR-1].";
   let part = &fixed_bytes[0_u64..3_u64];
-  let width = deref(part).len;
+  let width = part^.len;
   if width == 3_u64 {
   } else {
     return exit_status(code: 211_u8);

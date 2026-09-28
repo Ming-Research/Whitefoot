@@ -1663,7 +1663,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let parameter_bindings = bindings.clone();
         // [OP-10] a compiler-owned window type parameter is supplied by the
         // operand and never written, so a row carrying one has no symbolic
-        // instance any call can name: `deref(window).cap` names a measure of
+        // instance any call can name: `window^.cap` names a measure of
         // the shape the operand supplies, and the unsubstituted parameter is
         // not one of [MSR-1]'s measured types. Such a row's clauses are the
         // substituted clauses of each concrete instance, which the ordinary
@@ -3929,7 +3929,7 @@ impl<'unit> TypeContext<'unit> {
             if !self.declarations.is_window_type_parameter(*declaration)? {
                 continue;
             }
-            // Once an operand has supplied the shape, `deref(window).len`
+            // Once an operand has supplied the shape, `window^.len`
             // names a measure of one of [MSR-1]'s measured types whatever
             // that shape's element type and capacity still are. [OP-14] also
             // admits a Box holding a runtime-capacity window; its concrete W

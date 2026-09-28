@@ -57,7 +57,7 @@ fn main() -> status: std::process::ExitStatus pure {
 // separately. `writes(p)` states every access at or below `p` [EFF-1], so
 // the write row is written once and the read entry of v0.59's row is gone
 // with the permission marker on `output`.
-const MARKER: &str = "fn write_marker(output: &u64, source: &[u8], start: u64, end: u64) -> result: Result<u64, std::io::IoError> reads(source), writes(output) {\n  let previous = deref(output);\n  let length = deref(source).len;\n  set deref(output) = previous +wrap start;\n  return Ok<u64, std::io::IoError>(value: end);\n}\n\n";
+const MARKER: &str = "fn write_marker(output: &u64, source: &[u8], start: u64, end: u64) -> result: Result<u64, std::io::IoError> reads(source), writes(output) {\n  let previous = output^;\n  let length = source^.len;\n  set output^ = previous +wrap start;\n  return Ok<u64, std::io::IoError>(value: end);\n}\n\n";
 
 fn permission_of(source: &[u8]) -> PermissionMetadata {
     permission_of_with_discharged_query(source, &[])
@@ -224,12 +224,12 @@ const CELLS: &str = r#"struct Cell {
 }
 
 fn bump(slot: &Cell) -> result: u64 writes(slot.value) {
-  set deref(slot).value = 7_u64;
+  set slot^.value = 7_u64;
   return 1_u64;
 }
 
 fn peek(slot: &Cell) -> result: u64 reads(slot.value) {
-  return deref(slot).value;
+  return slot^.value;
 }
 
 fn take(v: u64) -> result: u64 pure {
@@ -332,12 +332,12 @@ fn independent_descendant_cursors_do_not_gain_sibling_field_separation() {
 }
 
 fn paint_left(node: &Node) -> result: unit writes(node.left) {
-  set deref(node).left = 1_u64;
+  set node^.left = 1_u64;
   return unit;
 }
 
 fn paint_right(node: &Node) -> result: unit writes(node.right) {
-  set deref(node).right = 2_u64;
+  set node^.right = 2_u64;
   return unit;
 }
 
@@ -345,16 +345,16 @@ fn inspect(root: &Node) -> result: unit writes(root) {
   let first = root;
   let second = root;
   for (i in 0_u64..2_u64) {
-    match deref(first).next {
+    match first^.next {
       Some(value: child) => {
-        set first = &deref(child).inner;
+        set first = &child^.inner;
       }
       None() => {
       }
     }
-    match deref(second).next {
+    match second^.next {
       Some(value: child) => {
-        set second = &deref(child).inner;
+        set second = &child^.inner;
       }
       None() => {
       }
@@ -389,19 +389,19 @@ fn rebound_parameter_summaries_distinguish_independent_and_overlapping_writes() 
     ] {
         let source = format!(
             "fn write_first(value: &u64) -> result: unit writes(value) {{
-  set deref(value) = 1_u64;
+  set value^ = 1_u64;
   return unit;
 }}
 
 fn write_second(value: &u64) -> result: unit writes(value) {{
-  set deref(value) = 2_u64;
+  set value^ = 2_u64;
   return unit;
 }}
 
 fn exchange(first: &u64, second: &u64, other: &u64) -> result: unit {effects} {{
   let saved = first;
-  set first = &deref(second);
-  set second = &deref(saved);
+  set first = &second^;
+  set second = &saved^;
   let left = write_first(value: first);
   let right = write_second(value: {destination});
   return unit;
@@ -431,8 +431,8 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn writes_through_one_shared_cursor_conflict_despite_disjoint_destinations() {
     let source = br#"fn stamp(cursor: &Cell, destination: &Cell) -> result: u64 writes(cursor.value), writes(destination.value) {
-  set deref(cursor).value = deref(cursor).value +wrap 1_u64;
-  set deref(destination).value = 5_u64;
+  set cursor^.value = cursor^.value +wrap 1_u64;
+  set destination^.value = 5_u64;
   return 1_u64;
 }
 
@@ -470,15 +470,15 @@ fn direct_prelude_calls_form_an_eligible_pair() {
 #[test]
 fn two_child_sibling_calls_are_permitted_and_eligible() {
     let source = br#"fn fold(node: &Node) -> result: u64 writes(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
-      return deref(leaf);
+      return leaf^;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = fold(node: &deref(l).inner);
-      let b = fold(node: &deref(r).inner);
+      let a = fold(node: &l^.inner);
+      let b = fold(node: &r^.inner);
       let total = imax(a, b);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }
   }
@@ -506,12 +506,12 @@ fn disjoint_effect_fields_of_one_object_are_permitted() {
 }
 
 fn set_left(pair: &Pair) -> result: unit writes(pair.left) {
-  set deref(pair).left = 1_u64;
+  set pair^.left = 1_u64;
   return unit;
 }
 
 fn set_right(pair: &Pair) -> result: unit writes(pair.right) {
-  set deref(pair).right = 2_u64;
+  set pair^.right = 2_u64;
   return unit;
 }
 
@@ -550,17 +550,17 @@ fn an_expression_statement_call_is_judged_as_its_let_bound_call() {
 }
 
 fn set_left(pair: &Pair) -> result: unit writes(pair.left) {
-  set deref(pair).left = 1_u64;
+  set pair^.left = 1_u64;
   return unit;
 }
 
 fn set_right(pair: &Pair) -> result: unit writes(pair.right) {
-  set deref(pair).right = 2_u64;
+  set pair^.right = 2_u64;
   return unit;
 }
 
 fn fresh_left(pair: &Pair) -> result: Box<Array<u64>> writes(pair.left) {
-  set deref(pair).left = 3_u64;
+  set pair^.left = 3_u64;
   let made = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
   return move made;
 }
@@ -629,7 +629,7 @@ fn an_index_live_only_after_an_append_is_not_distinct_from_the_append_slot() {
     for bind in ["", "let appended = "] {
         let source = format!(
             "fn peek(v: &u64) -> result: u64 reads(v) {{
-  return deref(v);
+  return v^;
 }}
 
 fn after_append() -> result: u64 pure {{
@@ -680,13 +680,13 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn read_only_sibling_recursion_is_permitted_and_eligible() {
     let source = br#"fn depth(node: &Node) -> result: u64 reads(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
       return 1_u64;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = depth(node: &deref(l).inner);
-      let b = depth(node: &deref(r).inner);
+      let a = depth(node: &l^.inner);
+      let b = depth(node: &r^.inner);
       return imax(a, b);
     }
   }
@@ -704,7 +704,7 @@ fn read_only_sibling_recursion_is_permitted_and_eligible() {
 #[test]
 fn reads_only_siblings_over_one_place_form_one_eligible_chain() {
     let source = br#"fn width(data: &Slots<u64, 8>) -> result: u64 reads(data) {
-  return deref(data).len;
+  return data^.len;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -868,9 +868,9 @@ fn an_operand_read_of_written_storage_is_denied() {
 #[test]
 fn an_operand_element_read_of_a_written_run_is_denied() {
     let source = br#"fn fill(dst: &Slots<u64, 4>, mark: u64) -> result: u64 writes(dst) contract {
-  requires 1_u64 <= deref(dst).len;
+  requires 1_u64 <= dst^.len;
 } {
-  set deref(dst)[0_u64] = mark;
+  set dst^[0_u64] = mark;
   return mark;
 }
 
@@ -1019,18 +1019,18 @@ fn a_recursive_closure_requires_source_proof_and_then_is_eligible() {
 }
 
 fn bubble(node: &Node) -> result: u64 writes(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
-      let w = deref(leaf);
+      let w = leaf^;
       let values = array_filled::<u8, 8>(value: 0_u8);
       let touched = scaled(values: values, index: w);
       return w;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = bubble(node: &deref(l).inner);
-      let b = bubble(node: &deref(r).inner);
+      let a = bubble(node: &l^.inner);
+      let b = bubble(node: &r^.inner);
       let total = a +wrap b;
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }
   }
@@ -1052,18 +1052,18 @@ fn bubble(node: &Node) -> result: u64 writes(node) {
 }
 
 fn bubble(node: &Node) -> result: u64 writes(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
-      let w = deref(leaf);
+      let w = leaf^;
       let values = array_filled::<u8, 8>(value: 0_u8);
       let touched = scaled(values: values, index: w);
       return w;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = bubble(node: &deref(l).inner);
-      let b = bubble(node: &deref(r).inner);
+      let a = bubble(node: &l^.inner);
+      let b = bubble(node: &r^.inner);
       let total = a +wrap b;
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }
   }
@@ -1102,17 +1102,17 @@ fn bubble(node: &Node) -> result: u64 writes(node) {
 #[test]
 fn a_pure_builtin_between_two_calls_keeps_one_run() {
     let source = r#"fn fold(node: &Node, seed: u64) -> result: u64 writes(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
-      return deref(leaf);
+      return leaf^;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = fold(node: &deref(l).inner, seed: seed);
+      let a = fold(node: &l^.inner, seed: seed);
       let gap = seed +wrap 1_u64;
-      let b = fold(node: &deref(r).inner, seed: seed);
+      let b = fold(node: &r^.inner, seed: seed);
       let kids = imax(a, b);
       let total = imax(kids, gap);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }
   }
@@ -1301,7 +1301,7 @@ nocopy struct Holder {
 }
 
 fn observe(holder: &Holder) -> result: u8 reads(holder) {
-  return deref(holder).cell.inner.value;
+  return holder^.cell.inner.value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1336,17 +1336,17 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_read_of_the_previous_calls_result_is_a_footprint_conflict() {
     let source = r#"fn fold(node: &Node, seed: u64) -> result: u64 writes(node) {
-  match deref(node) {
+  match node^ {
     Leaf(w: leaf) => {
-      return deref(leaf);
+      return leaf^;
     }
     Branch(left: l, right: r, w: slot) => {
-      let a = fold(node: &deref(l).inner, seed: seed);
+      let a = fold(node: &l^.inner, seed: seed);
       let gap = a +wrap 1_u64;
-      let b = fold(node: &deref(r).inner, seed: seed);
+      let b = fold(node: &r^.inner, seed: seed);
       let kids = imax(a, b);
       let total = imax(kids, gap);
-      set deref(slot) = total;
+      set slot^ = total;
       return total;
     }
   }
@@ -1574,7 +1574,7 @@ fn a_pure_row_reaches_nothing_through_a_reference_and_a_reading_row_denies() {
 }
 
 fn read_node(node: &Box<u64>) -> result: u64 reads(node) {
-  return deref(node).inner;
+  return node^.inner;
 }
 
 fn eat_node(node: Box<u64>) -> result: u64 pure {
@@ -1621,14 +1621,14 @@ fn loud(node: Box<u64>) -> result: u64 pure {
 /// erased the borrow's shared-or-uniq mode and an unloaned borrow would widen
 /// permission. v0.60 has no mode to erase: forming the reference reads no
 /// content and is permitted beside a write of the same storage, while the
-/// later `deref` resolves to that storage and conflicts with it.
+/// later `^` resolves to that storage and conflicts with it.
 #[test]
 fn a_read_through_a_reference_is_a_read_of_the_path_it_names() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let cell = Cell(value: 1_u64);
   let g = &cell;
   let a = bump(slot: &cell);
-  let seen = deref(g).value;
+  let seen = g^.value;
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1669,9 +1669,9 @@ fn the_row_not_the_reference_kind_decides_two_range_reference_calls() {
 }
 
 fn write_through(view: &[u8]) -> result: u64 writes(view) contract {
-  requires 1_u64 <= deref(view).len;
+  requires 1_u64 <= view^.len;
 } {
-  set deref(view)[0_u64] = 1_u8;
+  set view^[0_u64] = 1_u8;
   return 0_u64;
 }
 
@@ -1682,7 +1682,7 @@ fn shared(handed: &[u8]) -> result: u64 pure {
 }
 
 fn exclusive(handed: &[u8]) -> result: u64 writes(handed) contract {
-  requires 1_u64 <= deref(handed).len;
+  requires 1_u64 <= handed^.len;
 } {
   let a = write_through(view: handed);
   let b = write_through(view: handed);
@@ -1705,18 +1705,18 @@ fn exclusive(handed: &[u8]) -> result: u64 writes(handed) contract {
 // the range it receives, while the source remains sequentially valid whether
 // or not [PAR-1] can retain an overlap permission.
 const RANGE_PERMISSION_HELPERS: &str = r#"fn stamp_range(part: &[u8]) -> result: u64 writes(part) contract {
-  requires 0_u64 < deref(part).len;
+  requires 0_u64 < part^.len;
 } {
-  set deref(part)[0_u64] = 9_u8;
+  set part^[0_u64] = 9_u8;
   return 1_u64;
 }
 
 fn stamp_two_ranges(first: &[u8], second: &[u8]) -> result: u64 writes(first), writes(second) contract {
-  requires 0_u64 < deref(first).len;
-  requires 0_u64 < deref(second).len;
+  requires 0_u64 < first^.len;
+  requires 0_u64 < second^.len;
 } {
-  set deref(first)[0_u64] = 7_u8;
-  set deref(second)[0_u64] = 8_u8;
+  set first^[0_u64] = 7_u8;
+  set second^[0_u64] = 8_u8;
   return 2_u64;
 }
 "#;
@@ -1736,23 +1736,23 @@ fn loop_carried_range_generations_do_not_reuse_the_current_iteration_image() {
     let source = format!(
         "{RANGE_PERMISSION_HELPERS}
 fn shifted(values: &Array<u8, 8>) -> result: u64 writes(values) {{
-  let seed = &deref(values)[0_u64..1_u64];
-  let saved = &deref(seed)[0_u64..deref(seed).len];
+  let seed = &values^[0_u64..1_u64];
+  let saved = &seed^[0_u64..seed^.len];
   for (i in 0_u64..2_u64) {{
     let current_start = 5_u64 - i;
     let current_end = 6_u64 - i;
     let other_start = 6_u64 - i;
     let other_end = 7_u64 - i;
-    let current = &deref(values)[current_start..current_end];
-    let other = &deref(values)[other_start..other_end];
+    let current = &values^[current_start..current_end];
+    let other = &values^[other_start..other_end];
     let observed = saved;
-    if 0_u64 < deref(observed).len {{
-      if 0_u64 < deref(other).len {{
+    if 0_u64 < observed^.len {{
+      if 0_u64 < other^.len {{
         let a = stamp_range(part: observed);
         let b = stamp_range(part: other);
       }}
     }}
-    set saved = &deref(current)[0_u64..deref(current).len];
+    set saved = &current^[0_u64..current^.len];
   }}
   return 0_u64;
 }}
@@ -1763,10 +1763,10 @@ fn current_iteration(values: &Array<u8, 8>) -> result: u64 writes(values) {{
     let current_end = 6_u64 - i;
     let other_start = 6_u64 - i;
     let other_end = 7_u64 - i;
-    let current = &deref(values)[current_start..current_end];
-    let other = &deref(values)[other_start..other_end];
-    if 0_u64 < deref(current).len {{
-      if 0_u64 < deref(other).len {{
+    let current = &values^[current_start..current_end];
+    let other = &values^[other_start..other_end];
+    if 0_u64 < current^.len {{
+      if 0_u64 < other^.len {{
         let a = stamp_range(part: current);
         let b = stamp_range(part: other);
       }}
@@ -1799,22 +1799,22 @@ fn loop_carried_range_generations_do_not_discharge_overlapping_call_effects() {
     let source = format!(
         "{RANGE_PERMISSION_HELPERS}
 fn shifted(values: &Array<u8, 8>) -> result: u64 writes(values) {{
-  let seed = &deref(values)[0_u64..1_u64];
-  let saved = &deref(seed)[0_u64..deref(seed).len];
+  let seed = &values^[0_u64..1_u64];
+  let saved = &seed^[0_u64..seed^.len];
   for (i in 0_u64..2_u64) {{
     let current_start = 5_u64 - i;
     let current_end = 6_u64 - i;
     let other_start = 6_u64 - i;
     let other_end = 7_u64 - i;
-    let current = &deref(values)[current_start..current_end];
-    let other = &deref(values)[other_start..other_end];
+    let current = &values^[current_start..current_end];
+    let other = &values^[other_start..other_end];
     let observed = saved;
-    if 0_u64 < deref(observed).len {{
-      if 0_u64 < deref(other).len {{
+    if 0_u64 < observed^.len {{
+      if 0_u64 < other^.len {{
         let conflict = stamp_two_ranges(first: observed, second: other);
       }}
     }}
-    set saved = &deref(current)[0_u64..deref(current).len];
+    set saved = &current^[0_u64..current^.len];
   }}
   return 0_u64;
 }}
@@ -1835,8 +1835,8 @@ fn separated(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) co
   requires 1_u64 <= split;
   requires split < 4_u64;
 }} {{
-  let left = &deref(values)[0_u64..split];
-  let right = &deref(values)[split..4_u64];
+  let left = &values^[0_u64..split];
+  let right = &values^[split..4_u64];
   let a = stamp_range(part: left);
   let b = stamp_range(part: right);
   return a +wrap b;
@@ -1865,7 +1865,7 @@ fn front(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) contra
   requires 1_u64 <= split;
   requires split < 4_u64;
 }} {{
-  let left = &deref(values)[0_u64..split];
+  let left = &values^[0_u64..split];
   let a = stamp_range(part: left);
   return a;
 }}
@@ -1901,8 +1901,8 @@ fn halves(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) contr
   requires 1_u64 <= split;
   requires split < 4_u64;
 }} {{
-  let left = &deref(values)[0_u64..split];
-  let right = &deref(values)[split..4_u64];
+  let left = &values^[0_u64..split];
+  let right = &values^[split..4_u64];
   let a = stamp_range(part: left);
   let b = stamp_range(part: right);
   return a +wrap b;
@@ -1939,8 +1939,8 @@ fn halves(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) contr
 #[test]
 fn a_set_through_a_reference_reads_the_let_that_formed_it() {
     let source = br#"fn clear(values: &Array<u8, 4>) -> result: unit writes(values) {
-  let head = &deref(values)[0_u64..2_u64];
-  set deref(head)[0_u64] = 0_u8;
+  let head = &values^[0_u64..2_u64];
+  set head^[0_u64] = 0_u8;
   return unit;
 }
 "#;
@@ -1967,10 +1967,10 @@ fn a_set_through_a_reference_reads_the_let_that_formed_it() {
 #[test]
 fn a_rebinding_set_writes_the_reference_it_rebinds() {
     let source = br#"fn rebind(values: &Array<u8, 4>) -> result: unit writes(values) {
-  let whole = &deref(values)[0_u64..4_u64];
-  set whole = &deref(values)[1_u64..3_u64];
-  let head = &deref(whole)[0_u64..1_u64];
-  set deref(head)[0_u64] = 0_u8;
+  let whole = &values^[0_u64..4_u64];
+  set whole = &values^[1_u64..3_u64];
+  let head = &whole^[0_u64..1_u64];
+  set head^[0_u64] = 0_u8;
   return unit;
 }
 "#;
@@ -2000,8 +2000,8 @@ fn separated(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) co
   requires 1_u64 <= split;
   requires split < 4_u64;
 }} {{
-  let left = &deref(values)[0_u64..split];
-  let right = &deref(values)[split..4_u64];
+  let left = &values^[0_u64..split];
+  let right = &values^[split..4_u64];
   let a = stamp_range(part: left);
   let gap = 7_u64 +wrap 1_u64;
   let b = stamp_range(part: right);
@@ -2037,8 +2037,8 @@ fn rebinding_an_endpoint_does_not_separate_earlier_captured_ranges() {
 fn stale(values: &Array<u8, 4>) -> result: u64 writes(values) {{
   let start = 0_u64;
   let stop = 2_u64;
-  let left = &deref(values)[0_u64..2_u64];
-  let right = &deref(values)[start..stop];
+  let left = &values^[0_u64..2_u64];
+  let right = &values^[start..stop];
   set start = 2_u64;
   let a = stamp_range(part: left);
   let b = stamp_range(part: right);
@@ -2070,8 +2070,8 @@ fn guarded(values: &Array<u8, 4>, cut: u64, start: u64) -> result: u64 writes(va
   requires cut <= 4_u64;
   requires start < 4_u64;
 }} {{
-  let left = &deref(values)[0_u64..cut];
-  let right = &deref(values)[start..4_u64];
+  let left = &values^[0_u64..cut];
+  let right = &values^[start..4_u64];
   if cut <= start {{
     let guarded_left = stamp_range(part: left);
     let guarded_right = stamp_range(part: right);
@@ -2106,10 +2106,10 @@ fn every_range_conflict_of_a_multi_target_pair_must_be_separated() {
     let source = format!(
         "{RANGE_PERMISSION_HELPERS}
 fn conjunction(values: &Array<u8, 8>) -> result: u64 writes(values) {{
-  let a0 = &deref(values)[0_u64..2_u64];
-  let a1 = &deref(values)[4_u64..6_u64];
-  let b0 = &deref(values)[2_u64..4_u64];
-  let b1 = &deref(values)[5_u64..7_u64];
+  let a0 = &values^[0_u64..2_u64];
+  let a1 = &values^[4_u64..6_u64];
+  let b0 = &values^[2_u64..4_u64];
+  let b1 = &values^[5_u64..7_u64];
   let a = stamp_two_ranges(first: a0, second: a1);
   let b = stamp_two_ranges(first: b0, second: b1);
   return a +wrap b;
@@ -2138,9 +2138,9 @@ fn a_later_formed_range_does_not_justify_a_wider_run() {
     let source = format!(
         "{RANGE_PERMISSION_HELPERS}
 fn later(values: &Array<u8, 4>) -> result: u64 writes(values) {{
-  let left = &deref(values)[0_u64..2_u64];
+  let left = &values^[0_u64..2_u64];
   let a = stamp_range(part: left);
-  let right = &deref(values)[2_u64..4_u64];
+  let right = &values^[2_u64..4_u64];
   let b = stamp_range(part: right);
   return a +wrap b;
 }}
@@ -2167,14 +2167,14 @@ fn inline_range_actuals_resolve_to_their_formation_paths() {
     let source = format!(
         "{RANGE_PERMISSION_HELPERS}
 fn independent(values: &Array<u8, 4>, others: &Array<u8, 4>) -> result: u64 writes(values), writes(others) {{
-  let a = stamp_range(part: &deref(values)[0_u64..2_u64]);
-  let b = stamp_range(part: &deref(others)[0_u64..2_u64]);
+  let a = stamp_range(part: &values^[0_u64..2_u64]);
+  let b = stamp_range(part: &others^[0_u64..2_u64]);
   return a +wrap b;
 }}
 
 fn shared(values: &Array<u8, 4>) -> result: u64 writes(values) {{
-  let a = stamp_range(part: &deref(values)[0_u64..3_u64]);
-  let b = stamp_range(part: &deref(values)[2_u64..4_u64]);
+  let a = stamp_range(part: &values^[0_u64..3_u64]);
+  let b = stamp_range(part: &values^[2_u64..4_u64]);
   return a +wrap b;
 }}
 "
@@ -2199,11 +2199,11 @@ fn shared(values: &Array<u8, 4>) -> result: u64 writes(values) {{
 // range, and each caller below forms its two child ranges either as call
 // actuals or as bound ranges first.
 const PARTITION_HELPER: &str = r#"fn partition(v: &[u8]) -> pivot_at: u64 writes(v) contract {
-  requires 2_u64 <= deref(v).len;
-  ensures pivot_at < deref(v).len;
+  requires 2_u64 <= v^.len;
+  ensures pivot_at < v^.len;
 } {
-  let first = deref(v)[0_u64];
-  set deref(v)[0_u64] = first;
+  let first = v^[0_u64];
+  set v^[0_u64] = first;
   return 0_u64;
 }
 "#;
@@ -2213,7 +2213,7 @@ const PARTITION_HELPER: &str = r#"fn partition(v: &[u8]) -> pivot_at: u64 writes
 fn subdivision(name: &str, children: &str) -> String {
     format!(
         "fn {name}(v: &[u8]) -> result: unit writes(v) {{
-  let n = deref(v).len;
+  let n = v^.len;
   if n <= 1_u64 {{
     return unit;
   }}
@@ -2238,20 +2238,20 @@ fn a_range_formed_at_the_call_is_judged_as_the_same_range_bound_first() {
         PARTITION_HELPER.to_owned(),
         subdivision(
             "split_inline",
-            "  split_inline(v: &deref(v)[0_u64..p]);\n  split_inline(v: &deref(v)[after..n]);\n",
+            "  split_inline(v: &v^[0_u64..p]);\n  split_inline(v: &v^[after..n]);\n",
         ),
         subdivision(
             "split_bound",
-            "  let smaller = &deref(v)[0_u64..p];\n  let larger = &deref(v)[after..n];\n  \
+            "  let smaller = &v^[0_u64..p];\n  let larger = &v^[after..n];\n  \
              split_bound(v: smaller);\n  split_bound(v: larger);\n",
         ),
         subdivision(
             "shared_inline",
-            "  shared_inline(v: &deref(v)[0_u64..p]);\n  shared_inline(v: &deref(v)[p..n]);\n",
+            "  shared_inline(v: &v^[0_u64..p]);\n  shared_inline(v: &v^[p..n]);\n",
         ),
         subdivision(
             "shared_bound",
-            "  let smaller = &deref(v)[0_u64..p];\n  let larger = &deref(v)[p..n];\n  \
+            "  let smaller = &v^[0_u64..p];\n  let larger = &v^[p..n];\n  \
              shared_bound(v: smaller);\n  shared_bound(v: larger);\n",
         ),
     ]
@@ -2284,11 +2284,11 @@ fn overlapping_ranges_formed_at_the_call_are_denied_in_both_spellings() {
         PARTITION_HELPER.to_owned(),
         subdivision(
             "overlap_inline",
-            "  overlap_inline(v: &deref(v)[0_u64..after]);\n  overlap_inline(v: &deref(v)[p..n]);\n",
+            "  overlap_inline(v: &v^[0_u64..after]);\n  overlap_inline(v: &v^[p..n]);\n",
         ),
         subdivision(
             "overlap_bound",
-            "  let smaller = &deref(v)[0_u64..after];\n  let larger = &deref(v)[p..n];\n  \
+            "  let smaller = &v^[0_u64..after];\n  let larger = &v^[p..n];\n  \
              overlap_bound(v: smaller);\n  overlap_bound(v: larger);\n",
         ),
     ]
@@ -2316,19 +2316,19 @@ fn an_endpoint_the_first_statement_writes_is_not_read_before_it() {
     let source = r#"fn stamp_at(part: &[u8]) -> result: u64 writes(part) contract {
   ensures result <= 0_u64;
 } {
-  if 0_u64 < deref(part).len {
-    set deref(part)[0_u64] = 9_u8;
+  if 0_u64 < part^.len {
+    set part^[0_u64] = 9_u8;
   }
   return 0_u64;
 }
 
 fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
-  requires p <= deref(v).len;
+  requires p <= v^.len;
 } {
-  let n = deref(v).len;
+  let n = v^.len;
   let q = p;
-  set q = stamp_at(part: &deref(v)[0_u64..p]);
-  let b = stamp_at(part: &deref(v)[q..n]);
+  set q = stamp_at(part: &v^[0_u64..p]);
+  let b = stamp_at(part: &v^[q..n]);
   return b;
 }
 "#;
@@ -2365,7 +2365,7 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
 /// field-read spelling and `twice` writes one range twice, each through two
 /// adjacent calls; the empty range formed before those calls captures only
 /// its own endpoints, so it separates neither pair and both are denied.
-/// `apart` meets at one measure, `deref(w).len`, so the state before its
+/// `apart` meets at one measure, `w^.len`, so the state before its
 /// first call proves the first range ends where the second starts, and that
 /// retained ordering permits the pair although no endpoint is a literal or a
 /// binding.
@@ -2376,39 +2376,39 @@ fn range_endpoints_of_every_form_belong_to_their_own_formation() {
 }
 
 fn mark(part: &[u8]) -> result: u64 writes(part) {
-  if 0_u64 < deref(part).len {
-    set deref(part)[0_u64] = 9_u8;
+  if 0_u64 < part^.len {
+    set part^[0_u64] = 9_u8;
   }
   return 1_u64;
 }
 
 fn collide(v: &[u8], b: Bounds) -> result: u64 writes(v) contract {
-  requires b.lo <= deref(v).len;
+  requires b.lo <= v^.len;
 } {
-  let left = &deref(v)[b.lo..deref(v).len];
-  let right = &deref(v)[b.lo..deref(v).len];
-  let empty = &deref(v)[deref(v).len..deref(v).len];
+  let left = &v^[b.lo..v^.len];
+  let right = &v^[b.lo..v^.len];
+  let empty = &v^[v^.len..v^.len];
   let x = mark(part: left);
   let y = mark(part: right);
   return x +wrap y;
 }
 
 fn twice(v: &[u8], b: Bounds) -> result: u64 writes(v) contract {
-  requires b.lo <= deref(v).len;
+  requires b.lo <= v^.len;
 } {
-  let part = &deref(v)[b.lo..deref(v).len];
-  let empty = &deref(v)[deref(v).len..deref(v).len];
+  let part = &v^[b.lo..v^.len];
+  let empty = &v^[v^.len..v^.len];
   let x = mark(part: part);
   let y = mark(part: part);
   return x +wrap y;
 }
 
 fn apart(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes(v) contract {
-  requires deref(u).len <= deref(w).len;
-  requires deref(w).len <= deref(v).len;
+  requires u^.len <= w^.len;
+  requires w^.len <= v^.len;
 } {
-  let low = &deref(v)[deref(u).len..deref(w).len];
-  let high = &deref(v)[deref(w).len..deref(v).len];
+  let low = &v^[u^.len..w^.len];
+  let high = &v^[w^.len..v^.len];
   let x = mark(part: low);
   let y = mark(part: high);
   return x +wrap y;

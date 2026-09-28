@@ -9,7 +9,7 @@ struct Cursor {
 
 fn shrink(c: &Cursor) -> unused: unit writes(c.limit) {
   doc "Writes exactly the field its declared row names.";
-  set deref(c).limit = 1_u64;
+  set c^.limit = 1_u64;
   return unit;
 }
 

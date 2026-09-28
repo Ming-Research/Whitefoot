@@ -7,7 +7,7 @@ enum Pick {
 }
 
 fn get(b: &[u8], i: u64, choice: Pick) -> result: u8 reads(b) {
-  let spare = deref(b).len;
+  let spare = b^.len;
   let cursor = i;
   match choice {
     Zero() => {
@@ -21,7 +21,7 @@ fn get(b: &[u8], i: u64, choice: Pick) -> result: u8 reads(b) {
       }
     }
   }
-  return deref(b)[cursor];
+  return b^[cursor];
 }
 
 fn main() -> status: ExitStatus pure {

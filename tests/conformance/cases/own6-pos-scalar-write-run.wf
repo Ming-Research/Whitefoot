@@ -7,7 +7,7 @@ struct Slot {
 
 fn bump(target: &Slot) -> result: unit writes(target.value) {
   doc "The declared write on the referenced field reaches the caller's own storage.";
-  set deref(target).value = 42_i32;
+  set target^.value = 42_i32;
   return unit;
 }
 

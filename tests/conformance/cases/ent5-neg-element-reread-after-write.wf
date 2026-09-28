@@ -3,14 +3,14 @@ alias exit_status = std::process::exit_status;
 
 fn h2(buf: &[u8], i: u64, w: u8) -> result: u8 writes(buf) {
   doc "The old local copy is bounded, but a store replaces the element with an arbitrary byte. A fresh element read cannot inherit the old copy's bound; its domain must be rejected [ENT-5, OP-2]. The old immutable local theorem need not itself be killed.";
-  let limit = deref(buf).len;
+  let limit = buf^.len;
   let in_range = i < limit;
   if in_range {
-    let old = deref(buf)[i];
+    let old = buf^[i];
     let bounded = old <= 5_u8;
     if bounded {
-      set deref(buf)[i] = w;
-      let cur = deref(buf)[i];
+      set buf^[i] = w;
+      let cur = buf^[i];
       let z = cur + 250_u8;
       return z;
     } else {

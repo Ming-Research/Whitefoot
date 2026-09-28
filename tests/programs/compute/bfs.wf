@@ -2,15 +2,15 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn pull_distance(neighbors: &[u64], previous: &[u64], level: u64) -> result: u64 reads(neighbors), reads(previous) contract {
-  requires level < deref(previous).len;
-  requires deref(previous).len <= 67108864_u64;
+  requires level < previous^.len;
+  requires previous^.len <= 67108864_u64;
 } {
-  let count = deref(previous).len;
-  let slots = deref(neighbors).len;
+  let count = previous^.len;
+  let slots = neighbors^.len;
   for (slot in 0_u64..slots) {
-    let neighbor = deref(neighbors)[slot];
+    let neighbor = neighbors^[slot];
     if neighbor < count {
-      if deref(previous)[neighbor] == level {
+      if previous^[neighbor] == level {
         return level + 1_u64;
       }
     }
@@ -20,17 +20,17 @@ fn pull_distance(neighbors: &[u64], previous: &[u64], level: u64) -> result: u64
 
 fn pull_level(edges: &[u64], previous: &[u64], output: &[u64], count: u64, level: u64) -> result: u64 reads(edges), reads(previous), writes(output) contract {
   requires count <= 67108864_u64;
-  requires count <= deref(previous).len;
-  requires deref(previous).len <= count;
-  requires count <= deref(output).len;
-  requires 4_u64 * count <= deref(edges).len;
+  requires count <= previous^.len;
+  requires previous^.len <= count;
+  requires count <= output^.len;
+  requires 4_u64 * count <= edges^.len;
   requires level < count;
 } {
   let covered = count * 4_u64;
-  invariant complete_rows: covered <= deref(edges).len;
+  invariant complete_rows: covered <= edges^.len;
   let changed = 0_u64;
   for (vertex in 0_u64..count) {
-    let distance = deref(previous)[vertex];
+    let distance = previous^[vertex];
     let result = distance;
     let added = 0_u64;
     if distance == count {
@@ -39,23 +39,23 @@ fn pull_level(edges: &[u64], previous: &[u64], output: &[u64], count: u64, level
       invariant row_end: end <= covered {
         use 4 times (vertex + 1_u64 <= count);
       }
-      let neighbors = &deref(edges)[first..end];
+      let neighbors = &edges^[first..end];
       let found = pull_distance(neighbors: neighbors, previous: previous, level: level);
       set result = found;
       if found != count {
         set added = 1_u64;
       }
     }
-    set deref(output)[vertex] = result;
+    set output^[vertex] = result;
     set changed = changed +wrap added;
   }
   return changed;
 }
 
 fn bfs_pull(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
-  requires deref(edges).len <= 67108864_u64;
+  requires edges^.len <= 67108864_u64;
 } {
-  let slots = deref(edges).len;
+  let slots = edges^.len;
   let count = slots / 4_u64;
   let covered = count * 4_u64;
   invariant complete_rows: covered <= slots;
@@ -91,10 +91,10 @@ fn bfs_pull(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
 }
 
 fn bfs_sparse(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
-  requires deref(edges).len <= 67108864_u64;
+  requires edges^.len <= 67108864_u64;
 } {
   doc "Sparse level traversal. Each vertex owns one intrusive frontier link, so no queue-capacity theorem or per-vertex allocation is needed. The count sentinel denotes both an absent edge and an undiscovered distance.";
-  let slots = deref(edges).len;
+  let slots = edges^.len;
   let count = slots / 4_u64;
   let distance = box_array_filled::<u64>(count: count, value: count);
   let covered = count * 4_u64;
@@ -121,7 +121,7 @@ fn bfs_sparse(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
         use 4 times (vertex + 1_u64 <= count);
       }
       for (slot in first..end) {
-        let neighbor = deref(edges)[slot];
+        let neighbor = edges^[slot];
         if neighbor < count {
           if distance.inner[neighbor] == count {
             set distance.inner[neighbor] = level + 1_u64;
@@ -138,7 +138,7 @@ fn bfs_sparse(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
 }
 
 fn bfs(edges: &[u64], pull: u64) -> result: Box<Array<u64>> reads(edges) contract {
-  requires deref(edges).len <= 67108864_u64;
+  requires edges^.len <= 67108864_u64;
 } {
   doc "Distances from vertex zero in a graph with four adjacency slots per vertex. Out-of-range slots are absent edges; trailing incomplete rows are ignored. Pull traverses the reverse graph, so the comparison fixtures are undirected.";
   if pull != 0_u64 {

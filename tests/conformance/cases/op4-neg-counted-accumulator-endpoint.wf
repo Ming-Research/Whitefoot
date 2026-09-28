@@ -4,17 +4,17 @@ alias exit_status = std::process::exit_status;
 fn select(data: &[u8]) -> result: u8 reads(data) {
   doc "Exhaustion exports count <= length for a conditional counter, not the strict bound required to index the same input after the loop.";
   let count = 0_u64;
-  let length = deref(data).len;
+  let length = data^.len;
   for (
     i in 0_u64..length,
     invariant bound: count <= i
   ) {
-    let byte = deref(data)[i];
+    let byte = data^[i];
     if byte == 7_u8 {
       set count = count + 1_u64;
     }
   }
-  return deref(data)[count];
+  return data^[count];
 }
 
 fn main() -> status: ExitStatus pure {

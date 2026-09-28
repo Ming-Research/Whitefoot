@@ -3,9 +3,9 @@ alias exit_status = std::process::exit_status;
 
 fn selected(data: &[u8], table: Array<u8, 256>) -> result: u8 reads(data) {
   let peak = 0_u8;
-  let length = deref(data).len;
+  let length = data^.len;
   for (i in 0_u64..length) {
-    let byte = deref(data)[i];
+    let byte = data^[i];
     set peak = imax(peak, byte);
   }
   let index = cvt::<u8, u64>(peak);

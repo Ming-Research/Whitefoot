@@ -13,10 +13,10 @@ fn exchange(slot: &Box<u64>, spare: &Box<u64>) -> result: unit writes(slot), wri
 }
 
 fn observe(owner: &Box<u64>, spare: &Box<u64>) -> result: Observed writes(owner), writes(spare) {
-  doc "Reads the owner's content through the Box field `inner` across the reference, deref(owner).inner, before and after the exchange [TYPE-7, TYPE-9].";
-  let started = deref(owner).inner;
+  doc "Reads the owner's content through the Box field `inner` across the reference, owner^.inner, before and after the exchange [TYPE-7, TYPE-9].";
+  let started = owner^.inner;
   exchange(slot: owner, spare: spare);
-  let current = deref(owner).inner;
+  let current = owner^.inner;
   return Observed(previous: started, current: current);
 }
 

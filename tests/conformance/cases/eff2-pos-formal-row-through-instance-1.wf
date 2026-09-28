@@ -12,7 +12,7 @@ interface Inspect<T: drop> {
 
 fn left(input: &Pair) -> result: u64 reads(input.left) {
   doc "Reads one field through its reference parameter and states exactly that path.";
-  return deref(input).left;
+  return input^.left;
 }
 
 binding Left : Inspect<Pair> {

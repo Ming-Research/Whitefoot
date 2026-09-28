@@ -2,13 +2,13 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill(grid: &[u64]) -> result: unit writes(grid) contract {
-  requires deref(grid).len >= 12_u64;
+  requires grid^.len >= 12_u64;
 } {
   for (row in 0_u64..3_u64) {
     for (col in 0_u64..4_u64) {
       let base = row * 4_u64;
       let flat = base + col;
-      set deref(grid)[flat] = flat;
+      set grid^[flat] = flat;
     }
   }
   return unit;

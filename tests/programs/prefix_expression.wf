@@ -22,14 +22,14 @@ struct ParseOutput {
 
 fn parse_expression(input: &[u8], offset: u64) -> result: Result<ParseOutput, ParseError> reads(input) {
   doc "There is one heap and allocation is total, so a cell formation has no refusal arm and the parser carries only the two errors its own grammar can produce [STOR-8, TYPE-9].";
-  let size = deref(input).len;
+  let size = input^.len;
   let available = offset < size;
   if available {
   } else {
     let truncated_error = ParseError::Truncated();
     return Err<ParseOutput, ParseError>(error: truncated_error);
   }
-  let token = deref(input)[offset];
+  let token = input^[offset];
   let next = offset + 1_u64;
   let is_add = token == 43_u8;
   if is_add {
@@ -77,9 +77,9 @@ fn parse_expression(input: &[u8], offset: u64) -> result: Result<ParseOutput, Pa
 
 fn evaluate(expression: &Box<Expression>) -> result: Result<u64, Overflow> reads(expression) {
   doc "A Box's content is its field inner, and matching through a reference binds each payload as a reference naming the scrutinee path [TYPE-9, OWN-13].";
-  match deref(expression).inner {
+  match expression^.inner {
     Literal(value: literal_value) => {
-      return Ok<u64, Overflow>(value: deref(literal_value));
+      return Ok<u64, Overflow>(value: literal_value^);
     }
     Add(left: node_left, right: node_right) => {
       let left_value = propagate evaluate(expression: node_left);
@@ -93,7 +93,7 @@ fn main() -> status: ExitStatus pure {
   doc "Parses one prefix expression from a const table read through a range reference, evaluates it, and checks that a truncated input is refused.";
   let input = &prefix_input[0_u64..5_u64];
   let parsed = parse_expression(input: input, offset: 0_u64);
-  match parsed {
+  match move parsed {
     Ok(value: output) => {
       let consumed = output.next;
       if consumed == 5_u64 {
@@ -119,7 +119,7 @@ fn main() -> status: ExitStatus pure {
   }
   let incomplete = &prefix_incomplete[0_u64..2_u64];
   let incomplete_result = parse_expression(input: incomplete, offset: 0_u64);
-  match incomplete_result {
+  match move incomplete_result {
     Ok(value: unexpected_output) => {
       return exit_status(code: 1_u8);
     }

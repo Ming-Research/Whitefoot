@@ -1,3 +1,4 @@
 Decision: Recoverable failure is an ordinary `Result` value forwarded by `let value = propagate expression;`, with no exception, throw, catch, or unwinding, because `try` commonly suggests entering exception-handling control flow while the language only forwards an ordinary value, and `propagate` names that exact action, instead of a `try` spelling.
 
-Decision: A bare affine `Result` place used by `propagate` consumes its storage root exactly once, with explicit `move` still valid, because forwarding must consume one affine operand and the ordinary consuming rule lets the canonical bare form do so without weakening ownership, while requiring `propagate move p` contradicted the approved writer form, instead of requiring an explicit move operand.
+Rejected:
+- Implicit consumption of a bare affine Result in propagation: rejected because the common explicit consuming-place rule in `language/ownership` marks whole-owner death consistently across value boundaries.

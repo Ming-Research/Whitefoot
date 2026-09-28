@@ -1,24 +1,24 @@
 fn hash_map_extend<K, V, const ceiling: u64>(cells: &Box<Slots<HashMapSlot<K, V>>>, target: u64) -> result: unit writes(cells) contract {
-  requires deref(cells).inner.len <= target;
+  requires cells^.inner.len <= target;
   requires target <= ceiling;
-  ensures deref(cells).inner.len == target;
-  ensures deref(cells).inner.cap >= target;
+  ensures cells^.inner.len == target;
+  ensures cells^.inner.cap >= target;
 } {
-  if deref(cells).inner.cap < target {
+  if cells^.inner.cap < target {
     grow(cell: cells, capacity: target);
   }
-  let start = deref(cells).inner.len;
+  let start = cells^.inner.len;
   for @fill (
     index in start..target,
-    invariant filled: deref(cells).inner.len >= index,
-    invariant bounded: deref(cells).inner.len <= index,
-    invariant spare: deref(cells).inner.cap - deref(cells).inner.len + index >= target
+    invariant filled: cells^.inner.len >= index,
+    invariant bounded: cells^.inner.len <= index,
+    invariant spare: cells^.inner.cap - cells^.inner.len + index >= target
   ) {
     let vacant = HashMapSlot<K, V>::HashMapVacant();
-    place_back(window: &deref(cells).inner, value: move vacant);
+    place_back(window: &cells^.inner, value: move vacant);
   }
-  invariant complete_min: deref(cells).inner.len >= target;
-  invariant complete_max: deref(cells).inner.len <= target;
+  invariant complete_min: cells^.inner.len >= target;
+  invariant complete_max: cells^.inner.len <= target;
   return unit;
 }
 
@@ -32,12 +32,12 @@ fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V
 }
 
 fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) {
-  return deref(map).length;
+  return map^.length;
 }
 
 fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> capacity: u64 reads(map) {
   doc "Capacity counts the materialized buckets available to probing.";
-  return deref(map).cells.inner.len;
+  return map^.cells.inner.len;
 }
 
 fn hash_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contract {
@@ -55,7 +55,7 @@ fn hash_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contract 
 }
 
 fn hash_map_action<interface HashMapKey<K, E>, V>(slot: &HashMapSlot<K, V>, key: &K, env: &E) -> result: HashMapAction reads(slot), reads(key), reads(env) {
-  match deref(slot) {
+  match slot^ {
     HashMapVacant() => {
       return HashMapAction::HashMapStop();
     }
@@ -73,14 +73,14 @@ fn hash_map_action<interface HashMapKey<K, E>, V>(slot: &HashMapSlot<K, V>, key:
 }
 
 fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Result<u64, unit> reads(map), reads(key), reads(env) contract {
-  ensures when Ok(value: index): index < deref(map).cells.inner.len;
+  ensures when Ok(value: index): index < map^.cells.inner.len;
 } {
   let hash = HashMapKey::hash(env: env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = hash_map_probe(home: home, step: step, count: count);
-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &deref(map).cells.inner[index], key: key, env: env);
+    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
     match action {
       HashMapMatch() => {
         return Ok<u64, unit>(value: index);
@@ -99,12 +99,12 @@ fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMa
 
 fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) {
   let hash = HashMapKey::hash(env: key_env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = hash_map_probe(home: home, step: step, count: count);
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       HashMapFilled(key: saved_key, value: saved_value) => {
         let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
         if equal {
@@ -123,16 +123,16 @@ fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key:
 }
 
 fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } {
   let hash = HashMapKey::hash(env: key_env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = hash_map_probe(home: home, step: step, count: count);
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       HashMapFilled(key: saved_key, value: saved_value) => {
         let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
         if equal {
@@ -151,14 +151,14 @@ fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K
 }
 
 fn hash_map_exchange<K, V>(cells: &Box<Slots<HashMapSlot<K, V>>>, index: u64, key: K, value: V) -> result: HashMapPut<K, V> writes(cells) contract {
-  requires index < deref(cells).inner.len;
-  ensures deref(cells).inner.len == deref(entry(cells)).inner.len;
-  ensures deref(cells).inner.cap == deref(entry(cells)).inner.cap;
+  requires index < cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
+  ensures cells^.inner.cap == entry(cells)^.inner.cap;
 } {
   doc "Every old variant has ordinary useful behavior: vacant and deleted mean insertion, while filled returns the old complete pair. No vacancy proof is needed to consume the exchanged enum.";
   let offered = HashMapSlot<K, V>::HashMapFilled(key: move key, value: move value);
-  swap(first: &deref(cells).inner[index], second: &offered);
-  match offered {
+  swap(first: &cells^.inner[index], second: &offered);
+  match move offered {
     HashMapVacant() => {
       return HashMapPut<K, V>::HashMapInserted();
     }
@@ -174,19 +174,19 @@ fn hash_map_exchange<K, V>(cells: &Box<Slots<HashMapSlot<K, V>>>, index: u64, ke
 }
 
 fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } {
   let hash = HashMapKey::hash(env: env, key: &key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   let available = count;
   for @probe (step in 0_u64..count) {
     let home = hash % count;
     let index = hash_map_probe(home: home, step: step, count: count);
-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &deref(map).cells.inner[index], key: &key, env: env);
+    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
     match action {
       HashMapMatch() => {
-        let replaced = hash_map_exchange::<K, V>(cells: &deref(map).cells, index: index, key: move key, value: move value);
+        let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
         return move replaced;
       }
       HashMapStop() => {
@@ -205,10 +205,10 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
     }
   }
   if available < count {
-    let before = deref(map).length;
+    let before = map^.length;
     if before < ceiling {
-      set deref(map).length = before + 1_u64;
-      let inserted = hash_map_exchange::<K, V>(cells: &deref(map).cells, index: available, key: move key, value: move value);
+      set map^.length = before + 1_u64;
+      let inserted = hash_map_exchange::<K, V>(cells: &map^.cells, index: available, key: move key, value: move value);
       return move inserted;
     }
   }
@@ -218,7 +218,7 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
 }
 
 fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(slot) {
-  match deref(slot) {
+  match slot^ {
     HashMapVacant() => {
       return True();
     }
@@ -236,7 +236,7 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  let old_count = deref(map).cells.inner.len;
+  let old_count = map^.cells.inner.len;
   if capacity < old_count {
     return Err<unit, unit>(error: unit);
   }
@@ -245,13 +245,13 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   }
   let previous = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
   hash_map_extend::<K, V, ceiling>(cells: &previous, target: capacity);
-  swap(first: &deref(map).cells, second: &previous);
+  swap(first: &map^.cells, second: &previous);
   loop @old_cells {
     if previous.inner.len == 0_u64 {
       break @old_cells;
     }
     let slot = take_back(window: &previous.inner);
-    match slot {
+    match move slot {
       HashMapVacant() => {
       }
       HashMapDeleted() => {
@@ -265,16 +265,16 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
             break @owner;
           }
           let hash = HashMapKey::hash(env: env, key: &pending[0_u64].key);
-          let count = deref(map).cells.inner.len;
+          let count = map^.cells.inner.len;
           for @vacancy (step in 0_u64..count) {
             let home = hash % count;
             let index = hash_map_probe(home: home, step: step, count: count);
-            let available = hash_map_is_available::<K, V>(slot: &deref(map).cells.inner[index]);
+            let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
             if available {
               let offered = take_back(window: &pending);
               let HashMapPair(key: offered_key, value: offered_value) = move offered;
-              let exchanged = hash_map_exchange::<K, V>(cells: &deref(map).cells, index: index, key: move offered_key, value: move offered_value);
-              match exchanged {
+              let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move offered_key, value: move offered_value);
+              match move exchanged {
                 HashMapInserted() => {
                 }
                 HashMapReturned(reason: returned_reason, pair: returned_pair) => {
@@ -297,7 +297,7 @@ fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  if capacity <= deref(map).cells.inner.len {
+  if capacity <= map^.cells.inner.len {
     return Ok<unit, unit>(value: unit);
   }
   let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
@@ -305,14 +305,14 @@ fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
 }
 
 fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  let capacity = deref(map).cells.inner.len;
+  let capacity = map^.cells.inner.len;
   let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
   return rebuilt;
 }
 
 fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) {
   let attempted = hash_map_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
-  match attempted {
+  match move attempted {
     HashMapInserted() => {
       return HashMapPut<K, V>::HashMapInserted();
     }
@@ -323,7 +323,7 @@ fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap
           return HashMapPut<K, V>::HashMapReturned(reason: replacement_reason, pair: move returned_pair);
         }
         HashMapFull() => {
-          let count = deref(map).cells.inner.len;
+          let count = map^.cells.inner.len;
           if count >= ceiling {
             let ceiling_reason = HashMapReturnReason::HashMapFull();
             return HashMapPut<K, V>::HashMapReturned(reason: ceiling_reason, pair: move returned_pair);
@@ -356,7 +356,7 @@ fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap
 }
 
 fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) {
-  let before = deref(map).length;
+  let before = map^.length;
   if before == 0_u64 {
     return None<HashMapPair<K, V>>();
   }
@@ -364,10 +364,10 @@ fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
   match found {
     Ok(value: index) => {
       let removed = HashMapSlot<K, V>::HashMapDeleted();
-      swap(first: &deref(map).cells.inner[index], second: &removed);
-      match removed {
+      swap(first: &map^.cells.inner[index], second: &removed);
+      match move removed {
         HashMapFilled(key: saved_key, value: saved_value) => {
-          set deref(map).length = before - 1_u64;
+          set map^.length = before - 1_u64;
           let pair = HashMapPair<K, V>(key: move saved_key, value: move saved_value);
           return Some<HashMapPair<K, V>>(value: move pair);
         }
@@ -386,10 +386,10 @@ fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
 }
 
 fn hash_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) {
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (index in 0_u64..count) {
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       HashMapFilled(key: saved_key, value: saved_value) => {
         visit(env: env, key: saved_key, value: saved_value);
       }
@@ -415,7 +415,7 @@ fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: Has
       break @cleanup;
     }
     let slot = take_back(window: &storage.inner);
-    match slot {
+    match move slot {
       HashMapFilled(key: saved_key, value: saved_value) => {
         HashMapConsume::consume(env: env, key: move saved_key, value: move saved_value);
       }

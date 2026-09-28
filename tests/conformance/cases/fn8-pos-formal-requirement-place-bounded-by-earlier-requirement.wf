@@ -3,17 +3,17 @@ alias exit_status = std::process::exit_status;
 
 interface Pick {
   fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
-    requires i < deref(rows).len;
-    requires k < deref(rows)[i].len;
+    requires i < rows^.len;
+    requires k < rows^[i].len;
   };
 }
 
 fn pick_one(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u64 reads(rows) contract {
-  requires i < deref(rows).len;
-  requires k < deref(rows)[i].len;
+  requires i < rows^.len;
+  requires k < rows^[i].len;
 } {
   doc "Reads the element both requirements bound.";
-  let byte = deref(rows)[i][k];
+  let byte = rows^[i][k];
   let value = cvt::<u8, u64>(byte);
   return value;
 }
@@ -24,8 +24,8 @@ binding First : Pick {
 
 fn outer<interface Pick>(rows: &Slots<Slots<u8, 8>, 4>) -> value: u64 reads(rows) {
   doc "Calls the formal member where both of its requirements hold.";
-  if 0_u64 < deref(rows).len {
-    if 1_u64 < deref(rows)[0_u64].len {
+  if 0_u64 < rows^.len {
+    if 1_u64 < rows^[0_u64].len {
       return Pick::pick(rows: rows, i: 0_u64, k: 1_u64);
     }
   }

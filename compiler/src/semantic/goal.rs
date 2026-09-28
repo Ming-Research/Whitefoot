@@ -199,7 +199,7 @@ pub(crate) enum GoalProjection {
     /// It occurs in exactly one position: the image of a `&[T]` actual that
     /// formed its range at the call and therefore names no binding. A range
     /// reference a binding names carries no step of its own, that binding
-    /// being the [ENT-2] measure place `deref(view)`; this projection is what
+    /// being the [ENT-2] measure place `view^`; this projection is what
     /// keeps an anonymous range distinct from the storage it was formed over,
     /// whose `len` is a different quantity [MSR-1].
     Range(super::places::CapturedRange),

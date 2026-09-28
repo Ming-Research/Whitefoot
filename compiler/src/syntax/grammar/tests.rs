@@ -18,7 +18,8 @@ fn complete_inventory_is_pinned() {
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
     assert_eq!(DECISIONS.len(), 157);
-    assert_eq!(SELECT_ROWS.len(), 6_768);
+    // v0.76 moves reference access from an expression start into psuffix.
+    assert_eq!(SELECT_ROWS.len(), 6_568);
     assert_eq!(diagnostic_terminal_order().len(), 108);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -399,6 +400,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 6_768);
+    assert_eq!(total_rows, 6_568);
     assert!(saw_atom_only);
 }

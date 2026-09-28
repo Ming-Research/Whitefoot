@@ -9,14 +9,14 @@ enum Packet {
 fn read(packet: &Packet) -> result: u64 reads(packet) {
   let fallback = 0_u64;
   let selected = &fallback;
-  match deref(packet) {
+  match packet^ {
     Data(value: payload) => {
-      set selected = &deref(payload);
+      set selected = &payload^;
     }
     Empty() => {
     }
   }
-  return deref(selected);
+  return selected^;
 }
 
 fn main() -> status: ExitStatus pure {

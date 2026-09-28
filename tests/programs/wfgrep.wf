@@ -194,7 +194,7 @@ fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
 
 fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
   doc "Raises one byte window's capacity and length to total and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The written ceiling is what discharges the allocation-size obligation, and the fill is what lets a range reference cover the new slots [OP-9, OP-10, REF-4].";
-  let capacity = deref(cell).inner.cap;
+  let capacity = cell^.inner.cap;
   let bounded = total <= 1073741824_u64;
   let larger = total >= capacity;
   if bounded {
@@ -207,14 +207,14 @@ fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell)
     return False();
   }
   loop @fill {
-    let length = deref(cell).inner.len;
+    let length = cell^.inner.len;
     let done = length >= total;
     if done {
       break @fill;
     }
-    let room = deref(cell).inner.len < deref(cell).inner.cap;
+    let room = cell^.inner.len < cell^.inner.cap;
     if room {
-      place_back(window: &deref(cell).inner, value: 0_u8);
+      place_back(window: &cell^.inner, value: 0_u8);
     } else {
       return False();
     }
@@ -224,8 +224,8 @@ fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell)
 
 fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
   doc "Appends one byte, doubling full backing, or taking 4096 bytes for an empty store, within the 2^32-byte collection ceiling, and reports False only at that ceiling. A directory's collected names therefore have no fixed entry count [OP-9, OP-10].";
-  let length = deref(cell).inner.len;
-  let capacity = deref(cell).inner.cap;
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
   let full = length >= capacity;
   if full {
     let empty = capacity == 0_u64;
@@ -242,9 +242,9 @@ fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
       }
     }
   }
-  let room = deref(cell).inner.len < deref(cell).inner.cap;
+  let room = cell^.inner.len < cell^.inner.cap;
   if room {
-    place_back(window: &deref(cell).inner, value: value);
+    place_back(window: &cell^.inner, value: value);
     return True();
   }
   return False();
@@ -252,8 +252,8 @@ fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
 
 fn push_word(cell: &Box<Slots<u64>>, value: u64) -> pushed: Bool writes(cell) {
   doc "The same for word slots, taking 512 for an empty store, within a 2^28-entry ceiling, which is also what discharges the word window's allocation-size obligation [OP-9].";
-  let length = deref(cell).inner.len;
-  let capacity = deref(cell).inner.cap;
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
   let full = length >= capacity;
   if full {
     let empty = capacity == 0_u64;
@@ -270,23 +270,23 @@ fn push_word(cell: &Box<Slots<u64>>, value: u64) -> pushed: Bool writes(cell) {
       }
     }
   }
-  let room = deref(cell).inner.len < deref(cell).inner.cap;
+  let room = cell^.inner.len < cell^.inner.cap;
   if room {
-    place_back(window: &deref(cell).inner, value: value);
+    place_back(window: &cell^.inner, value: value);
     return True();
   }
   return False();
 }
 
 fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
-  requires capacity == deref(destination).len;
+  requires capacity == destination^.len;
   requires filled <= capacity;
   ensures result <= capacity;
 } {
   doc "Appends as much of one static message as the destination still holds. The destination's capacity is a written operand rather than a measure the row writes, so the published bound is a fact about a value this caller supplied [MSR-3].";
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let admitted = filled <= spare;
-  let length = deref(text).len;
+  let length = text^.len;
   if admitted {
     for @append (at in filled..spare) {
       let taken = at -wrap filled;
@@ -294,8 +294,8 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
       if done {
         return at;
       }
-      let byte = deref(text)[taken];
-      set deref(destination)[at] = byte;
+      let byte = text^[taken];
+      set destination^[at] = byte;
     }
     return spare;
   } else {
@@ -305,8 +305,8 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {
   doc "Copies one half-open source range into the destination at one offset.";
-  let source_room = deref(source).len;
-  let destination_room = deref(destination).len;
+  let source_room = source^.len;
+  let destination_room = destination^.len;
   let target = at;
   let cursor = from;
   loop @copy {
@@ -319,13 +319,13 @@ fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) ->
     } else {
       return target;
     }
-    let byte = deref(source)[cursor];
+    let byte = source^[cursor];
     let write_ok = target < destination_room;
     if write_ok {
     } else {
       return target;
     }
-    set deref(destination)[target] = byte;
+    set destination^[target] = byte;
     set target = target +wrap 1_u64;
     set cursor = cursor +wrap 1_u64;
   }
@@ -333,7 +333,7 @@ fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) ->
 }
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
-  define source_length = deref(source).len;
+  define source_length = source^.len;
   requires length <= source_length;
 } {
   doc "Publishes one prefix of the source range, reattempting until the host has accepted every byte or refused it. A reference carries no permission marker, so the same range reference the caller writes through is what it reads from here [REF-1, EFF-1].";
@@ -358,10 +358,10 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
   doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
-  let spare = deref(store).len;
+  let spare = store^.len;
   let inside = index < spare;
   if inside {
-    let value = deref(store)[index];
+    let value = store^[index];
     return value;
   }
   return 0_u8;
@@ -427,7 +427,7 @@ fn put_decimal(destination: &[u8], at: u64, value: u64) -> result: u64 writes(de
     set probe = probe / 10_u64;
     set digits = digits +wrap 1_u64;
   }
-  let spare = deref(destination).len;
+  let spare = destination^.len;
   let glyphs = digit_glyphs.len;
   let end = at +wrap digits;
   let cursor = end;
@@ -442,7 +442,7 @@ fn put_decimal(destination: &[u8], at: u64, value: u64) -> result: u64 writes(de
     let writable = cursor < spare;
     if writable {
       let glyph = digit_glyphs[digit];
-      set deref(destination)[cursor] = glyph;
+      set destination^[cursor] = glyph;
     }
     set rest = rest / 10_u64;
   }
@@ -450,16 +450,16 @@ fn put_decimal(destination: &[u8], at: u64, value: u64) -> result: u64 writes(de
 }
 
 fn assemble_failure(report: &[u8], capacity: u64, path: &[u8], path_length: u64, status: u8) -> result: u64 reads(path), writes(report) contract {
-  requires capacity == deref(report).len;
+  requires capacity == report^.len;
   ensures result <= capacity;
 } {
   doc "Assembles one `wfgrep: PATH: reason` diagnostic in the report range and hands back the assembled length, copying the caller's path bytes and clamping that length against the range's capacity. Publishing is the caller's, which now hands the same range reference to write_once [REF-1].";
   let length = 0_u64;
-  let report_capacity = deref(report).len;
+  let report_capacity = report^.len;
   let prefix_view = &error_prefix[0_u64..8_u64];
   set length = append_slice(destination: report, capacity: report_capacity, filled: length, text: prefix_view);
   let prior_length = length;
-  let path_room = deref(path).len;
+  let path_room = path^.len;
   let copied_count = 0_u64;
   loop @name {
     let done = copied_count >= path_length;
@@ -477,8 +477,8 @@ fn assemble_failure(report: &[u8], capacity: u64, path: &[u8], path_length: u64,
     } else {
       break @name;
     }
-    let byte = deref(path)[copied_count];
-    set deref(report)[target_at] = byte;
+    let byte = path^[copied_count];
+    set report^[target_at] = byte;
     set copied_count = copied_count +wrap 1_u64;
   }
   let candidate_length = prior_length +wrap copied_count;
@@ -544,21 +544,21 @@ fn assemble_failure(report: &[u8], capacity: u64, path: &[u8], path_length: u64,
 }
 
 fn append_trailing_newline(input: &[u8], carry: u64) -> result: TrailingChunk writes(input) {
-  let input_room = deref(input).len;
+  let input_room = input^.len;
   let carry_ok = carry < input_room;
   if carry_ok {
   } else {
     let rejected = TrailingChunk(available: carry, status: 6_u8);
     return rejected;
   }
-  set deref(input)[carry] = 10_u8;
+  set input^[carry] = 10_u8;
   let available = carry +wrap 1_u64;
   let accepted = TrailingChunk(available: available, status: 0_u8);
   return accepted;
 }
 
 fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_length: u64, first_pattern_byte: u8, empty_pattern: Bool) -> result: LineScan reads(input), reads(pattern) {
-  let input_room = deref(input).len;
+  let input_room = input^.len;
   let available_fits = available <= input_room;
   if available_fits {
   } else {
@@ -573,11 +573,11 @@ fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_le
     let rejected = LineScan(terminator: available, hit: missed, status: 6_u8);
     return rejected;
   }
-  let pattern_room = deref(pattern).len;
+  let pattern_room = pattern^.len;
   let terminator = available;
   let hit = empty_pattern;
   for @walk_line (probe in scan..available) {
-    let byte = deref(input)[probe];
+    let byte = input^[probe];
     let newline = byte == 10_u8;
     if newline {
       set terminator = probe;
@@ -601,7 +601,7 @@ fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_le
             set same = False();
             break @verify_line;
           }
-          let candidate = deref(input)[spot];
+          let candidate = input^[spot];
           let stopper = candidate == 10_u8;
           if stopper {
             set same = False();
@@ -613,7 +613,7 @@ fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_le
             set same = False();
             break @verify_line;
           }
-          let expected = deref(pattern)[ahead];
+          let expected = pattern^[ahead];
           let equal = candidate == expected;
           if equal {
           } else {
@@ -633,7 +633,7 @@ fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_le
 }
 
 fn shift_input_tail(input: &[u8], available: u64, scan: u64) -> result: ShiftedTail writes(input) {
-  let input_room = deref(input).len;
+  let input_room = input^.len;
   let available_fits = available <= input_room;
   if available_fits {
   } else {
@@ -651,8 +651,8 @@ fn shift_input_tail(input: &[u8], available: u64, scan: u64) -> result: ShiftedT
     source_index in scan..available,
     invariant destination_precedes_source: moved <= source_index
   ) {
-    let byte = deref(input)[source_index];
-    set deref(input)[moved] = byte;
+    let byte = input^[source_index];
+    set input^[moved] = byte;
     set moved = moved + 1_u64;
   }
   let accepted = ShiftedTail(tail: moved, status: 0_u8);
@@ -661,7 +661,7 @@ fn shift_input_tail(input: &[u8], available: u64, scan: u64) -> result: ShiftedT
 
 fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], path_length: u64, line_number: u64, scratch: &[u8], input: &[u8], scan: u64, stop: u64) -> result: u8 reads(path), reads(input), writes(factory), writes(out), writes(scratch) {
   doc "Publishes one `PATH:LINE:TEXT` record too long for the output batch straight from where its bytes already are: the path from its range, the line number through the emptied batch, and the line from the read window. The caller has published everything batched before it, so records stay in order. The result is 0, or the output status of the refused write.";
-  let path_room = deref(path).len;
+  let path_room = path^.len;
   let path_fits = path_length <= path_room;
   if path_fits {
   } else {
@@ -675,17 +675,17 @@ fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], p
       return refused;
     }
   }
-  let scratch_room = deref(scratch).len;
+  let scratch_room = scratch^.len;
   let opened = 0_u64 < scratch_room;
   if opened {
-    set deref(scratch)[0_u64] = 58_u8;
+    set scratch^[0_u64] = 58_u8;
   } else {
     return 6_u8;
   }
   let filled = put_decimal(destination: scratch, at: 1_u64, value: line_number);
   let closing_room = filled < scratch_room;
   if closing_room {
-    set deref(scratch)[filled] = 58_u8;
+    set scratch^[filled] = 58_u8;
   } else {
     return 6_u8;
   }
@@ -704,11 +704,11 @@ fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], p
     }
   }
   let ordered = scan <= stop;
-  let inside = stop <= deref(input).len;
+  let inside = stop <= input^.len;
   if ordered {
     if inside {
-      let line = &deref(input)[scan..stop];
-      let line_length = deref(line).len;
+      let line = &input^[scan..stop];
+      let line_length = line^.len;
       match publish_all(factory: factory, output: out, source: line, length: line_length) {
         Ok(value: published) => {
         }
@@ -728,12 +728,12 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
   let input_cell = zeroed_bytes(count: 4096_u64);
   let batch_cell = zeroed_bytes(count: 8192_u64);
   let batch = &batch_cell.inner[0_u64..8192_u64];
-  let batch_room = deref(batch).len;
-  let pattern_room = deref(pattern).len;
+  let batch_room = batch^.len;
+  let pattern_room = pattern^.len;
   let first_pattern_byte = 0_u8;
   let has_pattern = pattern_room > 0_u64;
   if has_pattern {
-    set first_pattern_byte = deref(pattern)[0_u64];
+    set first_pattern_byte = pattern^[0_u64];
   }
   let empty_pattern = pattern_length == 0_u64;
   let matched = 0_u8;
@@ -745,7 +745,7 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
   loop @chunks {
     let window = input_cell.inner.len;
     let input = &input_cell.inner[0_u64..window];
-    let chunk_room = deref(input).len;
+    let chunk_room = input^.len;
     let carry_within_input = carry <= chunk_room;
     if carry_within_input {
     } else {
@@ -848,13 +848,13 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
             set filled = copy_range(destination: batch, at: filled, source: path, from: 0_u64, to: path_length);
             let colon_room = filled < batch_room;
             if colon_room {
-              set deref(batch)[filled] = 58_u8;
+              set batch^[filled] = 58_u8;
               set filled = filled +wrap 1_u64;
             }
             set filled = put_decimal(destination: batch, at: filled, value: line_number);
             let second_room = filled < batch_room;
             if second_room {
-              set deref(batch)[filled] = 58_u8;
+              set batch^[filled] = 58_u8;
               set filled = filled +wrap 1_u64;
             }
             set filled = copy_range(destination: batch, at: filled, source: input, from: scan, to: stop);
@@ -926,7 +926,7 @@ fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) 
 
 fn open_file_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) contract {
   define ordered = start <= end;
-  define capacity = deref(name).len;
+  define capacity = name^.len;
   define within = end <= capacity;
   requires ordered;
   requires within;
@@ -936,7 +936,7 @@ fn open_file_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &
 
 fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) contract {
   define ordered = start <= end;
-  define capacity = deref(name).len;
+  define capacity = name^.len;
   define within = end <= capacity;
   requires ordered;
   requires within;
@@ -946,7 +946,7 @@ fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, na
 
 fn keep_entry(records: &Box<Slots<u8>>, starts: &Box<Slots<u64>>, entries: &[u8], kind: u8, length_low: u8, length_high: u8, name_at: u64, name_count: u64) -> kept: Bool reads(entries), writes(records), writes(starts) {
   doc "Collects one enumerated entry: its offset in the record store goes to starts, then its kind, its two name-length bytes and its name bytes go to records. Both stores grow by doubling, so a directory's entry count is bounded only by the collection ceilings of push_byte and push_word, and the result is False only at one of them.";
-  let offset = deref(records).inner.len;
+  let offset = records^.inner.len;
   let offset_kept = push_word(cell: starts, value: offset);
   if offset_kept {
   } else {
@@ -967,7 +967,7 @@ fn keep_entry(records: &Box<Slots<u8>>, starts: &Box<Slots<u64>>, entries: &[u8]
   } else {
     return False();
   }
-  let entries_room = deref(entries).len;
+  let entries_room = entries^.len;
   let taken = 0_u64;
   loop @copy_name {
     let done = taken >= name_count;
@@ -980,7 +980,7 @@ fn keep_entry(records: &Box<Slots<u8>>, starts: &Box<Slots<u64>>, entries: &[u8]
     } else {
       return False();
     }
-    let byte = deref(entries)[source_at];
+    let byte = entries^[source_at];
     let byte_kept = push_byte(cell: records, value: byte);
     if byte_kept {
     } else {
@@ -1016,7 +1016,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       loop @batches {
         let produced = 0_u64;
         let ended = 0_u8;
-        let window_room = deref(entries).len;
+        let window_room = entries^.len;
         let (list_result_8, endpoint, reported) = directory_next(source: &list, destination: entries, start: 0_u64, end: window_room);
         match list_result_8 {
           Ok(value: completed) => {
@@ -1044,7 +1044,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
         }
         let at = 0_u64;
         loop @stored_entry {
-          let entries_room = deref(entries).len;
+          let entries_room = entries^.len;
           let header_end = at +wrap 3_u64;
           let complete = header_end <= produced;
           if complete {
@@ -1056,7 +1056,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let kind = deref(entries)[at];
+          let kind = entries^[at];
           let length_low_at = at +wrap 1_u64;
           let length_low_readable = length_low_at < entries_room;
           if length_low_readable {
@@ -1069,8 +1069,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let name_length_low = deref(entries)[length_low_at];
-          let name_length_high = deref(entries)[length_high_at];
+          let name_length_low = entries^[length_low_at];
+          let name_length_high = entries^[length_high_at];
           let name_count_low = cvt::<u8, u64>(name_length_low);
           let name_count_high = cvt::<u8, u64>(name_length_high);
           let name_count_high_shifted = ishl.wrap(name_count_high, 8_u32);
@@ -1098,7 +1098,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           if single {
             let first_readable = name_at < entries_room;
             if first_readable {
-              let first = deref(entries)[name_at];
+              let first = entries^[name_at];
               if first == 46_u8 {
                 set dotted = 1_u8;
               }
@@ -1111,8 +1111,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
             let second_readable = second_at < entries_room;
             if first_readable {
               if second_readable {
-                let first = deref(entries)[name_at];
-                let second = deref(entries)[second_at];
+                let first = entries^[name_at];
+                let second = entries^[second_at];
                 if first == 46_u8 {
                   if second == 46_u8 {
                     set dotted = 1_u8;
@@ -1141,7 +1141,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     }
   }
   if overflowed == 1_u8 {
-    let report_room = deref(report).len;
+    let report_room = report^.len;
     let assembled = assemble_failure(report: report, capacity: report_room, path: prefix, path_length: prefix_length, status: 11_u8);
     match publish_all(factory: factory, output: err, source: report, length: assembled) {
       Ok(value: published) => {
@@ -1157,7 +1157,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   let order = &starts_cell.inner[0_u64..stored];
   let selected = 0_u64;
   loop @sort {
-    let order_room = deref(order).len;
+    let order_room = order^.len;
     let done = selected >= stored;
     if done {
       break @sort;
@@ -1170,7 +1170,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     let best = selected;
     let probe = selected +wrap 1_u64;
     loop @scan {
-      let scan_room = deref(order).len;
+      let scan_room = order^.len;
       let scanned = probe >= stored;
       if scanned {
         break @scan;
@@ -1185,8 +1185,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       } else {
         break @scan;
       }
-      let candidate = deref(order)[probe];
-      let incumbent = deref(order)[best];
+      let candidate = order^[probe];
+      let incumbent = order^[best];
       let earlier = 0_u8;
       let closer = name_before(names: names, left: candidate, right: incumbent);
       if closer {
@@ -1199,19 +1199,19 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     }
     let best_readable = best < order_room;
     if best_readable {
-      let held = deref(order)[selected];
-      let winner = deref(order)[best];
-      set deref(order)[best] = held;
-      set deref(order)[selected] = winner;
+      let held = order^[selected];
+      let winner = order^[best];
+      set order^[best] = held;
+      set order^[selected] = winner;
     }
     set selected = selected +wrap 1_u64;
   }
   let visited = 0_u64;
   loop @process {
-    let names_room = deref(names).len;
-    let order_room = deref(order).len;
-    let child_room = deref(child).len;
-    let prefix_room = deref(prefix).len;
+    let names_room = names^.len;
+    let order_room = order^.len;
+    let child_room = child^.len;
+    let prefix_room = prefix^.len;
     let done = visited >= stored;
     if done {
       break @process;
@@ -1221,14 +1221,14 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     } else {
       break @process;
     }
-    let base = deref(order)[visited];
+    let base = order^[visited];
     set visited = visited +wrap 1_u64;
     let kind_readable = base < names_room;
     if kind_readable {
     } else {
       break @process;
     }
-    let kind = deref(names)[base];
+    let kind = names^[base];
     let stored_length_low_at = base +wrap 1_u64;
     let length_low_readable = stored_length_low_at < names_room;
     if length_low_readable {
@@ -1241,8 +1241,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     } else {
       break @process;
     }
-    let stored_length_low = deref(names)[stored_length_low_at];
-    let stored_length_high = deref(names)[stored_length_high_at];
+    let stored_length_low = names^[stored_length_low_at];
+    let stored_length_high = names^[stored_length_high_at];
     let name_count_low = cvt::<u8, u64>(stored_length_low);
     let name_count_high = cvt::<u8, u64>(stored_length_high);
     let name_count_high_shifted = ishl.wrap(name_count_high, 8_u32);
@@ -1290,14 +1290,14 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       } else {
         break @prefix_copy;
       }
-      let byte = deref(prefix)[cursor];
-      set deref(child)[cursor] = byte;
+      let byte = prefix^[cursor];
+      set child^[cursor] = byte;
       set cursor = cursor +wrap 1_u64;
     }
     if separated {
       let separator_fits = cursor < child_room;
       if separator_fits {
-        set deref(child)[cursor] = 47_u8;
+        set child^[cursor] = 47_u8;
         set cursor = cursor +wrap 1_u64;
       }
     }
@@ -1318,8 +1318,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       } else {
         break @name_copy;
       }
-      let byte = deref(names)[source_at];
-      set deref(child)[cursor] = byte;
+      let byte = names^[source_at];
+      set child^[cursor] = byte;
       set cursor = cursor +wrap 1_u64;
       set taken = taken +wrap 1_u64;
     }
@@ -1353,7 +1353,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       let reportable = status != 0_u8;
       if reportable {
         set failed = 1_u8;
-        let report_room = deref(report).len;
+        let report_room = report^.len;
         let assembled = assemble_failure(report: report, capacity: report_room, path: child, path_length: cursor, status: status);
         match publish_all(factory: factory, output: err, source: report, length: assembled) {
           Ok(value: published) => {
@@ -1397,7 +1397,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       let reportable = status != 0_u8;
       if reportable {
         set failed = 1_u8;
-        let report_room = deref(report).len;
+        let report_room = report^.len;
         let assembled = assemble_failure(report: report, capacity: report_room, path: child, path_length: cursor, status: status);
         match publish_all(factory: factory, output: err, source: report, length: assembled) {
           Ok(value: published) => {
@@ -1425,7 +1425,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
 
 fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: u64, length: u64, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: RootSearch reads(dir), reads(name), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) {
   doc "Opens the search root named by name[from..length) one component at a time below dir and walks the last one. open_directory opens exactly one component and refuses a separator, so a root such as `tests/programs` is reached by opening `tests` and then `programs` below it, each intermediate directory closed on the way back; empty components from repeated or trailing separators are skipped, as path resolution does. The result is walk's packed outcome, or the io_class status of the first component that could not be opened, or 5 when no component remains.";
-  let name_room = deref(name).len;
+  let name_room = name^.len;
   let start = from;
   loop @leading {
     let exhausted = start >= length;
@@ -1437,7 +1437,7 @@ fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: 
     } else {
       break @leading;
     }
-    let byte = deref(name)[start];
+    let byte = name^[start];
     let separator = byte == 47_u8;
     if separator {
     } else {
@@ -1456,7 +1456,7 @@ fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: 
     } else {
       break @component;
     }
-    let byte = deref(name)[end];
+    let byte = name^[end];
     let separator = byte == 47_u8;
     if separator {
       break @component;
@@ -1474,7 +1474,7 @@ fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: 
     } else {
       break @trailing;
     }
-    let byte = deref(name)[next];
+    let byte = name^[next];
     let separator = byte == 47_u8;
     if separator {
     } else {
@@ -1532,7 +1532,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   if usable {
     match arg_get(args: args, position: 1_u64) {
       Ok(value: text) => {
-        let pattern_room = deref(pattern).len;
+        let pattern_room = pattern^.len;
         match host_copy_bytes(value: &text, destination: pattern, start: 0_u64, end: pattern_room) {
           Ok(value: copied) => {
             set pattern_length = copied;
@@ -1548,7 +1548,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     match arg_get(args: args, position: 2_u64) {
       Ok(value: text) => {
-        let name_room = deref(root_name).len;
+        let name_room = root_name^.len;
         match host_copy_bytes(value: &text, destination: root_name, start: 0_u64, end: name_room) {
           Ok(value: copied) => {
             set root_length = copied;
@@ -1568,7 +1568,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   if startup == 0_u8 {
   } else {
     let length = 0_u64;
-    let report_room = deref(report).len;
+    let report_room = report^.len;
     if startup == 1_u8 {
       let view = &usage_text[0_u64..27_u64];
       set length = append_slice(destination: report, capacity: report_room, filled: length, text: view);
@@ -1589,12 +1589,12 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     return exit_status(code: 2_u8);
   }
-  let root_name_room = deref(root_name).len;
+  let root_name_room = root_name^.len;
   let root_length_fits = root_length <= root_name_room;
   if root_length_fits {
   } else {
     let length = 0_u64;
-    let report_room = deref(report).len;
+    let report_room = report^.len;
     let view = &reason_root_too_long[0_u64..29_u64];
     set length = append_slice(destination: report, capacity: report_room, filled: length, text: view);
     match publish_all(factory: files, output: err, source: report, length: length) {
@@ -1607,8 +1607,8 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   }
   let copied = 0_u64;
   loop @root_copy_out {
-    let name_room = deref(root_name).len;
-    let root_room = deref(root_path).len;
+    let name_room = root_name^.len;
+    let root_room = root_path^.len;
     let done = copied >= root_length;
     if done {
       break @root_copy_out;
@@ -1623,13 +1623,13 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     } else {
       break @root_copy_out;
     }
-    let byte = deref(root_name)[copied];
-    set deref(root_path)[copied] = byte;
+    let byte = root_name^[copied];
+    set root_path^[copied] = byte;
     set copied = copied +wrap 1_u64;
   }
   let display = copied;
   loop @trim {
-    let root_room = deref(root_path).len;
+    let root_room = root_path^.len;
     let trimmable = display > 1_u64;
     if trimmable {
     } else {
@@ -1641,7 +1641,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     } else {
       break @trim;
     }
-    let byte = deref(root_path)[last_at];
+    let byte = root_path^[last_at];
     let separator = byte == 47_u8;
     if separator {
       set display = last_at;
@@ -1713,7 +1713,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   let reportable = root_status != 0_u8;
   if reportable {
     set failed = 1_u8;
-    let report_room = deref(report).len;
+    let report_room = report^.len;
     let assembled = assemble_failure(report: report, capacity: report_room, path: root_path, path_length: copied, status: root_status);
     match publish_all(factory: files, output: err, source: report, length: assembled) {
       Ok(value: published) => {
@@ -1730,7 +1730,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     } else {
       give 8_u8;
     }
-    let report_room = deref(report).len;
+    let report_room = report^.len;
     let subject = &standard_output_name[0_u64..15_u64];
     let assembled = assemble_failure(report: report, capacity: report_room, path: subject, path_length: 15_u64, status: output_status);
     match publish_all(factory: files, output: err, source: report, length: assembled) {

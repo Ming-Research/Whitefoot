@@ -9,7 +9,7 @@ fn need(index: u8) -> result: unit pure contract {
 }
 
 fn read(values: &Slots<u8, 255>, first: u8, first_limit: u8, second: u8, second_limit: u8, third: u8, third_limit: u8) -> result: u8 reads(values) contract {
-  requires deref(values).len >= 255_u64;
+  requires values^.len >= 255_u64;
   requires first <= first_limit;
   requires second <= second_limit;
   requires third <= third_limit;
@@ -28,8 +28,8 @@ fn read(values: &Slots<u8, 255>, first: u8, first_limit: u8, second: u8, second_
   let first_two = first + second;
   let index = first_two + third;
   let array_index = cvt::<u8, u64>(index);
-  let loaded_first = deref(values)[array_index];
-  let loaded_second = deref(values)[array_index];
+  let loaded_first = values^[array_index];
+  let loaded_second = values^[array_index];
   need(index: index);
   return loaded_second;
 }

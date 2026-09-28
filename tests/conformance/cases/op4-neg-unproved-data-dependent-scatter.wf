@@ -2,16 +2,16 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn count_low(input: &[u64]) -> result: u64 reads(input) contract {
-  requires deref(input).len <= 16777216_u64;
-  ensures result <= deref(input).len;
+  requires input^.len <= 16777216_u64;
+  ensures result <= input^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   let low = 0_u64;
   for (
     i in 0_u64..count,
     invariant counted: low <= i
   ) {
-    let key = deref(input)[i];
+    let key = input^[i];
     let digit = key % 2_u64;
     if digit == 0_u64 {
       set low = low + 1_u64;
@@ -21,26 +21,26 @@ fn count_low(input: &[u64]) -> result: u64 reads(input) contract {
 }
 
 fn scatter(input: &[u64], output: &[u64], split: u64) -> result: u64 reads(input), writes(output) contract {
-  requires deref(input).len <= 16777216_u64;
-  requires deref(input).len <= deref(output).len;
-  requires split <= deref(input).len;
+  requires input^.len <= 16777216_u64;
+  requires input^.len <= output^.len;
+  requires split <= input^.len;
 } {
   doc "This candidate deliberately has an insufficient contract. A bound on split does not relate it to the input's digit counts: split equal to one with a one-element odd input would write beyond the output. The retained OP-4 rejection identifies that missing relation, not an incorrect checker verdict or an impossibility result for every scatter representation.";
-  let count = deref(input).len;
+  let count = input^.len;
   let low = 0_u64;
   for (
     i in 0_u64..count,
     invariant counted: low <= i
   ) {
-    let key = deref(input)[i];
+    let key = input^[i];
     let digit = key % 2_u64;
     if digit == 0_u64 {
-      set deref(output)[low] = deref(input)[i];
+      set output^[low] = input^[i];
       set low = low + 1_u64;
     } else {
       let skipped = i - low;
       let high = split + skipped;
-      set deref(output)[high] = deref(input)[i];
+      set output^[high] = input^[i];
     }
   }
   return count;

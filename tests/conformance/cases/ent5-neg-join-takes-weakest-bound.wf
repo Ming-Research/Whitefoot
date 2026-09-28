@@ -3,7 +3,7 @@ alias exit_status = std::process::exit_status;
 
 fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
   doc "The join keeps the weakest (largest-constant) bound held by all joined states [ENT-5]. One branch establishes i - spare <= -1 and the other only i - spare <= 0, so the continuation carries the non-strict bound and the subscript after the join is undischarged [OP-4].";
-  let spare = deref(b).len;
+  let spare = b^.len;
   if pick {
     let inside = i < spare;
     if inside {
@@ -17,7 +17,7 @@ fn get(b: &[u8], i: u64, pick: Bool) -> result: u8 reads(b) {
       return 0_u8;
     }
   }
-  return deref(b)[i];
+  return b^[i];
 }
 
 fn main() -> status: ExitStatus pure {

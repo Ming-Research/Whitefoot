@@ -7,7 +7,7 @@ struct Counter {
 
 fn bump(c: &Counter) -> result: unit writes(c.value) {
   doc "Whether a callee may write through a reference parameter is stated by its effect row, not by a marker on the reference.";
-  set deref(c).value = 9_i32;
+  set c^.value = 9_i32;
   return unit;
 }
 
@@ -15,7 +15,7 @@ fn main() -> return_value: ExitStatus pure {
   doc "A bare parameter type selects value mode and & selects a reference; deref reads the storage it names, while write authority is the callee's declared row.";
   let a = Counter(value: 5_i32);
   let s = &a;
-  if deref(s).value == 5_i32 {
+  if s^.value == 5_i32 {
   } else {
     return exit_status(code: 1_u8);
   }

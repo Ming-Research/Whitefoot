@@ -1,6 +1,6 @@
 fn other(left: &u64, right: &u64) -> result: unit writes(left), writes(right) {
-  set deref(left) = 1_u64;
-  set deref(right) = 2_u64;
+  set left^ = 1_u64;
+  set right^ = 2_u64;
   return unit;
 }
 

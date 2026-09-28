@@ -12,7 +12,7 @@ struct Pair {
 
 fn change(cell: &Cell) -> result: u64 writes(cell.value) {
   doc "Writes the cell it was handed and returns an unrelated number.";
-  set deref(cell).value = 9_u64;
+  set cell^.value = 9_u64;
   return 7_u64;
 }
 
@@ -22,8 +22,8 @@ fn main() -> status: ExitStatus pure {
   let r = Cell(value: 5_u64);
   let pair = Pair(left: l, right: r);
   let holder = &pair;
-  let first = change(cell: &deref(holder).left);
-  let second = change(cell: &deref(holder).right);
-  set deref(holder).left.value = 13_u64;
+  let first = change(cell: &holder^.left);
+  let second = change(cell: &holder^.right);
+  set holder^.left.value = 13_u64;
   return exit_status(code: 0_u8);
 }

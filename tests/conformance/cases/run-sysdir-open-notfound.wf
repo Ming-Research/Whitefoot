@@ -13,7 +13,7 @@ alias relative_path = std::fs::relative_path;
 
 fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   doc "Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path.";
-  match deref(error) {
+  match error^ {
     NotFound(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -78,7 +78,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
       return False();
     }
     ResourceExhausted(code: native_code, origin: native_origin) => {
-      return deref(native_origin) == 0_u8;
+      return native_origin^ == 0_u8;
     }
     FileTooLarge(code: native_code, origin: native_origin) => {
       return False();

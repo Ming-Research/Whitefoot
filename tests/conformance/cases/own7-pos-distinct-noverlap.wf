@@ -7,8 +7,8 @@ struct Slot {
 
 fn write_both(first: &Slot, second: &Slot) -> result: unit writes(first.value), writes(second.value) {
   doc "Two declared writes on two reference parameters.";
-  set deref(first).value = 5_i32;
-  set deref(second).value = 6_i32;
+  set first^.value = 5_i32;
+  set second^.value = 6_i32;
   return unit;
 }
 

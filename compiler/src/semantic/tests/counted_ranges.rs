@@ -10,9 +10,9 @@ const ENDPOINT_TERM_FIX: &str =
 
 /// [SET-1]'s closed writability relation, as the diagnostic names it. There is
 /// no permission marker on a reference any more, so the required classes are a
-/// live own-mode binding and a path below `deref` of a reference whose row
+/// live own-mode binding and a path below `^` of a reference whose row
 /// declares that write [REF-1, EFF-1].
-const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below deref of a \
+const SET1_WRITABLE_ROOTS: &str = "a live own-mode value binding, or a path below `^` of a \
                                    reference whose row declares that write";
 
 fn assert_checks(source: &[u8]) {
@@ -115,16 +115,16 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `deref(holder)`",
+            mechanical_fix: "write `holder^`",
         },
     );
 
     // The holder is a reference formed in the body rather than the retired
     // store cell. [TYPE-7] owns the same exclusive judgment there: the
     // endpoint names a reference where its referent `own u64` is required, so
-    // the missing `deref` is cited at the same operand. A `Box` is no longer
+    // the missing `^` is cited at the same operand. A `Box` is no longer
     // a candidate here — its content is the field `inner` [TYPE-9] and
-    // `deref` of a cell is itself a TYPE-7 rejection.
+    // `^` of a cell is itself a TYPE-7 rejection.
     assert_rule(
         br#"fn main() -> status: std::process::ExitStatus pure {
   let origin = 0_u64;
@@ -136,7 +136,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `deref(holder)`",
+            mechanical_fix: "write `holder^`",
         },
     );
 
@@ -154,13 +154,13 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `deref(holder)`",
+            mechanical_fix: "write `holder^`",
         },
     );
 
     assert_checks(
         br#"fn walk(lower: &u64, upper: &u64) -> result: unit reads(lower), reads(upper) {
-  for @items (i in deref(lower)..deref(upper)) {
+  for @items (i in lower^..upper^) {
   }
   return unit;
 }
@@ -205,7 +205,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn probe(bounds: Bounds, upper: &u64) -> result: unit reads(upper) {
-  for @items (i in bounds.lower..deref(upper)) {
+  for @items (i in bounds.lower..upper^) {
   }
   return unit;
 }
@@ -325,8 +325,8 @@ struct Cursor {
 }
 
 fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
-  requires cursor.at < deref(nodes).len;
-  requires deref(nodes)[cursor.at].count <= 8_u64;
+  requires cursor.at < nodes^.len;
+  requires nodes^[cursor.at].count <= 8_u64;
 } {
   return 0_u64;
 }
@@ -380,7 +380,7 @@ fn counted_binder_is_not_source_writable_and_is_not_written_through() {
 
     assert_checks(
         br#"fn observe(value: &u64) -> result: unit reads(value) {
-  let seen = deref(value);
+  let seen = value^;
   return unit;
 }
 
@@ -397,7 +397,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
     assert_only_rule(
         br#"fn overwrite(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 9_u64;
+  set target^ = 9_u64;
   return unit;
 }
 
@@ -419,7 +419,7 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
   for (i in 0_u64..2_u64) {
     let held = &i;
     let aliased = held;
-    set deref(aliased) = 9_u64;
+    set aliased^ = 9_u64;
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -431,7 +431,7 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
     // binder; checking only the first member must not authorize this call.
     assert_only_rule(
         br#"fn overwrite(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 9_u64;
+  set target^ = 9_u64;
   return unit;
 }
 

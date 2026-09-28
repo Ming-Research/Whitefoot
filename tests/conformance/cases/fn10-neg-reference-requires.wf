@@ -1,6 +1,6 @@
 fn walk(value: &u64, n: u64) -> result: u64 reads(value) contract {
   requires n < 10_u64;
 } {
-  let local = deref(value);
+  let local = value^;
   return musttail walk(value: &local, n: 10_u64);
 }

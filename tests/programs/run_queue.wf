@@ -16,8 +16,8 @@ fn pair() -> result: Ring<u8, 4> pure contract {
 }
 
 fn enqueue(vector: &Ring<u8, 4>, value: u8) -> result: unit writes(vector) contract {
-  requires deref(vector).len < deref(vector).cap;
-  ensures deref(vector).len >= deref(entry(vector)).len + 1_u64;
+  requires vector^.len < vector^.cap;
+  ensures vector^.len >= entry(vector)^.len + 1_u64;
 } {
   doc "Places one value at the back boundary of a run.";
   place_back(window: vector, value: value);

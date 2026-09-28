@@ -5,8 +5,8 @@ fn main() -> status: ExitStatus pure {
   doc "SET-1 admits a target path reached through a range reference whose root is a live own binding. The program forms a range reference over a heap-resident array, writes two of its elements, reads all three positions back through the cell, and observes the two written values and the one untouched one.";
   let table = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
   let window = &table.inner[0_u64..4_u64];
-  set deref(window)[0_u64] = 9_u8;
-  set deref(window)[3_u64] = 11_u8;
+  set window^[0_u64] = 9_u8;
+  set window^[3_u64] = 11_u8;
   let first = table.inner[0_u64];
   let last = table.inner[3_u64];
   let untouched = table.inner[1_u64];

@@ -293,11 +293,11 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
     if done {
       break @octets;
     }
-    let spare = deref(destination).len;
+    let spare = destination^.len;
     let writable = cursor < spare;
     if writable {
       let byte = low_byte(v: rest);
-      set deref(destination)[cursor] = byte;
+      set destination^[cursor] = byte;
     }
     set rest = irotr(rest, 8_u32);
     set cursor = cursor +wrap 1_u64;
@@ -560,12 +560,12 @@ fn borrowed_read_modify_map_source() -> Vec<u8> {
     source
         .replacen(
             "fn mapped() -> result: Box<Array<u8>> pure {\n  let out = box_array_filled::<u8>(count: 400000_u64, value: 0_u8);\n",
-            "fn mapped(out: &Box<Array<u8>>) -> result: unit writes(out.inner) contract {\n  define spare = deref(out).inner.len;\n  requires 400000_u64 <= spare;\n} {\n",
+            "fn mapped(out: &Box<Array<u8>>) -> result: unit writes(out.inner) contract {\n  define spare = out^.inner.len;\n  requires 400000_u64 <= spare;\n} {\n",
             1,
         )
         .replacen(
             "    set out.inner[slot] = byte;\n",
-            "    let old = deref(out).inner[slot];\n    let blended = old +wrap byte;\n    set deref(out).inner[slot] = blended;\n",
+            "    let old = out^.inner[slot];\n    let blended = old +wrap byte;\n    set out^.inner[slot] = blended;\n",
             1,
         )
         .replacen("  return move out;\n", "  return unit;\n", 1)
@@ -1433,9 +1433,9 @@ fn a_borrowed_read_modify_map_preserves_the_sequential_bytes() {
 /// let-bound one, so the row loop is split as an independent map.
 const EXPRESSION_STATEMENT_ROWS: &[u8] =
     br#"fn fill_row(output: &[u64], value: u64) -> result: unit writes(output) {
-  let count = deref(output).len;
+  let count = output^.len;
   for (i in 0_u64..count) {
-    set deref(output)[i] = value;
+    set output^[i] = value;
   }
   return unit;
 }
@@ -1821,11 +1821,11 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
     if done {
       break @octets;
     }
-    let spare = deref(destination).len;
+    let spare = destination^.len;
     let writable = cursor < spare;
     if writable {
       let byte = low_byte(v: rest);
-      set deref(destination)[cursor] = byte;
+      set destination^[cursor] = byte;
     }
     set rest = irotr(rest, 8_u32);
     set cursor = cursor +wrap 1_u64;

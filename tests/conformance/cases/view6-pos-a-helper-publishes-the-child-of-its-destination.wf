@@ -2,27 +2,27 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn fill_and_count(destination: &[u8], value: u8) -> filled: u64 writes(destination) contract {
-  requires 2_u64 <= deref(destination).len;
+  requires 2_u64 <= destination^.len;
   ensures filled == 2_u64;
 } {
   doc "Fills the destination it was handed and publishes how many positions it filled.";
-  set deref(destination)[0_u64] = value;
-  set deref(destination)[1_u64] = value;
+  set destination^[0_u64] = value;
+  set destination^[1_u64] = value;
   return 2_u64;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The fill-and-publish helper, restated for v0.60. A reference never escapes its callee [REF-3], so the helper returns an owned count with its relation in ensures and the caller forms the child range itself: the re-slice &deref(window)[0_u64..filled] names the same storage the helper wrote through [REF-4], re-slicing through deref because window is a reference variable and the storage it names is reached only that way [REF-1], and the caller reads back through that child exactly what the helper wrote through its destination.";
+  doc "The fill-and-publish helper, restated for v0.60. A reference never escapes its callee [REF-3], so the helper returns an owned count with its relation in ensures and the caller forms the child range itself: the re-slice &window^[0_u64..filled] names the same storage the helper wrote through [REF-4], re-slicing through postfix ^ because window is a reference variable and the storage it names is reached only that way [REF-1], and the caller reads back through that child exactly what the helper wrote through its destination.";
   let table = box_array_filled::<u8>(count: 4_u64, value: 3_u8);
   let window = &table.inner[0_u64..4_u64];
   let filled = fill_and_count(destination: window, value: 200_u8);
-  let published = &deref(window)[0_u64..filled];
-  let seen = deref(published).len;
+  let published = &window^[0_u64..filled];
+  let seen = published^.len;
   if seen == 2_u64 {
   } else {
     return exit_status(code: 201_u8);
   }
-  let first = deref(published)[0_u64];
+  let first = published^[0_u64];
   if first == 200_u8 {
   } else {
     return exit_status(code: 202_u8);

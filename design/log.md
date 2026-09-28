@@ -5,6 +5,22 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-27 Use postfix caret for explicit reference access
+
+Nodes: language/ownership/reference-validity, language/surface-form/borrow-lexicon, language/data-model, compiler/checker-facts, compiler/rejection-payloads, language/ownership, language/surface-form/result-propagation
+
+Owner-approved: The owner selected the complete postfix `^` proposal for PR #107 ("use ^", written in Chinese), including whole access and field/index composition, after the C-like, prefix and postfix comparison.
+
+Summary: Replace the pending prefix-star/arrow proposal with the approved `p^`, `p^.field` and `p^[i]` family, and synchronize the four dependent spelling clauses while preserving Box `.inner`, reference validity and the typed place renderer. Remove the resolved amendment. The [caret comparison](../research/investigations/contract-surface/OWNERSHIP.md#selected-postfix-caret) records the one-step composition ground, alternatives and token-grammar limits. The node list also covers the earlier consumption and named-constant rulings on this branch. Coordinated specification/compiler/conformance implementation remains the follow-up in docs/todo.md; this research PR changes no accepted source syntax and this ruling authorizes no merge.
+
+## 2026-09-27 Mark consuming owned places explicitly and include named constant roots
+
+Nodes: language/ownership, language/ownership/reference-validity, language/surface-form/result-propagation
+
+Owner-approved: The owner accepted decision cards 1 and 3 for PR #107, and requested an arrow comparison before ruling on card 2, on 2026-09-27.
+
+Summary: Add the approved rule requiring `move` for consuming uses of existing noncopy owned places, including match and propagation, with its refusal of implicit whole-owner consumption; remove the consumption-spelling amendment and retire the result-propagation node's conflicting implicit-consumption decision under the same ruling. Include named constants in the reference-validity root list and synchronize its ancestor summary and the pending spelling amendment with that same correction to match REF-1. The [ownership investigation](../research/investigations/contract-surface/OWNERSHIP.md#consumption-spelling) supplies the consumption comparison. The reference-access spelling remains pending; implementing the approved consumption rule and the selected access spelling together remains the follow-up recorded in docs/todo.md. This research change does not amend the specification or implement either syntax change.
+
 ## 2026-09-26 Share validation identities, typed syntax views and structured emission
 
 Nodes: compiler/generic-validation-scope, compiler/typed-syntax-access, compiler/structured-emission

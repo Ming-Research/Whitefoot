@@ -15,7 +15,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &run, value: move b);
   let fresh = MaybeByte::Present(value: 9_u8);
   swap(first: &run[0_u64], second: &fresh);
-  match fresh {
+  match move fresh {
     Present(value: was) => {
       if was == 1_u8 {
       } else {
@@ -28,7 +28,7 @@ fn main() -> status: ExitStatus pure {
   }
   let again = MaybeByte::Present(value: 8_u8);
   swap(first: &run[0_u64], second: &again);
-  match again {
+  match move again {
     Present(value: got) => {
       if got == 9_u8 {
         return exit_status(code: 0_u8);

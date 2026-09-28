@@ -6,20 +6,20 @@ enum Pair {
 }
 
 fn observe(cell: &u64) -> result: u64 reads(cell) contract {
-  ensures result == deref(cell);
+  ensures result == cell^;
 } {
-  return deref(cell);
+  return cell^;
 }
 
 fn expect_equal(cell: &u64, seen: u64) -> result: unit reads(cell) contract {
-  requires deref(cell) == seen;
+  requires cell^ == seen;
 } {
-  let sampled = deref(cell);
+  let sampled = cell^;
   return unit;
 }
 
 fn inspect(pair: &Pair) -> result: unit reads(pair) {
-  match deref(pair) {
+  match pair^ {
     Both(left: l, right: r) => {
       let observed = observe(cell: l);
       expect_equal(cell: r, seen: observed);

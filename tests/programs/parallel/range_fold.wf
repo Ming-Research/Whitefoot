@@ -38,11 +38,11 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
     if done {
       break @octets;
     }
-    let spare = deref(destination).len;
+    let spare = destination^.len;
     let writable = cursor < spare;
     if writable {
       let byte = low_byte(v: rest);
-      set deref(destination)[cursor] = byte;
+      set destination^[cursor] = byte;
     }
     set rest = irotr(rest, 8_u32);
     set cursor = cursor +wrap 1_u64;

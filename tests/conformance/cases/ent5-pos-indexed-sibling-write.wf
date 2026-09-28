@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn overwrite(slots: &Slots<u64, 2>, at: u64) -> result: unit writes(slots[at]) contract {
-  requires at < deref(slots).len;
+  requires at < slots^.len;
 } {
   doc "Writes exactly the element position its declared row names; the index enters the row through a value parameter, evaluated once at the call [EFF-1].";
-  set deref(slots)[at] = 9_u64;
+  set slots^[at] = 9_u64;
   return unit;
 }
 
@@ -17,10 +17,10 @@ fn read_if_valid(index: u64) -> result: unit pure {
   let data = slots_new::<u8, 1>();
   place_back(window: &data, value: 7_u8);
   let guarded = &indices[0_u64];
-  let valid = deref(guarded) < 1_u64;
+  let valid = guarded^ < 1_u64;
   if valid {
     overwrite(slots: &indices, at: 1_u64);
-    let observed = data[deref(guarded)];
+    let observed = data[guarded^];
   }
   return unit;
 }

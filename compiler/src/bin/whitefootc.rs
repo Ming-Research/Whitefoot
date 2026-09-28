@@ -1308,8 +1308,8 @@ struct Options {
     emit_llvm: bool,
     /// Actualize the permission judgment's eligible groups on worker lanes.
     ///
-    /// Compute outlining is off by default; compiler-owned completion I/O
-    /// remains enabled independently. The compute path is free when requested
+    /// Outlining is off by default: the default build emits every call, I/O
+    /// included, as an ordinary call. The compute path is free when requested
     /// and no pool is asked for.
     ///
     /// Outlining a call is not free — it passes its arguments through a memory
@@ -1339,7 +1339,7 @@ struct Options {
     /// not a cost of the second copy, and it moves in both directions.
     ///
     /// Compute permission is never an obligation: without `--par`, compute
-    /// outlining stays off while completion keeps its own lowering. On every
+    /// outlining stays off and every call keeps the ordinary lowering. On every
     /// maintained native target, `WF_WORKERS=0` or `1` selects the sequential
     /// compute world, and invalid settings fail before the program body.
     /// Partial worker startup keeps the available workers; complete startup
@@ -1357,14 +1357,14 @@ struct Options {
     recursive_frontier: Option<RecursionBudget>,
     /// Emit the module a compiler with no overlap lowering at all emits.
     ///
-    /// This is the sequential reference build, and it exists for one reason:
-    /// measurement. The default compilation actualizes compiler-owned
-    /// completion I/O, so without this switch there is no way to compile one
-    /// source into the program that reaches the host through ordinary direct
-    /// calls and compare the two. Every I/O call becomes an ordinary call:
-    /// nothing is submitted, nothing is joined, and the completion runtime
-    /// does not join the link. It is not a performance option a writer picks
-    /// for a shipped program — the default build is what ships — and it
+    /// This is the sequential reference build that measurements name. The
+    /// default compilation selects the same lowering, so the two emit the same
+    /// module: every call, I/O included, is an ordinary call, and each I/O
+    /// call carries out its request through the linked completion runtime and
+    /// returns when it completes. The switch keeps a measurement's reference
+    /// explicit, and it may not be written together with `--par`, which
+    /// selects the opposite lowering. It is not a performance option a writer
+    /// picks for a shipped program — the default build is what ships — and it
     /// changes no acceptance, no claim, and no published value.
     no_overlap: bool,
     /// Print the non-normative permission ledger on stdout.

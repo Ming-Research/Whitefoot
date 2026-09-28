@@ -8,7 +8,7 @@ nocopy struct Pair {
 
 fn overwrite(out: &Box<Pair>, replacement: Pair) -> function_result: unit writes(out) {
   doc "A live affine-typed final place is stored whole as the field inner of a heap-owned cell reached by a reference parameter whose row declares the write; the previous affine owner is released at the commit rather than discarded.";
-  set deref(out).inner = move replacement;
+  set out^.inner = move replacement;
   return unit;
 }
 

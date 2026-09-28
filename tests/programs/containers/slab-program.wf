@@ -28,17 +28,17 @@ nodrop struct SlabTestTicket {
 }
 
 fn slab_test_record(env: &SlabTestSeen, value: u64) -> result: unit writes(env) {
-  set deref(env).sum = deref(env).sum +wrap value;
-  set deref(env).count = deref(env).count +wrap 1_u64;
-  let prefix = deref(env).sequence *wrap 257_u64;
-  set deref(env).sequence = prefix +wrap value;
+  set env^.sum = env^.sum +wrap value;
+  set env^.count = env^.count +wrap 1_u64;
+  let prefix = env^.sequence *wrap 257_u64;
+  set env^.sequence = prefix +wrap value;
   return unit;
 }
 
 fn slab_test_read_scalar(env: &SlabTestSeen, value: &u64) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).last = deref(value);
-  return deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.last = value^;
+  return value^;
 }
 
 binding SlabTestScalarVisit : SlabVisit<u64, SlabTestSeen, u64> {
@@ -50,9 +50,9 @@ binding SlabTestScalarConsume : SlabConsume<u64, SlabTestSeen> {
 }
 
 fn slab_test_read_box(env: &SlabTestSeen, value: &Box<SlabTestItem>) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).last = deref(value).inner.id;
-  return deref(value).inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.last = value^.inner.id;
+  return value^.inner.id;
 }
 
 fn slab_test_consume_box(env: &SlabTestSeen, value: Box<SlabTestItem>) -> result: unit writes(env) {
@@ -75,9 +75,9 @@ fn slab_test_ticket(id: u64) -> result: SlabTestTicket pure {
 }
 
 fn slab_test_read_ticket(env: &SlabTestSeen, value: &SlabTestTicket) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).last = deref(value).payload.inner.id;
-  return deref(value).payload.inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.last = value^.payload.inner.id;
+  return value^.payload.inner.id;
 }
 
 fn slab_test_consume_ticket(env: &SlabTestSeen, value: SlabTestTicket) -> result: unit writes(env) {

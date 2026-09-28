@@ -7,7 +7,7 @@ struct RecordCheck {
 }
 
 fn validate_record(input: &[u8], first: u64, end: u64) -> result: RecordCheck reads(input) contract {
-  define input_count = deref(input).len;
+  define input_count = input^.len;
   requires first <= end;
   requires end <= input_count;
   requires end <= 16777216_u64;
@@ -23,7 +23,7 @@ fn validate_record(input: &[u8], first: u64, end: u64) -> result: RecordCheck re
     i in first..end,
     invariant counted: scalars <= i - first
   ) {
-    let byte = deref(input)[i];
+    let byte = input^[i];
     if remaining == 0_u8 {
       set scalars = scalars + 1_u64;
       if byte <= 127_u8 {
@@ -72,7 +72,7 @@ fn validate_record(input: &[u8], first: u64, end: u64) -> result: RecordCheck re
 }
 
 fn record_summary(input: &[u8], first: u64, end: u64) -> result: u64 reads(input) contract {
-  define input_count = deref(input).len;
+  define input_count = input^.len;
   requires first <= end;
   requires end <= input_count;
   requires end <= 16777216_u64;
@@ -85,8 +85,8 @@ fn record_summary(input: &[u8], first: u64, end: u64) -> result: u64 reads(input
 }
 
 fn summarize_records(input: &[u8], offsets: &[u64], first: u64, end: u64) -> result: Box<Array<u64>> reads(input), reads(offsets) contract {
-  define input_count = deref(input).len;
-  define offset_count = deref(offsets).len;
+  define input_count = input^.len;
+  define offset_count = offsets^.len;
   requires input_count <= 16777216_u64;
   requires first <= end;
   requires end < offset_count;
@@ -98,9 +98,9 @@ fn summarize_records(input: &[u8], offsets: &[u64], first: u64, end: u64) -> res
   for (target in 0_u64..count) {
     let record = first + target;
     let next = record + 1_u64;
-    let lower = deref(offsets)[record];
-    let upper = deref(offsets)[next];
-    let size = deref(input).len;
+    let lower = offsets^[record];
+    let upper = offsets^[next];
+    let size = input^.len;
     let value = if lower > upper {
       give 18446744073709551614_u64;
     } else if upper > size {

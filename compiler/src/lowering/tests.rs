@@ -228,13 +228,13 @@ fn runtime_work_keeps_data_dependent_inner_extents_static() {
 }
 
 fn write_work(input: &[u64], output: &[u64]) -> result: unit reads(input), writes(output) contract {
-  requires deref(input).len <= 1024_u64;
-  requires deref(output).len >= deref(input).len;
+  requires input^.len <= 1024_u64;
+  requires output^.len >= input^.len;
 } {
-  let count = deref(input).len;
+  let count = input^.len;
   for (i in 0_u64..count) {
-    let upper = deref(input)[i];
-    set deref(output)[i] = count_work(upper: upper);
+    let upper = input^[i];
+    set output^[i] = count_work(upper: upper);
   }
   return unit;
 }
@@ -372,7 +372,7 @@ fn nested_wide_frame_source(depth: usize) -> String {
         )
         .expect("write fixture");
     }
-    writeln!(source, "{indent}let extent = deref(source).inner.len;").expect("write fixture");
+    writeln!(source, "{indent}let extent = source^.inner.len;").expect("write fixture");
     writeln!(source, "{indent}let combined = bias31 +wrap extent;").expect("write fixture");
     for level in (0..depth).rev() {
         let indent = "  ".repeat(level + 1);
@@ -881,7 +881,7 @@ fn source_signature_modes_distinguish_the_three_parameter_modes() {
 #[test]
 fn source_signature_results_are_owned_because_no_reference_escapes() {
     let source = format!(
-        "fn owned(value: u64) -> result: u64 pure {{\n  return value;\n}}\n\nfn read(value: &u64) -> result: u64 reads(value) {{\n  return deref(value);\n}}\n\n{PLAIN_ENTRY}"
+        "fn owned(value: u64) -> result: u64 pure {{\n  return value;\n}}\n\nfn read(value: &u64) -> result: u64 reads(value) {{\n  return value^;\n}}\n\n{PLAIN_ENTRY}"
     );
     with_ir(source.as_bytes(), |program| {
         for (name, mode) in [
@@ -941,7 +941,7 @@ fn source_signature_modes_are_not_invented_for_synthesized_functions() {
 #[test]
 fn source_call_uses_distinguish_borrow_and_consume_of_one_binding() {
     let source = format!(
-        "fn inspect(value: &Box<Array<u8>>) -> result: u64 reads(value) {{\n  return deref(value).inner.len;\n}}\n\nfn consume(value: Box<Array<u8>>) -> result: u64 pure {{\n  return value.inner.len;\n}}\n\nfn run() -> result: u64 pure {{\n  let data = box_array_filled::<u8>(count: 2_u64, value: 7_u8);\n  let before = inspect(value: &data);\n  let after = consume(value: move data);\n  return after;\n}}\n\n{PLAIN_ENTRY}"
+        "fn inspect(value: &Box<Array<u8>>) -> result: u64 reads(value) {{\n  return value^.inner.len;\n}}\n\nfn consume(value: Box<Array<u8>>) -> result: u64 pure {{\n  return value.inner.len;\n}}\n\nfn run() -> result: u64 pure {{\n  let data = box_array_filled::<u8>(count: 2_u64, value: 7_u8);\n  let before = inspect(value: &data);\n  let after = consume(value: move data);\n  return after;\n}}\n\n{PLAIN_ENTRY}"
     );
     with_ir(source.as_bytes(), |program| {
         let (borrow, _borrowed_values) = source_call(program, "run", "inspect");
@@ -985,7 +985,7 @@ fn source_call_uses_retain_the_actual_indexed_borrow_candidate() {
 }
 
 fn select(stamp: u64, value: &Row) -> result: u64 reads(value) {
-  return deref(value).value;
+  return value^.value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1191,7 +1191,7 @@ fn counted_range_carries_one_stable_binder_address_for_body_local_shared_borrows
   let upper = 2_u64;
   for @items (i in 0_u64..upper) {
     let held = &i;
-    let seen = deref(held);
+    let seen = held^;
     set total = total +wrap seen;
     set upper = 0_u64;
   }
@@ -1267,7 +1267,7 @@ fn addressed_cleanup_keeps_places_instead_of_whole_owner_snapshots() {
 }}
 
 fn touch(value: &Holder) -> result: unit writes(value.stamp) {{
-  set deref(value).stamp = 41_u64;
+  set value^.stamp = 41_u64;
   return unit;
 }}
 
@@ -1334,7 +1334,7 @@ fn an_unused_state_writing_call_reaches_ir() {
     let source = format!(
         "struct Pair {{\n  left: u64;\n}}\n\n\
          fn mutate(pair: &Pair) -> result: unit writes(pair.left) {{\n  \
-         set deref(pair).left = 1_u64;\n  return unit;\n}}\n\n\
+         set pair^.left = 1_u64;\n  return unit;\n}}\n\n\
          fn wrapper(pair: &Pair) -> result: unit writes(pair.left) {{\n  \
          mutate(pair: pair);\n  return unit;\n}}\n\n\
          {PLAIN_ENTRY}"

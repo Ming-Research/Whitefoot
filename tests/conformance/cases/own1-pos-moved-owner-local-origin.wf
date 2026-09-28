@@ -22,7 +22,7 @@ fn view_after_move(value: Slots<u8, 2>) -> result: u8 pure {
   let view = &moved[0_u64..spare];
   let nonempty = 0_u64 < spare;
   if nonempty {
-    return deref(view)[0_u64];
+    return view^[0_u64];
   } else {
     return 0_u8;
   }

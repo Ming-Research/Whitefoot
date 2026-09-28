@@ -7,9 +7,9 @@ enum Choice {
 }
 
 fn needs_one<const n: u64>(values: &Slots<u8, n>) -> result: unit reads(values.len) contract {
-  requires deref(values).len == 1_u64;
+  requires values^.len == 1_u64;
 } {
-  let observed = deref(values).len;
+  let observed = values^.len;
   return unit;
 }
 
@@ -27,7 +27,7 @@ fn inspect(choose_short: Bool) -> result: unit pure {
     let long = Choice::Long(values: move long_values);
     give move long;
   }
-  match choice {
+  match move choice {
     Short(values: selected) => {
       needs_one::<4>(values: &selected);
     }

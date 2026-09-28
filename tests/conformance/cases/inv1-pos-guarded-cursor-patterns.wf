@@ -3,8 +3,8 @@ alias exit_status = std::process::exit_status;
 
 fn count_equal_prefix(left: &[u64], right: &[u64]) -> matched: u64 reads(left), reads(right) {
   doc "Paired cursors kept equal by two orderings, walked under a shared bound.";
-  let left_len = deref(left).len;
-  let right_len = deref(right).len;
+  let left_len = left^.len;
+  let right_len = right^.len;
   let shorter = left_len < right_len;
   let bound = if shorter {
     give left_len;
@@ -21,8 +21,8 @@ fn count_equal_prefix(left: &[u64], right: &[u64]) -> matched: u64 reads(left), 
   ) {
     let remaining = i < bound;
     if remaining {
-      let left_value = deref(left)[i];
-      let right_value = deref(right)[j];
+      let left_value = left^[i];
+      let right_value = right^[j];
       let same = left_value == right_value;
       if same {
         set matched = matched +wrap 1_u64;

@@ -296,7 +296,7 @@ impl Input<'_, '_> {
     /// ordinary term-support judgment below decides whether that field,
     /// element, descriptor word, or whole-value write reaches the term. The
     /// former prefix-overlap test conflated those questions and discarded a
-    /// window-length relation on `swap(&deref(holder)[i], ...)` even though
+    /// window-length relation on `swap(&holder^[i], ...)` even though
     /// [MSR-2] makes the indexed element disjoint from the descriptor.
     pub(super) fn write_replaces_live_holder(
         &self,
@@ -1277,7 +1277,7 @@ impl Reasoning<'_, '_, '_> {
         // range kind a mode and not a type: the checked type of a `&[T]`
         // parameter is its element type, so the measured row cannot be
         // recovered from it and comes from the parameter's mode instead.
-        // Without this a clause naming `deref(part).len` of a range
+        // Without this a clause naming `part^.len` of a range
         // parameter had no term at all, so [FN-9] selected no exit for it.
         let measured = if range_referent && projections.is_empty() {
             MeasuredKind::Range

@@ -6,8 +6,8 @@ nocopy enum StepError {
 }
 
 fn forward(holder: &Result<i32, StepError>) -> function_result: Result<i32, StepError> reads(holder) {
-  doc "Propagation is a consuming context [ERR-3], and the place deref(holder) reaches through a reference parameter is not rooted in a live own-mode binding, so it cannot be consumed and the rejection is OWN-1's.";
-  let value = propagate deref(holder);
+  doc "Propagation is a consuming context [ERR-3], and the place holder^ reaches through a reference parameter is not rooted in a live own-mode binding, so it cannot be consumed and the rejection is OWN-1's.";
+  let value = propagate move holder^;
   return Ok<i32, StepError>(value: value);
 }
 

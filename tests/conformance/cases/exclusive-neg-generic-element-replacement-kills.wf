@@ -2,10 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn replace_at<T: drop>(values: &Slots<T, 2>, at: u64, incoming: &T) -> result: unit writes(values[at]), writes(incoming) contract {
-  requires at < deref(values).len;
+  requires at < values^.len;
 } {
   doc "A generic helper preserving the outer window's boundary while exchanging one of its elements [OP-11].";
-  swap(first: &deref(values)[at], second: incoming);
+  swap(first: &values^[at], second: incoming);
   return unit;
 }
 

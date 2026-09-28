@@ -2,22 +2,22 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn stamp_two_ranges(first: &[u8], second: &[u8]) -> result: u64 writes(first), writes(second) {
-  if 0_u64 < deref(first).len {
-    set deref(first)[0_u64] = 7_u8;
+  if 0_u64 < first^.len {
+    set first^[0_u64] = 7_u8;
   }
-  if 0_u64 < deref(second).len {
-    set deref(second)[0_u64] = 8_u8;
+  if 0_u64 < second^.len {
+    set second^[0_u64] = 8_u8;
   }
   return 2_u64;
 }
 
 fn split(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes(v) contract {
-  requires deref(u).len <= deref(w).len;
-  requires deref(w).len <= deref(v).len;
+  requires u^.len <= w^.len;
+  requires w^.len <= v^.len;
 } {
   doc "OWN-7, EFF-5: both ranges have measure endpoints. The first's captured end and the second's captured start are the same measure, so the first ends no later than the second starts and the call may write both.";
-  let low = &deref(v)[deref(u).len..deref(w).len];
-  let high = &deref(v)[deref(w).len..deref(v).len];
+  let low = &v^[u^.len..w^.len];
+  let high = &v^[w^.len..v^.len];
   let stamped = stamp_two_ranges(first: low, second: high);
   return stamped;
 }

@@ -4,12 +4,12 @@ alias exit_status = std::process::exit_status;
 fn pick(rows: &Slots<Slots<u8, 8>, 4>, i: u64, k: u64) -> value: u8 reads(rows) contract {
   define row = i;
   define again = row;
-  define width = deref(rows)[again].len;
-  requires i < deref(rows).len;
+  define width = rows^[again].len;
+  requires i < rows^.len;
   requires k < width;
 } {
   doc "A definition's place reads its offset through a chain of definitions. The place is formed in the first requirement whose expansion reaches it, after the bound, with its offset expanded to i.";
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }
 
 fn main() -> status: ExitStatus pure {

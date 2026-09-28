@@ -58,14 +58,14 @@ fn wrapping_conversion_goal_identity_retains_its_operand_support() {
 fn a_write_through_a_reference_kills_the_value_fact_a_requirement_needs() {
     for borrowed in [false, true] {
         let (mode, term, read, effects, actual) = if borrowed {
-            ("&", "deref(value)", "deref(value)", "reads(value)", "value")
+            ("&", "value^", "value^", "reads(value)", "value")
         } else {
             ("", "value", "value", "pure", "seen")
         };
         let bind = if borrowed {
             String::new()
         } else {
-            "  let seen = deref(value);\n".to_owned()
+            "  let seen = value^;\n".to_owned()
         };
         for changed in [false, true] {
             // [EFF-1] `writes(p)` states every access at or below `p`, so the
@@ -76,7 +76,7 @@ fn a_write_through_a_reference_kills_the_value_fact_a_requirement_needs() {
                 ("", "reads(value)")
             };
             let source = format!(
-                "fn overwrite(cell: &u64) -> result: unit writes(cell) {{\n  set deref(cell) = 9_u64;\n  return unit;\n}}\n\nfn indexed(value: {mode}u64) -> result: u64 {effects} contract {{\n  requires {term} < 1_u64;\n}} {{\n  let rows = array_filled::<u64, 1>(value: 7_u64);\n  let index = {read};\n  return rows[index];\n}}\n\nfn forward(value: &u64) -> result: u64 {forward_effect} contract {{\n  requires deref(value) < 1_u64;\n}} {{\n{write}{bind}  return indexed(value: {actual});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+                "fn overwrite(cell: &u64) -> result: unit writes(cell) {{\n  set cell^ = 9_u64;\n  return unit;\n}}\n\nfn indexed(value: {mode}u64) -> result: u64 {effects} contract {{\n  requires {term} < 1_u64;\n}} {{\n  let rows = array_filled::<u64, 1>(value: 7_u64);\n  let index = {read};\n  return rows[index];\n}}\n\nfn forward(value: &u64) -> result: u64 {forward_effect} contract {{\n  requires value^ < 1_u64;\n}} {{\n{write}{bind}  return indexed(value: {actual});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             if changed {
                 super::assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
@@ -1291,9 +1291,9 @@ fn fn8_growth_bridge_requires_each_written_source_fact() {
 #[test]
 fn fn8_bridge_visits_a_live_measure_before_scalar_bindings() {
     let source = br#"fn range_ceiling(part: &[u8]) -> ceiling: u64 reads(part.len) contract {
-  ensures ceiling >= deref(part).len;
+  ensures ceiling >= part^.len;
 } {
-  return deref(part).len;
+  return part^.len;
 }
 
 fn require_room(length: u64, ceiling: u64) -> result: unit pure contract {
@@ -1626,19 +1626,19 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 /// A concrete reference-root datum already denotes its referent. Substituting
-/// `&deref(value)` therefore removes the callee wrapper and retains the
+/// `&value^` therefore removes the callee wrapper and retains the
 /// caller's reference binding as the root with no projection step.
 #[test]
 fn borrow_substitution_normalizes_a_reborrow_to_the_caller_reference_root() {
     let source = br#"fn observe(value: &u64) -> result: unit reads(value) contract {
-  requires deref(value) > 0_u64;
+  requires value^ > 0_u64;
 } {
-  let copied = deref(value);
+  let copied = value^;
   return unit;
 }
 
 fn proxy(value: &u64) -> result: unit reads(value) {
-  observe(value: &deref(value));
+  observe(value: &value^);
   return unit;
 }
 
@@ -2004,7 +2004,7 @@ fn affine_requirement_measure_observations_survive_as_values_without_retargeting
 /// a fact about a different element is a different term.
 ///
 /// [MSR-1]: an admitted measure place is formed "with any number of
-/// field-selection and enum-payload `psuffix`es, `deref` wrappings, and
+/// field-selection and enum-payload `psuffix`es, `^` suffixes, and
 /// subscripts", and "The subscript admission is what makes `table[i].len` a
 /// term, so a storage whose elements are themselves storages has provable
 /// operations." [ENT-2] then decides identity by spelling: "Two places are the
@@ -2026,13 +2026,13 @@ fn a_clause_subscript_names_the_element_it_indexes() {
         format!(
             r#"fn cell_at(rows: &Array<Slots<u8, 4>, 2>, i: u64, k: u64) -> result: u8 reads(rows) contract {{
   requires i < 2_u64;
-  requires k < deref(rows)[i].len;
+  requires k < rows^[i].len;
 }} {{
-  return deref(rows)[i][k];
+  return rows^[i][k];
 }}
 
 fn read_first(rows: &Array<Slots<u8, 4>, 2>) -> result: u8 reads(rows) contract {{
-  requires 1_u64 < deref(rows)[0_u64].len;
+  requires 1_u64 < rows^[0_u64].len;
 }} {{
   return cell_at(rows: rows, i: {index}, k: 1_u64);
 }}

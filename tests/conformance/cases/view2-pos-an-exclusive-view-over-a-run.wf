@@ -6,7 +6,7 @@ fn main() -> status: ExitStatus pure {
   let one = slots_new::<u8, 2>();
   place_back(window: &one, value: 7_u8);
   let window = &one[0_u64..1_u64];
-  set deref(window)[0_u64] = 9_u8;
+  set window^[0_u64] = 9_u8;
   let seen = one[0_u64];
   if seen == 9_u8 {
     return exit_status(code: 0_u8);

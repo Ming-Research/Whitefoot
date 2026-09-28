@@ -11,7 +11,7 @@ struct Wrapped<A, B> {
 
 fn read(value: &Wrapped<Slots<u8, 1>, Slots<u8, 2>>) -> result: u64 reads(value.value.tag) {
   doc "Type parameters no field mentions still take part in the ordinary explicit substitution [FN-2].";
-  return deref(value).value.tag;
+  return value^.value.tag;
 }
 
 fn main() -> status: ExitStatus pure {

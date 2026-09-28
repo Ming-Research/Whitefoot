@@ -10,9 +10,9 @@ fn inspect(root: Node) -> result: u64 pure {
   doc "Moving an ultimate owner invalidates descendant cursors instead of rerooting them.";
   let cursor = &root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
@@ -20,7 +20,7 @@ fn inspect(root: Node) -> result: u64 pure {
     }
   }
   let transferred = move root;
-  return deref(cursor).value;
+  return cursor^.value;
 }
 
 fn main() -> status: ExitStatus pure {

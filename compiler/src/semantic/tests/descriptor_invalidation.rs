@@ -43,7 +43,7 @@ fn carry(window: Box<Ring<u8>>) -> result: unit pure contract {
   let transferred = move wrapper;
   set transferred.stamp = 1_u64;
   let selected = Some<Box<Ring<u8>>>(value: move transferred.storage);
-  match selected {
+  match move selected {
     None() => {
     }
     Some(value: returned) => {
@@ -188,7 +188,7 @@ fn a_declared_write_before_or_after_box_placement_kills_the_old_measure() {
             r#"fn fill(window: &Box<Slots<u8>>) -> result: unit writes(window) {{
   let filled = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &filled.inner, value: 7_u8);
-  set deref(window) = move filled;
+  set window^ = move filled;
   return unit;
 }}
 
@@ -232,7 +232,7 @@ fn carry(third_window: Box<Ring<u8>>) -> result: unit pure contract {
   let first_window = box_ring_new::<u8>(capacity: 4_u64);
   let root = Chain::Next(window: move first_window, tail: move middle_box);
   let moved = move root;
-  match moved {
+  match move moved {
     End() => {
     }
     Next(window: first, tail: middle) => {
@@ -301,16 +301,16 @@ fn a_recursive_descendant_cursors_fact_is_not_the_owners_fact() {
 fn examine(root: Node) -> result: unit pure {
   let cursor = &root;
   for (i in 0_u64..2_u64) {
-    match deref(cursor).next {
+    match cursor^.next {
       Some(value: child) => {
-        set cursor = &deref(child).inner;
+        set cursor = &child^.inner;
       }
       None() => {
         break;
       }
     }
   }
-  if deref(cursor).window.inner.len == 0_u64 {
+  if cursor^.window.inner.len == 0_u64 {
     let moved = move root;
     free_empty(window: move moved.window);
     return unit;
@@ -324,7 +324,7 @@ fn examine(root: Node) -> result: unit pure {
 #[test]
 fn a_call_through_a_joined_reference_kills_every_possible_targets_fact() {
     let source = br#"fn write(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 1_u64;
+  set target^ = 1_u64;
   return unit;
 }
 
@@ -354,7 +354,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_joined_reference_write_cannot_preserve_a_nonzero_divisor_proof() {
     let source = br#"fn zero(target: &u64) -> result: unit writes(target) {
-  set deref(target) = 0_u64;
+  set target^ = 0_u64;
   return unit;
 }
 

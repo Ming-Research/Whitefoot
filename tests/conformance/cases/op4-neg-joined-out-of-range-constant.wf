@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn indexed_byte(b: &[u8], flag: Bool) -> result: u8 reads(b) contract {
-  define spare = deref(b).len;
+  define spare = b^.len;
   requires spare == 5_u64;
 } {
   doc "The two incoming index values are three and seven while the range reference's length is five, so the joined constant interval must include seven.";
@@ -12,7 +12,7 @@ fn indexed_byte(b: &[u8], flag: Bool) -> result: u8 reads(b) contract {
   } else {
     set idx = idx +wrap 7_u64;
   }
-  return deref(b)[idx];
+  return b^[idx];
 }
 
 fn main() -> status: ExitStatus pure {

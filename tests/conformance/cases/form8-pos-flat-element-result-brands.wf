@@ -17,10 +17,10 @@ fn build<T>(first: Box<T>, replacement: Box<T>) -> (slots: Slots<Option<Entry<T>
 }
 
 fn exchange_one<T>(slots: &Slots<Option<Entry<T>>, 1>, spare: &Option<Entry<T>>) -> result: unit writes(slots), writes(spare) contract {
-  requires 1_u64 <= deref(slots).len;
+  requires 1_u64 <= slots^.len;
 } {
   doc "One commit per statement and no hole: `swap` exchanges the stored element with the caller's spare, consumes neither root, and leaves each root the sole owner of what the other held [OP-11, SET-1].";
-  swap(first: &deref(slots)[0_u64], second: spare);
+  swap(first: &slots^[0_u64], second: spare);
   return unit;
 }
 

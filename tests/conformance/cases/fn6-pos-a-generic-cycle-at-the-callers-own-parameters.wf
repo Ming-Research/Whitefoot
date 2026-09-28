@@ -2,16 +2,16 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn walk<const n: u64>(run: &Slots<u8, n>, at: u64) -> total: u64 reads(run) contract {
-  requires at <= deref(run).len;
+  requires at <= run^.len;
 } {
   doc "[FN-6] permits recursion and refuses only polymorphic recursion. A call that writes exactly the caller's own parameters, as this one writes `n`, is the caller's own instance and mints no second one, so the cycle's instance set is finite and it monomorphizes.";
-  let held = deref(run).len;
+  let held = run^.len;
   let more = at < held;
   if more {
   } else {
     return 0_u64;
   }
-  let here = deref(run)[at];
+  let here = run^[at];
   let widened = cvt::<u8, u64>(here);
   let next = at + 1_u64;
   let rest = walk::<n>(run: run, at: next);

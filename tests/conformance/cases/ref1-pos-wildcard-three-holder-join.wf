@@ -13,15 +13,15 @@ fn inspect(first: &Node, second: &Node) -> result: u64 reads(first), reads(secon
   for (i in 0_u64..8_u64) {
     set a = b;
     set b = c;
-    match deref(c).next {
+    match c^.next {
       Some(value: child) => {
-        set c = &deref(child).inner;
+        set c = &child^.inner;
       }
       None() => {
       }
     }
   }
-  return deref(a).value;
+  return a^.value;
 }
 
 fn main() -> status: ExitStatus pure {

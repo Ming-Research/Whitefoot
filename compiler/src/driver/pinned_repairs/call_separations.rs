@@ -13,8 +13,8 @@ pub(super) const CALL_SEPARATIONS: &[RepairPair] = &[
 }
 
 fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
-  let v = deref(source).value;
-  set deref(destination).value = v;
+  let v = source^.value;
+  set destination^.value = v;
   return unit;
 }
 
@@ -33,8 +33,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
-  let v = deref(source).value;
-  set deref(destination).value = v;
+  let v = source^.value;
+  set destination^.value = v;
   return unit;
 }
 
@@ -56,8 +56,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -76,8 +76,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -91,8 +91,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -113,8 +113,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -141,8 +141,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -165,8 +165,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -188,8 +188,8 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < 4_u64;
   requires j < 4_u64;
 } {
-  let observed = deref(values)[i];
-  set deref(values)[j] = observed;
+  let observed = values^[i];
+  set values^[j] = observed;
   return unit;
 }
 
@@ -220,11 +220,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(values)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(values)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &values^[lo..hi];
+  let count = run^.len;
+  let out = &values^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -253,11 +253,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(values)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(values)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &values^[lo..hi];
+  let count = run^.len;
+  let out = &values^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -281,11 +281,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(values)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(values)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &values^[lo..hi];
+  let count = run^.len;
+  let out = &values^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -309,11 +309,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(values)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(values)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &values^[lo..hi];
+  let count = run^.len;
+  let out = &values^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -343,11 +343,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(source)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(target)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &source^[lo..hi];
+  let count = run^.len;
+  let out = &target^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -376,11 +376,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(source)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(target)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &source^[lo..hi];
+  let count = run^.len;
+  let out = &target^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -404,11 +404,11 @@ fn main() -> status: std::process::ExitStatus pure {
   requires a <= b;
   requires b <= 4_u64;
 } {
-  let run = &deref(source)[lo..hi];
-  let count = deref(run).len;
-  let out = &deref(target)[a..b];
-  if 0_u64 < deref(out).len {
-    set deref(out)[0_u64] = count;
+  let run = &source^[lo..hi];
+  let count = run^.len;
+  let out = &target^[a..b];
+  if 0_u64 < out^.len {
+    set out^[0_u64] = count;
   }
   return unit;
 }
@@ -434,10 +434,10 @@ fn main() -> status: std::process::ExitStatus pure {
         // one argument supplies both entries [EFF-5].
         name: "call-separation-index-beside-next.wf",
         rejected: br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
+  let seen = if i < r^.len {
+    give r^[i];
   } else {
     give 0_u64;
   }
@@ -446,7 +446,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
   let x = read_then_append(r: r, i: k);
   return x;
@@ -465,10 +465,10 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
         repaired: &[
             br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
+  let seen = if i < r^.len {
+    give r^[i];
   } else {
     give 0_u64;
   }
@@ -477,9 +477,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  if k < deref(r).len {
+  if k < r^.len {
     let x = read_then_append(r: r, i: k);
     return x;
   }
@@ -494,10 +494,10 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
             br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 reads(r[i]), writes(r.next), writes(r.len) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
+  let seen = if i < r^.len {
+    give r^[i];
   } else {
     give 0_u64;
   }
@@ -506,8 +506,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
-  requires 0_u64 < deref(r).len;
+  requires r^.len < 4_u64;
+  requires 0_u64 < r^.len;
 } {
   let x = read_then_append(r: r, i: 0_u64);
   return x;
@@ -521,10 +521,10 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
             br#"fn read_then_append(r: &Slots<u64, 4>, i: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if i < deref(r).len {
-    give deref(r)[i];
+  let seen = if i < r^.len {
+    give r^[i];
   } else {
     give 0_u64;
   }
@@ -533,7 +533,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn caller(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
   let x = read_then_append(r: r, i: k);
   return x;
@@ -576,7 +576,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn outer<interface Stage>(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires k < deref(r).len;
+  requires k < r^.len;
 } {
   let y = Stage::step(x: r, w: r, i: k);
   return y;
@@ -591,7 +591,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn outer<interface Stage>(r: &Slots<u64, 4>, k: u64) -> result: u64 writes(r) contract {
-  requires 0_u64 < deref(r).len;
+  requires 0_u64 < r^.len;
 } {
   let y = Stage::step(x: r, w: r, i: 0_u64);
   return y;
@@ -613,9 +613,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -644,9 +644,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -672,9 +672,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -698,9 +698,9 @@ fn main() -> status: std::process::ExitStatus pure {
   requires end <= 4_u64;
   requires slot < 4_u64;
 } {
-  let run = &deref(values)[start..end];
-  let length = deref(run).len;
-  set deref(values)[slot] = length;
+  let run = &values^[start..end];
+  let length = run^.len;
+  set values^[slot] = length;
   return unit;
 }
 
@@ -727,11 +727,11 @@ fn main() -> status: std::process::ExitStatus pure {
         name: "call-separation-range-beside-next.wf",
         rejected: br#"fn count_then_push(r: &Slots<u64, 4>, lo: u64, hi: u64) -> result: u64 reads(r[lo..hi]), writes(r.next), writes(r.len) contract {
   requires lo <= hi;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if hi <= deref(r).len {
-    let run = &deref(r)[lo..hi];
-    give deref(run).len;
+  let seen = if hi <= r^.len {
+    let run = &r^[lo..hi];
+    give run^.len;
   } else {
     give 0_u64;
   }
@@ -741,7 +741,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn caller(r: &Slots<u64, 4>, a: u64, b: u64) -> result: u64 writes(r) contract {
   requires a <= b;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
   let x = count_then_push(r: r, lo: a, hi: b);
   return x;
@@ -762,11 +762,11 @@ fn main() -> status: std::process::ExitStatus pure {
         repaired: &[
             br#"fn count_then_push(r: &Slots<u64, 4>, lo: u64, hi: u64) -> result: u64 reads(r[lo..hi]), writes(r.next), writes(r.len) contract {
   requires lo <= hi;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if hi <= deref(r).len {
-    let run = &deref(r)[lo..hi];
-    give deref(run).len;
+  let seen = if hi <= r^.len {
+    let run = &r^[lo..hi];
+    give run^.len;
   } else {
     give 0_u64;
   }
@@ -776,9 +776,9 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn caller(r: &Slots<u64, 4>, a: u64, b: u64) -> result: u64 writes(r) contract {
   requires a <= b;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  if b <= deref(r).len {
+  if b <= r^.len {
     let x = count_then_push(r: r, lo: a, hi: b);
     return x;
   }
@@ -795,11 +795,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
             br#"fn count_then_push(r: &Slots<u64, 4>, lo: u64, hi: u64) -> result: u64 reads(r[lo..hi]), writes(r.next), writes(r.len) contract {
   requires lo <= hi;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if hi <= deref(r).len {
-    let run = &deref(r)[lo..hi];
-    give deref(run).len;
+  let seen = if hi <= r^.len {
+    let run = &r^[lo..hi];
+    give run^.len;
   } else {
     give 0_u64;
   }
@@ -809,7 +809,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn caller(r: &Slots<u64, 4>, a: u64, b: u64) -> result: u64 writes(r) contract {
   requires a <= b;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
   let x = count_then_push(r: r, lo: 0_u64, hi: 0_u64);
   return x;
@@ -825,11 +825,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
             br#"fn count_then_push(r: &Slots<u64, 4>, lo: u64, hi: u64) -> result: u64 writes(r) contract {
   requires lo <= hi;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
-  let seen = if hi <= deref(r).len {
-    let run = &deref(r)[lo..hi];
-    give deref(run).len;
+  let seen = if hi <= r^.len {
+    let run = &r^[lo..hi];
+    give run^.len;
   } else {
     give 0_u64;
   }
@@ -839,7 +839,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn caller(r: &Slots<u64, 4>, a: u64, b: u64) -> result: u64 writes(r) contract {
   requires a <= b;
-  requires deref(r).len < 4_u64;
+  requires r^.len < 4_u64;
 } {
   let x = count_then_push(r: r, lo: a, hi: b);
   return x;
@@ -934,7 +934,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn outer<interface Stage>(r: &Slots<u64, 4>, a: u64, b: u64) -> result: u64 writes(r) {
-  if b <= deref(r).len {
+  if b <= r^.len {
     let y = Stage::step(x: r, w: r, lo: a, hi: b);
     return y;
   }
@@ -965,8 +965,8 @@ fn main() -> status: std::process::ExitStatus pure {
         // entailment fragment cannot prove distinct.
         name: "call-separation-two-arguments.wf",
         rejected: br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
+  let observed = source^;
+  set destination^ = observed;
   return unit;
 }
 
@@ -974,7 +974,7 @@ fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) c
   requires a < 4_u64;
   requires b < 4_u64;
 } {
-  copy_across(source: &deref(values)[a], destination: &deref(values)[b]);
+  copy_across(source: &values^[a], destination: &values^[b]);
   return unit;
 }
 
@@ -990,8 +990,8 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
         repaired: &[
             br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
+  let observed = source^;
+  set destination^ = observed;
   return unit;
 }
 
@@ -1000,7 +1000,7 @@ fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) c
   requires b < 4_u64;
   requires a < b;
 } {
-  copy_across(source: &deref(values)[a], destination: &deref(values)[b]);
+  copy_across(source: &values^[a], destination: &values^[b]);
   return unit;
 }
 
@@ -1011,8 +1011,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
             br#"fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
-  let observed = deref(source);
-  set deref(destination) = observed;
+  let observed = source^;
+  set destination^ = observed;
   return unit;
 }
 
@@ -1020,7 +1020,7 @@ fn shift(values: &Array<u8, 4>, a: u64, b: u64) -> result: unit writes(values) c
   requires a < 4_u64;
   requires b < 4_u64;
 } {
-  copy_across(source: &deref(values)[0_u64], destination: &deref(values)[1_u64]);
+  copy_across(source: &values^[0_u64], destination: &values^[1_u64]);
   return unit;
 }
 

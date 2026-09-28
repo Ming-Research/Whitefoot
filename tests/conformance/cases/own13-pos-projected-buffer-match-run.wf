@@ -12,9 +12,9 @@ struct Envelope {
 
 fn inspect(envelope: &Envelope) -> result: u64 reads(envelope.packet) {
   doc "Matching through a struct projection binds the cell payload as a reference, and the window length behind that cell is read through it.";
-  match deref(envelope).packet {
+  match envelope^.packet {
     Data(bytes: payload) => {
-      return deref(payload).inner.len;
+      return payload^.inner.len;
     }
     Empty() => {
       return 0_u64;

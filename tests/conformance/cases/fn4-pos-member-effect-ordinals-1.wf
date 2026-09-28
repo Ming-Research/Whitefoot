@@ -12,8 +12,8 @@ interface Touch {
 
 fn apply(input: &Pair) -> result: unit reads(input.left), writes(input.right) {
   doc "Formal and actual effect paths compare parameter and field ordinals, not binder spelling; the two field paths here match ordinal for ordinal.";
-  let observed = deref(input).left;
-  set deref(input).right = observed;
+  let observed = input^.left;
+  set input^.right = observed;
   return unit;
 }
 

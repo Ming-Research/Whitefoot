@@ -3,24 +3,24 @@ alias exit_status = std::process::exit_status;
 
 fn slice_len(part: &[u64]) -> result: u64 reads(part.len) {
   doc "REF-4: a range reference's one measure is len, equal to hi - lo.";
-  let n = deref(part).len;
+  let n = part^.len;
   return n;
 }
 
 fn clear_first_nominal(part: &[Option<Slots<u64, 1>>]) -> result: u64 writes(part) contract {
-  requires 1_u64 <= deref(part).len;
+  requires 1_u64 <= part^.len;
 } {
-  let count = deref(part).len;
-  let same = &deref(part)[0_u64..count];
-  set deref(same)[0_u64] = None<Slots<u64, 1>>();
-  return deref(same).len;
+  let count = part^.len;
+  let same = &part^[0_u64..count];
+  set same^[0_u64] = None<Slots<u64, 1>>();
+  return same^.len;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "REF-4: &x[lo..hi] forms a range reference under lo <= hi and hi <= x.len, re-slicing &deref(part)[a..b] under a <= b <= deref(part).len is admitted, and the kind's one measure len is hi - lo.";
+  doc "REF-4: &x[lo..hi] forms a range reference under lo <= hi and hi <= x.len, re-slicing &part^[a..b] under a <= b <= part^.len is admitted, and the kind's one measure len is hi - lo.";
   let a = array_filled::<u64, 8>(value: 1_u64);
   let part = &a[2_u64..6_u64];
-  let inner = &deref(part)[1_u64..3_u64];
+  let inner = &part^[1_u64..3_u64];
   let outer_len = slice_len(part: part);
   let inner_len = slice_len(part: inner);
   if outer_len == 4_u64 {
@@ -41,7 +41,7 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 3_u8);
   }
   let observed = &values[0_u64];
-  match deref(observed) {
+  match observed^ {
     None() => {
     }
     Some(value: unexpected) => {

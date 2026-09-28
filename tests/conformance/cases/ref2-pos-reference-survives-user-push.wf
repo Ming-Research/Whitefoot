@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn push(window: &Slots<u64, 4>, value: u64) -> result: unit writes(window.next), writes(window.len) contract {
-  requires deref(window).len < deref(window).cap;
+  requires window^.len < window^.cap;
 } {
   doc "Appends one element. Its row writes window.next and window.len and nothing below the length, so a call never lowers window.len.";
   place_back(window: window, value: value);
@@ -15,7 +15,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &r, value: 1_u64);
   let e = &r[0_u64];
   push(window: &r, value: 5_u64);
-  let seen = deref(e);
+  let seen = e^;
   if seen == 1_u64 {
     return exit_status(code: 0_u8);
   }

@@ -17,13 +17,13 @@ fn main() -> status: ExitStatus pure {
   let cursor = &root.inner;
   let total = 0_u64;
   loop @walk {
-    match deref(cursor) {
+    match cursor^ {
       End() => {
         break @walk;
       }
       Next(stamp: value, tail: rest) => {
-        set total = total +wrap deref(value);
-        set cursor = &deref(rest).inner;
+        set total = total +wrap value^;
+        set cursor = &rest^.inner;
       }
     }
   }

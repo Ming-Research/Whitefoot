@@ -8,8 +8,8 @@ struct Stats {
 
 fn inspect(stats: &Stats) -> result: u64 reads(stats), reads(stats.count) {
   doc "EFF-1: reads(stats) states every observation at or below stats, so reads(stats.count) states one of them twice.";
-  let whole = deref(stats);
-  let count = deref(stats).count;
+  let whole = stats^;
+  let count = stats^.count;
   return whole.total +wrap count;
 }
 

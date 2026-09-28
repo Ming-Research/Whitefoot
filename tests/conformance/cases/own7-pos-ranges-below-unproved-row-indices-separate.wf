@@ -3,9 +3,9 @@ alias exit_status = std::process::exit_status;
 
 fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
   doc "Writes the length of the range src into the first element of the range dst.";
-  let n = deref(src).len;
-  if 0_u64 < deref(dst).len {
-    set deref(dst)[0_u64] = n;
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
   }
   return unit;
 }
@@ -15,7 +15,7 @@ fn copy_across(rows: &Array<Array<u64, 4>, 4>, i: u64, j: u64) -> result: unit w
   requires j < 4_u64;
 } {
   doc "Passes rows[i][0..2] and rows[j][2..4] for rows i and j that nothing proves equal or distinct.";
-  copy_len(src: &deref(rows)[i][0_u64..2_u64], dst: &deref(rows)[j][2_u64..4_u64]);
+  copy_len(src: &rows^[i][0_u64..2_u64], dst: &rows^[j][2_u64..4_u64]);
   return unit;
 }
 

@@ -5,7 +5,7 @@ const alternative: u64 = 9_u64;
 
 fn select(value: &u64) -> chosen: u64 reads(value) {
   doc "Hands back owned data rather than a reference [REF-3]; named const storage supplies it.";
-  let seen = deref(value);
+  let seen = value^;
   return alternative;
 }
 

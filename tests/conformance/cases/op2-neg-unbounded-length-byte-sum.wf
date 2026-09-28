@@ -4,12 +4,12 @@ alias exit_status = std::process::exit_status;
 fn weighted_sum(weights: &[u8]) -> result: u32 reads(weights) {
   doc "A per-byte accumulator invariant scales with the captured length; without an incoming length ceiling it cannot prove that the next exact u32 addition fits.";
   let sum = 0_u32;
-  let length = deref(weights).len;
+  let length = weights^.len;
   for (
     i in 0_u64..length,
     invariant per_byte: sum <= 255_u32 * i
   ) {
-    let w = deref(weights)[i];
+    let w = weights^[i];
     let wide = cvt::<u8, u32>(w);
     set sum = sum + wide;
   }

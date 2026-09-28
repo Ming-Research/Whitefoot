@@ -53,10 +53,10 @@ pub(super) struct MatchResult {
 /// read to decide whether the match goes through a reference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScrutineeSpelling {
-    /// `&x`: a `borrow_expr` naming the enum's own path [REF-1]. No `deref`
+    /// `&x`: a `borrow_expr` naming the enum's own path [REF-1]. No `^`
     /// step stands between the expression and the enum it names.
     Borrowed,
-    /// `deref(p)` and anything selected below it: the storage a reference
+    /// `p^` and anything selected below it: the storage a reference
     /// names, reached under the step [REF-1] requires.
     Dereferenced,
     /// Every other written form: an owned place, a call result, a literal.
@@ -87,7 +87,7 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .scrutinee_spelling(expression_node)?;
         // [REF-1] a reference variable denotes the reference, and the storage
-        // it names is reached only through `deref`, so a bare holder written
+        // it names is reached only through `^`, so a bare holder written
         // where the enum itself is required is that missing step. A `Box` is
         // not one of these at v0.60: its content is the ordinary field
         // `inner` [TYPE-9], so a `Box` scrutinee is the ordinary wrong-type
@@ -102,13 +102,13 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }
         // [OWN-13] matching through a reference leaves the scrutinee live and
         // binds each payload as a reference naming the scrutinee path
-        // extended by that payload step [REF-1]. `deref(p)` reads the value
+        // extended by that payload step [REF-1]. `p^` reads the value
         // at the path `p` names everywhere else, so the reading is made here,
         // where the rule distinguishes the two, and not at the place walk.
         if spelling == ScrutineeSpelling::Dereferenced && scrutinee.reference.is_none() {
@@ -378,7 +378,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `deref(holder)`",
+                    mechanical_fix: "write `holder^`",
                 },
             );
         }
@@ -843,10 +843,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(place) = self.tree.first_child_with(atom, Production::Place)? else {
             return Ok(ScrutineeSpelling::Other);
         };
-        let Some(pbase) = self.tree.first_child_with(place, Production::Pbase)? else {
-            return Ok(ScrutineeSpelling::Other);
-        };
-        Ok(if self.tree.place_base(pbase)?.is_dereference() {
+        Ok(if self.tree.place_has_dereference(place)? {
             ScrutineeSpelling::Dereferenced
         } else {
             ScrutineeSpelling::Other
