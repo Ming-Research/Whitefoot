@@ -936,6 +936,10 @@ enum FunctionSlot {
     /// The slot a waiting call constructs a result that has no planned
     /// storage in, read back once the callee has transferred back [WAIT-1].
     WaitingResult(IrValueId),
+    /// The slot a bound start's context constructs its result in, keyed by
+    /// the start, which its await reads [WAIT-2]. It is the starting frame's
+    /// own, so it outlives the context that writes it.
+    ContextResult(IrValueId),
 }
 
 /// Where a body constructs its stored result: its destination parameter,
@@ -1046,6 +1050,27 @@ impl FunctionFramePlan {
                             TargetStorageType::source(*ty),
                             None,
                         )?;
+                    }
+                    IrOperation::ContextAwait { start } => {
+                        let IrInstruction::Define { ty, .. } = instruction else {
+                            continue;
+                        };
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            FunctionSlot::ContextResult(*start),
+                            TargetStorageType::source(*ty),
+                            None,
+                        )?;
+                        if storage.slot(*result).is_none() {
+                            push_function_slot(
+                                &mut specifications,
+                                &mut ordered,
+                                FunctionSlot::WaitingResult(*result),
+                                TargetStorageType::source(*ty),
+                                None,
+                            )?;
+                        }
                     }
                     _ => {}
                 }
@@ -1348,9 +1373,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         let mut output = FunctionBody::default();
         let mut entry_prelude = frame.render(program, &mut output.references)?;
-        if contexts::keeps_context_group(function) {
-            entry_prelude.push_str(&contexts::context_group_prelude());
-        }
+        entry_prelude.push_str(&contexts::context_group_prelude(function));
         Ok(Self {
             program,
             function,
@@ -2035,7 +2058,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::ContextStart {
                 function,
                 arguments,
-            } => self.emit_context_start(result, *function, arguments),
+            } => self.emit_context_start(result, *function, arguments, false),
+            IrOperation::ContextStartBound {
+                function,
+                arguments,
+            } => self.emit_context_start(result, *function, arguments, true),
+            IrOperation::ContextAwait { start } => self.emit_context_await(result, ty, *start),
             IrOperation::ContextJoin => self.emit_context_join(result),
             IrOperation::LoopSplit {
                 splitter,

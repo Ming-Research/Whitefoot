@@ -99,6 +99,7 @@ macro_rules! operation_operands {
             | IrOperation::ContextJoin => Vec::new(),
             IrOperation::Call { arguments, .. }
             | IrOperation::ContextStart { arguments, .. }
+            | IrOperation::ContextStartBound { arguments, .. }
             | IrOperation::Integer { arguments, .. }
             | IrOperation::Float { arguments, .. }
             | IrOperation::Boolean { arguments, .. } => arguments.$iter().map($value).collect(),
@@ -112,7 +113,8 @@ macro_rules! operation_operands {
             | IrOperation::BoxDeref { value, .. }
             | IrOperation::RuntimeBoxPayload { owner: value, .. }
             | IrOperation::RuntimeBoxOwner { payload: value, .. }
-            | IrOperation::AddressOf { value, .. } => vec![$value(value)],
+            | IrOperation::AddressOf { value, .. }
+            | IrOperation::ContextAwait { start: value } => vec![$value(value)],
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],

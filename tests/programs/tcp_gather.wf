@@ -1,0 +1,178 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias SocketAddress = std::net::SocketAddress;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_connect = std::net::tcp_connect;
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u16>(value);
+      let scaled = port *wrap 10_u16;
+      set port = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return port;
+}
+
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @sending {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @sending;
+    }
+    match send_once(send: send, source: source, start: sent, end: length) {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return Err<unit, IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn fetch(factory: HandleFactory, address: SocketAddress, request: u8) -> result: u8 pure waits {
+  doc "Connects to the address, sends the one request byte and returns the first byte the peer answers, or zero when any step of the exchange fails.";
+  let buffer = slots_new::<u8, 1>();
+  for @fill_buffer (
+    at in 0_u64..1_u64,
+    invariant grown_buffer: buffer.len == at
+  ) {
+    place_back(window: &buffer, value: request);
+  }
+  let window = &buffer[0_u64..1_u64];
+  let answer = 0_u8;
+  match tcp_connect(factory: &factory, address: &address) {
+    Ok(value: link) => {
+      match send_all(send: &link.send, source: window, length: 1_u64) {
+        Ok(value: delivered) => {
+          match receive_next(receive: &link.receive, destination: window, start: 0_u64, end: 1_u64) {
+            Ok(value: endpoint) => {
+              if endpoint == 1_u64 {
+                set answer = byte_at(store: window, index: 0_u64);
+              }
+            }
+            Err(error: stop) => {
+            }
+          }
+        }
+        Err(error: problem) => {
+        }
+      }
+      let TcpConnection(receive: closing_receive, send: closing_send) = move link;
+      close_receive(factory: &factory, receive: move closing_receive);
+      close_send(factory: &factory, send: move closing_send);
+    }
+    Err(error: problem) => {
+    }
+  }
+  return answer;
+}
+
+fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64 reads(args), writes(window) contract {
+  requires 16_u64 <= window^.len;
+} {
+  doc "Copies one invocation argument into the window and returns its length, or zero when it is absent or does not fit.";
+  let carried = 0_u64;
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      set carried = 0_u64;
+    }
+  }
+  return carried;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Fetches one byte from each of the two loopback ports the arguments name and exits with their sum. Each fetch is marked `mustpar` and bound [PAR-4, WAIT-2], so the two exchanges may proceed together and each is joined where its byte is first used.";
+  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  close_directory(factory: &handles, directory: move unused_cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let arguments = args_count(args: &args);
+  if arguments < 3_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let first_length = argument(args: &args, position: 1_u64, window: window);
+  let first_port = parse_port(digits: window, length: first_length);
+  let second_length = argument(args: &args, position: 2_u64, window: window);
+  let second_port = parse_port(digits: window, length: second_length);
+  let first_address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: first_port);
+  let second_address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: second_port);
+  let first_factory = factory_share(factory: &handles);
+  let second_factory = factory_share(factory: &handles);
+  let first = mustpar fetch(factory: move first_factory, address: move first_address, request: 1_u8);
+  let second = mustpar fetch(factory: move second_factory, address: move second_address, request: 2_u8);
+  let total = first +wrap second;
+  return exit_status(code: total);
+}
