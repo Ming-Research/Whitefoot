@@ -7,10 +7,12 @@ resumable frame](#a-waiting-function-is-a-resumable-frame)), and a program
 means its sequential execution ([The program means its sequential
 execution](#the-program-means-its-sequential-execution)); Experiment 3 found
 the frame server at the stackful server's throughput with a mapping count
-that does not grow with its connections. Nothing in this file
-is a design-tree decision yet; each choice it states becomes an amendment when
-it is proposed. It serves the concurrent I/O design and is superseded by the
-design-tree nodes that record its surviving decisions.
+that does not grow with its connections. The owner approved its decisions on
+2026-09-28, and they are now the design-tree nodes `language/waiting`,
+`language/parallelism`, `language/system-interface`,
+`language/system-interface/handle-factory` and `compiler/waiting-contexts`
+(`design/log.md`); this file keeps their grounds and measurements and is
+superseded by those nodes wherever the two differ.
 
 ## The question
 
@@ -144,7 +146,7 @@ possible: the entry accepts, and each accepted connection is served by
 window and sends back what it received until its peer finishes; the first run
 used 16 KiB and every later one 64 KiB, the size `waiting_echo` uses. It is
 compiled by the ordinary compiler with no flag, and it runs every context on
-the entry's one thread with one ring (`design/amendments/compiler-waiting-contexts.md`).
+the entry's one thread with one ring (`design/compiler/waiting-contexts.md`).
 
 The references are the three C servers of Experiment 1 under the same
 `linux-net-bench.sh measure` protocol, each run twice: at its default of one
@@ -384,8 +386,8 @@ What this does not establish:
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
-is kernel-spec v0.77 [WAIT-1, WAIT-2, PAR-4, HOST-1], and each choice below is
-proposed to the design tree as an amendment.
+is kernel-spec v0.77 [WAIT-1, WAIT-2, PAR-4, HOST-1], and the owner approved
+the design-tree nodes that record each choice below on 2026-09-28.
 
 ### Waiting is a function kind the writer declares
 
@@ -556,9 +558,9 @@ The accounting stays a plain counter because every context runs on one driver
 thread and only a waiting host call writes the counter, and a waiting call
 never runs on a compute worker [PAR-1, PAR-2].
 
-The sharing rule below finds that this budget fails it, and the split first
-proposed to replace it does not serve the server this work measures; kernel-spec
-v0.77 keeps `factory_share` until the owner rules
+The split first proposed to replace this budget does not serve the server
+this work measures, and the owner kept the shared budget under the sharing
+rule as stated below
 ([Sharing between concurrent activities](#sharing-between-concurrent-activities)).
 
 ### The program means its sequential execution
@@ -594,7 +596,9 @@ has to write into the language.
 
 A host interface may split one resource into separately held parts only when
 operations through different parts commute under every observation the
-interface defines, so that reordering them changes no observation. Two files
+interface defines, so that reordering them changes no observation, except
+through an outcome the interface already lets the host produce at any call,
+which a program must handle in every order anyway. Two files
 written separately commute; two writers of one standard output do not,
 because the byte order is observed, so standard output has one owner. The
 two ends of a channel do not commute, because what a receive returns and
@@ -603,9 +607,10 @@ values is therefore not admitted. External systems are outside this rule:
 the specification does not define how a peer or a database answers, and a
 program is correct for every answer.
 
-`factory_share` fails the rule. Two factories drawing on one budget let one
-acquisition's refusal depend on what the other factory holds, so its result
-depends on the order of operations in two contexts.
+The rule was first stated without that clause, and `factory_share` failed it:
+two factories drawing on one budget let one acquisition's refusal depend on
+what the other factory holds, so its result depends on the order of
+operations in two contexts.
 
 A split that gives each part a fixed share of the credits was proposed to
 replace it, and it does not serve the server this work measures. The accept
@@ -621,7 +626,7 @@ finish. Returning them through the part's owner needs the starter to join
 the context and take the part back, which an accept loop that never ends
 cannot do.
 
-Two forms remain, and the choice is the owner's:
+Two forms remained, and the owner chose the first on 2026-09-28:
 
 - Keep one shared budget and state the sharing rule over what the interface
   lets a program observe: parts may interact through an outcome the
@@ -638,7 +643,8 @@ Two forms remain, and the choice is the owner's:
   form, and an accept loop that never ends still cannot join its contexts
   before it runs out.
 
-Until the ruling, kernel-spec v0.77 keeps `factory_share` unchanged.
+The clause in the rule's first paragraph is that choice, and `factory_share`
+stays as kernel-spec v0.77 states it.
 
 Mutable state shared by several concurrent activities has no admitted form in
 this revision. A program keeps such state behind an external system, or in
@@ -665,8 +671,7 @@ addition to it, provided the first version keeps these properties:
    flight has completed or been cancelled and reaped.
 5. Join bookkeeping is dynamic: a loop may start any number of contexts.
 6. Every split host interface satisfies the sharing rule, and no program can
-   observe which calls ran as contexts. `factory_share` is the one split
-   interface in question, pending the owner's ruling above.
+   observe which calls ran as contexts.
 7. The footprint classification of [PAR-1] can take a new class, the one a
    shared object would need.
 

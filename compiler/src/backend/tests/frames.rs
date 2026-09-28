@@ -1,5 +1,5 @@
 //! Waiting functions lowered to resumable frames
-//! (design/amendments/compiler-waiting-contexts.md).
+//! (design/compiler/waiting-contexts.md).
 //!
 //! A call of a waiting function transfers into the callee's frame and the
 //! callee transfers back when it returns, each by a resume placed before a

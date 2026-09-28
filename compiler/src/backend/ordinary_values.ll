@@ -17,7 +17,7 @@
 ; or answers at once, returning 0 when it wrote the result, 1 when its
 ; operation has already completed and 2 when it is still pending, and the
 ; finish reads the completed record into the result. The waiting function that calls them
-; suspends between the two (design/amendments/compiler-waiting-contexts.md).
+; suspends between the two (design/compiler/waiting-contexts.md).
 
 declare void @wf__body_host_copy_bytes(ptr, ptr, ptr, i64, i64)
 

@@ -141,7 +141,7 @@ impl FunctionAbi {
     /// ordinary parameters, and every result constructed through a
     /// destination, because a resumable frame returns its frame and
     /// constructs its result in the caller's storage before it transfers
-    /// back (design/amendments/compiler-waiting-contexts.md).
+    /// back (design/compiler/waiting-contexts.md).
     pub(crate) fn waiting(&self) -> Self {
         Self {
             parameters: self.parameters.clone(),

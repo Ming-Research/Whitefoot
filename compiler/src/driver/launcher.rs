@@ -116,7 +116,7 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, Back
     // A waiting entry [WAIT-1] is a resumable frame: the launcher makes it in
     // the root context with the no-op coroutine as its parent, and the root
     // context runs every context until that frame has finished
-    // (design/amendments/compiler-waiting-contexts.md). Its result is always
+    // (design/compiler/waiting-contexts.md). Its result is always
     // constructed through a destination, a unit one included.
     let waiting = main.waits();
     if waiting {

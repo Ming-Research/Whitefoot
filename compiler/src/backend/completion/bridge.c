@@ -911,7 +911,7 @@ static void wf_bridge_park(uint64_t observed_epoch) {
  * and every call a `mustpar` statement starts [PAR-4].
  *
  * A context is a chain of resumable frames
- * (design/amendments/compiler-waiting-contexts.md).  Every waiting function
+ * (design/compiler/waiting-contexts.md).  Every waiting function
  * is an LLVM coroutine: its frame comes from the running context's arena, a
  * call transfers into the callee and a finished callee back into its caller
  * without returning here, and a frame that has to wait registers its context

@@ -15,7 +15,7 @@
 //! have finished.
 //!
 //! Nothing here can be refused. Every marked waiting call runs as a context
-//! of its own (design/amendments/compiler-waiting-contexts.md), so there is
+//! of its own (design/compiler/waiting-contexts.md), so there is
 //! no fallback that runs the call inline: running it inline would wait for
 //! it. The runtime symbols are the completion bridge's, which every program
 //! links, and they begin `wf__` so no source name can reach them.

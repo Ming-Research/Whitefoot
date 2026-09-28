@@ -168,7 +168,7 @@ fn tcp_calls_use_ordinary_linked_declarations() {
     ] {
         // A waiting host function is linked as its start and its finish, the
         // two halves a waiting frame suspends between
-        // (design/amendments/compiler-waiting-contexts.md); nothing calls a
+        // (design/compiler/waiting-contexts.md); nothing calls a
         // blocking whole.
         assert!(
             llvm.contains(&format!("call i32 @wf_std.net.{name}.start(")),

@@ -342,7 +342,7 @@ static void wf_factory_return(wf_value *factory) {
  * finish reads besides the record.  Every waiting body below is a start,
  * which submits into it or answers at once, and a finish, which reads it once
  * the record is complete; the frame that calls them suspends between the two
- * (design/amendments/compiler-waiting-contexts.md).  A start answers 0 when
+ * (design/compiler/waiting-contexts.md).  A start answers 0 when
  * it wrote the result itself and submitted nothing, 1 when it submitted an
  * operation that has already completed, and 2 when the operation is still
  * pending; only 2 makes the frame wait, and 1 and 2 are read by the finish.

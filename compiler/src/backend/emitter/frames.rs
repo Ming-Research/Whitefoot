@@ -1,5 +1,5 @@
 //! Waiting functions [WAIT-1] lowered to resumable frames
-//! (design/amendments/compiler-waiting-contexts.md).
+//! (design/compiler/waiting-contexts.md).
 //!
 //! A waiting function is an LLVM switched-resume coroutine. Its definition is
 //! the ramp: `ptr @f(ptr %wf.result, ptr %wf.coro.parent, parameters...)`,

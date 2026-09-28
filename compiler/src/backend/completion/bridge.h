@@ -201,7 +201,7 @@ int wf__completion_pending(const void *record);
 /* ------------------------------------------------------ waiting contexts */
 
 /* Contexts [WAIT-2], each a chain of resumable frames
- * (design/amendments/compiler-waiting-contexts.md).  The emitted code of a
+ * (design/compiler/waiting-contexts.md).  The emitted code of a
  * waiting function allocates its frame with `wf__context_frame_allocate` and
  * releases it with `wf__context_frame_release`, last in, first out, from the
  * context that runs it. */

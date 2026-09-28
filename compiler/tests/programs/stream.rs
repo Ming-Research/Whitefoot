@@ -32,7 +32,7 @@ fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
     // The source calls ordinary PRE-2 signatures. Native submission and join
     // belong to their linked bodies and cannot select a compiler call path. A
     // waiting host function is linked as its start and its finish, which the
-    // calling frame suspends between (design/amendments/compiler-waiting-contexts.md).
+    // calling frame suspends between (design/compiler/waiting-contexts.md).
     for (caller, callee) in [("main", "read_next"), ("publish_all", "write_once")] {
         let body = emitted_function(&llvm, caller);
         for (result, half) in [("i32", "start"), ("void", "finish")] {
