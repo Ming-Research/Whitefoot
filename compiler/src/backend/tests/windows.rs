@@ -170,6 +170,241 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
     }
 }
 
+/// [WIN-1] selects physical head modulo capacity, while [MSR-2] permits
+/// head == cap. Ordinary linked calls owe those contracts, not a stricter
+/// representation invariant inferred from the compiler's constructors.
+#[test]
+fn ring_front_removal_normalizes_only_the_physical_address() {
+    const SOURCE: &[u8] =
+        br#"fn fixed_scalar(window: &Ring<u64, 1>) -> result: u64 writes(window) contract {
+  requires window^.len > 0_u64;
+  requires window^.head == window^.cap;
+} {
+  let value = take_front(window: window);
+  return value;
+}
+
+fn runtime_scalar(window: &Box<Ring<u64>>) -> result: u64 writes(window.inner) contract {
+  requires window^.inner.len > 0_u64;
+  requires window^.inner.head == window^.inner.cap;
+} {
+  let value = take_front(window: &window^.inner);
+  return value;
+}
+
+fn fixed_zst(window: &Ring<Array<u64, 0>, 1>) -> result: u64 writes(window) contract {
+  requires window^.len > 0_u64;
+  requires window^.head == window^.cap;
+} {
+  let value = take_front(window: window);
+  return window^.head;
+}
+
+fn runtime_zst(window: &Box<Ring<Array<u64, 0>>>) -> result: u64 writes(window.inner) contract {
+  requires window^.inner.len > 0_u64;
+  requires window^.inner.head == window^.inner.cap;
+} {
+  let value = take_front(window: &window^.inner);
+  return window^.inner.head;
+}
+
+fn main() -> result: u64 pure {
+  let single = ring_new::<u64, 1>();
+  place_front(window: &single, value: 17_u64);
+  let one = take_front(window: &single);
+  if one != 17_u64 {
+    return 1_u64;
+  }
+  if single.head != 0_u64 {
+    return 2_u64;
+  }
+  let fixed = ring_new::<u64, 7>();
+  place_back(window: &fixed, value: 29_u64);
+  let first = take_front(window: &fixed);
+  if first != 29_u64 {
+    return 3_u64;
+  }
+  if fixed.head != 1_u64 {
+    return 4_u64;
+  }
+  if fixed.len != 0_u64 {
+    return 5_u64;
+  }
+  let runtime = box_ring_new::<u64>(capacity: 7_u64);
+  place_front(window: &runtime.inner, value: 41_u64);
+  if runtime.inner.head != 6_u64 {
+    return 6_u64;
+  }
+  let wrapped = take_front(window: &runtime.inner);
+  if wrapped != 41_u64 {
+    return 7_u64;
+  }
+  if runtime.inner.head != 0_u64 {
+    return 8_u64;
+  }
+  free_empty(window: move runtime);
+  let empty_fixed = ring_new::<Array<u64, 0>, 0>();
+  if empty_fixed.head != 0_u64 {
+    return 9_u64;
+  }
+  let empty_runtime = box_ring_new::<Array<u64, 0>>(capacity: 0_u64);
+  if empty_runtime.inner.head != 0_u64 {
+    return 10_u64;
+  }
+  free_empty(window: move empty_runtime);
+  let zero = array_filled::<u64, 0>(value: 0_u64);
+  let large = box_ring_new::<Array<u64, 0>>(capacity: 18446744073709551615_u64);
+  place_front(window: &large.inner, value: zero);
+  if large.inner.head != 18446744073709551614_u64 {
+    return 11_u64;
+  }
+  place_front(window: &large.inner, value: zero);
+  if large.inner.head != 18446744073709551613_u64 {
+    return 12_u64;
+  }
+  let large_first = take_front(window: &large.inner);
+  if large.inner.head != 18446744073709551614_u64 {
+    return 13_u64;
+  }
+  let large_last = take_front(window: &large.inner);
+  if large.inner.head != 0_u64 {
+    return 14_u64;
+  }
+  if large.inner.len != 0_u64 {
+    return 15_u64;
+  }
+  free_empty(window: move large);
+  return 0_u64;
+}
+"#;
+    const OBSERVER: &str = r#"#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+extern uint64_t wf_fixed_scalar(void *window);
+extern uint64_t wf_runtime_scalar(void *window);
+extern uint64_t wf_fixed_zst(void *window);
+extern uint64_t wf_runtime_zst(void *window);
+extern uint64_t wf_main(void);
+
+typedef uint64_t (*TakeFront)(void *);
+
+static int observe(TakeFront take, int runtime, int zst,
+                   uint64_t capacity, uint64_t length, uint64_t guard, int fault) {
+    const size_t header = runtime ? 3 : 2;
+    const size_t payload = zst ? 0 : (size_t)capacity;
+    /* The guard lies inside the same allocation. An unnormalized head reads
+     * this initialized word, so the regression fails without an invalid load. */
+    uint64_t *allocation = calloc(header + payload + 1, sizeof(uint64_t));
+    if (allocation == NULL) return 70;
+    allocation[0] = length;
+    if (runtime) allocation[1] = capacity;
+    allocation[header - 1] = capacity;
+    for (size_t index = 0; index < payload; ++index)
+        allocation[header + index] = UINT64_C(17) + (uint64_t)index;
+    allocation[header + payload] = guard;
+    uint64_t *owner = allocation;
+    uint64_t result = take(runtime ? (void *)&owner : (void *)allocation);
+    uint64_t observed_length = allocation[0];
+    uint64_t observed_head = allocation[header - 1];
+    uint64_t observed_guard = allocation[header + payload];
+    int owner_ok = owner == allocation;
+    /* Faults alter observer snapshots, never a source precondition, address,
+     * or LLVM assumption. Each independent observation must detect its fault. */
+    if (fault == 'v' && !zst) result ^= UINT64_C(1);
+    if (fault == 'z' && zst) result ^= UINT64_C(1);
+    if (fault == 'l') observed_length ^= UINT64_C(1);
+    if (fault == 'h' && capacity == 1) observed_head = 2;
+    if (fault == 'g') observed_guard ^= UINT64_C(1);
+    if (fault == 'o') owner_ok = 0;
+    free(allocation);
+    if (!owner_ok) { fputs("ring front: owner\n", stderr); return 71; }
+    if (observed_length != length - 1) { fputs("ring front: length\n", stderr); return 72; }
+    if (observed_head > capacity) { fputs("ring front: head bound\n", stderr); return 73; }
+    if (observed_guard != guard) { fputs("ring front: guard\n", stderr); return 74; }
+    if (!zst && result != 17) { fputs("ring front: payload\n", stderr); return 75; }
+    /* PRE-1 bounds the post-head, but does not require its canonical residue. */
+    if (zst && result != observed_head) { fputs("ring front: observed head\n", stderr); return 76; }
+    return 0;
+}
+
+int wf__main_body(int argc, char **argv) {
+    const int fault = argc == 2 ? argv[1][0] : 0;
+    const uint64_t guards[] = {61, 127};
+    unsigned cases = 0;
+    for (int kind = 0; kind < 4; ++kind) {
+        const int runtime = kind == 1 || kind == 3;
+        const int zst = kind == 2 || kind == 3;
+        TakeFront take = kind == 0 ? wf_fixed_scalar : kind == 1 ? wf_runtime_scalar
+            : kind == 2 ? wf_fixed_zst : wf_runtime_zst;
+        const uint64_t capacities[] = {1, 7, UINT64_MAX};
+        const int count = runtime ? (zst ? 3 : 2) : 1;
+        for (int index = 0; index < count; ++index) {
+            for (size_t guard = 0; guard < 2; ++guard) {
+                const uint64_t cap = capacities[index];
+                const int status = observe(take, runtime, zst, cap, cap == 1 ? 1 : 2,
+                                           guards[guard], fault);
+                if (status != 0) return status;
+                ++cases;
+            }
+        }
+    }
+    uint64_t closed = wf_main();
+    if (fault == 'c') closed ^= UINT64_C(1);
+    if (closed != 0) { fputs("ring front: closed control\n", stderr); return 77; }
+    printf("ring front boundary: %u cases\n", cases + 1);
+    return 0;
+}
+
+extern int wf__floor_run(int argc, char **argv);
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+    let modules = with_ir(SOURCE, |program| {
+        let target = TargetLayout::host().expect("supported target");
+        [WindowAddressFacts::Emit, WindowAddressFacts::Withhold].map(|facts| {
+            emit_llvm_with_window_address_facts(program, target, facts)
+                .expect("the inclusive Ring head domain emits")
+                .into_string()
+        })
+    });
+    for module in modules {
+        let directory = test_directory();
+        let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
+        let output = Command::new(&executable)
+            .output()
+            .expect("run Ring boundary observer");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(
+            output.stdout, b"ring front boundary: 15 cases\n",
+            "{output:?}"
+        );
+        assert!(output.stderr.is_empty(), "{output:?}");
+        for (fault, code, message) in [
+            ("o", 71, "owner"),
+            ("l", 72, "length"),
+            ("h", 73, "head bound"),
+            ("g", 74, "guard"),
+            ("v", 75, "payload"),
+            ("z", 76, "observed head"),
+            ("c", 77, "closed control"),
+        ] {
+            let output = Command::new(&executable)
+                .arg(fault)
+                .output()
+                .expect("run Ring observer fault");
+            assert_eq!(output.status.code(), Some(code), "{fault}: {output:?}");
+            assert!(output.stdout.is_empty(), "{fault}: {output:?}");
+            assert_eq!(
+                output.stderr,
+                format!("ring front: {message}\n").as_bytes(),
+                "{fault}: {output:?}"
+            );
+        }
+        std::fs::remove_file(executable).expect("remove Ring observer executable");
+        std::fs::remove_dir(directory).expect("remove Ring observer directory");
+    }
+}
+
 /// A front placement already has the physical slot it just wrote. The
 /// descriptor update must reuse that slot as the new Ring origin instead of
 /// reloading head/capacity and recomputing the predecessor [OP-10, WIN-1].

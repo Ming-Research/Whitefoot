@@ -15,9 +15,12 @@
 //!
 //! Slots uses its proved logical offset directly. A Ring window is `len`
 //! slots beginning at `head` modulo `cap` [WIN-1], so its subscript at
-//! logical offset `i` reads slot `(head + i) mod cap`. Because
-//! `head < cap` and `i < len <= cap`, the sum is below `2 * cap` and the
-//! modulus is one conditional subtract; no division is emitted.
+//! logical offset `i` reads slot `(head + i) mod cap`. For positive stride,
+//! the qualified allocation bounds `cap` within the signed address domain;
+//! `head <= cap` and `i < len <= cap` then bound the sum below `2 * cap`
+//! without unsigned overflow, so one conditional subtract computes its slot.
+//! Zero-stride addressing substitutes zero before forming the pointer; its
+//! logical head arithmetic remains separate from that address normalization.
 
 use crate::{IrBoundary, IrElement, IrMeasure, IrWindowShape};
 
@@ -248,11 +251,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     /// [REF-4] one range reference formed over typed owner storage.
     ///
-    /// The window is `len` slots beginning at `head`, and the row's own
-    /// requirement `vector.head <= vector.cap` is discharged before
-    /// this operation exists [BLK-0], so `head + len <= cap` and the window
-    /// is one contiguous range: the descriptor is the address of slot `head`
-    /// together with `len`, and no modulus is emitted.
+    /// This path receives fixed Arrays and fixed/runtime Slots admitted by
+    /// [REF-4]; runtime Arrays use their buffer path, and Ring ranges are refused.
+    /// A Slots window begins at slot zero, so its descriptor pairs that slot's
+    /// address with `len`. No wrapping premise is needed.
     ///
     /// A complete array instead contributes its type's length and the address
     /// of its first slot, without descriptor metadata in the owner.
@@ -500,7 +502,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// A back operation touches the slot one past the window's last, which is
     /// `(head + len) mod cap` for a placement and `(head + len - 1) mod cap`
     /// for a removal; a front placement touches `(head + cap - 1) mod cap`
-    /// and a front removal touches `head` itself.
+    /// and a front removal touches `head mod cap`.
     fn boundary_slot(
         &mut self,
         shape: RunShape,
@@ -510,8 +512,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<String, BackendFailure> {
         let head = self.window_origin(shape, run_type, run)?;
         match row {
-            IrBoundary::TakeFront => Ok(head),
-            // Placement proves cap > 0 and the Ring invariant gives head <
+            IrBoundary::TakeFront => {
+                // TakeFront proves cap > 0; MSR-2 gives head <= cap.
+                // The head == cap representative denotes physical slot zero.
+                // Normalize this address only; the observable head update is
+                // still performed by move_run_boundary.
+                let capacity = self.run_capacity(shape, run_type, run)?;
+                let at_end = self.next_temporary()?;
+                let physical = self.next_temporary()?;
+                writeln!(
+                    self.output,
+                    "  %{at_end} = icmp eq i64 {head}, {capacity}\n  %{physical} = select i1 %{at_end}, i64 0, i64 {head}",
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                Ok(format!("%{physical}"))
+            }
+            // Placement proves cap > 0 and the bounded head obeys head <=
             // cap. Select a positive predecessor base before subtracting:
             // head + cap - 1 can overflow even for header-only storage.
             IrBoundary::PlaceFront => {
@@ -592,8 +608,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(format!("%{word}"))
     }
 
-    /// The run's capacity: a `FixedVector`'s type constant, or a `Vector`'s
-    /// own descriptor word.
+    /// A Slots or Ring capacity: its type constant for fixed storage, or
+    /// its own descriptor word for runtime-capacity storage.
     fn run_capacity(
         &mut self,
         shape: RunShape,
