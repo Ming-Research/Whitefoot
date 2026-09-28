@@ -475,8 +475,11 @@ rarely insert at the same place.
   forwarding or result placement with
   the same owning return paths, failed insertion returning the offered owner,
   partial cleanup and alias controls, checking optimized transfers and
-  same-source timings on supported toolchains. Defer general enum layout and
-  call ABI changes until that experiment establishes which transfer can be
+  same-source timings on supported toolchains. Enum layout is now the
+  [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md):
+  its proposed layout makes the insertion result 264 bytes, as in C, and
+  leaves `Option<Record>` and the transfer counts unchanged. Defer call ABI
+  changes until the forwarding experiment establishes which transfer can be
   removed without changing ownership; reopen with the owning-map library or
   a workload dominated by wide Slab removal.
   The [map's exhaustive returned-owner protocol](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
@@ -693,6 +696,27 @@ rarely insert at the same place.
   the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
   found into this stop; reopen when a writer report or a program meets the
   unlocated failure.
+
+- **Payload enums are laid out as products.** An enum's size is the sum of
+  every variant's payload: Snowghost's CSS `Component` takes 168 bytes per
+  slot where one variant needs at most 40, `std::io::IoError` 228 where 12
+  suffice, and every `IoError`-bearing result 236--352 bytes. The
+  [enum union layout investigation](../research/investigations/enum-union-layout/DESIGN.md)
+  finds no specification change needed and proposes, as the pending
+  amendment `compiler/payload-enum-layout`, a per-variant union layout for
+  enums with two or more payload variants whose product does not return in
+  registers, handled as memory-only values in the backend. Implement it after
+  the owner's ruling and validate with that investigation's criterion
+  (layout equal to the target computation and never above the product,
+  `make check` green with no conformance change, emission unchanged apart
+  from the eligible type declarations elsewhere, exact allocation sizes, no slowdown on the
+  Slab, priority-queue and I/O programs). Deferred refinements, each to be
+  measured on its own: a first-class word carrier so register-sized
+  two-payload enums (at most 8 bytes saved in the maintained programs) could
+  also shrink, reopened by a workload storing many of them; niche encoding,
+  reopened with refined integer domains or a workload dominated by
+  `Option<Box<T>>`; and a narrower tag, reopened by a workload of enums whose
+  views are less than 4-aligned.
 
 ## Parallel lowering and runtime
 
