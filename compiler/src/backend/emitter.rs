@@ -1605,7 +1605,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             llvm_type_with_references(self.program, abi.result().ty(), &mut references.types)?
         };
-        if abi.result().uses_destination() && !(waiting && !declaration) {
+        if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
         let mut module = Module::default();

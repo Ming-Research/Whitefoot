@@ -1026,8 +1026,8 @@ fn the_bootstrap_selects_one_world_once() {
     let bootstrap = function_body(&overlapped, "@wf__main_body");
     assert!(
         bootstrap.contains("  %par.pool = call i32 @wf__par_pool_active()")
-            && bootstrap.contains("call void @\"wf_main\"(ptr %status,")
-            && bootstrap.contains("call void @\"wf__par_seq_main\"(ptr %status,"),
+            && bootstrap.contains("call ptr @\"wf_main\"(ptr %status, ptr %wf.parent,")
+            && bootstrap.contains("call ptr @\"wf__par_seq_main\"(ptr %status, ptr %wf.parent,"),
         "the bootstrap must branch between the two lowerings of the entry:\n{bootstrap}"
     );
     // These POSIX fallback definitions are an emitted-module property. The
@@ -2037,7 +2037,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 "#;
     let module = emit_with_overlap(source);
     let helper = function_body(&module, "@wf_write_byte");
-    assert!(helper.contains("call void @wf_std.io.write_once("));
+    assert!(helper.contains("call i32 @wf_std.io.write_once.start("));
     let main = function_body(&module, "@wf_main");
     assert!(
         !main.contains("@wf__par_publish(") && !main.contains("@wf__par_join("),

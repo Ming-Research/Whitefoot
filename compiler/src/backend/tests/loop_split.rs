@@ -1326,14 +1326,22 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     assert!(!splitter.contains("call void @free("), "{splitter}");
     for outer in ["@wf_main", "@wf__par_seq_main"] {
         let body = function_body(&split, outer);
+        // The entry waits, so each source return leaves by a branch to the
+        // frame's final block, and the one `ret` is the frame's return to
+        // its resumer from the block every suspension shares.
         let mut releases_in_block = 0;
         let mut returning_blocks = 0;
+        let mut block = "";
         for line in body.lines() {
-            if line.ends_with(':') {
+            if let Some(label) = line.strip_suffix(':') {
                 releases_in_block = 0;
+                block = label;
             }
             releases_in_block += usize::from(line.contains("call void @free("));
-            if line.trim_start().starts_with("ret ") {
+            let instruction = line.trim_start();
+            if instruction == "br label %wf.coro.final"
+                || (instruction.starts_with("ret ") && block != "wf.coro.suspended")
+            {
                 returning_blocks += 1;
                 assert_eq!(
                     releases_in_block, 1,

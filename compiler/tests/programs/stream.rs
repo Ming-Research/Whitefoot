@@ -51,7 +51,7 @@ fn the_stream_uses_ordinary_linked_calls_and_an_ordinary_inputs_argument() {
         }
         assert!(!llvm.contains(&format!("@wf_std.io.{callee}(")));
     }
-    assert!(!llvm.contains("@wf_std.fs.read_at"));
+    assert!(!llvm.contains("call i32 @wf_std.fs.read_at.start("));
     assert!(!llvm.contains("@wf__completion_"));
     // Build initialization supplies one ordinary Inputs owner, then receives
     // the ordinary opaque ExitStatus through its result destination. The

@@ -467,7 +467,7 @@ fn resolve_qualified(
             meta.scope == inventory
                 && !meta.type_owned
                 && !defers_to_definition(meta)
-                && !(use_record.interface && meta.implementation_only)
+                && (!use_record.interface || !meta.implementation_only)
         })
     {
         for class in &meta.entries {
