@@ -1598,7 +1598,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let public = FunctionAbi::build(self.program, self.function)?;
         // A waiting function is a resumable frame [WAIT-1]: its result is
         // always constructed through a destination and it has no public
-        // entry (`frames`). A budgeted variant has no frame form.
+        // entry (`frames`). A budgeted variant has no frame form, so the
+        // recursion frontier never selects a waiting member (`frontier`).
         let waiting = self.function.waits();
         if waiting && self.grain.is_some() {
             return Err(BackendFailure::InvalidIr);
