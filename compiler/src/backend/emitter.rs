@@ -22,6 +22,7 @@ pub(super) mod places;
 mod reinterpret;
 mod runs;
 mod slice;
+mod union_enums;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -42,7 +43,7 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrTargetDomainObligation, IrTerminator, IrType, IrValueId,
     IrWindowShape,
 };
-use cleanup::{emit_resource_drop_helpers, emit_value_cleanup, type_requires_cleanup};
+use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
 use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
@@ -345,7 +346,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
     text.header(format!("target triple = \"{}\"", target.triple()));
     text.text("\n");
-    emit_nominal_declarations(&mut text, program)?;
+    emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
@@ -830,6 +831,7 @@ fn global_constant_value(
 fn emit_nominal_declarations(
     module: &mut Module,
     program: &IrProgram,
+    target: TargetLayout,
 ) -> Result<(), BackendFailure> {
     let mut emitted = false;
     for nominal in program.nominals() {
@@ -844,6 +846,10 @@ fn emit_nominal_declarations(
             continue;
         }
         emitted = true;
+        if union_enums::is_union_enum(program, nominal.id())? {
+            union_enums::emit_union_declarations(module, program, target, nominal)?;
+            continue;
+        }
         let mut output = String::from("{ ");
         let mut references = References::default();
         match nominal.kind() {
@@ -936,6 +942,10 @@ enum FunctionSlot {
     /// The slot a waiting call constructs a result that has no planned
     /// storage in, read back once the callee has transferred back [WAIT-1].
     WaitingResult(IrValueId),
+    /// Where a memory-only edge transfer into this block parameter keeps
+    /// its source while another transfer of the same edge overwrites the
+    /// source's storage (compiler/payload-enum-layout).
+    EdgeSnapshot(IrValueId),
     /// The slot a bound start's context constructs its result in, keyed by
     /// the start, which its await reads [WAIT-2]. It is the starting frame's
     /// own, so it outlives the context that writes it.
@@ -1010,6 +1020,33 @@ impl FunctionFramePlan {
             }
         }
         for block in function.blocks() {
+            if let IrTerminator::Jump {
+                target: successor,
+                arguments,
+                ..
+            } = block.terminator()
+            {
+                let parameters = function
+                    .blocks()
+                    .get(successor.index())
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .parameters();
+                for position in
+                    union_enums::edge_snapshot_positions(program, storage, parameters, arguments)?
+                {
+                    let (parameter, ty) = parameters[position];
+                    let key = FunctionSlot::EdgeSnapshot(parameter);
+                    if !ordered.contains(&key) {
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            key,
+                            TargetStorageType::source(ty),
+                            None,
+                        )?;
+                    }
+                }
+            }
             for instruction in block.instructions() {
                 let IrInstruction::Define {
                     result, operation, ..
@@ -2028,6 +2065,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             _ => self.materialize_operands(operation.operands())?,
         }
+        // Only these value operations can produce a memory-only result
+        // (compiler/payload-enum-layout), and each writes the result's slot
+        // itself; every other producer of one is a place definition above.
+        if self.is_memory_only(ty)?
+            && !matches!(
+                operation,
+                IrOperation::Call { .. }
+                    | IrOperation::LoopSplit { .. }
+                    | IrOperation::BoxTake { .. }
+                    | IrOperation::BoxDeref { .. }
+                    | IrOperation::SliceIndex { .. }
+                    | IrOperation::ContextAwait { .. }
+            )
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
         self.emit_value_definition(result, ty, operation)?;
         if !self.overlap_handed_out.contains(&result) {
             self.save_value_result(result)?;
@@ -2444,6 +2497,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     if tag_only {
                         return Ok((self.value_name(scrutinee), tag_ty));
                     }
+                    // A memory-only scrutinee stays in its slot
+                    // (compiler/payload-enum-layout); its tag is field 0 in
+                    // every enum layout.
+                    if self.is_memory_only(IrType::Nominal(nominal))? {
+                        let address = self.value_place(scrutinee)?;
+                        let field =
+                            self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
+                        let temporary = self.next_temporary()?;
+                        writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                            .map_err(|_| BackendFailure::TextEmission)?;
+                        return Ok((format!("%{temporary}"), tag_ty));
+                    }
                     let temporary = self.next_temporary()?;
                     writeln!(
                         self.output,
@@ -2482,7 +2547,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     /// Validate the checked release and capture only content it actually
     /// reads. In particular, a no-op owner node requires no aggregate load.
-    fn prepare_drop(&mut self, drop: IrDrop) -> Result<Option<String>, BackendFailure> {
+    ///
+    /// A memory-only subject (compiler/payload-enum-layout) is released from
+    /// its address instead of a loaded snapshot. That address is a frame
+    /// slot, or a place the checker names on its own inside a single-drop
+    /// group, and no release of a group writes frame storage, so the
+    /// content the release reads is the content the group started with.
+    fn prepare_drop(&mut self, drop: IrDrop) -> Result<Option<CleanupOperand>, BackendFailure> {
         let actual = match drop.subject() {
             IrDropSubject::Value(value) => self.value_type(value),
             IrDropSubject::Place(address) => match self.value_type(address) {
@@ -2515,8 +2586,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if !reads_content {
             return Ok(None);
         }
+        if self.is_memory_only(drop.ty())? {
+            return Ok(Some(CleanupOperand::Address(match drop.subject() {
+                IrDropSubject::Value(value) => self.value_place(value)?,
+                IrDropSubject::Place(address) => self.value_name(address),
+            })));
+        }
         match drop.subject() {
-            IrDropSubject::Value(value) => self.value_operand(value).map(Some),
+            IrDropSubject::Value(value) => self
+                .value_operand(value)
+                .map(CleanupOperand::Value)
+                .map(Some),
             IrDropSubject::Place(address) => {
                 let snapshot = format!("%{}", self.next_temporary()?);
                 {
@@ -2529,7 +2609,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
-                Ok(Some(snapshot))
+                Ok(Some(CleanupOperand::Value(snapshot)))
             }
         }
     }
@@ -2543,13 +2623,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map(|drop| self.prepare_drop(*drop))
             .collect::<Result<Vec<_>, _>>()?;
         for (drop, snapshot) in drops.iter().zip(snapshots) {
-            if let Some(value) = snapshot {
-                emit_value_cleanup(
+            if let Some(operand) = snapshot {
+                emit_cleanup(
                     self.program,
                     &mut self.output,
                     &mut self.temporary,
                     drop.ty(),
-                    value,
+                    operand,
                 )?;
             }
             writeln!(self.output, "  ; drop {}", value_name(drop.operand()))
