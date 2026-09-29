@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nothing(limit: u64) -> result: Option<u64> pure contract {
+  ensures when None(value: gone): gone < limit;
+} {
+  doc "A route names its ordinal's success variant [FN-9]: None is Option's failure variant and carries no payload, so the route is refused.";
+  return None<u64>();
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,55 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+enum PngError {
+  Malformed();
+}
+
+fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pure contract {
+  ensures when Ok(value: header): header.width >= 1_u32;
+  ensures when Ok(value: header): header.width <= 16384_u32;
+  ensures when Ok(value: header): header.height >= 1_u32;
+  ensures when Ok(value: header): header.height <= 16384_u32;
+} {
+  doc "FN-9: a routed Ok clause over a struct payload names the payload's integer fields, the data an unrouted Header result would supply [CALL-4]. The construction placement carries the checked width and height into header [MSR-3].";
+  let width_ok = width >= 1_u32;
+  let width_small = width <= 16384_u32;
+  let height_ok = height >= 1_u32;
+  let height_small = height <= 16384_u32;
+  let sizes = band(width_ok, width_small);
+  let heights = band(height_ok, height_small);
+  let valid = band(sizes, heights);
+  if valid {
+    let header = Header(width: width, height: height);
+    return Ok<Header, PngError>(value: header);
+  }
+  let error = PngError::Malformed();
+  return Err<Header, PngError>(error: error);
+}
+
+fn frame_bytes(width: u32, height: u32) -> result: Result<u32, PngError> pure {
+  doc "propagate's successful continuation selects the same conditional context as a match's Ok arm [ENT-5, ERR-3]: the bound binder's fields carry the published bounds.";
+  let header = propagate parse_header(width: width, height: height);
+  let stride = header.width * 4_u32;
+  let bytes = stride * header.height;
+  return Ok<u32, PngError>(value: bytes);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The propagated success runs and its product is observed.";
+  let outcome = frame_bytes(width: 3_u32, height: 2_u32);
+  match outcome {
+    Ok(value: bytes) => {
+      let code = cvt.wrap::<u32, u8>(bytes);
+      return exit_status(code: code);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

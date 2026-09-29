@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Table {
+  spans: Box<Slots<u32>>;
+}
+
+fn first_index(table: &Table) -> index: u32 reads(table) contract {
+  requires table^.spans.inner.len >= 1_u64;
+  ensures cvt::<u32, u64>(index) < table^.spans.inner.len;
+} {
+  doc "ENT-2: a widening conversion of a result datum is that datum in a relation term, so a u32 identifier is related to a u64 length [FN-9].";
+  return 0_u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller widens the identifier for the subscript; S5's conversion equality and the published relation discharge it.";
+  let spans = box_slots_new::<u32>(capacity: 4_u64);
+  place_back(window: &spans.inner, value: 5_u32);
+  let table = Table(spans: move spans);
+  let index = first_index(table: &table);
+  let wide = cvt::<u32, u64>(index);
+  let span = table.spans.inner[wide];
+  let code = cvt.wrap::<u32, u8>(span);
+  return exit_status(code: code);
+}
