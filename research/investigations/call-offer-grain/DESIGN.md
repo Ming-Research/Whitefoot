@@ -607,7 +607,13 @@ allowance. From the third block:
 `tcp_gather.wf` and `tcp_refused.wf` changed and were not timed: they need a
 network peer the block does not provide.
 
-**Criterion 3: being measured.** The best-of-seven front-end comparison of the prototype's `--par` build is running.
+**Criterion 3: met, on three runs.** The front-end time `--report` prints for
+the prototype's `--par` build, alternating the two compilers, read 97,288,
+95,349 and 97,775 ms for main and 97,301, 95,155 and 97,491 ms for the call
+grain; the bests are 95,349 and 95,155 ms, 0.2 percent apart. The owner cut
+the recorded seven runs to three on 2026-09-29, since the rule's own work (one
+call-graph decomposition and one pass over each function's groups) is small
+beside the 95-second check that both compilers share.
 
 ## The design-tree node it would change
 
