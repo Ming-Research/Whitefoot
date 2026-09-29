@@ -112,8 +112,9 @@ use super::{
     FunctionPostconditionProof, JoinedSourceProofProvenance, LoopInvariantOutcome,
     LoopInvariantProof, ObligationFamily, ObligationOutcome, PostconditionAggregate,
     PostconditionDisposition, PostconditionEntryImage, PostconditionEntryImageOutcome,
-    PostconditionExit, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
-    VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
+    PostconditionExit, RangeEndpointReading, RangeLengthReading, SourceProofCertificateFailure,
+    SourceProofCheck, SourceProofOutcome, VerifiedPostconditionSummaryRef, fragment_type,
+    overflow_conjuncts_for_values,
 };
 
 /// One [ENT-5] kill event gathered from a statement or expression.

@@ -24,6 +24,7 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
+pub(crate) use repairs::target_allocation_count;
 
 use std::collections::{HashMap, HashSet};
 

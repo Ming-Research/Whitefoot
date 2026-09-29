@@ -412,6 +412,17 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **An instantiated goal spells a field-read range endpoint as `?`.** An
+  FN-8 goal over a range an argument formed at the call renders an endpoint
+  that is not a literal, const or binding as `?`, as in
+  `text^[?..?].len <= 16_u64` for `&text^[span.start..span.end]`, because the
+  entailment renderer has no source text for such a capture. The repair
+  already spells those endpoints from their source occurrence and says to
+  copy them into bindings; the `instantiated_goal` payload does not. Spell
+  the capture's source occurrence there too, through the same occurrence the
+  repair reads, and pin it with the field-endpoint pair in
+  `driver::pinned_repairs`. Reopen with the next change to goal rendering.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -666,34 +677,48 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
-- **A target-layout failure names no allocation site or admitted bound.** A
-  program whose OP-9 proof retains a count bound the selected target cannot
-  hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,
-  passes checking and stops at [STOR-6] target qualification with
-  `target layout failure in TargetLayout: TargetLayout(Unrepresentable(RuntimeSizedAllocation))`,
-  which names no source site, no proved bound and no bound the target
-  admits. The numbers exist where the check fails, in the runtime-sized
-  allocation branch of the source-call validation in
-  `compiler/src/target.rs`: the retained bound, the element's target
-  stride, the descriptor header and `runtime_allocation_max()`, which give the
-  largest admitted count `(max - header) / stride`. Design: `IrSourceCall`
-  carries the call's node path, copied from the checked call during lowering;
-  a `TargetLayoutFailure` variant carries the site, the proved bound and the
-  admitted bound (the enum is `Copy` and crosses many `?` returns, so an index
-  into a side table keeps it `Copy`); the driver renders the site as a source
-  location beside the two numbers, still as a target-layout stop and never as
-  a source rejection [STOR-6]; and
-  `u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure`
-  in `compiler/src/driver/tests.rs`, which pins today's stop by
-  `RuntimeSizedAllocation` in its detail, changes with it. No specification
-  change. Validate with a program that proves the OP-9 ceiling and calls the
-  allocating function from its entry: the failure names the allocation's call
-  site, the proved bound and the selected target's largest admitted count,
-  while the same program bounded below that count builds. Deferred because the
-  OP-9 repair no longer offers the ceiling as the bound to write, which closes
-  the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
-  found into this stop; reopen when a writer report or a program meets the
-  unlocated failure.
+- **Checking accepts a program whose build stops at target layout.** A
+  program whose [OP-9] proof retains a count bound the selected target cannot
+  hold passes `whitefootc --check` and `--check-module` and stops only when
+  built, at [STOR-6] target qualification; the stop now names the call, the
+  proved bound and the target's largest admitted count
+  (`AllocationCountExceedsTarget`), but a writer who checks before building
+  still learns of it one round late, which is what cost the Snowghost PNG
+  decoder's writer most. The specification permits a check command to
+  qualify the host target: [STOR-6] places target layout after semantic
+  publication and makes its failure no source rejection [DIAG-1], which a
+  check that also qualified the host and reported a `TargetLayout` stop
+  (never a source verdict) would respect. But `driver::check` is
+  defined as the source-verdict projection that stops before lowering, and
+  `design/compiler` records no decision on what a check command covers. Two
+  further obstacles: `--check-module` selects no entry, while target
+  qualification qualifies the lowered program an entry reaches, so a
+  module-level check has no materialization set to qualify; and qualifying
+  requires lowering, whose cost on a check has not been measured. The
+  options are qualifying the host in `--check` when an entry is selected,
+  a separate target-check option, or relying on the OP-9 repair's warning
+  that a bound near the language's limit stops at target layout. This is a
+  compiler decision for the owner; validate a chosen form with the
+  reproduction in `an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds`
+  (`compiler/src/driver/pinned_repairs.rs`) stopping at check time as a
+  `TargetLayout` stop with no rule, and the check time of the corpus
+  programs before and after. Reopen when the owner rules or another writer
+  meets a build-only target stop.
+- **A target stop inside a generic function names only the template's call.**
+  The allocation-fit record captures the call and count coordinates once,
+  from the checked template body (`allocation_fit_of_call` in
+  `compiler/src/semantic/check/expressions/calls/user.rs`), and lowering
+  copies them into every monomorphized instance, so an
+  `AllocationCountExceedsTarget` stop inside a generic function points at
+  the template's allocation and not at the call that instantiated it, while
+  a source rejection in a concrete instance names a requesting call
+  [MOD-8]. Impact: a writer whose generic container helper is instantiated
+  from several sites must find which instance carries the unbounded count.
+  Change: carry the instantiating call's coordinate with each
+  monomorphized instance's allocation record and print it as the
+  requesting call. Validate with a generic allocating helper instantiated
+  from two callers, one bounded and one not, whose stop names the unbounded
+  caller. Deferred because no writer has met it; reopen when one does.
 
 ## Parallel lowering and runtime
 
@@ -1552,7 +1577,12 @@ rarely insert at the same place.
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
-  `driver::check_module` has no caller. Finalize checks every parsed node
+  `driver::check_module` has no caller. `IrRuntimeTargetObligations`'s
+  `call_site_bound` is `false` in its one constructor, so the byte checks
+  `validate_target_obligation` in `compiler/src/target.rs` keeps for a direct
+  `BufferFill`, `WindowBlockNew` or `WindowGrow` node with its own bound never
+  run; every source bound is qualified per call in
+  `validate_source_call_allocations`. Finalize checks every parsed node
   against its production again, the re-verification `design/compiler.md`
   refuses. By reading, generic validation never takes its early return,
   because the prelude's generic signatures are templates in every bundle, so
@@ -1731,6 +1761,12 @@ each is resolved by a discussion and a tree change.
   states the identity, and with the new intervals the exact row is provable
   wherever the step would apply. Reopen when a proof needs the identity and
   the writer cannot use the exact row.
+  A width `end -wrap start` computed under the guard `start <= end` is outside
+  even that step: the guard is a relation between the operands, and the S7
+  row reads only their separate intervals, so the width stays unrelated to a
+  range length `end - start` (conformance case
+  `ref4-neg-a-wrapped-width-does-not-bound-the-range-length`); the exact
+  subtraction under the same guard is the admitted spelling.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
@@ -1765,6 +1801,14 @@ each is resolved by a discussion and a tree change.
   kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
   whose starter can wait for it, not for an accept loop that never ends.
   Reopen when a context-serving program needs to log or report.
+- **ENT-3.S6 names only the bound range's length fact.** S6 establishes
+  `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
+  every range's one measure equals `hi - lo` and the value-image rule gives a
+  formation's length image without a binding. The checker establishes the
+  same S6 relation on the range an argument forms at its call (conformance
+  case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
+  REF-4 as the entitlement. Decide whether S6 should say so by naming every
+  formation, bound or not; reopen with the next amendment touching S6.
 
 ## Ownership redesign (candidate x1) follow-ups
 

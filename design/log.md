@@ -21,6 +21,21 @@ Owner-approved: 2026-09-28, the owner approved the #166 decision cards (surface-
 
 Summary: Apply the two reviewed amendments of PR #166. language/surface-form's first decision now reads the one-spelling principle per construct, so the character literal `'a'_u8` and the numeric literal `97_u8` are each the one spelling of their own construct while every literal keeps one spelling of its interior; the old wording is recorded as replaced because it did not say how two constructs that denote one value are counted. Add language/surface-form/text-literals: a character literal `'C'_TYPE` with suffix `u8` or `u32` is an integer literal of TYPE, a `u8` character at most 0x7F; each Unicode scalar value has one spelling per quote; a STRING is the `cvalue` of an `Array<u8, N>` constant holding its UTF-8 encoding, with N checked and never inferred, and is never an expression; item shape is decided at token classification and value judgments at check time with a repair. With this approval the owner added the escapes `\t` (U+0009) and `\r` (U+000D), so the node's escape decision names five escaped values and `\u{9}` and `\u{d}` become noncanonical; this is the only change from the amendment as shown. The [text-literals investigation](../research/investigations/text-literals/DESIGN.md) holds the evidence and rejected alternatives. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
 
+## 2026-09-28 Locate the target-layout stop at an allocation the target cannot hold
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (located allocation-target stop) in the session handoff
+
+Summary: Apply the remaining part of the reviewed combined amendment for PR #168 unchanged. Add a decision to compiler/diagnostic-repairs: a target-layout stop at a source call whose proved allocation count the selected target cannot hold [STOR-6] is located at the call and lists the count as written, the proved bound, the largest count the target admits and a fix beside the OP-9 repair's words, with the checker handing the call's and the count's coordinates to lowering, because the stop cites no rule and is no rejection [DIAG-1] while the writer still fixes it in source by tightening the proved count. Refuse rendering the stop from the stage value's `Debug` text and a node path the driver resolves again through a side table. The OP-9 decision's reason and its refused ceiling alternative now say the stop comes only when the program is built rather than that it names nothing. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
+## 2026-09-28 Name a call-formed range's length by its endpoints in repairs
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (range-length repair) in the session handoff
+
+Summary: Apply the reviewed amendment for PR #167 unchanged. The second decision of compiler/diagnostic-repairs now gives the unproved goal over the `len` of a range an argument forms at the call its own routes: the length is written as the difference of the range's endpoints [REF-4], guarded when that difference is one binding, bounded by a width with the exact subtraction and then guarded when it is a subtraction, re-sliced from zero by that width when the goal equates such a subtraction, and preceded by a `let` for an endpoint that is not a binding. Its grounds are that such a range has the length its endpoints give it, so naming it as a value only its occurrence identifies hid the missing bound on the difference, and that a `-wrap` width carries no relation to the endpoints [ENT-3]; the refused occurrence-local classification is added to `Rejected:`. Remove the accepted amendment and its directory. This ruling authorizes no merge.
 ## 2026-09-28 Bind marked waiting results and run contexts on several drivers
 
 Nodes: language/parallelism, compiler/waiting-contexts

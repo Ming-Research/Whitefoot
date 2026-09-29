@@ -277,6 +277,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut arguments = Vec::with_capacity(fields.len());
         let mut argument_nodes = Vec::with_capacity(fields.len());
+        let mut argument_atoms = Vec::with_capacity(fields.len());
         let mut goal_arguments = Vec::with_capacity(fields.len());
         // [EFF-5] each actual's resolved path set, in parameter order. The set
         // has more than one member only where the actual is a reference a
@@ -435,6 +436,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
+            argument_atoms.push(atom);
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -524,7 +526,9 @@ impl<'unit> Checker<'_, 'unit> {
                 requirements: Vec::new(),
                 result,
                 result_borrow: None,
-                allocation: self.types.allocation_fit_of_call(signature)?,
+                allocation: self
+                    .types
+                    .allocation_fit_of_call(signature, node, &argument_atoms)?,
             },
             mode: result_mode,
             // [REF-3] no call delivers a reference: FN-1 returns owned values
@@ -903,10 +907,14 @@ impl<'unit> TypeContext<'unit> {
     /// stored type is that cell's and its count is its second argument. The
     /// constant-capacity rows allocate nothing at runtime and the cell row
     /// `box_new` allocates exactly one value, so neither carries the
-    /// obligation.
+    /// obligation. `node` is the call and `atoms` its argument atoms in
+    /// declared order, whose coordinates the record keeps for a target that
+    /// cannot hold the retained bound [STOR-6].
     fn allocation_fit_of_call(
         &self,
         signature: &FunctionSignature,
+        node: NodeId,
+        atoms: &[NodeId],
     ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
         let (count, cell) = match signature.name.as_str() {
             "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
@@ -936,12 +944,19 @@ impl<'unit> TypeContext<'unit> {
             }
             None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
+        let tree = &self.declarations.tree;
+        let count_atom = atoms
+            .get(count)
+            .copied()
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         Ok(Some(
             super::super::super::super::model::CheckedAllocationFit {
                 cell,
                 element,
                 layout_ceiling,
                 count,
+                site: tree.coordinate(node)?,
+                count_site: tree.coordinate(count_atom)?,
                 source_length_upper_bound: None,
             },
         ))

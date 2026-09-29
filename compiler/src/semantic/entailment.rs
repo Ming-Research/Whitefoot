@@ -1061,6 +1061,36 @@ pub(crate) struct CallGoalOutcome {
     /// some path to the call roots its place, sorted [ENT-5], as
     /// [`ObligationOutcome::written_before`] records it.
     pub(crate) written_before: Vec<BindingId>,
+    /// For a call no step discharged, every range the goal measures that the
+    /// call formed at an argument [REF-4], in goal order, for the repair
+    /// [DIAG-1]. Discharged calls carry none.
+    pub(crate) range_lengths: Vec<RangeLengthReading>,
+}
+
+/// [REF-4] one range formed at a call whose `len` an unproved requirement
+/// reads, spelled as the repair names it [DIAG-1]: the range, and its length
+/// as the difference of its two captured endpoints.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RangeLengthReading {
+    /// The place the range was formed over, as the instantiated goal
+    /// spells it: `text^` for `text^[start..end]`.
+    pub(crate) base: String,
+    pub(crate) start: RangeEndpointReading,
+    pub(crate) end: RangeEndpointReading,
+    /// The goal with this and every other such range's `len` written as its
+    /// endpoint difference, present when every endpoint is spelled.
+    pub(crate) difference_goal: Option<String>,
+}
+
+/// How one range endpoint reads in source [REF-1, REF-4].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RangeEndpointReading {
+    /// A written literal, a const, or a binding still holding the value the
+    /// formation read: a term the relation can name.
+    Spelled(String),
+    /// Any other value, such as a field or element read, identified by the
+    /// source occurrence that evaluated it where it has one.
+    Unspelled(Option<u32>),
 }
 
 /// One retained declaration-only [FN-4] implication result. Its enclosing
