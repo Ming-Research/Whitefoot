@@ -100,8 +100,8 @@ refuse par-quicksort and both fail `wfgrep`'s `--par` build (found along the
 way, below). Its runtime with no instrument selected compiles to the same
 object code as main's.
 
-Snowghost is the snapshot of `research/concurrency` at `80d9d2c97874` in
-`/home/user/sg-conc`, built from a copy; the pages are the pinned files of its
+Snowghost is the snapshot of `research/concurrency` at `80d9d2c97874` in a
+separate checkout, built from a copy; the pages are the pinned files of its
 `run.sh`, with matching SHA-256 prefixes. Setup is the prototype's T(0) path,
 `proto_style C 0 PAGE ua.css SHEETS...`: it reads the page, builds the tree
 with `pkg::html::tree_builder`, parses the page's style sheets and builds the
@@ -460,6 +460,9 @@ programs, whose block's control failed. Not measured: par-quicksort, the
 radix-scatter oracle, `wfgrep`, the lowering-cost comparison, and the style
 shapes per candidate.
 
+The recommended rule's implementation was then measured against every part
+of the criterion; see [Implementation results](#implementation-results).
+
 ## Recommendation
 
 One candidate meets every part of the criterion that was measured: **(a)
@@ -536,6 +539,75 @@ it runs.
 - Existing tests that assert scalar-leaf ledger lines or rely on a small
   offered pair are updated to the new rule or to the override, each with its
   reason; none is deleted to pass.
+
+## Implementation results
+
+The recommended rule is implemented in `compiler/src/lowering/builder/call_grain.rs`
+(`b4917910`), in place of the scalar-leaf filter. `--par` keeps a statement-group
+call offer only when its callee belongs to or reaches a cyclic call component or
+its static weight (the `assign_weights` total) reaches 150,000; `--par-call-grain
+off` offers every permitted call, and `--par-ledger` names each omitted offer
+with its callee's static work. The baseline is main at `6259db68`. Both
+compilers are gate builds on the investigation's host (four CPUs, Intel Xeon at
+2.10 GHz), and every block below ran under the verification lock.
+
+**Emission.** Of the 90 `--par` builds compared (every `tests/programs` source
+outside `windows/`, and par-quicksort), 55 are byte-identical to main's, 27
+differ and 8 fail on both compilers alike (the multi-source container units and
+the deflate programs, which do not compile as single files). The five formal
+kernels, merge sort, `range_split`, `par_layout`, adaptive quadrature and
+par-quicksort are byte-identical. The implementation criterion above predicted
+byte identity for the parallel tests too; that does not hold for the whole
+modules of `parallel/tree.wf`, `parallel/window.wf` and `recursive_tree.wf`,
+whose non-recursive fan-out helpers (`leaf`, `pair`, `quad`, `oct`, `branch`,
+`boxed_leaf`, static work 3 to 61) lose their offers while the recursive `fold`
+and `spine` offers stay. They are therefore timed under criterion 2 below.
+
+**Criterion 1: met.** Setup T(0), best of seven, in one block started at a
+one-minute load of 0.75, the three arms interleaved:
+
+| Page | Arm | W1 | W2 | W4 |
+|---|---|---:|---:|---:|
+| ecma262 | call grain | 0.280 | 0.284 | 0.280 |
+| ecma262 | main | 0.280 | 7.455 | 10.434 |
+| ecma262 | main, identical copy | 0.283 | 7.706 | 10.312 |
+| html5 | call grain | 0.223 | 0.226 | 0.223 |
+| html5 | main | 0.221 | 4.460 | 5.813 |
+| html5 | main, identical copy | 0.222 | 4.559 | 5.975 |
+| apollo11 | call grain | 0.057 | 0.057 | 0.059 |
+| apollo11 | main | 0.058 | 0.577 | 0.725 |
+| apollo11 | main, identical copy | 0.058 | 0.576 | 0.733 |
+
+Every call-grain cell at two and four workers is within 5 percent or 10 ms of
+its own one-worker time; main is 37 times slower at four workers on ecma262.
+The prototype's `check` mode passes on every page at one and four workers, with
+the same checksums as main's build.
+
+**Criterion 2: met.** The five formal kernels are byte-identical, so they need
+no timing; the hosted `compute regression` job on `b4917910`, which runs
+`tests/performance/compare.sh` against the merge base after its identical-image
+control, passed. The 24 changed programs that run without a network peer were
+timed as whole processes, best of seven, at one, two and four workers, beside an
+identical copy of main's image. The first block is void (`wfgrep` was given an
+absolute root, which it refuses). The second is inconclusive under the recorded
+rule: the control read 0.057 s against main's 0.092 s for `sha256_abc` at four
+workers, main's own variance there. The third and fourth blocks, started at
+one-minute loads of 0.74 and 1.09, are clean: every control cell within the
+allowance of main's, and no call-grain cell slower than main's by more than the
+allowance. From the third block:
+
+| Program | main W1 / W2 / W4 | call grain W1 / W2 / W4 |
+|---|---|---|
+| `sha256_abc` | 0.0014 / 0.0660 / 0.0895 | 0.0014 / 0.0020 / 0.0020 |
+| `dir_walk` | 0.0041 / 0.0171 / 0.0236 | 0.0041 / 0.0040 / 0.0039 |
+| `wfgrep fn ../compiler/src` | 0.0221 / 0.0270 / 0.0304 | 0.0224 / 0.0222 / 0.0221 |
+| `radix_scatter` | 0.0017 / 0.0062 / 0.0086 | 0.0018 / 0.0020 / 0.0029 |
+| `recursive_tree` | 0.0015 / 0.0017 / 0.0022 | 0.0015 / 0.0014 / 0.0014 |
+
+`tcp_gather.wf` and `tcp_refused.wf` changed and were not timed: they need a
+network peer the block does not provide.
+
+**Criterion 3: being measured.** The best-of-seven front-end comparison of the prototype's `--par` build is running.
 
 ## The design-tree node it would change
 

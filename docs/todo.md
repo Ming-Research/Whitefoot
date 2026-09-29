@@ -1301,36 +1301,32 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
-- **Statement-group call offers have no grain policy.** Under `--par`,
-  Snowghost's style prototype sets up a 7.6 MB page 52 times slower at four
-  workers than at one, publishing 115 offers per element, 99 percent of
-  them calls of callees with static weight at most 100; main's `sha256_abc`
-  and `dir_walk` also slow down with workers. The
-  [call-offer grain investigation](../research/investigations/call-offer-grain/DESIGN.md)
-  recommends, provisionally, offering a call only when its callee reaches a
-  recursive component or its static work summary reaches the runtime work
-  unit: that rule met the recorded criterion on all three real pages and
-  left the formal kernels byte-identical, while sequential refusal, runtime
-  per-site adaptation and the existing flags did not. Before an amendment to
-  `design/compiler/parallel-lowering.md`, finish the unmeasured parts of its
-  criterion: the other maintained programs in a block whose identical-image
-  control passes, par-quicksort, and best-of-seven lowering cost. Validate
-  an implementation with the investigation's implementation criterion.
+- **The call-offer grain is provisional.** `--par` now offers a
+  statement-group call only when its callee reaches a cyclic call component
+  or its static work reaches the 150,000 work unit
+  ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results));
+  the amendment to `design/compiler/parallel-lowering.md` awaits the
+  owner's ruling. Two known limits no measured program exercises: a
+  non-recursive helper whose work is large only through its runtime extents
+  loses its offer, and a cheap call into a recursive component keeps one.
+  Validate either by a program whose four-worker time loses to its
+  `--par-call-grain off` build; reopen when one appears.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
   (compiler/parallel-lowering/two-worlds), because a waiting function is a
   resumable frame with no ordinary entry for a variant to stand behind.
   Every activation of such a recursion therefore reaches its offers
-  unbudgeted, as a `--par-recursive-frontier off` build does: in
+  unbudgeted, as a `--par-recursive-frontier off` build does. In
   `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
-  reach `name_before`'s byte-pair offers at every depth. Whether that costs
-  anything is unmeasured; the offers are small, and a grain rule may refuse
-  them before depth matters. Validate by timing the `--par` build of
-  `wfgrep.wf` on a deep and on a wide tree against the default build and
-  against a build that withholds those offers; if the unbudgeted offers cost
-  measurable time that no grain rule removes, give waiting components a
-  budget-carrying frame variant. Reopen with that measurement.
+  reached `name_before`'s byte-pair offers at every depth; the call grain now
+  omits those offers (static work 4), so no maintained program has an offer
+  beneath a waiting recursion, and whether one costs anything is unmeasured.
+  Validate with a program whose waiting recursion reaches an offer the grain
+  keeps, timed on a deep and on a wide input against a build that withholds
+  the offer; if the unbudgeted offers cost measurable time, give waiting
+  components a budget-carrying frame variant. Reopen when such a program
+  appears.
 
 ## Platforms and host interfaces
 
