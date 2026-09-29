@@ -1800,6 +1800,16 @@ each is resolved by a discussion and a tree change.
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
 
+- **The specification does not yet make an atomic statement's guard a
+  proof source.** The checker establishes the guard's facts at the block's
+  entry, which `tests/programs/shared_objects.wf` and the Redis subset rely
+  on to call `place_back` and `take_front`, but [ENT-3]'s S1 source names
+  only `if_stmt` and `value_if`. The amendment
+  `design/amendments/language-waiting-shared-objects.md` proposes the
+  behavior; the owner's ruling decides whether S1 gains the guard or the
+  checker drops it. Close with that ruling and a conformance pair showing a
+  guard admitting an operation's requirement and its absence refusing it.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in

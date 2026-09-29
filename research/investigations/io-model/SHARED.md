@@ -495,6 +495,17 @@ and encoding that a library would hold.
 4. `nodrop` state and taking the value back (`shared_into`, which returns the
    state when its caller holds the last handle).
 5. An invariant the object declares and every block preserves.
+6. The guard as a proof source. The checker gives the block the guard's
+   facts, as an `if` gives its true branch (amendment decision on the `when`
+   guard), but [ENT-3]'s S1 source names only `if_stmt` and `value_if`, so
+   the specification does not yet state what the compiler does; the
+   owner's ruling on that decision settles whether S1 gains the guard.
+7. Progress. Executing every call in order is a conforming execution
+   [WAIT-2], and in it a statement that waits on a guard only a later
+   context would make true never completes, while this compiler's drivers
+   run that context and the statement completes. Whether the language
+   promises that progress is the owner's to rule on
+   (`design/amendments/language-parallelism.md`).
 
 ## What would test it
 
