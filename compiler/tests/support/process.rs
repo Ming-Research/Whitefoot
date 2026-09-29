@@ -139,5 +139,6 @@ pub(crate) fn output_within(command: &mut Command, limit: Duration) -> std::io::
 }
 
 pub(crate) fn run_command(command: &mut Command) -> Output {
-    output_within(command, PROGRAM_DEADLINE).expect("run native test command within its deadline")
+    output_within(command, PROGRAM_DEADLINE)
+        .unwrap_or_else(|error| panic!("run native test command: {error}"))
 }

@@ -2363,7 +2363,9 @@ condition under which it is taken up.
   review would notice; four such waits once held a local gate for almost
   half an hour
   (`research/investigations/test-economy/time-budgets.md#stop-a-program-that-never-finishes`).
-  Clippy's `disallowed_methods` in a `compiler/clippy.toml` could refuse
+  The runtime group's C harnesses, which `compiler/Makefile` builds and
+  runs, have only the command's 30-minute deadline. Clippy's
+  `disallowed_methods` in a `compiler/clippy.toml` could refuse
   those three methods, with an `#[allow]` at each call of the host C
   compiler, `grep` or `awk` in the tests and at the driver's own calls of
   the host toolchain. Validate that the lint fails on a restored

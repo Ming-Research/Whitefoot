@@ -206,7 +206,8 @@ the whole command with the unit suite's summary and failure list unwritten
 and the later groups unrun. Stable libtest printed that each test had been
 running for over 60 seconds, and never stopped one.
 
-Only the program suites ran each program as an owned process: its own
+Only the program suites, and the Windows-only native suite, ran each
+program as an owned process: its own
 process group, both outputs drained, and a 60 s deadline
 (`compiler/tests/support/process.rs`). The backend unit tests, the two
 command-line tool tests that run a built program, and the conformance
@@ -220,13 +221,17 @@ verdict, so the case fails by name. The tests' calls of the host C compiler,
 compiled and still wait without limit.
 
 No choice among alternatives was measured here, so no criterion was set:
-the limit is the program suites' existing one. It stops a program that has
-run far past any case's time. Run alone, the slowest unit case took 6 s,
-compilation included ([where the time goes](#where-the-time-goes)). At
+the limit is the program suites' existing one. It stops only a program that
+has run far past any recorded program's time. Run alone, the slowest unit
+case took 6 s, compilation included
+([where the time goes](#where-the-time-goes)), and every conformance case's
+program exited within about 5 ms (the fourth change below). At
 revision 9f4370b4a on the local container, the unit group passed 1,870
 tests in 57.0 s and none reached libtest's 60-second report; the corpus
-group passed the 21 CLI tests, and 93 tests in 68.4 s, where only the
-conformance walk, one test that runs every case, reached it. Four changes
+group passed the 21 CLI tests, and 93 tests in 68.4 s, where libtest's
+report appeared only for
+`the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`,
+one of the two tests that walk every conformance case. Five changes
 made at 8973802b0, which differs only in the stop message's form, and then
 reverted show what the tests observe:
 
@@ -236,15 +241,17 @@ reverted show what the tests observe:
 - With `PROGRAM_DEADLINE` at one millisecond, 1 of the 12 `cost_shape` and
   `deterministic_target` tests that run a program failed with `TimedOut`
   (3 in a run of the first version, 3e18aee3d). The others had exited by
-  the first poll, 5 ms after the start, since the owned process reads a
-  program's exit status before its deadline. The same change stopped the
+  the first poll after the deadline, about 5 ms after the start, since the
+  owned process reads a program's exit status before its deadline. The same change stopped the
   corpus group's own runtime compilations, which also use `run_command`,
   before any case ran.
 - With `run_command` panicking instead of running its command, both CLI
   tests failed there.
-- With every case's program replaced by a 30-second sleep under a 100 ms
-  limit, the conformance walk failed in 116 s and reported each of the 467
-  cases that run a program as `Stopped`, by name.
+- With the adapter's limit alone at one millisecond, the conformance walk
+  still passed: each of the 467 cases that run a program had exited by the
+  first poll after that limit. With every case's program then replaced by a
+  30-second sleep under a 100 ms limit, the walk failed in 116 s and
+  reported each of the 467 as `Stopped`, by name.
 
 The deadline holds only where a test uses the owned process: nothing
 refuses a new test that runs its program with `Command::output`, which
