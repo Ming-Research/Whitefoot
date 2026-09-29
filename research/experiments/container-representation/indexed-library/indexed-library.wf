@@ -181,7 +181,7 @@ fn indexed_cost_insert<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
   let inserted = record_store_insert::<T, 8192, 18446744073709551615>(store: store, id: id, payload: move payload);
   match move inserted {
     Ok(value: handle) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 1_u64, id: id, status: done);
       indexed_cost_handle(env: env, handle: handle);
       let attached = record_store_attach::<T, 8192, 18446744073709551615>(store: store, handle: handle);
@@ -190,7 +190,7 @@ fn indexed_cost_insert<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
       indexed_cost_outcome(env: env, operation: 4_u64, id: id, status: scheduled);
     }
     Err(error: refused) => {
-      let full = RecordFull();
+      let full = RecordStatus::RecordFull();
       indexed_cost_outcome(env: env, operation: 1_u64, id: id, status: full);
       indexed_cost_accept::<IndexedCostElement<T>>(env: env, id: id, payload: move refused);
     }
@@ -202,7 +202,7 @@ fn indexed_cost_lookup<T>(store: &RecordStore<T, 8192, 18446744073709551615>, en
   let found = record_store_lookup::<T, 8192, 18446744073709551615>(store: store, id: id);
   match found {
     Ok(value: handle) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 3_u64, id: id, status: done);
       indexed_cost_handle(env: env, handle: handle);
       return Ok<RecordHandle, RecordStatus>(value: handle);
@@ -218,7 +218,7 @@ fn indexed_cost_delete<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
   let deleted = record_store_delete::<T, 8192, 18446744073709551615>(store: store, handle: handle);
   match move deleted {
     Ok(value: old) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 9_u64, id: id, status: done);
       indexed_cost_consume::<IndexedCostElement<T>>(env: env, value: move old);
     }
@@ -263,7 +263,7 @@ fn indexed_cost_trace<interface IndexedCostElement<T>>(count: u64, seed: u64, re
           let visited = record_store_visit::<T, IndexedCostLog, unit, fn indexed_cost_observe::<IndexedCostElement<T>>, 8192, 18446744073709551615>(store: &store, handle: handle, env: env);
           match visited {
             Ok(value: done) => {
-              let present = RecordDone();
+              let present = RecordStatus::RecordDone();
               indexed_cost_outcome(env: env, operation: 12_u64, id: id, status: present);
             }
             Err(error: status) => {

@@ -18,21 +18,21 @@ nocopy struct DequeRecord {
 }
 
 interface DequeElement<T: drop> {
-  fn make(seed: own u64) -> value: own T pure;
-  fn accept(env: &DequeDigest, value: own T) -> result: own unit writes(env);
+  fn make(seed: u64) -> value: T pure;
+  fn accept(env: &DequeDigest, value: T) -> result: unit writes(env);
 }
 
-fn deque_word_make(seed: own u64) -> value: own u64 pure {
+fn deque_word_make(seed: u64) -> value: u64 pure {
   return seed;
 }
 
-fn deque_word_accept(env: &DequeDigest, value: own u64) -> result: own unit writes(env) {
+fn deque_word_accept(env: &DequeDigest, value: u64) -> result: unit writes(env) {
   let prefix = env^.value *wrap 131_u64;
   set env^.value = prefix +wrap value;
   return unit;
 }
 
-fn deque_record_make(seed: own u64) -> value: own DequeRecord pure {
+fn deque_record_make(seed: u64) -> value: DequeRecord pure {
   let words = array_filled::<u64, 32>(value: 0_u64);
   for (index in 0_u64..32_u64) {
     set words[index] = seed +wrap index;
@@ -40,7 +40,7 @@ fn deque_record_make(seed: own u64) -> value: own DequeRecord pure {
   return DequeRecord(words: words);
 }
 
-fn deque_record_accept(env: &DequeDigest, value: own DequeRecord) -> result: own unit writes(env) {
+fn deque_record_accept(env: &DequeDigest, value: DequeRecord) -> result: unit writes(env) {
   for (index in 0_u64..32_u64) {
     let word = value.words[index];
     let prefix = env^.value *wrap 131_u64;
@@ -59,7 +59,7 @@ binding DequeRecordElement : DequeElement<DequeRecord> {
   accept = deque_record_accept;
 }
 
-fn deque_library_fill<interface DequeElement<T>>(values: &Box<Ring<T>>, count: own u64, seed: own u64) -> result: own unit writes(values) contract {
+fn deque_library_fill<interface DequeElement<T>>(values: &Box<Ring<T>>, count: u64, seed: u64) -> result: unit writes(values) contract {
   requires values^.inner.len == 0_u64;
   requires values^.inner.cap >= count;
   ensures values^.inner.len == count;
@@ -78,7 +78,7 @@ fn deque_library_fill<interface DequeElement<T>>(values: &Box<Ring<T>>, count: o
   return unit;
 }
 
-fn deque_library_trace<interface DequeElement<T>>(count: own u64, rounds: own u64, seed: own u64, path: own u64) -> result: own u64 pure contract {
+fn deque_library_trace<interface DequeElement<T>>(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 4096_u64;
 } {
   let checksum = seed;
@@ -158,21 +158,21 @@ fn deque_library_trace<interface DequeElement<T>>(count: own u64, rounds: own u6
   return digest.value;
 }
 
-fn deque_library_word_trace(count: own u64, rounds: own u64, seed: own u64, path: own u64) -> result: own u64 pure contract {
+fn deque_library_word_trace(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 4096_u64;
 } {
   let result = deque_library_trace::<DequeWordElement>(count: count, rounds: rounds, seed: seed, path: path);
   return result;
 }
 
-fn deque_library_record_trace(count: own u64, rounds: own u64, seed: own u64, path: own u64) -> result: own u64 pure contract {
+fn deque_library_record_trace(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 4096_u64;
 } {
   let result = deque_library_trace::<DequeRecordElement>(count: count, rounds: rounds, seed: seed, path: path);
   return result;
 }
 
-fn main() -> status: own ExitStatus pure {
+fn main() -> status: ExitStatus pure {
   let word = deque_library_word_trace(count: 3_u64, rounds: 2_u64, seed: 17_u64, path: 0_u64);
   let record = deque_library_record_trace(count: 3_u64, rounds: 2_u64, seed: 17_u64, path: 2_u64);
   return exit_status(code: 0_u8);
