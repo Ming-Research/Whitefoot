@@ -88,10 +88,11 @@ tree should record is a design decision.
    work continues on that recommendation.
 3. **At completion,** validate (see [Checks](#checks)), run the one
    [review](#review), fix what it finds, and hand the work back as the
-   `design-tree` skill describes. The handoff also shows every specification
-   change rule by rule, its before and after behavior and why it was
-   selected, the validation actually run, and what the work found along the
-   way. A version number or PR link does not replace this.
+   `design-tree` skill describes. After its decision cards, the handoff
+   shows every specification change rule by rule, with its before and after
+   behavior and the card that selected it or why it needed none, then the
+   validation actually run and what the work found along the way. A version
+   number or PR link does not replace this.
 4. **After the owner approves** every decision the work needs, including every
    design-tree and specification change, write the log entries and mark the PR
    ready (rule 1 below).
@@ -426,8 +427,10 @@ contradiction), or "none within scope".
 ```
 
 Fix every finding, including one that changes the design tree or the
-specification; a fix that changes a design decision, a specification rule or
-the agreed scope becomes a question for the owner at handoff. Review again
+specification; at handoff a fix that changes a design decision becomes a
+decision card, one that changes a specification rule is shown with the
+specification changes, and one that changes the agreed scope is reported in
+the status. Review again
 only what a fix changed in behavior, a rule or a decision; recheck other fixes
 yourself and say so. Merging main without conflicts in reviewed content needs
 no new review. Then commit and push, verify that the remote head is the

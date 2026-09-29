@@ -101,10 +101,14 @@ branches add entries, keep both, newest first.
 
 ## Owner decisions
 
-The owner decides in the conversation, in the owner's language. Every
-decision the owner must make is an entry in one ledger kept there, whatever
-its source: a tree change, a review finding, an open research question, a
-choice made while working, or a direction the owner gave in passing.
+The owner decides in the conversation, in the owner's language. A decision
+the owner makes lands in the tree, as a node added, changed or retired or as
+a refused option under `Rejected:`, so the decisions awaiting the owner and
+the branch's tree changes are one list: the ledger kept in the conversation.
+An entry may come from a choice made while working, a review finding, an open
+research question or a direction the owner gave in passing. The scope of the
+work is agreed before starting (below); a change to it is reported in the
+handoff's status, not as an entry.
 
 - **Entries.** Each gets an ID, `Q1`, `Q2` and on, never renumbered or reused.
   It stays open until the owner answers that ID. A discussion that moves past
@@ -128,23 +132,29 @@ choice made while working, or a direction the owner gave in passing.
 A handoff presents, in this order:
 
 1. **Status.** For each thing the owner asked for: done, done on a
-   recommendation still open (name the ID), or not started. Research that
-   recommends work is not that work.
-2. **Decision cards.** One for every open entry, oldest first, each after the
-   entries it depends on, ending with one line naming every open ID and
-   stating that no other decision is open. A card opens with its ID and the
-   question in bold, then:
+   recommendation still open (name the ID), changed from the agreed scope
+   (how and why), or not started. Research that recommends work is not that
+   work.
+2. **Decision cards.** One per decision the branch adds, changes or retires,
+   oldest first, each after the cards it depends on; together they cover
+   every node the branch changed, so there is no separate list of tree
+   changes. A card whose question the owner already answered says so and
+   asks only for approval of its text. End with one line naming every open
+   ID and stating that no other decision is open.
+   A card opens with its ID and the question in bold, then:
    - Problem: what it is about and why it needs a decision, for a reader who
      has not seen the work: what the component or rule does, what goes wrong
-     or stays open, and the concrete evidence. For a tree change, the node and
-     its decision before and after. Explain each project term at first use.
+     or stays open, and the concrete evidence. Explain each project term at
+     first use.
    - Options: each viable choice, what it does and what it costs.
    - Recommendation and reason: the choice proposed and why it fits better.
    - Confidence N/5: 5 when evidence settles it, 1 when it rests on judgment,
      and what could overturn it.
-3. **Tree changes.** Every node added, changed or retired, before and after.
-4. The parts the project adds, such as its other approved artifacts, the
-   validation run and what the work found along the way.
+   - Tree change: the node path, then its lines before and after, quoted as
+     written; approving the card approves this text.
+3. The parts the project adds, such as its other approved artifacts, the
+   validation run and what the work found along the way. They cite a card by
+   its ID instead of repeating its reasons.
 
 Write each part as bullets under its bold name; a table's narrow columns bury
 reasoning.
@@ -162,11 +172,12 @@ reasoning.
    disposition.
 3. At completion, run DCR once, or the project's review that includes it.
    Fix every finding, including those that change the tree or another
-   approved artifact; a fix that changes a decision, a rule or the agreed
-   scope becomes a ledger entry for handoff. Review again only what a fix
-   changed in behavior, a rule or a decision; recheck other fixes yourself.
-4. Hand off (Owner decisions). The owner rules on every open entry and
-   approves the tree changes.
+   approved artifact; a fix that changes a decision becomes a ledger entry,
+   and one that changes the agreed scope goes into the handoff's status.
+   Review again only what a fix changed in behavior, a rule or a decision;
+   recheck other fixes yourself.
+4. Hand off (Owner decisions). The owner rules on every card, and so on
+   every tree change.
 5. Write the log entry, mark ready once the readiness check and the project's
    CI pass, and leave the merge to the project's merge rules.
 

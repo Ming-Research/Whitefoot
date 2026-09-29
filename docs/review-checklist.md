@@ -232,13 +232,13 @@ Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
   `docs/todo.md`, or declined with a reason; report any the reviewer notices
   that it omits. For specification revisions, check the conversation
   explanation required by `AGENTS.md`: affected rules, before/after behavior,
-  and selection grounds. Conformance changes explain what changed and their
-  selection ground. A PR marked ready has the owner's approval of every
-  design-tree and specification change it carries, recorded in
-  `design/log.md` and `spec/log.md`. If merging is requested, verify owner
-  approval and root `make check` for the exact merge tree under the existing
-  four rules; neither a fast review nor a focused test run substitutes for
-  them.
+  and the decision card that selected each or why it needed none.
+  Conformance changes explain what changed and their selection ground. A PR
+  marked ready has the owner's approval of every design-tree and
+  specification change it carries, recorded in `design/log.md` and
+  `spec/log.md`. If merging is requested, verify owner approval and root
+  `make check` for the exact merge tree under the existing four rules;
+  neither a fast review nor a focused test run substitutes for them.
 - [ ] **V4 — Existing PR updated.** The reviewed task changes are committed
   and pushed to the existing PR branch without waiting for a reminder; its
   remote head contains the delivered revision, and its description and
