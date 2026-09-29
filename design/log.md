@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-29 Admit element-subtree loop accesses and add segmented storage
+
+Nodes: language/parallelism/loop-permission, language/data-model/storage-shapes, compiler/storage-representation, language/data-model, language/data-model/opaque-struct, language/ownership/affine-replacement
+
+Owner-approved: 2026-09-29, the owner selected option C for element-subtree loop writes and the segmented-storage design earlier in the session ("agreed, very clean; do it this way", written in Chinese), then approved PR #186's handoff, decision cards Q1 to Q4 and the listed other tree edits, writing in Chinese "all agreed".
+
+Summary: A counted loop's element family becomes every write, read or borrowed argument at or below one proved affine-mapped element, through fields, payloads, cell contents, subscripts and ranges, because aggregates own their parts and a cell has one owner; element maps on overlapping roots still deny. A fourth storage shape, a run of segments, holds variable-length per-item output in one contiguous buffer whose boundaries only the storage sets, so distinct segments are distinct storage, after one contiguous buffer ran five to eleven times faster than a buffer per item. Q1 keeps its elements copy, Q2 has its construction return nothing when the language-ceiling size predicate fails, Q3 reaches it only through the range references to one segment and to all elements, and Q4 lays it out as one header-first block whose element offset is recomputed, provisionally. The data-model ancestors, the opaque-struct declaration list and the affine-replacement move refusal name the fourth shape; the last now covers every runtime-capacity content, as the specification already did. Refused: an offsets witness type, a proved non-decreasing array fact, a buffer per item, and an element family of direct subscripts only. Evidence: [segmented storage](../research/investigations/segmented-storage/DESIGN.md).
+
 ## 2026-09-29 Stop every program a test compiled after 60 s
 
 Nodes: compiler/verification
