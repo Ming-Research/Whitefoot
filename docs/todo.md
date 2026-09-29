@@ -1196,11 +1196,12 @@ rarely insert at the same place.
   whose generated code did not change.
 
 - **Every atomic statement holds its object alone.** Statements whose
-  blocks only read could share the object; the runtime's queue already grants
-  readers together, but lowering always acquires for writing
+  blocks only read could share the object, but lowering always acquires for
+  writing
   (`design/amendments/language-waiting-shared-objects.md`, the provisional
   read/write decision). Readers that contend then wait for one another.
-  Deciding it needs a measured workload where readers contend, compared with
+  The runtime already admits readers together; deciding it needs a measured
+  workload where readers contend, compared with
   a lowering that acquires for reading when the block writes no path rooted
   at the binding. Reopen when a program's atomic statements that only read
   are seen to queue.
@@ -1213,6 +1214,17 @@ rarely insert at the same place.
   case and a fact the checker has, needs neither. Measure the uncontended
   statement with and without them; reopen when atomic statements show in a
   profile, as they may in the Redis subset.
+
+- **An atomic statement has no bound on how often it is overtaken.** A
+  statement that finds its object held spins and then parks, and an unlock
+  wakes it to try again rather than handing it the object, which Experiment 7
+  of `research/investigations/io-model/SHARED.md` needed to keep two drivers
+  from parking almost every statement. A statement arriving while the woken
+  one is being resumed can take the object first; the woken one keeps its
+  place at the head of the queue, but nothing bounds how often it loses. The
+  usual remedy hands the object to a statement that has waited past a time
+  or a count of misses. Reopen when a workload shows a statement's wait in
+  the tail of its latency.
 
 - **A shared object takes at least one 512-byte pool block.** The bridge's
   pool serves blocks from 512 bytes up, so a `Shared<u64>` occupies 512

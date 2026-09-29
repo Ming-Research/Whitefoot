@@ -281,11 +281,15 @@ an object's state. The implementation:
   statement's handle, before any join of the activation's contexts. The
   handle's release drops the state and frees the object when it was the last.
 - **Runtime** (`completion/bridge.c`). An object is a header (handle count,
-  spin lock, holder count, a first-come queue of waiting contexts, the
-  contexts watching for a write) followed by the state. An uncontended
-  statement takes the lock word twice and parks nothing. A contended one
-  parks its context in the queue; the holder's unlock grants the object in
-  queue order and makes the granted context ready on its driver.
+  spin lock, holder count, a queue of parked contexts, the contexts watching
+  for a write) followed by the state. An uncontended statement takes the
+  lock word twice and parks nothing. One that finds the object held spins
+  for a bounded time, because a holder's block cannot wait and so its holder
+  is running, then parks; an unlock wakes the first parked statement to try
+  again, and one that misses again keeps its place at the head. The first
+  version handed the object to the parked context at the queue's head
+  instead, which Experiment 7 found to make almost every statement park on
+  two drivers.
 - **A fix along the way.** A context parked where another driver can make it
   ready (a group join, and now an object) could be resumed, finished and
   released by another driver before the driver that ran it read its frame
@@ -412,6 +416,57 @@ the first run's build with only that change undone:
 - **The copy was the `GET` gap** if, with 16 per pipeline on one driver,
   `GET` reaches at least 0.9 of `SET`.
 
+### The acquire without a convoy: results
+
+Both comparisons ran on the counting build, the changed and unchanged
+variants interleaved, requests per second.
+
+- **The convoy is gone: met.** On the first run's program, with 16 per
+  pipeline, two drivers reached 999,001 `SET`s per second in both passes
+  against 499,002 and 499,500 with the first-come handoff, while one driver
+  reached 665,779 and 570,776; 5,736 and 6,241 of about a million acquires
+  parked, against 969,192 and 972,752. Without pipelining two drivers went
+  from 159,949 to 153,775 and 173,822, with 6,159 and 5,158 parks against
+  755,665 and 561,330.
+- **The copy was the `GET` gap: met.** On the new runtime, one driver, 16
+  per pipeline, `GET` went from 444,247, 443,853 and 443,853 to 666,223,
+  665,779 and 799,361 against `SET`s of 570,776, 666,223 and 665,336.
+
+### The second run
+
+`redis-bench.sh` at `2d5c41250`, requests per second, two passes:
+
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 111,049 / 108,050 | 114,181 / 105,053 | 570,451 / 570,451 | 664,894 / 571,102 |
+| subset, 2 drivers | 153,775 / 166,583 | 159,949 / 153,799 | 799,361 / 799,361 | 998,004 / 999,001 |
+| subset, 1 driver | 99,980 / 108,085 | 102,543 / 102,270 | 664,452 / 570,776 | 665,779 / 666,223 |
+
+Every criterion is met. The correctness pass held on every line. Without
+pipelining two drivers reached 1.38 and 1.54 times the reference for `SET`
+and 1.40 and 1.46 for `GET`, and 1.54 and 1.54 times one driver for `SET`
+and 1.56 and 1.50 for `GET`. With 16 per pipeline two drivers reached 1.40
+times the reference for `SET` and 1.50 and 1.75 for `GET`.
+
+The reference runs its protocol work on one thread. Not a criterion, but the
+comparison the result invites: `redis-server` with `--io-threads 2
+--io-threads-do-reads yes` on the same two CPUs, two passes interleaved with
+the subset on two drivers, reached 128,999 and 142,796 `SET`s and 142,816
+and 148,082 `GET`s without pipelining against the subset's 159,949 and
+166,611 and 153,775 and 166,611, and 665,779 and 570,451 `SET`s and 665,779
+and 666,223 `GET`s with 16 per pipeline against 799,361, 798,722, 999,001 and
+999,001.
+
+What this shows, and what it does not. A server written in the language, its
+keyspace one shared object changed only in atomic statements, keeps up with
+Redis on this host for these commands, and the one object does not keep it
+from using two cores. It does not show the subset is as fast as Redis
+per command in general: Redis carries its full command table, expiry,
+encoding choices and statistics, which the subset does not, and the rates
+here are near what two client threads on this host issue, so the ratios may
+understate either server. The subset is 830 lines, most of them RESP parsing
+and encoding that a library would hold.
+
 
 ## Remaining questions
 
@@ -421,18 +476,15 @@ the first run's build with only that change undone:
 2. Several objects in one statement, above.
 3. Reader concurrency. Whether statements that only read should share the
    object is a runtime choice to measure on a workload where readers
-   contend; the runtime's queue already grants readers together.
+   contend; the runtime already admits readers together.
 4. `nodrop` state and taking the value back (`shared_into`, which returns the
    state when its caller holds the last handle).
 5. An invariant the object declares and every block preserves.
 
 ## What would test it
 
-Write the Redis subset (`GET`, `SET`, `DEL`, `INCR`, `MULTI`/`EXEC`, RESP2
-over TCP) as `tests/programs/redis_subset.wf`, and check two things:
-
-- Whether it is as short as the sketch above.
-- Whether it runs against `redis-benchmark` on the echo bench's host,
-  compared with `redis-server` on its default configuration.
-
-Criteria are to be recorded before the measurement, as for Experiments 1 to 6.
+Experiment 7 above is the test this record proposed: the Redis subset, run
+against `redis-benchmark` beside `redis-server`. It left out `MULTI`/`EXEC`,
+which a connection can serve as one atomic statement over the commands it
+queued, and `BLPOP`, a guarded statement; both remain to write. The subset is
+longer than the sketch because it parses and encodes RESP itself.

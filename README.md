@@ -331,8 +331,13 @@ Safe, fast and small are the core. These are the other things worth knowing.
   deadlock between objects cannot be written. `when` makes the statement wait
   until a condition on the value holds, and the block may rely on it, as in a
   queue whose consumer takes an item only when one is there
-  (`tests/programs/shared_objects.wf`). Still open: a statement over several
-  objects, and letting statements that only read run at the same time.
+  (`tests/programs/shared_objects.wf`). A Redis subset written this way,
+  `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace
+  (`tests/programs/redis_subset.wf`), kept up with `redis-server` on the same
+  two cores under `redis-benchmark`
+  ([Experiment 7](research/investigations/io-model/SHARED.md#experiment-7-a-redis-subset)).
+  Still open: a statement over several objects, and letting statements that
+  only read run at the same time.
 
 ### Planned
 
