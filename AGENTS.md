@@ -404,9 +404,14 @@ report every 30 seconds, and stops a command after 30 minutes unless
 each labeled stage with its budget in `.github/time-budgets.txt` without
 changing the stage's status: CI records a stage that exceeded its budget or
 has none and fails the job in a final verdict step, and a local run only
-prints the comparison. Raising a budget is a decision for the owner; lower
-one in the change that makes its stage much faster, and give a new labeled
-CI stage its budget. Inspect an existing owner's PID instead of starting
+prints the comparison. When a stage exceeds its budget, look at what the
+change adds to that stage, such as cases, fixtures or work on its path, and
+at the job's slowest cases and host. Fix a cause you find, or bring the raise
+it needs to the owner; re-run the job once when you cannot tell; and when the
+change plainly cannot slow the stage, report the overrun as runner variance in
+the validation you hand back, where it does not hold the revision back.
+Raising a budget is a decision for the owner; lower one in the change that
+makes its stage much faster, and give a new labeled CI stage its budget. Inspect an existing owner's PID instead of starting
 another heavy command, and after an
 uncatchable stop inspect the recorded PID and command before removing a stale
 lock. The `gate` Cargo profile builds the Rust compiler with optimization,
