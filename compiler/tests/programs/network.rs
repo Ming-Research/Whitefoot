@@ -843,6 +843,7 @@ fn crossed_ordinary_tcp_halves_keep_the_other_directions_live() {
 }
 
 /// One RESP2 request of bulk strings.
+#[cfg(target_os = "linux")]
 fn resp(arguments: &[&str]) -> Vec<u8> {
     let mut bytes = format!("*{}\r\n", arguments.len()).into_bytes();
     for argument in arguments {
@@ -852,6 +853,7 @@ fn resp(arguments: &[&str]) -> Vec<u8> {
 }
 
 /// Reads exactly the bytes of the expected replies and compares them.
+#[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
     let mut returned = vec![0_u8; expected.len()];
     stream
