@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-29 Stop every program a test compiled after 60 s
+
+Nodes: compiler/verification
+
+Owner-approved: 2026-09-29, the owner approved decision card 1 of PR #188, the program deadline, in the session ("#1 approved", written in Chinese).
+
+Summary: compiler/verification gains the decision that every program a test compiled runs as its own process group with both outputs drained and is stopped after 60 s, in the library's and the command-line tool's unit tests, the program suites and the conformance adapter, which reports the stop as a stopped case and never as a verdict, because four backend unit tests whose programs waited without end held a local gate for almost half an hour, while the slowest unit case took 6 s alone and every conformance program exited within about 5 ms. The limit measures no case, unlike the per-case limits the budget decision refuses. Refused: the command deadline alone, and the test harness's report of a long test. Evidence: [program deadline](../research/investigations/test-economy/time-budgets.md#stop-a-program-that-never-finishes).
+
 ## 2026-09-29 Hold verification stages to time budgets judged from the change
 
 Nodes: compiler/verification
