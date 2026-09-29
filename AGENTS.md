@@ -70,7 +70,7 @@ A *material choice* changes accepted behavior, a safety or trust condition, a
 shared interface or representation, a significant performance commitment or a
 standing project rule. Restoring specified behavior or editing prose without
 changing its meaning is routine; task size and file count do not decide which
-a change is. A material choice between viable alternatives is a design
+a change is. Only a material choice between viable alternatives is a design
 decision; this is the project's threshold for the `design-tree` skill's
 decisions.
 
@@ -352,8 +352,8 @@ status banner or self-description merely to satisfy this list.
 The compiler's implementation rules are its design decisions in
 `design/compiler`, each with its reason. Before changing the compiler, read the
 subtree you are changing and its ancestors; a decision the tree does not
-cover is added to the tree and brought to the owner as a decision card, never
-left only in code. Apply the design-tree skill's
+cover is added to the tree for the owner's approval, never left only in
+code. Apply the design-tree skill's
 [structural-choice assessment](design/skill/SKILL.md#workflow) when choosing
 or revising compiler code structure, including during implementation.
 

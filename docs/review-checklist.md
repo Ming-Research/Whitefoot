@@ -111,7 +111,7 @@ Source: [compiler rules](../AGENTS.md#compiler-rules) and
   assessment occurred when making or revising the choice and was explained
   to the owner, rather than supplied retrospectively at completion.
 
-## T. Specification and checks — changes to `spec/kernel-spec.md`, `tests/`, the conformance adapter under `compiler/tests/conformance/`, a Makefile or `.github/`
+## T. Specification and checks — changes to `spec/kernel-spec.md`, `tests/`, the conformance adapter under `compiler/tests/conformance/` and its wiring in `compiler/tests/corpus.rs`, a Makefile or `.github/`
 
 Source: [specification and test integrity](../AGENTS.md#specification-and-test-integrity).
 

@@ -105,8 +105,8 @@ first.
 
 The owner decides in the conversation, in the owner's language. A decision
 the owner makes lands in the tree, as a node added, changed or retired or as
-a refused option under `Rejected:`, so the decisions awaiting the owner and
-the branch's tree changes are one list: the ledger kept in the conversation.
+a refused option under `Rejected:`, so every decision awaiting the owner is
+a tree change, and all of them form one ledger kept in the conversation.
 An entry may come from a choice made while working, a review finding, an open
 research question or a direction the owner gave in passing. The scope of the
 work is agreed before starting (below); a change to it is reported in the
@@ -126,9 +126,9 @@ handoff's status, not as an entry.
 - **After starting.** Work through to completion. A question that arises is
   sent to the owner with a recommendation and work continues on that
   recommendation; the entry stays open and returns at handoff.
-- **Batch.** The owner rules once, at handoff, on every open entry together:
-  review findings go only there, and a question sent while working returns
-  there. Never bring rulings one round at a time.
+- **Batch.** Bring every open entry to the owner once, at handoff: review
+  findings go only there, and a question sent while working returns there.
+  Never bring rulings one round at a time.
 - Re-read this skill before a handoff; a copy loaded early in a long session
   may predate a change to it.
 

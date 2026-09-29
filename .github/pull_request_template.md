@@ -1,10 +1,11 @@
 ## Change
 
 <!-- The problem, the resulting behavior and material tradeoffs, briefly.
-Name every design-tree node the PR adds, changes or retires, with the lint's
-node count, depth and net change against the base. For a change to the
-specification or conformance evidence, state what changed and its selection
-ground (AGENTS.md rule 4). Owner questions belong in the conversation. -->
+Name every design-tree node the PR adds, changes or retires and, when the
+tree changed, the lint's node count, depth and net change against the base.
+For a change to the specification or conformance evidence, state what
+changed and its selection ground (AGENTS.md rule 4). Owner questions belong
+in the conversation. -->
 
 ## Found along the way
 
