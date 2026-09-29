@@ -132,10 +132,12 @@ completion criterion were refused.
   has been recorded since. Not a gate and not reachable from `make check`.
 - `monitor-invariants/` — whether today's proof machinery discharges the
   per-block obligations of a monitor invariant on a shared object, for
-  `research/investigations/io-model/CONCURRENCY-MODEL.md`. Twelve probes stand
+  `research/investigations/io-model/CONCURRENCY-MODEL.md`. Fifteen probes stand
   in for the missing entry fact with an `if` or a helper's `requires` and state
   the invariant at the exit with an `invariant` statement. Results:
   - a difference-bound invariant over fields and measures proves end to end;
+  - a cursor invariant is the only proof that a block's subscript is in
+    bounds, and a block that breaks it fails its exit obligation;
   - a missed update is refuted and a split transaction unproved;
   - an affine invariant over fields gets no premise from today's field terms,
     so it needs an entry snapshot, and then one bridging step.

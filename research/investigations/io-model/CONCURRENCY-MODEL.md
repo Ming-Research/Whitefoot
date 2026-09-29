@@ -310,7 +310,16 @@ the block, or a helper's `requires`.
 - **Difference-bound invariants over fields and measures work end to end.**
   `count == items.len` is proved at the exit of a bounded queue's `put` and
   `take`. The invariant also discharges the arithmetic: `count + 1` from
-  `count == len < cap`, and `count - 1` from `count == len > 0`.
+  `count == len < cap`, and `count - 1` from `count == len > 0`. That `count`
+  repeats `items.len`, so it only tests the machinery.
+- **An invariant can be what makes a block's access safe.** A cursor `next`
+  into a `Slots` window, kept `next < slots.len`, is the only proof that
+  `slots[next]` is in bounds: with a weaker entry fact the subscript is
+  refused, and a block that forgets to wrap the cursor fails its exit
+  obligation. Without the invariant each block would test the cursor at run
+  time and choose what to do when it fails. This is the case the feature
+  exists for: a relation between fields that the types do not state, which
+  a partial operation in every block depends on.
 - **The two classic mistakes are refused.**
   - A block that forgets its update is refuted.
   - A read-modify-write split over two atomic statements is unproved: the
@@ -353,8 +362,9 @@ block. Still, where it lives decides how general it looks.
 - **(C) At `shared_new`.** The handle's type would still have to carry it for
   the blocks to know it, which is (B).
 
-This record recommends (A), with a spelling that says the invariant belongs
-to shared objects. The owner decides the surface.
+The owner chose (A) (2026-09-29, in conversation), with a spelling that
+says the invariant belongs to shared objects. The spelling itself is still
+open.
 
 ### 5.5 Limits
 
@@ -557,8 +567,9 @@ Sources:
 2. Whether weak fairness for guards is promised (4.3).
 3. `mustpar`: retire it entirely, as this record recommends, or keep forms 1
    and 2 as assertions about computation (4.4).
-4. Where the invariant is declared (5.4), and whether ghost state (erased
-   mathematical integers) comes with it or later.
+4. Whether ghost state (erased mathematical integers) comes with the
+   invariant or later. The owner chose to declare the invariant on the state
+   type (5.4, option A).
 5. Whether PR #173 lands first with its progress rule withdrawn, carrying
    what still stands (section 6), and the model follows as its own change; or
    the model is built on #173 before it lands.

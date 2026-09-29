@@ -28,7 +28,8 @@ sh research/experiments/monitor-invariants/run.sh
 
 ## Results
 
-Checked at `2ff9181a4` on Linux, with the same verdicts as at `0a2d00283`:
+Checked at `c19ac6714` on Linux; the first twelve had the same verdicts at
+`0a2d00283` and `2ff9181a4`:
 
 | Probe | What it tests | Verdict |
 |---|---|---|
@@ -44,6 +45,9 @@ Checked at `2ff9181a4` on Linux, with the same verdicts as at `0a2d00283`:
 | `ghost-counters-unbounded` | the same with no bound on `produced` | OP-2, Unproved |
 | `field-premise-direct` | `requires s^.a >= n` and then `s^.a - n` | OP-2, Unproved |
 | `field-premise-copied` | the same with `s^.a` copied to a local first | accepted |
+| `slot-cursor` | a cursor `next` into a `Slots` window kept `next < slots.len` by `claim`, which reads `slots[next]` and advances with wrap-around | accepted |
+| `slot-cursor-weak-entry` | the same with only `next <= slots.len` at entry | OP-4, Unproved |
+| `slot-cursor-missed-wrap` | `claim` forgets the wrap-around | INV-1, Unproved |
 
 ## What the results show
 
@@ -52,6 +56,15 @@ Checked at `2ff9181a4` on Linux, with the same verdicts as at `0a2d00283`:
 invariant also pays for the arithmetic: `count + 1` cannot overflow because
 `count == len < cap`, and `count - 1` cannot underflow because
 `count == len > 0`. The checker derives both automatically.
+
+**An invariant can be what makes a block's own access safe.** `count` in
+`queue-count` repeats `items.len`, so that invariant only tests the
+machinery. `slot-cursor` keeps a cursor that nothing else bounds: the entry
+fact `next < slots.len` is the only proof that `slots[next]` is in bounds
+(`slot-cursor-weak-entry` is refused at the subscript without it), and the
+exit obligation catches a cursor left one past the end
+(`slot-cursor-missed-wrap`). Without an invariant, each block would have to
+test the cursor at run time and choose what to do when it fails.
 
 **The two classic mistakes are refused, each for its own reason.**
 - A block that forgets the update is refuted: the invariant is false where it
@@ -100,8 +113,9 @@ not do today.**
 ## Limits
 
 - The probes check proofs. Every accepted probe also compiles and runs;
-  only `queue-count` observes anything, exiting with the value 7 it puts
-  through its queue and takes back.
+  only `queue-count` and `slot-cursor` observe anything, exiting with 7 (the
+  value put through the queue and taken back) and 31 (three claims over two
+  slots, 10 + 11 + 10).
 - Only a single object's invariant is tested. Invariants over the elements of
   a storage (for example "every value in the keyspace is at most 512 MiB") are
   outside the fact language by an existing decision
