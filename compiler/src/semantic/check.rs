@@ -2453,19 +2453,39 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_expression_call_requirements(check_context, offset, requirements)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets_mut() {
+                    self.install_expression_call_requirements(check_context, offset, requirements)?;
+                }
+                if let Some(offset) = segment.offset_mut() {
+                    self.install_expression_call_requirements(check_context, offset, requirements)?;
+                }
+            }
             // [REF-4] both endpoints are ordinary operands evaluated at the
             // formation, and a storage source carries its own offsets.
             CheckedExpression::RangeOf {
                 source, start, end, ..
             } => {
-                if let super::model::CheckedRangeSource::Storage(root) = source {
-                    for offset in root.offsets_mut() {
-                        self.install_expression_call_requirements(
-                            check_context,
-                            offset,
-                            requirements,
-                        )?;
+                match source {
+                    super::model::CheckedRangeSource::Storage(root) => {
+                        for offset in root.offsets_mut() {
+                            self.install_expression_call_requirements(
+                                check_context,
+                                offset,
+                                requirements,
+                            )?;
+                        }
                     }
+                    super::model::CheckedRangeSource::Element(place) => {
+                        for offset in place.offsets_mut() {
+                            self.install_expression_call_requirements(
+                                check_context,
+                                offset,
+                                requirements,
+                            )?;
+                        }
+                    }
+                    super::model::CheckedRangeSource::Range(_) => {}
                 }
                 self.install_expression_call_requirements(check_context, start, requirements)?;
                 self.install_expression_call_requirements(check_context, end, requirements)?;
@@ -2628,13 +2648,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Checker::install_expression_allocation_bounds(offset, bounds)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+                if let Some(offset) = segment.offset_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+            }
             CheckedExpression::RangeOf {
                 source, start, end, ..
             } => {
-                if let super::model::CheckedRangeSource::Storage(root) = source {
-                    for offset in root.offsets_mut() {
-                        Checker::install_expression_allocation_bounds(offset, bounds)?;
+                match source {
+                    super::model::CheckedRangeSource::Storage(root) => {
+                        for offset in root.offsets_mut() {
+                            Checker::install_expression_allocation_bounds(offset, bounds)?;
+                        }
                     }
+                    super::model::CheckedRangeSource::Element(place) => {
+                        for offset in place.offsets_mut() {
+                            Checker::install_expression_allocation_bounds(offset, bounds)?;
+                        }
+                    }
+                    super::model::CheckedRangeSource::Range(_) => {}
                 }
                 Checker::install_expression_allocation_bounds(start, bounds)?;
                 Checker::install_expression_allocation_bounds(end, bounds)?;
@@ -3007,6 +3043,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     regions,
                 )?,
                 length: self.types.instantiate_goal_const(length, signature)?,
+            },
+            CheckedType::Segments { element } => CheckedType::Segments {
+                element: self.instantiate_goal_element(
+                    check_context,
+                    element,
+                    signature,
+                    regions,
+                )?,
             },
             CheckedType::Buffer { element } => CheckedType::Buffer {
                 element: self.instantiate_goal_element(

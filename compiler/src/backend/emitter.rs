@@ -21,6 +21,7 @@ mod parallel;
 pub(super) mod places;
 mod reinterpret;
 mod runs;
+mod segments;
 mod slice;
 mod union_enums;
 
@@ -2293,6 +2294,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 },
             ),
             IrOperation::BufferMeasure { buffer } => self.emit_buffer_length(result, ty, *buffer),
+            IrOperation::SegmentsTotal { lengths } => {
+                self.emit_segments_total(result, ty, *lengths)
+            }
+            IrOperation::SegmentsFits {
+                lengths,
+                total,
+                layout_ceiling,
+                ..
+            } => self.emit_segments_fits(result, ty, *lengths, *total, *layout_ceiling),
+            IrOperation::SegmentsFill {
+                nominal,
+                lengths,
+                total,
+                value,
+            } => self.emit_segments_fill(result, ty, *nominal, *lengths, *total, *value),
+            IrOperation::SegmentsMeasure { segments } => {
+                self.emit_segments_measure(result, ty, *segments)
+            }
+            IrOperation::SegmentSlice { segments, index } => {
+                self.emit_segment_slice(result, ty, *segments, *index)
+            }
+            IrOperation::SegmentsAll { segments } => self.emit_segments_all(result, ty, *segments),
             IrOperation::Window => self.emit_fixed_vector(result, ty),
             IrOperation::ContainerMeasure { measure, container } => {
                 self.emit_container_measure(result, ty, *measure, *container)
@@ -2872,6 +2895,11 @@ pub(super) fn llvm_type_with_references(
                 references
             )?
         )),
+        // compiler/storage-representation: a `Segments<T>` block is `len`
+        // and then `len + 1` element offsets; its elements follow at the
+        // first offset past the bounds that their alignment admits, so the
+        // type names only the header [TYPE-9].
+        IrType::Segments { .. } => Ok("{ i64, [0 x i64] }".to_owned()),
         // compiler/storage-representation: header first, so the inline and
         // the boxed placement of one shape share one address computation. A
         // `Slots` carries `len` alone and a `Ring` carries `len` and `head`;

@@ -162,13 +162,26 @@ impl<'unit> TypeContext<'unit> {
                     self.validate_expression_release_graphs(offset)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets().chain(segment.offset()) {
+                    self.validate_expression_release_graphs(offset)?;
+                }
+            }
             CheckedExpression::RangeOf {
                 source, start, end, ..
             } => {
-                if let crate::semantic::CheckedRangeSource::Storage(root) = source {
-                    for offset in root.offsets() {
-                        self.validate_expression_release_graphs(offset)?;
+                match source {
+                    crate::semantic::CheckedRangeSource::Storage(root) => {
+                        for offset in root.offsets() {
+                            self.validate_expression_release_graphs(offset)?;
+                        }
                     }
+                    crate::semantic::CheckedRangeSource::Element(place) => {
+                        for offset in place.offsets() {
+                            self.validate_expression_release_graphs(offset)?;
+                        }
+                    }
+                    crate::semantic::CheckedRangeSource::Range(_) => {}
                 }
                 self.validate_expression_release_graphs(start)?;
                 self.validate_expression_release_graphs(end)?;
@@ -208,7 +221,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Generic(_) => {}
                 CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
-                | CheckedType::Window { .. } => {
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
                     if !self.is_copy_type(check_context, current)? {
@@ -280,6 +294,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. }
+                | CheckedType::Segments { .. }
                     if selected =>
                 {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -293,7 +308,8 @@ impl<'unit> TypeContext<'unit> {
                 CheckedType::Generic(_)
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
-                | CheckedType::Window { .. } => {
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. } => {
                     if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }

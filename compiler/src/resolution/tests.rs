@@ -2622,8 +2622,8 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // not its own.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
-        ("Bool", vec![22]),
-        ("Overflow", vec![37, 38]),
+        ("Bool", vec![26]),
+        ("Overflow", vec![41, 42]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2683,7 +2683,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first, second);
     // [PRE-1]'s preorder: "each opaque struct above in written order with its
     // refused constructor and its fields in declaration order". x1 puts the
-    // three storage shapes first, each with its nominal, the constructor
+    // four storage shapes first, each with its nominal, the constructor
     // [TYPE-2] exists to refuse, its element and capacity parameters and its
     // readonly measure fields; the cell follows with four records of its own.
     // The host handles are the standard library's [PRE-2], not PRE-1's.
@@ -2701,28 +2701,33 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[15].1, "len");
     assert_eq!(first[16].1, "cap");
     assert_eq!(first[17].1, "head");
-    assert_eq!(first[18].1, "Box");
-    assert_eq!(first[18].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[19].1, "Box");
-    assert_eq!(first[19].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[18].1, "Segments");
     assert_eq!(first[20].1, "T");
-    assert_eq!(first[21].1, "inner");
+    assert_eq!(first[21].1, "len");
+    assert_eq!(first[22].1, "Box");
+    assert_eq!(first[22].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[23].1, "Box");
+    assert_eq!(first[23].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[24].1, "T");
+    assert_eq!(first[25].1, "inner");
     // Then each enum with its variants and their fields, then `Int` and
     // `Float`, then the construction functions [OP-13], then the window
     // operations [OP-10], then `swap` [OP-11] and `free_empty` [OP-14], each
     // with its type, const and value parameters in declared order.
-    assert_eq!(first[22].1, "Bool");
-    assert_eq!(first[44].1, "Int");
-    assert_eq!(first[45].1, "Float");
-    assert_eq!(first[46].1, "box_new");
-    assert_eq!(first[77].1, "place_back");
-    assert_eq!(first[121].1, "swap");
-    assert_eq!(first[125].1, "free_empty");
-    // The opaque phase holds the three storage shapes and the cell, 22
-    // records: `Array` contributes five, `Slots` six, `Ring` seven and `Box`
-    // four. The host declarations left PRE-1 for the standard library
-    // [PRE-2], so the inventory holds 128 records where it held 397.
-    assert_eq!(first.len(), 128);
+    assert_eq!(first[26].1, "Bool");
+    assert_eq!(first[48].1, "Int");
+    assert_eq!(first[49].1, "Float");
+    assert_eq!(first[50].1, "box_new");
+    assert_eq!(first[67].1, "box_segments_filled");
+    assert_eq!(first[85].1, "place_back");
+    assert_eq!(first[129].1, "swap");
+    assert_eq!(first[133].1, "free_empty");
+    // The opaque phase holds the four storage shapes and the cell, 26
+    // records: `Array` contributes five, `Slots` six, `Ring` seven,
+    // `Segments` four and `Box` four. The host declarations left PRE-1 for
+    // the standard library [PRE-2], so the inventory holds 136 records where
+    // it held 397.
+    assert_eq!(first.len(), 136);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
@@ -2736,7 +2741,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 128, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 136, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2753,7 +2758,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 125)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 133)
             );
         },
     );

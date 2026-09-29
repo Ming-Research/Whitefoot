@@ -22,10 +22,10 @@
 //!    reaching the accumulator nowhere." The operation is one of ten fixed
 //!    for the accumulator across the whole of B.
 //! 2. **Every written place is admitted.** "Every place a footprint of B
-//!    writes is iteration-own storage, the accumulator's whole place, one
-//!    proved single-binder affine element write, or one proved range
-//!    reference." Nothing else is admitted, and no injectivity argument is
-//!    searched for.
+//!    writes is iteration-own storage, the accumulator's whole place, a place
+//!    in one proved single-binder affine element, or a place in one proved
+//!    range reference." Nothing else is admitted, and no injectivity argument
+//!    is searched for.
 //! 3. **Resolved footprints.** "A footprint element whose caller place the
 //!    implementation does not resolve overlaps every place, so an unresolved
 //!    element denies permission rather than granting it."
@@ -36,12 +36,18 @@
 //!
 //! # The two element families
 //!
-//! A **proved single-binder affine element write** is a `set_stmt` whose
-//! target is one direct `Array` or `Slots` subscript rooted in an own binding
+//! A **proved single-binder affine element** is one subscript of an `Array`,
+//! a `Slots`, the run a range names or a `Segments`, rooted in an own binding
 //! declared outside L, or reached through `^` of a reference parameter
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
 //! `a` nonzero. Distinct binder values therefore select distinct elements.
+//! A place is in that element when its path continues the element's by any
+//! field, payload, `Box` content, index or range steps: aggregates hold only
+//! owned values and a cell has one owner [TYPE-8, TYPE-9], so nothing below
+//! element i is reachable from element j. A `set` target, an operand read and
+//! a borrowed argument, whose callee row is projected onto the argument's
+//! actual path [EFF-5], each reach such a place.
 //! The `^` needs no rule of its own here: it selects the reference
 //! root's resolved path [REF-1, TYPE-7], so `b^[a*i + c]` is recognized
 //! exactly as an inline subscript is, which is what keeps every
@@ -53,10 +59,10 @@
 //! storage rather than a linear offset".
 //!
 //! One affine map is admitted per resolved root. Every write to that root
-//! must carry the same `a` and `b`, and every operand read through the same
-//! root must be a direct subscript whose own discharged bounds result retains
-//! the same `a` and `b`; a whole-root read, a different map, or an
-//! unavailable one denies. That admits a same-index read-modify-write and
+//! must be in an element carrying the same `a` and `b`, and every read
+//! through the same root must be in an element whose own discharged bounds
+//! result retains the same `a` and `b`; a whole-root read, a different map,
+//! or an unavailable one denies. That admits a same-index read-modify-write and
 //! refuses a stencil, without any pairwise range search.
 //!
 //! A **proved range reference** is `&r[s*i+b..s*i+b+s]` [REF-4] passed as an
@@ -119,8 +125,9 @@ use super::entailment::{
 };
 use super::model::{
     BindingId, CheckedArrayRoot, CheckedBooleanOperation, CheckedExpression, CheckedFunction,
-    CheckedIntegerOperation, CheckedLoopId, CheckedPlaceStep, CheckedSetTarget, CheckedStatement,
-    CheckedType, WindowShape, expression_children,
+    CheckedIntegerOperation, CheckedLoopId, CheckedPlaceStep, CheckedRangeElementPlace,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, WindowShape,
+    expression_children,
 };
 use super::permission::{
     Footprint, Program, argument_places, call_projection, collect_consumed_places, container_steps,
@@ -402,6 +409,17 @@ struct ProvenElementRead {
     map: ProvedAffineIndexMap,
 }
 
+/// One borrowed argument at or below one mapped element [PAR-2]: the callee's
+/// row, projected onto the actual path [EFF-5], reaches only storage below
+/// that element.
+struct ProvenElementReference {
+    /// The mapped root: the resolved place above the element's index step.
+    root: ResolvedPlace,
+    /// The element itself: the root extended by that index step.
+    element: ResolvedPlace,
+    map: ProvedAffineIndexMap,
+}
+
 /// One range reference `&r[s*i+b..s*i+b+s]` whose endpoint images the [REF-4]
 /// formation retained [PAR-2].
 struct ProvenRangeReference {
@@ -625,24 +643,10 @@ impl<'check> Survey<'check, '_> {
             if self.record_range_write(&write.place) {
                 continue;
             }
-            if let Some(map) = affine_map
-                && let Some(root) = element_root(&write.place)
+            if let Some((after, map)) = affine_map
+                && let Some((root, _)) = element_prefix(&write.place, after)
             {
-                // One affine map per resolved root: two different maps can
-                // cross between iterations even where each is injective by
-                // itself. This fixed rule performs no pairwise range search.
-                if self
-                    .element_writes
-                    .iter()
-                    .any(|written| same_element_root(&written.root, &root) && written.map != map)
-                {
-                    self.shared.get_or_insert(node.clone());
-                }
-                self.element_writes.push(ProvenElementWrite {
-                    root,
-                    statement: node.clone(),
-                    map,
-                });
+                self.record_element_write(root, node.clone(), map);
                 continue;
             }
             self.enclosing_write(target, &write.place, node, combine);
@@ -665,47 +669,50 @@ impl<'check> Survey<'check, '_> {
         }
     }
 
-    /// Reads the exact single-binder affine image [ENT] retained beside this
-    /// subscript's successful [OP-4] outcome, refusing a `Ring` base.
+    /// The outermost subscript of a written target whose exact
+    /// single-binder affine image [ENT] was retained beside its successful
+    /// [OP-4] outcome, with the number of subscripts written below it; a
+    /// `Ring` base is refused that position.
     ///
-    /// Permission neither evaluates the source expression nor reruns proof:
-    /// absence of this checked evidence fails closed. Whether the subscript's
-    /// root is an own binding or a reference parameter whose row declares the
-    /// write was already decided when [SET-1] formed a writable target.
-    fn proven_affine_map(&self, target: &CheckedSetTarget) -> Option<ProvedAffineIndexMap> {
-        let obligation = match target {
-            // [REF-4] the outer position selects from a range. A suffix may
-            // select a nested Array or Slots element; PAR-2 consumes the
-            // innermost written element's retained affine map, as it does for
-            // an ordinary typed storage path.
+    /// [PAR-2]'s element family is every access at or below one mapped
+    /// element: everything below element i is storage element i alone owns
+    /// [TYPE-8, TYPE-9], so the steps written after the mapped subscript are
+    /// free. Permission neither evaluates the source expression nor reruns
+    /// proof: absence of this checked evidence fails closed. Whether the
+    /// subscript's root is an own binding or a reference parameter whose row
+    /// declares the write was already decided when [SET-1] formed a writable
+    /// target.
+    fn proven_affine_map(
+        &self,
+        target: &CheckedSetTarget,
+    ) -> Option<(usize, ProvedAffineIndexMap)> {
+        match target {
+            // [REF-4] the outer position selects from a range.
             CheckedSetTarget::RangeIndex(target) => {
-                if let Some(index) = target.path.iter().rev().find_map(|step| match step {
-                    CheckedPlaceStep::Subscript(index) => Some(index),
-                    CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-                }) {
-                    if checked_type_is_ring(index.base_type) {
-                        return None;
-                    }
-                    &index.obligation
-                } else {
-                    &target.obligation
-                }
+                self.outermost_map(range_element_subscripts(target))
             }
-            CheckedSetTarget::Storage(target) => {
-                let index = target.path.iter().rev().find_map(|step| match step {
-                    CheckedPlaceStep::Subscript(index) => Some(index),
-                    CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-                })?;
-                if checked_type_is_ring(index.base_type) {
-                    return None;
-                }
-                &index.obligation
-            }
-            // A whole-place target is no element, and the view element store
-            // has no v0.60 subject.
-            CheckedSetTarget::Place(_) => return None,
-        };
-        self.proven_affine_map_at(obligation)
+            CheckedSetTarget::Storage(target) => self.outermost_map(path_subscripts(&target.path)),
+            // A whole-place target is no element.
+            CheckedSetTarget::Place(_) => None,
+        }
+    }
+
+    /// The first subscript, outermost first, whose retained map is affine in
+    /// this loop's binder, with the number of subscripts after it.
+    fn outermost_map(
+        &self,
+        subscripts: Vec<(&NodePath, bool)>,
+    ) -> Option<(usize, ProvedAffineIndexMap)> {
+        let count = subscripts.len();
+        subscripts
+            .into_iter()
+            .enumerate()
+            .find_map(|(position, (obligation, ring))| {
+                (!ring)
+                    .then(|| self.proven_affine_map_at(obligation))
+                    .flatten()
+                    .map(|map| (count - 1 - position, map))
+            })
     }
 
     /// Reads the retained [OP-4] map for one subscript occurrence.
@@ -926,7 +933,8 @@ impl<'check> Survey<'check, '_> {
             // accumulator outside its one combine operand still violates
             // PAR-2's occurrence restriction. Keep the occurrence without
             // inventing an element-read footprint for address formation.
-            CheckedExpression::BorrowAddressed { root, .. } => {
+            CheckedExpression::BorrowAddressed { root, .. }
+            | CheckedExpression::BorrowSegment { root, .. } => {
                 if let Some(binding) = root.binding() {
                     self.reads.push(ReadOccurrence {
                         binding,
@@ -942,26 +950,14 @@ impl<'check> Survey<'check, '_> {
                 });
                 None
             }
-            CheckedExpression::ContainerMeasure { root, .. } => root
-                .binding()
-                .map(|binding| (binding, self.places.resolve(root.root, &container_steps(root)))),
-            // A subscripted storage read: its own discharged [OP-4] image is
-            // what puts it in the element family, and a `Ring` base is
-            // refused that position [WIN-1].
-            CheckedExpression::ReadStorage { root, .. } => {
+            // A subscripted storage read or measure: the discharged [OP-4]
+            // image of its outermost mapped subscript is what puts it in the
+            // element family, and a `Ring` base is refused that position
+            // [WIN-1].
+            CheckedExpression::ContainerMeasure { root, .. }
+            | CheckedExpression::ReadStorage { root, .. } => {
                 let places = self.places.resolve(root.root, &container_steps(root));
-                if let Some(index) = root.path.iter().rev().find_map(|step| match step {
-                    CheckedPlaceStep::Subscript(index) => Some(index),
-                    CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-                }) && !checked_type_is_ring(index.base_type)
-                    && let Some(map) = self.proven_affine_map_at(&index.obligation)
-                {
-                    for place in &places {
-                        if let Some(root) = element_root(place) {
-                            self.element_reads.push(ProvenElementRead { root, map });
-                        }
-                    }
-                }
+                self.record_element_reads(path_subscripts(&root.path), &places);
                 root.binding().map(|binding| (binding, places))
             }
             CheckedExpression::Binding { binding, .. }
@@ -975,38 +971,23 @@ impl<'check> Survey<'check, '_> {
                 root.binding,
                 self.places.resolve(PlaceRoot::Binding(root.binding), &[]),
             )),
-            CheckedExpression::RangeElementMeasure { place, .. } => Some((
-                place.root.binding,
-                self.places.resolve(
+            CheckedExpression::RangeElementMeasure { place, .. } => {
+                let places = self.places.resolve(
                     PlaceRoot::Binding(place.root.binding),
                     &place.place_path(),
-                ),
-            )),
+                );
+                self.record_element_reads(range_element_subscripts(place), &places);
+                Some((place.root.binding, places))
+            }
             // A read through a range first selects its outer element and may
-            // then select a nested Array or Slots element. As for a storage
-            // read and range write, PAR-2 consumes the innermost selected
-            // element's retained map; with no nested subscript, the range's
-            // own admitted offset is that element map.
+            // then select a nested element; the outermost mapped subscript
+            // puts it in the element family.
             CheckedExpression::RangeIndex { place, .. } => {
                 let places = self.places.resolve(
                     PlaceRoot::Binding(place.root.binding),
                     &place.place_path(),
                 );
-                let obligation = match place.path.iter().rev().find_map(|step| match step {
-                    CheckedPlaceStep::Subscript(index) => Some(index),
-                    CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-                }) {
-                    Some(index) if checked_type_is_ring(index.base_type) => None,
-                    Some(index) => Some(&index.obligation),
-                    None => Some(&place.obligation),
-                };
-                if let Some(map) = obligation.and_then(|path| self.proven_affine_map_at(path)) {
-                    for resolved in &places {
-                        if let Some(root) = element_root(resolved) {
-                            self.element_reads.push(ProvenElementRead { root, map });
-                        }
-                    }
-                }
+                self.record_element_reads(range_element_subscripts(place), &places);
                 Some((place.root.binding, places))
             }
             CheckedExpression::Project {
@@ -1102,12 +1083,74 @@ impl<'check> Survey<'check, '_> {
         }
     }
 
+    /// One proved element read per resolved place, when a subscript of the
+    /// read carries a map affine in this loop's binder.
+    fn record_element_reads(
+        &mut self,
+        subscripts: Vec<(&NodePath, bool)>,
+        places: &[ResolvedPlace],
+    ) {
+        if let Some((after, map)) = self.outermost_map(subscripts) {
+            for place in places {
+                if let Some((root, _)) = element_prefix(place, after) {
+                    self.element_reads.push(ProvenElementRead { root, map });
+                }
+            }
+        }
+    }
+
+    /// The borrowed arguments of one call that lie at or below one mapped
+    /// element [PAR-2]: `&a^[i]`, `&cells.inner[i].field` or a range formed
+    /// below such an element. The call's projected row is then judged against
+    /// these elements.
+    fn element_arguments(&self, arguments: &[CheckedExpression]) -> Vec<ProvenElementReference> {
+        let mut references = Vec::new();
+        for argument in arguments {
+            let subscripts = match argument {
+                CheckedExpression::BorrowRangeIndex { place, .. } => {
+                    range_element_subscripts(place)
+                }
+                CheckedExpression::BorrowAddressed { root, .. } => path_subscripts(&root.path),
+                // [TYPE-9] distinct segments are distinct storage, so a
+                // segment borrow is an element of its `Segments` place.
+                CheckedExpression::BorrowSegment { root, segment, .. } => {
+                    let mut subscripts = path_subscripts(&root.path);
+                    if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                        subscripts.push((&index.obligation, false));
+                    }
+                    subscripts
+                }
+                CheckedExpression::RangeOf { source, .. } => match source {
+                    CheckedRangeSource::Storage(root) => path_subscripts(&root.path),
+                    CheckedRangeSource::Element(place) => range_element_subscripts(place),
+                    CheckedRangeSource::Range(_) => continue,
+                },
+                _ => continue,
+            };
+            let Some((after, map)) = self.outermost_map(subscripts) else {
+                continue;
+            };
+            let Some(resolved) = argument_places(self.places, argument) else {
+                continue;
+            };
+            // A range formed below the element adds one range step, never an
+            // index step, so the count of subscripts after the mapped one
+            // locates it in every resolved place.
+            for place in &resolved {
+                if let Some((root, element)) = element_prefix(place, after) {
+                    references.push(ProvenElementReference { root, element, map });
+                }
+            }
+        }
+        references
+    }
+
     /// The caller places one expression transfers away by consuming an `own`
     /// value. A move out of enclosing storage is a write of it [PAR-1].
     fn moved_places(&mut self, value: &CheckedExpression, node: &NodePath) {
         let mut footprint = Footprint::default();
         collect_consumed_places(self.places, value, node, &mut footprint);
-        self.record_writes(&footprint);
+        self.record_writes(&footprint, &[]);
     }
 
     /// One expression tree: every read it performs, and every call it makes.
@@ -1128,8 +1171,9 @@ impl<'check> Survey<'check, '_> {
     fn calls(&mut self, expression: &CheckedExpression) {
         if let Some(projection) = call_projection(expression) {
             self.record_range_arguments(projection.arguments);
+            let elements = self.element_arguments(projection.arguments);
             let footprint = self.program.footprint(self.places, &projection);
-            self.record_writes(&footprint);
+            self.record_writes(&footprint, &elements);
         }
         for child in expression_children(expression) {
             self.calls(child);
@@ -1142,7 +1186,7 @@ impl<'check> Survey<'check, '_> {
     /// helper's declared row counts as an access on its actual range", so a
     /// read reaching a mapped root or a proved origin is judged exactly as a
     /// source read occurrence is.
-    fn record_writes(&mut self, footprint: &Footprint) {
+    fn record_writes(&mut self, footprint: &Footprint, elements: &[ProvenElementReference]) {
         if let Some(argument) = &footprint.unresolved {
             self.unresolved.get_or_insert(argument.clone());
         }
@@ -1150,6 +1194,15 @@ impl<'check> Survey<'check, '_> {
         // expressions are walked by `record_reads`, and counting them again
         // here would double every source read occurrence.
         for read in &footprint.reads {
+            if let Some(element) = elements
+                .iter()
+                .find(|element| element.element.contains(&read.place))
+            {
+                self.element_reads.push(ProvenElementRead {
+                    root: element.root.clone(),
+                    map: element.map,
+                });
+            }
             self.reads.push(ReadOccurrence {
                 binding: match read.place.root {
                     PlaceRoot::Binding(binding) => binding,
@@ -1167,8 +1220,51 @@ impl<'check> Survey<'check, '_> {
             if self.record_range_write(&write.place) {
                 continue;
             }
+            // [PAR-2] a row projected onto a borrow at or below one mapped
+            // element writes only that element's storage.
+            if let Some(element) = elements
+                .iter()
+                .find(|element| element.element.contains(&write.place))
+            {
+                self.record_element_write(
+                    element.root.clone(),
+                    write.argument.clone(),
+                    element.map,
+                );
+                continue;
+            }
             self.shared.get_or_insert(write.argument.clone());
         }
+    }
+
+    /// One proved element write, refusing a second map on an overlapping
+    /// root.
+    fn record_element_write(
+        &mut self,
+        root: ResolvedPlace,
+        statement: NodePath,
+        map: ProvedAffineIndexMap,
+    ) {
+        // [PAR-2] "Every write by B to one mapped root must be to a place in
+        // a proved single-binder affine element of it carrying exactly the
+        // same a and b". Two different maps on one root can cross between
+        // iterations even where each is injective by itself, and so can two
+        // roots one of which lies inside the other: `a` mapped by `a[i]` and
+        // `a[j].xs` mapped by `a[j].xs[i]` both reach `a[j].xs`. Roots are
+        // compared by the ordinary overlap relation [OWN-7]; this fixed rule
+        // performs no pairwise range search.
+        let oracle = UnprovedSeparations;
+        if self.element_writes.iter().any(|written| {
+            self.places.overlaps(&oracle, &written.root, &root)
+                && !(same_element_root(&written.root, &root) && written.map == map)
+        }) {
+            self.shared.get_or_insert(statement.clone());
+        }
+        self.element_writes.push(ProvenElementWrite {
+            root,
+            statement,
+            map,
+        });
     }
 
     fn leaves(&mut self, edge: &'static str) {
@@ -1390,13 +1486,57 @@ const fn statement_node(statement: &CheckedStatement) -> Option<&NodePath> {
     }
 }
 
-/// The resolved place above a trailing index step: the root an affine element
-/// map is stated over.
-fn element_root(place: &ResolvedPlace) -> Option<ResolvedPlace> {
-    matches!(place.path.last(), Some(PlaceStep::Index(_))).then(|| ResolvedPlace {
-        root: place.root,
-        path: place.path[..place.path.len() - 1].to_vec(),
-    })
+/// The mapped root and the mapped element of a resolved place whose mapped
+/// index step has `after` index steps below it: the prefix above that step,
+/// and the prefix through it. Steps below the element are that element's own
+/// storage [TYPE-8, TYPE-9].
+fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace, ResolvedPlace)> {
+    let mut remaining = after;
+    let position = place
+        .path
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, step)| matches!(step, PlaceStep::Index(_)))
+        .find_map(|(position, _)| {
+            if remaining == 0 {
+                Some(position)
+            } else {
+                remaining -= 1;
+                None
+            }
+        })?;
+    Some((
+        ResolvedPlace {
+            root: place.root,
+            path: place.path[..position].to_vec(),
+        },
+        ResolvedPlace {
+            root: place.root,
+            path: place.path[..=position].to_vec(),
+        },
+    ))
+}
+
+/// The subscripts of one typed storage path, outermost first, each with
+/// whether its base is a `Ring` [WIN-1].
+fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
+    path.iter()
+        .filter_map(|step| match step {
+            CheckedPlaceStep::Subscript(index) => {
+                Some((&index.obligation, checked_type_is_ring(index.base_type)))
+            }
+            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+        })
+        .collect()
+}
+
+/// The subscripts of one element place through a range, outermost first:
+/// the range's own offset, then the nested subscripts below the element.
+fn range_element_subscripts(place: &CheckedRangeElementPlace) -> Vec<(&NodePath, bool)> {
+    std::iter::once((&place.obligation, false))
+        .chain(path_subscripts(&place.path))
+        .collect()
 }
 
 /// Whether two mapped roots positively name the same storage.

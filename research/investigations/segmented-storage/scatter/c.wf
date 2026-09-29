@@ -1,0 +1,41 @@
+fn fill(item: u64, salt: u64, window: &[Cmd]) -> result: unit writes(window) {
+  let count = window^.len;
+  for (at in 0_u64..count) {
+    let made = command(item: item, at: at, salt: salt);
+    set window^[at] = made;
+  }
+  return unit;
+}
+
+fn once(salt: u64) -> sum: u64 pure {
+  let counts = box_array_filled::<u64>(count: items, value: 0_u64);
+  for (i in 0_u64..items) {
+    let count = count_of(item: i);
+    set counts.inner[i] = count;
+  }
+  let zero = Cmd(kind: 0_u64, a: 0_u64, b: 0_u64, c: 0_u64);
+  let made = box_segments_filled::<Cmd>(lengths: &counts.inner[0_u64..items], value: zero);
+  match move made {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: out) => {
+      let segments = out.inner.len;
+      for (i in 0_u64..segments) {
+        fill(item: i, salt: salt, window: &out.inner[i]);
+      }
+      let sum = checksum(out: &out.inner.all);
+      return sum;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let total = 0_u64;
+  for (rep in 0_u64..reps) {
+    let one = once(salt: total);
+    set total = one;
+  }
+  let low = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: low);
+}

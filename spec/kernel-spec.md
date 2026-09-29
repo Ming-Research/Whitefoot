@@ -1,4 +1,4 @@
-# Kernel Specification v0.80
+# Kernel Specification v0.81
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -396,12 +396,12 @@ Callee kind is resolved by name lookup [OP-1], the same partition that already s
 [TYPE-1] Primitive types: `i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 unit`.
 (`Bool` is a prelude enum, §14, not a primitive.)
 
-[TYPE-2] Composite types: `struct` and `enum`; the three storage shapes `Array`, `Slots`, and `Ring` and the cell `Box` are the prelude's opaque structs [TYPE-9, PRE-1].
-The four are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], written as a TYPEID with `targs` [GRAM-3]; what a declaration cannot state — element storage, the omitted-capacity form, placement, and element domains — is [TYPE-9]'s.
+[TYPE-2] Composite types: `struct` and `enum`; the four storage shapes `Array`, `Slots`, `Ring`, and `Segments` and the cell `Box` are the prelude's opaque structs [TYPE-9, PRE-1].
+The five are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], written as a TYPEID with `targs` [GRAM-3]; what a declaration cannot state — element storage, the omitted-capacity form, placement, and element domains — is [TYPE-9]'s.
 In this specification's prose `N` stands for a written const argument; source writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows do.
-`Slots`, `Ring`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
+`Slots`, `Ring`, `Segments`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
 A `struct` or `enum` declaration may carry one capability modifier [GRAM-2]: `nodrop`, which states a logical must-consume obligation on values of that nominal in every scope, or `nocopy`, which makes its values non-duplicable although every part could be copied; neither changes a component, layout, or construction route [OWN-1, PROV-6].
-A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the three storage shapes and `Box<T>`, which the prelude declares [PRE-1], and a host function forms the host handles the host modules declare [PRE-2], so no other opaque struct ever has a value.
+A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the four storage shapes and `Box<T>`, which the prelude declares [PRE-1], and a host function forms the host handles the host modules declare [PRE-2], so no other opaque struct ever has a value.
 A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it only together with `public` [MOD-6]. Inside the module that declares a source struct its readonly field is an ordinary field. Outside that module — and everywhere, for a PRE-1 struct's field — a path that ends at or passes through a readonly field is never a write target: a `set` whose target is such a path [SET-1], and an argument naming such a path at a reference parameter whose callee row writes that parameter [EFF-5], are each a hard error citing TYPE-2 at the complete target `place` or argument `atom`, with a repair [DIAG-1]. Construction gives a readonly field its value like any other field [GRAM-8], and a construction outside the declaring module supplies none [MOD-5]; a whole-value assignment replaces it together with its owner. Its value otherwise changes only through a compiler-owned [PRE-1] operation whose row declares `writes` of it [OP-10]; a declared row may name a readonly field in `writes`, because a row reports every change its callees make [EFF-2]. `readonly` states that the field is not assignable, not that its value is constant.
 
 [TYPE-3] Nameability: every constructible type, parameter kind and effect has a canonical, finite source spelling requiring no compiler execution [GRAM-3, EFF-1].
@@ -519,20 +519,21 @@ Absence of an in-scope const generic under this spelling remains the ordinary [T
 
 [TYPE-8] A reference kind is not a value type.
 `&T` and `&[T]` are reference kinds and not types [GRAM-3].
-No struct field, enum variant payload, `Array`, `Slots`, or `Ring` element, `Box` content, or written generic type argument may be one, recursively and closed under wrapping, so `Option<&T>` does not form whatever T is.
+No struct field, enum variant payload, `Array`, `Slots`, `Ring`, or `Segments` element, `Box` content, or written generic type argument may be one, recursively and closed under wrapping, so `Option<&T>` does not form whatever T is.
 The grammar admits no reference kind in a stored or type-argument position at all [GRAM-3, STOR-5], so the semantic check closes exactly one case: a substituted generic instance.
 A violation is a hard error citing TYPE-8 at the complete offending `type`, with a repair [DIAG-1].
 Every aggregate therefore holds only owned values, which is what [STOR-7] rests on.
 
-[TYPE-9] Three storage shapes, two placements each, and one cell.
+[TYPE-9] Four storage shapes and one cell.
 `Array`, `Slots`, and `Ring` are the prelude's opaque structs [TYPE-2, PRE-1], each declared with a const capacity parameter N and its measures as readonly fields [MSR-1]; their element storage is compiler-owned and reached only by a subscript [OP-4] and the window operations [OP-10].
 `Array<T, N>`, `Slots<T, N>`, and `Ring<T, N>` are the constant-capacity forms, whose capacity is the type constant N [CONST-1] and whose storage is inline in the owner or the stack frame [STOR-1].
 `Array<T>`, `Slots<T>`, and `Ring<T>` are the runtime-capacity forms, written by omitting the const argument N, whose capacity is fixed at construction and read as the readonly field `cap`, or as `len` for an `Array<T>` [MSR-1]; a runtime-capacity form may appear only as the content of a `Box` — the type of its `inner` field — and never inline in another value and never as a local binding; every other position is a hard error citing TYPE-9 at the complete `type`, with a repair [DIAG-1].
-`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored in exactly one heap object the `Box` value owns [STOR-1]; T is any nameable type [TYPE-3], including a runtime-capacity form; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
+`Segments<T>` is the prelude's opaque struct `Segments` [TYPE-2, PRE-1], declared with no capacity parameter and its one measure `len` as a readonly field [MSR-1]: a run of `len` segments of T whose boundaries `box_segments_filled` fixes when it builds the run [OP-13] and no operation changes, its elements stored contiguously in segment order. It has no constant-capacity form and is placed exactly as a runtime-capacity form is, only as the content of a `Box`, every other position being the same hard error citing TYPE-9. Its segments and the run of all its elements are reached only as range references [REF-4].
+`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored in exactly one heap object the `Box` value owns [STOR-1]; T is any nameable type [TYPE-3], including a runtime-capacity form and a `Segments<T>`; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
 The content is reached by the ordinary field step, `b.inner`, and through a reference to the cell as `cell^.inner`, where `^` steps through the reference and `inner` through the cell; `^` never reaches the content itself [TYPE-7, REF-1]. `let n = move b.inner;` consumes the `Box`, yields its content, and frees the cell [WIN-3].
-A `move` of a runtime-capacity content is a hard error citing TYPE-9 at the complete `place`, with a repair [DIAG-1].
+A `move` of a runtime-capacity or `Segments` content is a hard error citing TYPE-9 at the complete `place`, with a repair [DIAG-1].
 The element type of any shape is any nameable type, copy, affine, or linear [OWN-1, PROV-6].
-A constructor `call` and a destructuring `let_stmt` naming any of the four is refused by [TYPE-2] like every opaque struct's, with a repair [DIAG-1].
+A constructor `call` and a destructuring `let_stmt` naming any of the five is refused by [TYPE-2] like every opaque struct's, with a repair [DIAG-1].
 
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and only the operations of [OP-10] and [OP-13] change them.
@@ -662,6 +663,9 @@ Its parameter kind is `&[T]` [GRAM-2], which is a reference kind and not a type 
 Its one measure is `len`, equal to `hi - lo` [MSR-1].
 It is never a stored value, never a result, and never a generic type argument.
 Re-slicing is admitted: `&part^[a..b]` under `a <= b <= part^.len`.
+`&s[i]`, where `s` is a place of type `Segments<T>` [TYPE-9], forms a range reference over segment i, the run of T elements from boundary i to boundary i + 1, under [OP-4]'s obligation `i < s.len`; its `len` is that segment's length.
+`&s.all` forms a range reference over every element of `s` in segment order, and its `len` is their total; `all` is not a field and occupies no declaration domain. In both forms the segment subscript or `all` is the last suffix of the `borrow_expr`.
+As a resolved place [REF-1], `&s[i]` names `s` extended by an index step capturing i, so two segments of one `Segments` are separated exactly as two elements of one array are, and `&s.all` names `s` extended by a range step whose captured endpoints are values no relation names, so it overlaps every segment [OWN-7].
 A range reference over a `Ring` is a hard error citing REF-4 at the complete `psuffix`, carrying a repair [DIAG-1], because a wrapped window is two extents and `&[T]` has one `len`.
 A range reference dies with the bound that formed it exactly as any other reference does [REF-2].
 
@@ -730,8 +734,8 @@ Its binders are ordinary `let` binders of the enclosing block, fresh under [TYPE
 Each binder receives its field's declared type and `own` mode [TYPE-5], the statement is one consuming use of `v` [OWN-1], and no residual of `v` survives it, so the statement derives no release of the consumed value's own storage [STOR-3].
 An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
-The release graph of a type `T` has as its nodes the types reachable from `T` through fields, enum variant payloads, `Box` content, and `Array`, `Slots`, or `Ring` elements.
-A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>` is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no runtime-capacity shape is ever a node of an owner other than its own cell.
+The release graph of a type `T` has as its nodes the types reachable from `T` through fields, enum variant payloads, `Box` content, and `Array`, `Slots`, `Ring`, or `Segments` elements.
+A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, and a `Segments<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
 A type's release action is non-empty by the least fixed point of two clauses: a `Box` [TYPE-9] is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
 The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
 One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a `Slots` or a `Ring` window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
@@ -756,7 +760,7 @@ The checked program retains, before lowering [DIAG-2], each type's linearity cla
 
 ## 6. Storage
 
-[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned, one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>` exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
+[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned, one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, and a `Segments<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
 There is no per-binding storage annotation and no default clause.
 An `Array<T, N>` holds exactly N stride-spaced element representations in index order and stores no length, capacity, head, occupancy, or discriminant; a `Slots` or `Ring` stores its `len`, and a `Ring` its `head`, with the block [WIN-1].
 A shape's concrete size, stride, padding, and zero-extent representation obey [STOR-6]; placing a shape inside another owner changes no element order or ownership.
@@ -788,12 +792,12 @@ That one route also consumes a `Box` whose content is such a window, freeing the
 No judgment of this specification depends on a value's address being stable, and no accepted program can observe one.
 
 [STOR-8] There is one heap, provided by the trusted base and internally synchronized.
-Allocation is total in the source: it never returns a failure, never traps, and no allocating operation carries a `Result`.
+Allocation is total in the source: heap exhaustion never returns a failure and never traps, and no allocating operation carries a `Result`.
 Exhaustion of the heap terminates the program from the trusted base, outside the language [SCOPE-3], so no payload is ever handed back and no program point holds a value whose owner has vanished.
-The arithmetic that computes an allocation size carries the static overflow obligation [OP-9].
+The arithmetic that computes an allocation size is bounded before it is performed: a count by the static overflow obligation [OP-9], and a sum of lengths by `box_segments_filled`'s size predicate [OP-13].
 Addresses are not observable, so allocator concurrency does not affect program determinism.
 Allocation and release carry no effect entry [EFF-1] and never prevent two statements from overlapping [PAR-1].
-A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box` or the runtime-capacity shapes [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_slots_new`, `box_ring_new`, and `grow` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
+A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box`, the runtime-capacity shapes, or `Segments` [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, and `grow` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
 A module program entry whose `no_heap` states the requirement [MOD-9] withdraws the heap from that entry's execution closure: the entry function and every function its checked body reaches through its calls, in every branch, each as the concrete instance the call selects [FN-6]; an instance's body calls the function-kind actuals it names, and an erased proof annotation calls nothing.
 A function of that closure uses the heap on its own when its body calls an allocating prelude row, or when the concrete type of one of its parameters, its results, or a value its body evaluates, binds or releases holds a `Box` or a runtime-capacity shape [TYPE-9] as itself, a field, a payload field or an element, private fields included, since releasing such a value frees heap storage [STOR-3]; it requires the heap when it uses it on its own or calls a function that requires it.
 A component of the closure's call graph introduces the requirement when its functions require the heap and no function of another component that they call does; the first such component a breadth-first walk from the entry reaches is a hard error citing STOR-8 at the declaration of its first function in that walk that uses the heap on its own, reporting the call path from the entry. Definitions the closure does not reach impose nothing on the entry.
@@ -850,6 +854,7 @@ For every runtime-capacity shape materialized by a construction function [OP-13]
 The accepted [OP-9] judgment retains a numeric upper bound for the source length at that allocation site; target qualification computes the complete allocation size, including the shape's descriptor, its padding before the elements, and that bound multiplied by the actual target stride, using checked mathematical arithmetic, and requires the result to fit both the allocator-parameter and address-index domains before lowering the operation.
 At this target stage, when the actual element stride is positive, the exact SSA result of a runtime-capacity shape's `len` measure additionally carries the selected target's runtime-allocation byte maximum minus that shape's padded descriptor size, divided by its actual element stride and rounded down, because every materialized shape already satisfies the successful-allocation representation invariant.
 When that stride is zero, the invariant contributes no additional count bound beyond the source length type; the complete padded descriptor must still satisfy target qualification, and every actually emitted address operand still obeys the exact-representation requirement below.
+For every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification verifies the element's actual size, alignment, and stride against [OP-9]'s language ceilings, and requires the largest block its predicate admits, `2^62` bytes of elements and boundaries together with the shape's own descriptor and its padding before the elements, to fit both the allocator-parameter and address-index domains, before lowering the operation.
 Qualification may intersect this target bound with the retained source bound only for that exact SSA result; it does not publish a Whitefoot comparison fact or transfer the bound through a block parameter, storage load, conversion, user call, or another value merely because its source spelling or type is similar.
 The source allocation proof and this target qualification jointly establish that every reachable runtime byte count has one exact value-preserving target representation; neither alone authorizes emission, and the allocator receives exactly that value.
 Every emitted target address computation must likewise be proved valid for every runtime value that reaches it: the compiler establishes before emission that each runtime index and each mathematically scaled byte offset actually used by the computation has an exact value-preserving representation in the applicable target address-index domain, and that scaling and offset addition do not wrap.
@@ -1004,6 +1009,7 @@ Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix
 
 [OP-4] A subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selected type must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, or the run of T elements a range reference `&[T]` names [TYPE-9, REF-4], a runtime-capacity form and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; a subscript whose base's final selected type is not one of those indexable types is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
+A `Segments<T>` is not an indexable base: a subscript of it is admitted only as the segment subscript of [REF-4]'s `&s[i]`, and every other subscript of a `Segments` place is the hard error above. That segment subscript carries the same bounds obligation, and it is judged by every sentence below exactly as an element subscript is.
 The subscript carries the bounds obligation `i < p.len` [ENT-6], and `i` is a logical offset whose storage slot [WIN-1] fixes, so the obligation is against `p.len` for every indexable base and never against `p.cap`.
 The injectivity sentence of [MSR-1] is what carries that logical conclusion to a storage conclusion, and its premise `p.len <= p.cap` is one of [MSR-2]'s standing facts, so no subscript occurrence submits a separate obligation for it.
 The obligation is submitted to the one numeric goal disposition [MSR-4]; that rule fixes the complete ordered derivation and this rule grants no route of its own.
@@ -1117,14 +1123,14 @@ No written conclusion alone, runtime multiplication guard, or fallback is retain
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
-The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
+The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
 Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
 A constant-capacity `Ring<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by two `(8,8)` words, its length and its window origin.
 A tag-only enum with at most two variants has `(1,1)`, and every other tag-only enum `(4,4)`.
 A payload enum, including `Option` and `Result`, sequences a `(4,4)` tag followed conservatively by every variant payload field in variant and field declaration order.
-The existing recursive-type rejection remains, and the `Box` and runtime-capacity shape ceilings do not recursively expand their content.
+The existing recursive-type rejection remains, and the `Box`, runtime-capacity shape, and `Segments` ceilings do not recursively expand their content.
 `stride_ceiling(T)` is `max(1, size_ceiling(T))` after the aggregate rule.
 
 Before emitting a stored type S, target qualification verifies that its actual size, alignment, and stride do not exceed the three language ceilings.
@@ -1173,11 +1179,13 @@ A call that fails the result condition is not an atomic update and is judged as 
 An atomic update is not a [PAR-2] accumulator form: that rule's accumulator combines by one operation fixed for it from a closed associative and commutative set, and `f` is not a member of that set.
 
 [OP-13] Construction.
-The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
+The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
 Each runtime-capacity construction and `grow` [OP-10] carries [OP-9]'s static allocation-size obligation on its own count.
-Allocation is total [STOR-8], so no construction returns a `Result` and none has a failure arm.
+Allocation is total [STOR-8], so no construction has a failure arm for exhausted storage.
 A window built by `slots_new`, `ring_new`, `box_slots_new`, or `box_ring_new` starts empty.
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
+`box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
+Its element total t, the sum of the lengths, is a runtime sum that no term states, so it carries no [OP-9] obligation; instead its result is `Some` of the cell exactly when the pure, total, target-independent predicate `stride_ceiling(T) * t + 8 * r^.len <= 2^62` over unbounded integers holds, with [OP-9]'s `stride_ceiling`, and `None` otherwise.
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
 A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
@@ -2101,13 +2109,15 @@ The counted permission [PAR-2] forms every statement's read and write paths exac
 Permission holds for a `for_stmt` L exactly when all of the following hold, writing B for L's body and forming every written, read, and operand-read footprint of a statement of B exactly as [PAR-1] forms one.
 Among whole-place writes of B, at most one place is rooted in a binding declared outside L; that binding is L's accumulator, and every occurrence of it in B is one operand of one `set` statement whose target is that whole binding and whose right-hand side is one operation applied to that operand and to a second operand reaching the accumulator nowhere.
 That operation is one operation fixed for the accumulator across the whole of B, and is exactly one of `+wrap`, `*wrap`, `iand`, `ior`, `ixor`, `imin`, `imax`, `band`, `bor`, and `bxor` [OP-1].
-Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, one proved single-binder affine element write, or one proved range reference.
-A proved single-binder affine element write is exactly a `set_stmt` whose target is one direct `Array` or `Slots` subscript rooted in an own binding declared outside L or reached through `^` of a reference parameter whose row declares the write [EFF-5], whose exact [OP-4] bounds obligation at that subscript is discharged in the current ProofContext and retains the offset's canonical exact value `a*i + b`: i is L's compiler-owned binder, a and b are mathematical integer constants, a is nonzero, and no other symbolic term occurs.
+Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, a place in one proved single-binder affine element, or a place in one proved range reference.
+A proved single-binder affine element is one subscript whose base is an `Array`, a `Slots`, the run a range reference names [OP-4], or a `Segments` [TYPE-9], rooted in an own binding declared outside L or reached through `^` of a reference parameter whose row declares the write [EFF-5], whose exact [OP-4] bounds obligation at that subscript is discharged in the current ProofContext and retains the offset's canonical exact value `a*i + b`: i is L's compiler-owned binder, a and b are mathematical integer constants, a is nonzero, and no other symbolic term occurs. The place that subscript selects from is the element's mapped root.
+A place is in that element when its resolved path [REF-1] is the element's path or continues it by any further field, payload, `Box` content, index, or range steps, and it is in the element of the outermost such subscript of its path. Every aggregate holds only owned values [TYPE-8] and a `Box` has one owner [TYPE-9], so nothing in one element of a root is reachable from another element of it.
+A footprint reaches a place in an element through a `set_stmt` target, an operand read, and a reference argument, whose callee row is projected onto the argument's actual path exactly as [EFF-5] projects it.
 The retained [OP-4] result and affine value are consumed from the same source semantic check. The value may have been carried through copies and checked affine operations; PAR-2 neither repeats the bounds proof, reconstructs the value from parser shape, nor trusts a runtime check, optimizer fact, or backend result.
-For permission only, this fixed form refines the ordinary whole-collection write footprint to the single-element range `[a*i + b, a*i + b + 1)`.
+For permission only, this fixed form refines the ordinary whole-collection footprint of every place in the element to the single-element range `[a*i + b, a*i + b + 1)` of its mapped root.
 The counted recurrence of [FN-1] gives distinct binder values to distinct iterations, and multiplication by the same nonzero integer a preserves distinctness, so their refined ranges do not overlap; statement order within one iteration is unchanged.
 This refinement proves only the source element-range and cross-iteration disjointness. The selected-target [STOR-6] check must still prove the concrete element stride, layout, and address domain before emission; that later target check consumes the already-permitted source access and never grants PAR-2 permission retroactively.
-Every write by B to one mapped root must be another proved single-binder affine element write carrying exactly the same a and b; different resolved roots may carry different maps. Every operand read through that same root binding must be a direct `Array` or `Slots` subscript whose own discharged [OP-4] result retains exactly the same a and b. For permission only, that read footprint is refined to the same single-element range, so it overlaps writes of its own iteration in source order and no access of another iteration. A whole-root read, a subscript carrying a different or unavailable map, any other access overlapping the resolved root, or an unresolved place denies.
+Every write by B to one mapped root must be to a place in a proved single-binder affine element of it carrying exactly the same a and b; different resolved roots may carry different maps. Every read through that same root binding must be of a place in a proved single-binder affine element of it carrying exactly the same a and b. For permission only, that read footprint is refined to the same single-element range, so it overlaps writes of its own iteration in source order and no access of another iteration. A whole-root read, a subscript carrying a different or unavailable map, any other access overlapping the resolved root, or an unresolved place denies.
 The element family admits one affine map per root, including same-index read-modify-write and writes reached through `^` of a reference parameter whose row declares the write. A constant element image, two different element maps of one root, and every other element injectivity argument deny permission rather than starting proof search. A `Ring` in an element-map position denies permission, because a `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a wrapping map onto storage rather than a linear offset.
 
 A proved range reference is a range reference `&r[s*i+b..s*i+b+s]` [REF-4] passed as an ordinary argument, whose discharged endpoint domain retains the exact mathematical images `[s*i+b, s*i+b+s)`, where i is L's binder, and s and b are fixed throughout L with proved `0 <= s` and `0 <= b`. The indexable place or range reference it is formed from is declared outside B and retains its resolved origin; a range reference formed inside B instead inherits an existing proved range reference only when its complete origin path is a descendant of that range reference. Each further formation's own [REF-4] endpoint obligation establishes containment. No child call, read, or write gains a wider extent than its actual origin path.
@@ -2162,7 +2172,7 @@ No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so 
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the three storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2178,6 +2188,10 @@ opaque nocopy struct Ring<T, const n: u64> {
   readonly len: u64;
   readonly cap: u64;
   readonly head: u64;
+}
+
+opaque nocopy struct Segments<T> {
+  readonly len: u64;
 }
 
 opaque nocopy struct Box<T> {
@@ -2237,6 +2251,9 @@ fn ring_new<T, const n: u64>() -> result: Ring<T, n> pure contract {
 };
 fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
+};
+fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
+  ensures when Some(value: made): made.inner.len == lengths^.len;
 };
 fn box_slots_new<T>(capacity: u64) -> result: Box<Slots<T>> pure contract {
   ensures result.inner.len == 0_u64;
@@ -2687,7 +2704,7 @@ A constant operand folds through Z: `a <= 7` is `a - Z <= 7`.
 Implicit facts hold at every program point: every term t carries the reflexive bound `t - t <= 0`; every term t of fragment type T carries `t - Z <= max(T)` and `Z - t <= -min(T)`; every measure term carries [MSR-2]'s standing facts; and every `P.len` term over a place of type `Array<T, N>` carries the equality to N (both bounds), with concrete N a constant and const-generic N a symbolic constant term.
 
 [MSR-1] Measure terms are the readonly fields of the storage shapes, over one place, for every measured value [OP-15].
-`P.len`, `P.cap`, and `P.head` — the readonly fields the prelude declares on `Array`, `Slots`, and `Ring` [PRE-1], and the `len` of a range reference, which no declaration states [REF-4] — are [ENT-2] terms of fragment type u64 over an admitted measure place P: a clause (a) tracked place when P carries no subscript and a clause (b) place when it carries one.
+`P.len`, `P.cap`, and `P.head` — the readonly fields the prelude declares on `Array`, `Slots`, `Ring`, and `Segments` [PRE-1], and the `len` of a range reference, which no declaration states [REF-4] — are [ENT-2] terms of fragment type u64 over an admitted measure place P: a clause (a) tracked place when P carries no subscript and a clause (b) place when it carries one.
 An admitted measure place is a `place` rooted and formed as in [ENT-2] clause (a) or clause (b), whose final selected type is a measured type.
 The subscript admission is what makes `table[i].len` a term, so a storage whose elements are themselves storages has provable operations; it is also why [MSR-2]'s granularity is stated over storage rather than over the word *element*.
 Its subscripts and their offsets are those [ENT-2] clause (b) admits.
@@ -2707,6 +2724,7 @@ The table in this version is:
 | Slots<T>        | initialized slots, exact | slots taken, exact | absent                  |
 | Ring<T, N>      | initialized slots, exact | N, exact           | window origin, bounded  |
 | Ring<T>         | initialized slots, exact | slots taken, exact | window origin, bounded  |
+| Segments<T>     | segments, exact          | absent             | absent                  |
 | &[T]            | range elements, exact    | absent             | absent                  |
 ```
 

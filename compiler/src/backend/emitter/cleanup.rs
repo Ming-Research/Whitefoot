@@ -301,6 +301,7 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
             length,
         } => format!("array<{};{length}>", element(held)?),
         IrType::Buffer { element: held } => format!("buffer<{}>", element(held)?),
+        IrType::Segments { element: held } => format!("segments<{}>", element(held)?),
         IrType::Range { element: held } => format!("range<{}>", element(held)?),
         IrType::RuntimeBoxPayload { nominal } => format!(
             "payload<{}>",
@@ -371,7 +372,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Array { element, .. } | IrType::Window { element, .. } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
-            IrType::Buffer { element } => {
+            IrType::Buffer { element } | IrType::Segments { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?)
             }
             IrType::Range { element } => {
@@ -635,7 +636,9 @@ fn emit_cleanup_jobs(
                 // cell arm below is the one route to its release, exactly as
                 // it is for a runtime-capacity window. Reaching here would
                 // mean a value of a type no storage can hold.
-                IrType::Buffer { .. } => return Err(BackendFailure::InvalidIr),
+                IrType::Buffer { .. } | IrType::Segments { .. } => {
+                    return Err(BackendFailure::InvalidIr);
+                }
                 IrType::Nominal(id) => {
                     let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
                     match nominal.kind() {
@@ -689,6 +692,14 @@ fn emit_cleanup_jobs(
                             // declared zero-length element array, so its
                             // walk takes the pointer and the cell's own free
                             // is the block's.
+                            // A `Segments` block holds copy elements
+                            // [OP-13], so its release is the free alone.
+                            if matches!(referent, IrType::Segments { .. }) {
+                                if *release == IrReleaseClass::General {
+                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
+                                }
+                                continue;
+                            }
                             if matches!(
                                 referent,
                                 IrType::Window { capacity: None, .. } | IrType::Buffer { .. }

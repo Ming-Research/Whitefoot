@@ -62,15 +62,18 @@ pub enum ContainerShape {
     /// `Ring<T, N>` and `Ring<T>`: a window whose logical origin is `r.head`
     /// [WIN-1, MSR-1].
     Ring,
+    /// `Segments<T>`: a run of segments of T whose boundaries are fixed at
+    /// construction; it exists only as `Box` content [TYPE-9].
+    Segments,
     /// `Box<T>`: one heap object of any nameable T, carrying no brand and no
     /// measure at all, a cell being never empty [TYPE-9]. Its declaration is
     /// the prelude's opaque struct [TYPE-2, PRE-1], not a row below.
     Box,
 }
 
-/// The three storage nominals, in [TYPE-9] order. The cell is not one of them:
+/// The four storage nominals, in [TYPE-9] order. The cell is not one of them:
 /// it is declared by [PRE-1] and read through [`CELL_NOMINAL`].
-pub const CONTAINER_NOMINALS: [ContainerNominal; 3] = [
+pub const CONTAINER_NOMINALS: [ContainerNominal; 4] = [
     ContainerNominal {
         spelling: "Array",
         shape: ContainerShape::Array,
@@ -82,6 +85,10 @@ pub const CONTAINER_NOMINALS: [ContainerNominal; 3] = [
     ContainerNominal {
         spelling: "Ring",
         shape: ContainerShape::Ring,
+    },
+    ContainerNominal {
+        spelling: "Segments",
+        shape: ContainerShape::Segments,
     },
 ];
 
@@ -180,7 +187,7 @@ mod tests {
     #[test]
     fn storage_nominals_match_the_active_specification() {
         let body = crate::ACTIVE_KERNEL_SPEC_TEXT
-            .split_once("[TYPE-9] Three storage shapes, two placements each, and one cell.")
+            .split_once("[TYPE-9] Four storage shapes and one cell.")
             .expect("exact TYPE-9 opening")
             .1
             .split_once("\n\n")
@@ -193,7 +200,7 @@ mod tests {
                 nominal.spelling
             );
         }
-        assert_eq!(CONTAINER_NOMINALS.len(), 3);
+        assert_eq!(CONTAINER_NOMINALS.len(), 4);
     }
 
     /// [TYPE-2, PRE-1]: the cell is declared by the prelude, so it takes no
@@ -212,8 +219,8 @@ mod tests {
         ));
     }
 
-    /// x1 [TYPE-2, PRE-1]: the three storage shapes are prelude declarations
-    /// too, so every one of the four spellings resolves to its compiler-owned
+    /// x1 [TYPE-2, PRE-1]: the four storage shapes are prelude declarations
+    /// too, so every one of the five spellings resolves to its compiler-owned
     /// identity through the one mapping resolution reads.
     #[test]
     fn every_storage_spelling_maps_to_its_container_identity() {

@@ -914,6 +914,63 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
+/// [MOD-9] a module program's entry build reports the permission ledger of
+/// its whole composition, a line from a module other than the entry's
+/// included, and emits the module the same build without the ledger emits.
+#[test]
+fn an_entry_build_reports_the_permission_ledger_of_its_composition() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::lib: [];\npkg: [pkg::lib, std::process];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: [(&str, &[u8]); 4] = [
+        (
+            "lib/module.wfm",
+            b"public fn pair(x: u64) -> result: u64 pure doc \"Adds two independent halves.\";\n",
+        ),
+        (
+            "lib/pair.wf",
+            b"fn half(x: u64) -> result: u64 pure {\n  return x / 2_u64;\n}\n\nfn pair(x: u64) -> result: u64 pure {\n  let a = half(x: x);\n  let b = half(x: x);\n  return a +wrap b;\n}\n",
+        ),
+        (
+            "module.wfm",
+            b"public fn main() -> status: std::process::ExitStatus pure doc \"Runs the pair.\";\n",
+        ),
+        (
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let value = pkg::lib::pair(x: 8_u64);\n  if value == 8_u64 {\n    return std::process::exit_status(code: 0_u8);\n  }\n  return std::process::exit_status(code: 1_u8);\n}\n",
+        ),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let (module, ledger) = super::compile_module_program_with_permission_ledger(
+        &graph,
+        &inputs,
+        super::ModuleEntry::Named("app"),
+        CompilerLimits::default(),
+        OverlapLowering::Off,
+    )
+    .expect("the entry builds");
+    let plain = super::compile_module_program(
+        &graph,
+        &inputs,
+        super::ModuleEntry::Named("app"),
+        CompilerLimits::default(),
+        OverlapLowering::Off,
+    )
+    .expect("the entry builds");
+    assert_eq!(module, plain);
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.contains("lib/pair.wf:6  pair(half, half)  eligible")),
+        "{ledger:#?}"
+    );
+}
+
 /// [FN-2, MOD-8] a rejection raised while checking a concrete instance
 /// stays at the template's source, in the module that owns it, and names
 /// the call in another module that requested the instance. Here the
