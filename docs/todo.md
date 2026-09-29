@@ -90,6 +90,17 @@ rarely insert at the same place.
   a propagated error exit select every unrouted clause over an exit state and
   every type invariant, judged at the `propagate` edge as a return is.
   Resolve before the branch that carries TYPE-11 merges.
+- **TYPE-11's failure citation disagrees with its verdicts.** Awaiting the
+  owner's direction. [TYPE-11] judges a construction "as an [FN-8]
+  requirement is judged at a call" and an atomic block's leaving edge "as an
+  [INV-1] invariant", and says a failure is "the rejection of the rule the
+  occurrence is judged under", which reads as FN-8 and INV-1; the checker and
+  the manifest cite TYPE-11 for both, and an atomic statement has one
+  occurrence per leaving edge rather than one per statement. Found in the
+  TYPE-11 review. The proposed change is one sentence in TYPE-11 saying that
+  a construction's and a leaving edge's failures cite TYPE-11, each keyed by
+  its construction or edge, which keeps the verdicts. Resolve with the
+  propagated-exit item above.
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -1754,6 +1765,18 @@ rarely insert at the same place.
 
 ## Code structure
 
+- **Five parallel substitution walkers over a type invariant.**
+  `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
+  parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
+  `substitute_relation` and `substitute_expanded`, one walker per
+  representation (goal, relation and expanded clause) and subject (a
+  parameter or its referent, a construction's operands, an atomic binder, an
+  exit state or a result). Each is short and has one caller, so a change to
+  the datum shape must be repeated in each. A single substitution keyed by
+  subject over the expanded clause, from which the goal and relation are then
+  formed, would leave one walker; validate by identical verdicts on the
+  `type11-*` cases. Found in the TYPE-11 review; reopen when a new subject or
+  datum shape is added, such as a fact at an element read.
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
   1,729-line inline test module, and the tests in
