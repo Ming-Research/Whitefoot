@@ -165,6 +165,10 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
   Platform qualification and paired performance remain explicit separate
   responsibilities. Report the tested revision and actual groups; matching
   group names alone do not establish matching test selection.
+- [ ] **T8 — Time budgets.** A new labeled CI stage has a row in
+  `.github/time-budgets.txt` for each host it runs on. A raised budget has the
+  owner's decision; a change that makes a stage much faster lowers its budget.
+  A stage kept within its budget by removing coverage fails T2.
 
 ## R. Decisions — changed choices, premises or relevant evidence
 

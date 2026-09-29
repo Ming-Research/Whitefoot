@@ -22,6 +22,9 @@ env:
   CARGO_BUILD_JOBS: 2
   RUST_TEST_THREADS: 2
   JOBS: 2
+  # Each run-check.pl stage must finish within its budget in
+  # .github/time-budgets.txt.
+  WHITEFOOT_TIME_BUDGETS: enforce
 jobs:
   regression:
     name: compute regression (ubuntu-24.04)

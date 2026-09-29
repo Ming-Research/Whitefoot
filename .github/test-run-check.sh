@@ -37,10 +37,16 @@ wait "$holder"
 holder=
 test ! -e "$work/lock"
 
+processors=$(getconf _NPROCESSORS_ONLN)
 (
     unset CARGO_BUILD_JOBS RUST_TEST_THREADS JOBS
-    perl "$runner" defaults sh -c 'test "$CARGO_BUILD_JOBS:$RUST_TEST_THREADS:$JOBS" = 2:2:2'
+    perl "$runner" defaults sh -c 'test "$CARGO_BUILD_JOBS:$RUST_TEST_THREADS:$JOBS" = "$1:$1:$1"' sh "$processors"
 ) > "$work/defaults.log" 2>&1
+(
+    CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1
+    export CARGO_BUILD_JOBS RUST_TEST_THREADS
+    perl "$runner" chosen sh -c 'test "$CARGO_BUILD_JOBS:$RUST_TEST_THREADS" = 1:1'
+) > "$work/chosen.log" 2>&1
 test ! -e "$work/lock"
 
 status=0
@@ -75,4 +81,46 @@ perl "$runner" orphan sh -c 'sleep 30 & echo $! > "$1"' sh "$work/orphan" \
 test "$status" -eq 1
 test ! -e "$work/lock"
 ! kill -0 "$(cat "$work/orphan")" 2>/dev/null
-echo 'check runner: status, nesting, exclusion, limits, timeout, cancellation and orphan cleanup pass'
+
+# Budgets: a zero budget is exceeded by any stage, a large one by none.
+printf '# test budgets\nlabel linux macos windows\nwithin 600 600 600\nover 0 0 0\nparent 600 600 600\nnowhere - - -\n' \
+    > "$work/budgets"
+WHITEFOOT_TIME_BUDGET_FILE=$work/budgets
+export WHITEFOOT_TIME_BUDGET_FILE
+
+perl "$runner" over true > "$work/report.log" 2>&1
+grep -q 'OVER BUDGET: over took' "$work/report.log"
+perl "$runner" unlisted true > "$work/unlisted.log" 2>&1
+! grep -q 'BUDGET' "$work/unlisted.log"
+
+WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" within true > "$work/within.log" 2>&1
+grep -q '== BUDGET within: 0 s of 600 s' "$work/within.log"
+
+status=0
+WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" parent sh -c \
+    'perl "$1" over true; perl "$1" within true; touch "$2"' sh "$runner" "$work/continued" \
+    > "$work/enforce.log" 2>&1 || status=$?
+test "$status" -eq 3
+test -f "$work/continued"
+grep -q '^  over took [0-9]* s, over its 0 s' "$work/enforce.log"
+! grep -q '^  within' "$work/enforce.log"
+test ! -e "$work/lock"
+
+for label in unlisted nowhere; do
+    status=0
+    WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" "$label" true > "$work/$label-enforced.log" 2>&1 || status=$?
+    test "$status" -eq 3
+    grep -q "^  $label has no [a-z]* budget" "$work/$label-enforced.log"
+done
+
+status=0
+WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" over sh -c 'exit 17' > "$work/over-failed.log" 2>&1 || status=$?
+test "$status" -eq 17
+grep -q 'TIME BUDGETS EXCEEDED' "$work/over-failed.log"
+
+status=0
+WHITEFOOT_TIME_BUDGETS=strict perl "$runner" within true > "$work/mode.log" 2>&1 || status=$?
+test "$status" -ne 0
+grep -q 'must be report or enforce' "$work/mode.log"
+test ! -e "$work/lock"
+echo 'check runner: status, nesting, exclusion, limits, timeout, cancellation, orphan cleanup and time budgets pass'

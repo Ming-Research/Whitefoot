@@ -359,8 +359,8 @@ or revising compiler code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
 exploratory timing runs only when requested. Separate build time from
-test/program execution, investigate a stage that exceeds its observed cost,
-and preserve the full gate before merge.
+test/program execution, investigate a stage that exceeds its budget, and
+preserve the full gate before merge.
 
 ## Checks
 
@@ -369,10 +369,13 @@ and preserve the full gate before merge.
   translation changed together, prose integrity, guidance references,
   compiler sources over 4,000 lines named in `docs/todo.md`, and the design
   tree's form.
-- `make check`, on the revision to merge and in `gate.yml` on Linux and
-  macOS: the static group plus the compiler build, tests, the conformance
-  adapter and the runtime; `make check-groups` lists the groups. It needs
-  `python3`, LLD on Linux (`ld.lld`) and the `time` utility.
+- `make check`, on the revision to merge: the static group plus the compiler
+  build, tests, the conformance adapter and the runtime; `make check-groups`
+  lists the groups. `gate.yml` runs those groups on Linux and macOS on every
+  push, and its green run on the exact revision is that revision's
+  `make check`; run it locally to reproduce a failure or when CI is
+  unavailable. It needs `python3`, LLD on Linux (`ld.lld`) and the `time`
+  utility.
 - `make design-ready`, before marking ready and in `design-readiness.yml` on
   ready PRs and main: approved tree and specification changes.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
@@ -393,9 +396,15 @@ perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml
 
 Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets already do, including commands from other worktrees. It
-holds one host-wide lock, prints wall, user and system time with a report
-every 30 seconds, and stops a command after 30 minutes unless
-`WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. Inspect an existing
+holds one host-wide lock, builds and tests on every online processor unless
+`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
+system time with a report every 30 seconds, and stops a command after 30
+minutes unless `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It
+also compares each labeled stage with its budget in `.github/time-budgets.txt`:
+CI fails a job whose stage exceeded its budget or has none, and a local run
+only prints the comparison. Raising a budget is a decision for the owner;
+lower one in the change that makes its stage faster, and give a new labeled
+CI stage its budget. Inspect an existing
 owner's PID instead of starting another heavy command, and after an
 uncatchable stop inspect the recorded PID and command before removing a stale
 lock. The `gate` Cargo profile builds the Rust compiler with optimization,

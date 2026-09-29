@@ -2382,3 +2382,22 @@ condition under which it is taken up.
   when updating verification-base selection. This research uses the existing
   `DESIGN_REVIEW_BASE` override for the actual merge base and records default
   failures; it does not change the checks or another worktree's main ref.
+- **The corpus stage waits on one serial conformance walk.** Each of the
+  conformance adapter's two walks visits every conformance case on one
+  thread, 62 s and 78 s on a four-core host, so the corpus stage cannot drop
+  below about 78 s at any thread count while its other 91 cases need about
+  87 CPU-seconds
+  ([serial profile](../research/investigations/test-economy/time-budgets.md#where-the-time-goes)).
+  Splitting each walk's cases across the processors, keeping every case's
+  ordinary compiler path and verdict, would bring the stage near its 57-s
+  processor bound on four cores. It is not the gate's critical path while the
+  unit job is longer; reopen when the corpus job becomes the longest or its
+  budget trips. This changes conformance evidence wiring, so the PR states it
+  under AGENTS.md rule 4.
+- **Incremental rebuilds are not gated.** The time budgets measure hosted
+  cold builds, but daily work pays incremental rebuilds, 6–25 s per edit
+  today. A change that makes them slow, such as merging modules into one
+  large code-generation unit, passes every budget. Measure an edit's
+  incremental rebuild in CI or in `make check` if daily rebuilds grow past
+  about 30 s; validate that the measurement fails when incremental state is
+  discarded.

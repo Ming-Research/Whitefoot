@@ -27,6 +27,10 @@ env:
   CARGO_TERM_COLOR: never
   # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
   CARGO_INCREMENTAL: 0
+  # Every labeled stage must finish within its budget in
+  # .github/time-budgets.txt; run-check.pl fails the job after all its stages
+  # have run when one did not.
+  WHITEFOOT_TIME_BUDGETS: enforce
 
 jobs:
   groups:
@@ -67,17 +71,6 @@ jobs:
       # `runner` context is not available to a job-level `env:` block.
       - name: Set the scratch root
         run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
-
-      # The desktop default of two reserves capacity for interactive work and
-      # other agents' commands. Each CI job owns its VM, so compilation and the
-      # test pool both use the host. Building whitefootc from scratch on a
-      # four-CPU host took 72.6 s at two Cargo jobs and 43.1 s at four, with
-      # peak memory 1.27 and 1.37 GB.
-      - name: Set dedicated-runner build and test parallelism
-        run: |
-          processors=$(getconf _NPROCESSORS_ONLN)
-          echo "CARGO_BUILD_JOBS=$processors" >> "$GITHUB_ENV"
-          echo "RUST_TEST_THREADS=$processors" >> "$GITHUB_ENV"
 
       # `spec-archives` and `readme-translation` read `main` as a local ref:
       # they compare released specification archives, and the README with its

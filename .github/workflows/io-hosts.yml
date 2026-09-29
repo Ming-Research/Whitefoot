@@ -23,12 +23,16 @@ env:
   CARGO_TERM_COLOR: never
   # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
   CARGO_INCREMENTAL: 0
+  # Linux stages run under run-check.pl and its budgets in
+  # .github/time-budgets.txt; the Windows steps, which run without it, are
+  # bounded by their own timeout-minutes.
+  WHITEFOOT_TIME_BUDGETS: enforce
 
 jobs:
   completion-linux:
     name: completion-linux (ubuntu-24.04)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -73,7 +77,7 @@ jobs:
   completion-windows:
     name: completion-windows (windows-latest)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
@@ -86,7 +90,7 @@ jobs:
           systeminfo | grep -E '^(OS Name|OS Version|System Type|Total Physical Memory)' || true
 
       - name: Construct Windows native test images once
-        timeout-minutes: 5
+        timeout-minutes: 2
         run: |
           if ! command -v make > /dev/null; then
             choco install make --yes --no-progress
@@ -241,9 +245,10 @@ jobs:
       # IOCP submission was also reaped, so a silent direct fallback cannot
       # satisfy this step.
       - name: Construct and run shared Windows program cases
-        timeout-minutes: 8
+        timeout-minutes: 6
+        # Cargo builds on every processor of this dedicated runner; the case
+        # pool stays at two.
         env:
-          CARGO_BUILD_JOBS: 2
           RUST_TEST_THREADS: 2
           RUST_MIN_STACK: 8388608
         run: |
