@@ -12,29 +12,31 @@ in the PR, the amendment or the investigation, but the problem, the options
 and the grounds are explained in the card itself. Write in the owner's
 language; repository artifacts stay English.
 
-Every decision the owner must make lives in one place, the **Decisions**
-ledger of the PR description, until the owner rules on it. Conversation
-context is lost to compaction and a card numbered per handoff is lost when the
-next handoff reuses its number; the ledger is what keeps a decision from
-disappearing between them.
+Every decision the owner must make is kept in one ledger in the
+conversation, in the owner's language, until the owner rules on it. It is not
+kept in the PR description, which is English and not where the owner decides.
+A card numbered per handoff is lost when the next handoff reuses its number;
+the ledger is what keeps a decision from disappearing.
 
-- **Entries.** Each decision gets an ID, `Q1`, `Q2` and on, assigned once for
-  the PR and never renumbered or reused, whatever its source: an amendment, a
-  review finding, an investigation's open question, a choice made while
-  implementing, or a direction the owner gave in conversation. An entry holds
-  the question in one line, its status and where its ruling is applied.
-- **Status.** `open` until the owner rules. `ruled` records the date and the
-  owner's words. `superseded by Qn` and `withdrawn` need the owner's explicit
+- **Entries.** Each decision gets an ID, `Q1`, `Q2` and on, assigned once and
+  never renumbered or reused, whatever its source: an amendment, a review
+  finding, an investigation's open question, a choice made while
+  implementing, or a direction the owner gave in passing.
+- **Status.** `open` until the owner rules. A ruling is the owner's own
+  answer to that ID. `superseded` and `withdrawn` need the owner's explicit
   agreement too: a discussion that moves past a card leaves it open.
+- **Restate after every owner reply.** List every ID with its status, for
+  example "Q1, Q2, Q3 approved; Q4 approved with a change; Q5, Q6 not yet
+  discussed, so not started", so that the owner can see at once what is
+  settled and what is not.
+- **Work only on settled ground.** Either say what remains undiscussed, or
+  work; never start work that an open entry could change.
 - **Reconcile before every handoff.** Walk the owner's messages since the last
   handoff, `design/amendments/`, the open questions of the investigations the
-  PR touches, review findings awaiting direction and `docs/todo.md` items
-  awaiting the owner; each becomes an entry or updates one. When the owner
-  states a direction in passing, the reply says which entry it became and
-  whether it is taken as a ruling, and asks when that is unclear.
+  work touches, review findings awaiting direction and `docs/todo.md` items
+  awaiting the owner; each becomes an entry or updates one.
 - **Batch.** Hand off once per finished unit of work, after the review and its
-  rechecks, not once per finding. A question that blocks work before then
-  still shows the whole open list.
+  rechecks, not once per finding.
 
 Re-read this file before each handoff: a copy loaded earlier in a long session
 may predate a merge that changed it.

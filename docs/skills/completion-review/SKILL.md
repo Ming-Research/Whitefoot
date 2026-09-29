@@ -37,7 +37,7 @@ report goes.
 
    | Resolving the finding would change | Action |
    |---|---|
-   | a design decision or amendment, a specification rule, or the agreed scope | Enter it in the PR's decision ledger with your assessment and recommended response (owner-handoff skill) and wait for direction, including during unattended work. |
+   | a design decision or amendment, a specification rule, or the agreed scope | Enter it in the owner's decision ledger with your assessment and recommended response (owner-handoff skill) and wait for direction, including during unattended work. |
    | anything else: form, wording, a broken reference, missing coverage or evidence, placement | Fix it, recheck the affected items and list it in the report. |
 
    The implementing agent rechecks a wording or mechanical fix itself and says
