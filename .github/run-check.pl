@@ -139,8 +139,9 @@ exit $code;
 # which some callers read. CI names a record file in
 # WHITEFOOT_TIME_BUDGET_RECORD: a stage over its budget, or one without a
 # budget for this host, is appended there, and the job's final verdict step
-# fails on a nonempty record, after every stage has run. Without a record the budget is
-# only printed, since a local host is not the runner it was measured on.
+# fails on a nonempty record, after every stage has run. Without a record
+# the budget is only printed, since a local host is not the runner it was
+# measured on.
 sub check_budget {
     my ($label, $elapsed) = @_;
     my ($budget, $problem) = budget_for($label);
