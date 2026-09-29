@@ -96,7 +96,7 @@ Judged by what each command does, on a four-core host:
 | `make static` | reads the tree; small scripts, their self-tests and the design lint's tests | under 30 s | 21 s locally for the whole static group, clippy warm |
 | `make -C compiler lint` | clippy over every target | under a minute cold, seconds warm | 18–59 s cold in CI, 16 s after an edit |
 | `make -C compiler build` / `test-build` after one edit | incremental rebuild of the edited crate | tens of seconds | see [daily loop](#daily-loop) |
-| hosted gate, end to end | two cold optimized builds per OS, 1,900 unit and 93 corpus cases, runtime fixtures | the slowest job under 5 min | 4.3–5.7 min before this change, 3.9 min after |
+| hosted gate, end to end | two cold optimized builds per OS, 1,900 unit and 93 corpus cases, runtime fixtures | the slowest job under 5 min | 4.3–5.7 min before this change, 3.5–3.9 min after |
 | `make check` locally | the same, in sequence, on one host | a few minutes warm, under 10 cold | 11.3 min with a rebuild before this change, 3.0 min warm after |
 | `io-hosts`, `compute-regression` | platform builds and fixtures; a paired performance comparison | under 5 min each | within |
 
@@ -132,24 +132,29 @@ group builds only the library in test mode. Expected: the unit job loses its
 corpus job gains the CLI harness build and its 3–5 s of cases. Local `make
 check` builds the same artifacts as before. Criterion: the hosted unit job
 falls by at least 40 s on both runners while the corpus job grows by at most
-20 s. Result, run 36559339945 against the six earlier runs:
+20 s. Result, job wall times of runs 36559339945 and 36560712129 against the
+median of the six earlier runs:
 
-| Job | ubuntu before (median) | ubuntu after | macOS before (median) | macOS after |
+| Job | ubuntu before | ubuntu after | macOS before | macOS after |
 |---|---|---|---|---|
-| unit, whole group | 249 s | 187 s | job 288 s | job 235 s |
-| corpus, whole group | 145 s | 103 s | job 166 s | job 191 s |
+| unit | 279 s | 209 s, 208 s | 288 s | 235 s, 168 s |
+| corpus | 169 s | 128 s, 183 s | 166 s | 191 s, 157 s |
 
-The unit job met the criterion on both runners. The corpus job fell on
-ubuntu and rose 25 s on macOS, inside its earlier range of 125–196 s; one
-sample cannot separate the CLI harness from runner variance, and the next run
-adds a second sample.
+The unit job fell by 53–120 s, meeting the criterion on both runners. The
+corpus job's two samples average 13 s less on ubuntu and 8 s more on macOS,
+within the criterion and inside its earlier range. The longest gate job is
+now under four minutes.
 
 ### Tried and withdrawn: the Windows build on every processor
 
 The Windows program step builds the compiler at two Cargo jobs. At Cargo's
 default of every processor, run 36559339981's build took 175 s against a
 step of 157–212 s before, of which the cases take about 18 s: no
-measurable gain on one sample, so the step keeps its two jobs.
+measurable gain on one sample, so the step keeps its two jobs. The next run,
+back at two jobs, took a 285-s Windows job against 251 s at every processor
+and 204–251 s before, so this runner's variance exceeds any difference the
+setting makes; reopen with several samples if the Windows job becomes the
+longest.
 
 ### Kept: optimization level 3 for the `gate` profile
 
