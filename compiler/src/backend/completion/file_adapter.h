@@ -107,6 +107,10 @@ typedef struct wf_file_adapter {
     _Atomic uint64_t mean_execute_ns;
     _Atomic uint64_t execute_ticks;
     unsigned stopping;
+    /* Set, under the queue lock, once another context of the program may be
+     * the peer a queued request waits on; see
+     * `wf_file_adapter_hold_for_contexts`. */
+    unsigned hold_for_contexts;
     /* How many helpers this adapter may ever hold.  It is the caller's stated
      * bound on the pool rather than the policy's wish, so it, and not the wish,
      * is what bounds the ceiling `wf_file_adapter_set_helper_cap` installs. */
@@ -342,6 +346,19 @@ size_t wf_file_adapter_queued(const wf_file_adapter *adapter);
  * growing and one that grows past the number of helpers this adapter was told
  * it may ever hold. */
 int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap);
+
+/* From now on, treats every queued request as peer-bound: a submission grows
+ * a helper whenever the pool has room, and while the pool may grow at all a
+ * scheduler thread takes none of them.
+ *
+ * A request's kind says whether another program may hold it up, but not
+ * whether another context of this one may: a read of a pipe waits for the
+ * context that writes it, and a write waits for the one that drains it.  Once
+ * a program runs several contexts, a scheduler thread inside such a call
+ * stops every context it runs, including that peer [WAIT-2].  The runtime
+ * calls this when the first context other than the root starts; it is never
+ * undone, since a context started later may be the peer of any request. */
+int wf_file_adapter_hold_for_contexts(wf_file_adapter *adapter);
 
 /* Read without the queue lock. Zero means the calling thread is itself the
  * only engine this queue has. */

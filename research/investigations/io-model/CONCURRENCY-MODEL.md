@@ -185,8 +185,8 @@ also reports a goroutine blocked on a primitive that no runnable goroutine
 can reach (section 7). The same reachability test over shared-object handles
 is a candidate for reporting a partial cycle; it is untested here.
 
-**What the runtime must still fix for the promise to hold.** These are today's
-gaps, all recorded in `docs/todo.md`:
+**What the runtime had to fix for the promise to hold.** These were the gaps
+when the model was proposed; section 10 closes the first four:
 - A host operation with no asynchronous form blocks the driver thread: a pipe
   read or write, a connect, and every file operation on a host with no ring.
   It must go to a helper and park its context.
@@ -796,3 +796,62 @@ or its cost is brought to the owner; it is not adopted silently.
   waiting on a guard only its own later statement sets both stop with the
   report on 1 and on 4 drivers; an idle server waiting in `accept`, and the
   echo servers, never report.
+
+### 10.5 Results
+
+Each witness program was built with the compiler before the runtime work
+(dac9f07c1) and after it, and run on this four-core container. A run that
+did not finish was stopped after 10 s. The programs are maintained in
+`tests/programs`, and `compiler/tests/programs/contexts.rs` runs them.
+
+- **R1.** `pipe_contexts.wf` takes one pipe as both its standard input and
+  its standard output; its reader starts first, and its writer asks for
+  256 KiB, four times what the pipe holds, in one request.
+  - Before, it stopped on every route: the ring on 1 and on 4 drivers, and
+    the adapter.
+  - After, it finished 8 times in 8 on each.
+  - Cost: the named read benchmark no longer compiles (recorded in
+    `docs/todo.md`). A scratch single-context loop over eight 64 MiB files
+    in 64 KiB reads, warm, 11 and then 15 interleaved runs, took 0.996 and
+    0.979 of its earlier median time.
+- **R2.** `poll_contexts.wf` polls an object for a spawned producer's write.
+  - Before, it ran without end on 1 driver and finished on 4.
+  - After, it finished 5 times in 5 on each.
+  - Cost: the Redis subset at 2 drivers, 16 per pipeline, 3 million
+    requests, 10 interleaved rounds. The client prints rates in steps of
+    about 10% at this length, so the server's CPU time over each run is the
+    finer measure. After R1 and R2: SET 1.11, GET 1.000 and CPU 0.987 of
+    before. With the final runtime: SET 1.062, GET 1.000, CPU 0.990.
+- **R3.** `busy_contexts.wf`: two contexts hand a guard back and forth until
+  a third context's read completes.
+  - Before, it ran without end on every route.
+  - After, it finished 8 times in 8 on each.
+  - Cost: the context echo server, 15 interleaved passes. With R1 to R3,
+    64 connections ran at 0.958 of before, outside the criterion, and 1024
+    connections at 1.082. With the final runtime, 1 connection ran at
+    1.009, 64 at 0.981, 1024 at 0.980, and 64 KiB messages at 0.992.
+  - An attribution run with and without the periodic reap was cut short by
+    the shutdown defect below, and was not repeated once the final runtime
+    met the criterion.
+- **R4.** A cycle of two guards, and a guard only the context's own later
+  statement sets.
+  - Before, both stopped with the report on 1 driver, and 4 drivers ran
+    them until they were killed.
+  - After, both stop with the report on 1 and on 4 drivers.
+  - A server idle in `accept` ran 3 s with no report on every route.
+  - The first version counted host waits in one shared counter that every
+    park and unpark updated. Each driver now keeps its own count, which only
+    its thread writes and another reads once it is idle. That version was
+    replaced before any measurement.
+
+**Found while measuring: a helper could notify a released driver.** The
+echo server stopped once at exit. A helper thread that publishes a record
+wakes every driver (`wf_drivers_notify_others`). After the last context
+finished, the entry released the other drivers' wakes (`wf_drivers_end`),
+and three helpers were blocked on a released driver's lock. The race
+existed wherever helpers ran beside several drivers, such as a pinned
+`WF_IO_HELPERS`. R1 made it common by starting helpers beside the ring.
+
+The fix: a notifier counts itself before it reads the driver count, and
+`wf_drivers_end` lowers the count and waits for the notifiers before it
+releases anything. The 32 final echo passes and every witness run finished.

@@ -1,0 +1,62 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias Inputs = std::process::Inputs;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias read_next = std::io::read_next;
+
+struct Turns {
+  turn: u64;
+  stop: u64;
+}
+
+fn play(state: Shared<Turns>, mine: u64, next: u64) -> result: unit pure waits {
+  doc "Waits for its turn, hands the turn on, and stops after the turn on which it read the stop mark.";
+  let done = 0_u64;
+  loop @play {
+    atomic turns = &state when turns^.turn == mine {
+      set done = turns^.stop;
+      set turns^.turn = next;
+    }
+    if done != 0_u64 {
+      break @play;
+    }
+  }
+  return unit;
+}
+
+fn watch(factory: HandleFactory, input: InputStream, state: Shared<Turns>) -> result: unit pure waits {
+  doc "Reads once from the standard input and then sets the stop mark, whatever the read answered.";
+  let buffer = array_filled::<u8, 16>(value: 0_u8);
+  let window = &buffer[0_u64..16_u64];
+  match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 16_u64) {
+    Ok(value: n) => {
+      let unused = n;
+    }
+    Err(error: stop) => {
+      let unused = 0_u64;
+    }
+  }
+  atomic turns = &state {
+    set turns^.stop = 1_u64;
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Two contexts hand a turn back and forth through a guard and stop only after a third context's read has completed. The two players are never both waiting, so the program finishes only if the host's answer to the read reaches its context while contexts are ready [WAIT-2].";
+  let Inputs(args: unused_args, cwd: cwd, stdout: unused_out, stderr: unused_err, handles: handles, stdin: input) = move inputs;
+  close_directory(factory: &handles, directory: move cwd);
+  let start = Turns(turn: 0_u64, stop: 0_u64);
+  let state = shared_new::<Turns>(value: start);
+  let watched = shared_share::<Turns>(shared: &state);
+  let first = shared_share::<Turns>(shared: &state);
+  let second = shared_share::<Turns>(shared: &state);
+  let factory = factory_share(factory: &handles);
+  spawn watch(factory: move factory, input: move input, state: move watched);
+  spawn play(state: move first, mine: 0_u64, next: 1_u64);
+  spawn play(state: move second, mine: 1_u64, next: 0_u64);
+  return exit_status(code: 0_u8);
+}

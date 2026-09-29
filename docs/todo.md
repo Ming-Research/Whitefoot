@@ -1222,18 +1222,6 @@ rarely insert at the same place.
   or one shared port whose completions carry their driver. Reopen when a
   server on either route needs more than one core.
 
-- **A context's operation with no readiness form still blocks the thread
-  every context shares.** With other contexts live, a socket receive, send
-  or accept waits in the ring or, with no ring, for its descriptor's
-  readiness. Every other host call a context makes that the ring does not
-  take runs on that thread and blocks it: a read or write of a pipe such as
-  standard input or output, a connect to a remote peer, and on a host with no
-  ring every open, close and directory operation. A context reading a pipe
-  that another context of the same program writes would stop both. Route such
-  operations to the helper pool whenever other contexts are live, with the
-  context parked on its record; validate with two contexts joined by a pipe,
-  on both routes.
-
 - **A readiness wait and a helper's completion are found by scanning.** A
   record published on the thread that runs the contexts wakes its context by
   address, but one a helper thread publishes is found by a pass over every
@@ -1253,6 +1241,15 @@ rarely insert at the same place.
   server there holds only as many silent peers as the pool has helpers. A
   `WSAPoll` readiness wait would give it the Linux readiness route's
   behavior. Reopen when a Windows server has to run without the port.
+
+- **The read benchmark's programs no longer compile.**
+  `research/experiments/io-completion-bench/programs/read_heavy_*.wf` still
+  write `own Bool` and other retired spellings, so `read-bench.sh` stops at
+  its first build; the spawn work measured single-context reads with a
+  scratch loop instead (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
+  section 10.5). Port the four programs to the current surface and check
+  that they publish the expected sums. Reopen before the next read-path
+  measurement.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
@@ -1346,52 +1343,29 @@ rarely insert at the same place.
   on hand-made contexts. Reopen when the lock changes again or a handoff
   defect is suspected.
 
-- **A context that never suspends holds back its driver.** Drivers do not
-  preempt, and a waiting call the host or an object answers at once does not
-  suspend, so a context that loops on such calls, or computes forever, keeps
-  the other contexts on its driver waiting; [SHARE-3]'s progress promise
-  therefore assumes every context keeps reaching a wait for a false guard, an
-  unfinished context or a pending host operation. A yield after some number
-  of waiting calls that did not suspend, taken only when another context is
-  ready, would let the promise count every waiting call; its cost on the
-  Redis subset's pipelined rate is the measurement to make first. Reopen when
-  a program's contexts starve behind one that never suspends.
+- **A bound spawn is joined before the whole statement that uses it.**
+  [WAIT-3] joins a bound spawn at the beginning of the first later statement
+  of its block that names the binding, so in
+  `let seen = spawn consume(…); if go { atomic … { … } return seen; }` the
+  call is joined before the `if`, and the atomic statement that would make
+  its guard true never runs. Joining on the path inside the statement instead
+  was refused because later code would merge a joined and an unjoined path
+  (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
+  program needs the use and the enabling statement in one compound statement.
 
-- **A driver reaps host completions only when no context is ready.**
-  `wf_context_drive` harvests the ring and publishes completions only in its
-  idle branch (design/compiler/waiting-contexts, the ring-entry decision), so
-  on one driver two contexts that wake each other through guards forever keep
-  a third, whose host outcome has arrived, from ever running. That breaks
-  [SHARE-3]'s promise that a context waiting for nothing proceeds, whose
-  premise the two looping contexts meet. Reaping after some number of context
-  runs without an idle pass would keep it; the change revises a compiler
-  decision measured on the echo servers, so its cost there is the
-  measurement to make first. Reopen before a program relies on guard
-  ping-pong beside host waits, or with the yield budget above.
-
-- **A bound context is joined before the whole statement that needs it.**
-  A `let`-bound call is joined before the first later statement of its block
-  that names the binding or may leave the block, so in
-  `let seen = consume(…); if go { atomic … { … } return seen; }` the call is
-  joined before the `if`, and the atomic statement that would make its guard
-  true never runs: [SHARE-3] promises progress only up to such a statement.
-  Joining on the path inside the statement instead was refused because later
-  code would merge a joined and an unjoined path
-  (`research/investigations/io-model/WAITS.md`). Reopen when a program needs
-  the use and the enabling statement in one compound statement.
-
-- **With several drivers, a program whose every context waits on another
-  one hangs instead of stopping.** On one driver, when no context is ready
-  and none waits for the host, the bridge stops the program with "every
-  context waits for a context that is not waiting for the host": a context
-  that waits on a guard only its own later statement would satisfy, or two
-  contexts each waiting on a guard the other would satisfy, end there. On
-  several drivers only the entry's driver may declare it, and only while it
-  runs alone, so the same two-context cycle runs until it is killed. A count
-  of contexts that are neither ready nor waiting for the host, checked when
-  every driver is idle with nothing in flight, would let any driver declare
-  it. Reopen when a program is seen to hang this way, or before a guarded
-  program is expected to fail rather than hang.
+- **At most eight operations run on helper threads at once.** Once a
+  program spawns, every operation the ring does not carry runs on the helper
+  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
+  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
+  in the queue until one returns, so nine contexts whose operations wait on
+  one another through pipes can stop although [WAIT-2] promises that they
+  proceed. On Linux the ring carries reads, connects and every socket
+  operation, so only stream writes and a few immediate calls take a helper
+  there; on a host with no ring every file operation does. Letting the pool
+  grow past the ceiling while every helper is blocked, or carrying stream
+  writes on the ring, would remove it; validate with nine contexts paired
+  through pipes. Reopen when a program runs more than eight such waits at
+  once.
 
 - **A fixed recursion budget cannot follow an unbalanced tree.** The budget
   of `compiler/parallel-lowering/two-worlds` is now spent only at calls in

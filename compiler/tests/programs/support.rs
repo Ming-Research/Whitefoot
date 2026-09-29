@@ -592,6 +592,55 @@ impl CompiledProgram {
         output
     }
 
+    /// Runs the program with its standard input and its standard output both
+    /// one pipe, so what it writes it can read back, under the given runtime
+    /// settings. The program is the pipe's only reader and only writer.
+    pub fn run_with_own_pipe(&self, settings: &[(&str, &str)]) -> Output {
+        let (reader, writer) = std::io::pipe().expect("create the program's pipe");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .env_remove("WF_IO_NO_NATIVE_RING")
+            .env_remove("WF_DRIVERS");
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        ProgramChild::spawn(&mut command)
+            .expect("spawn own-pipe program")
+            .wait_with_output()
+            .expect("finish own-pipe program")
+    }
+
+    /// Runs the program with its standard input a regular file holding
+    /// `bytes`, under the given runtime settings.
+    pub fn run_with_file_input_and_settings(
+        &self,
+        bytes: &[u8],
+        settings: &[(&str, &str)],
+    ) -> Output {
+        let path = self.directory.join("standard-input");
+        std::fs::write(&path, bytes).expect("write the input fixture");
+        let file = std::fs::File::open(&path).expect("open the input fixture");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(file))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove("WF_IO_NO_NATIVE_RING")
+            .env_remove("WF_DRIVERS");
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        ProgramChild::spawn(&mut command)
+            .expect("spawn file-input program")
+            .wait_with_output()
+            .expect("finish file-input program")
+    }
+
     /// Runs the program with its standard input redirected from a regular
     /// file holding `bytes`.
     ///

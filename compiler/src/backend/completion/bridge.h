@@ -224,8 +224,15 @@ void *wf__context_operation(void);
 /* Called by a frame whose host operation `operation` did not complete in its
  * start: returns zero when the record is complete after all, and otherwise
  * parks the running context on it, to resume `frame` once it completes, and
- * returns nonzero, after which the frame suspends. */
+ * returns nonzero, after which the frame suspends. A record complete after
+ * all counts as a wait that did not suspend, and may yield the context
+ * instead [WAIT-2]. */
 int wf__context_wait(void *operation, void *frame);
+
+/* [WAIT-2] a host operation its start answered: answers 1 when the running
+ * context has yielded to another ready context and its frame suspends, and 0
+ * when it continues. */
+int wf__context_pass(void *frame);
 
 /* [WAIT-3] a context start: `wf__context_prepare` makes the context and
  * returns an argument block of `bytes` from its arena, and
