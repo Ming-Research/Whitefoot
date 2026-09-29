@@ -15,8 +15,8 @@ use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
 use crate::semantic::postcondition::{
-    CheckedPostcondition, CheckedPostconditionSelector, ParameterDenotation, PostconditionPlace,
-    PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
+    CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
+    PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
 use crate::{DeclarationClass, FixedTerminal, LexicalUseRole, ResolvedTarget};
 
@@ -42,6 +42,9 @@ pub(super) struct TypeInvariantTemplate {
     /// The same relation, as a postcondition over parameter zero's exit
     /// state [FN-9, MSR-3].
     pub(super) relation: RelationTemplate,
+    /// The clause as a contract expression over parameter zero's exit
+    /// state, the form a callable boundary compares [FN-4].
+    pub(super) expanded: ExpandedClauseExpression,
     /// The binder's origin, the source candidate of every selector the
     /// relation's postconditions carry.
     pub(super) binder: crate::SourceOrigin,
@@ -270,11 +273,14 @@ impl<'unit> Checker<'_, 'unit> {
                 .into_goal_expression()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?,
         );
-        let relation = self.types.type_invariant_relation(invariant, expanded)?;
+        let relation = self
+            .types
+            .type_invariant_relation(invariant, expanded.clone())?;
         Ok(TypeInvariantTemplate {
             clause,
             goal,
             relation,
+            expanded,
             binder: binder.origin().clone(),
         })
     }
@@ -383,10 +389,38 @@ impl<'unit> Checker<'_, 'unit> {
         parameters: &[CheckedParameter],
         body: &[CheckedStatement],
     ) -> Result<Vec<CheckedPostcondition>, CheckStop> {
-        let FunctionContext {
-            check_context,
-            function,
-        } = context;
+        let mut postconditions = Vec::new();
+        for (invariant, subject, selector) in
+            self.type_invariant_postcondition_selectors(context.check_context, context.function)?
+        {
+            postconditions.push(self.types.build_checked_postcondition(
+                context,
+                parameters,
+                selector,
+                substitute_relation(&invariant.relation, subject),
+                body,
+            )?);
+        }
+        Ok(postconditions)
+    }
+
+    /// [TYPE-11] each type invariant a callable's boundary promises after its
+    /// written postconditions [FN-9]: over the exit state of each reference
+    /// parameter whose row writes it, then over each result ordinal, each
+    /// with the invariant, its subject and a selector of every explicit
+    /// return.
+    pub(super) fn type_invariant_postcondition_selectors(
+        &self,
+        check_context: &CheckContext<'_>,
+        function: &FunctionSignature,
+    ) -> Result<
+        Vec<(
+            TypeInvariantTemplate,
+            InvariantSubject,
+            CheckedPostconditionSelector,
+        )>,
+        CheckStop,
+    > {
         let mut subjects = Vec::new();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             if parameter.mode != CheckedMode::Reference
@@ -426,7 +460,7 @@ impl<'unit> Checker<'_, 'unit> {
                 subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal));
             }
         }
-        let mut postconditions = Vec::new();
+        let mut selectors = Vec::new();
         for (nominal, subject, result_ordinal) in subjects {
             for invariant in self
                 .types
@@ -448,16 +482,10 @@ impl<'unit> Checker<'_, 'unit> {
                         .get(result_ordinal as usize)
                         .map_or(function.result, |result| result.ty),
                 };
-                postconditions.push(self.types.build_checked_postcondition(
-                    context,
-                    parameters,
-                    selector,
-                    substitute_relation(&invariant.relation, subject),
-                    body,
-                )?);
+                selectors.push((invariant.clone(), subject, selector));
             }
         }
-        Ok(postconditions)
+        Ok(selectors)
     }
 
     /// [TYPE-11] each type invariant a construction of `nominal` owes, over
@@ -534,6 +562,215 @@ impl<'unit> Checker<'_, 'unit> {
                 })
             })
             .collect()
+    }
+}
+
+impl Checker<'_, '_> {
+    /// [TYPE-11] each struct construction a `const` initializer writes owes
+    /// its struct's type invariants over the written field values, which
+    /// decide it exactly. Judged once the invariants are formed, since an
+    /// invariant may name a constant.
+    pub(super) fn judge_constant_invariants(&self, items: &[NodeId]) -> Result<(), CheckStop> {
+        if self.types.type_invariants.is_empty() {
+            return Ok(());
+        }
+        for node in self.types.declarations.constant_order(items)? {
+            let declaration = self
+                .types
+                .declarations
+                .declaration_at(node, DeclarationRole::NamedConst)?
+                .id();
+            let Some(constant) = self
+                .types
+                .constants
+                .get(&declaration)
+                .and_then(|id| self.types.checked_constants.get(id.0 as usize))
+            else {
+                continue;
+            };
+            let value_node = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(node, Production::Cvalue)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            self.judge_constant_value(value_node, &constant.value)?;
+        }
+        Ok(())
+    }
+
+    /// One written `cvalue` and its value: nested constructions first, then
+    /// this one's own invariants. A `cvalue` naming another constant writes
+    /// no construction here; that constant's declaration judged its own.
+    fn judge_constant_value(&self, node: NodeId, value: &CheckedValue) -> Result<(), CheckStop> {
+        let (
+            nested,
+            CheckedValue::Struct {
+                fields: nested_values,
+                ..
+            }
+            | CheckedValue::Array {
+                elements: nested_values,
+                ..
+            },
+        ) = (
+            self.types
+                .declarations
+                .tree
+                .children_with(node, Production::Cvalue)?,
+            value,
+        )
+        else {
+            return Ok(());
+        };
+        if nested.len() != nested_values.len() {
+            return Ok(());
+        }
+        for (child, child_value) in nested.iter().zip(nested_values) {
+            self.judge_constant_value(*child, child_value)?;
+        }
+        let CheckedValue::Struct {
+            ty: CheckedType::Nominal(nominal),
+            ..
+        } = value
+        else {
+            return Ok(());
+        };
+        for invariant in self
+            .types
+            .type_invariants
+            .get(nominal)
+            .into_iter()
+            .flatten()
+        {
+            let terms = invariant
+                .relation
+                .operands
+                .iter()
+                .map(|term| {
+                    self.constant_datum(&term.datum, value)
+                        .map(|datum| datum + term.displacement)
+                })
+                .collect::<Option<Vec<_>>>();
+            let holds = terms
+                .as_deref()
+                .is_some_and(|terms| match invariant.relation.normalized {
+                    NormalizedRelation::Equal => terms[0] == terms[1],
+                    NormalizedRelation::NotEqual => terms[0] != terms[1],
+                    NormalizedRelation::UpperBound {
+                        left,
+                        right,
+                        strict,
+                    } => {
+                        let (left, right) = (terms[usize::from(left)], terms[usize::from(right)]);
+                        if strict { left < right } else { left <= right }
+                    }
+                });
+            if holds {
+                continue;
+            }
+            let text = match terms.as_deref() {
+                Some([left, right]) => format!(
+                    "{left} {} {right}",
+                    comparison_spelling(invariant.relation.operation)
+                ),
+                _ => {
+                    let tree = &self.types.declarations.tree;
+                    let clause = tree
+                        .node_with_path(&invariant.clause)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let expression = tree
+                        .first_child_with(clause, Production::ClauseExpr)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    tree.source_spelling(expression)?
+                }
+            };
+            return self.types.declarations.issue_node(
+                SemanticRule::Type11,
+                node,
+                SemanticIssueKind::UndischargedTypeInvariant {
+                    type_invariant: self.types.declarations.node_location(&invariant.clause)?,
+                    mechanical_fix: super::repairs::constant_construction_invariant(&text),
+                    instantiated_goal: text,
+                    disposition: if terms.is_some() {
+                        crate::CallRequirementDisposition::Refuted
+                    } else {
+                        crate::CallRequirementDisposition::Unproved
+                    },
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// One relation datum's mathematical value over a constant struct value
+    /// in place of parameter zero.
+    fn constant_datum(&self, datum: &RelationDatum, value: &CheckedValue) -> Option<i128> {
+        let read = match datum {
+            RelationDatum::Parameter {
+                ordinal: 0,
+                projections,
+                ..
+            } => constant_projection(value, projections)?,
+            RelationDatum::NamedConst {
+                declaration,
+                projections,
+                ..
+            } => {
+                let id = self.types.constants.get(declaration)?;
+                let constant = self.types.checked_constants.get(id.0 as usize)?;
+                constant_projection(&constant.value, projections)?
+            }
+            RelationDatum::Literal { value, .. } => value,
+            RelationDatum::Measure(
+                crate::semantic::model::CheckedMeasure::Length,
+                PostconditionPlace {
+                    root: PostconditionPlaceRoot::ExitParameter { ordinal: 0 },
+                    projections,
+                    ..
+                },
+            ) => {
+                let CheckedValue::Array { elements, .. } = constant_projection(value, projections)?
+                else {
+                    return None;
+                };
+                return i128::try_from(elements.len()).ok();
+            }
+            _ => return None,
+        };
+        let CheckedValue::Integer { ty, bits } = read else {
+            return None;
+        };
+        Some(crate::semantic::entailment::integer_value(*ty, *bits))
+    }
+}
+
+/// The field a projection of struct-field steps reaches in a constant value.
+fn constant_projection<'value>(
+    value: &'value CheckedValue,
+    projections: &[GoalProjection],
+) -> Option<&'value CheckedValue> {
+    projections
+        .iter()
+        .try_fold(value, |value, projection| match (projection, value) {
+            (GoalProjection::Field(field), CheckedValue::Struct { fields, .. }) => {
+                fields.get(*field as usize)
+            }
+            _ => None,
+        })
+}
+
+/// The source spelling of a relation's comparison.
+const fn comparison_spelling(
+    operation: crate::semantic::model::CheckedIntegerOperation,
+) -> &'static str {
+    match operation {
+        crate::semantic::model::CheckedIntegerOperation::Equal => "==",
+        crate::semantic::model::CheckedIntegerOperation::NotEqual => "!=",
+        crate::semantic::model::CheckedIntegerOperation::Less => "<",
+        crate::semantic::model::CheckedIntegerOperation::LessEqual => "<=",
+        crate::semantic::model::CheckedIntegerOperation::Greater => ">",
+        _ => ">=",
     }
 }
 
@@ -827,5 +1064,52 @@ fn substitute_relation_datum(datum: &RelationDatum, subject: InvariantSubject) -
             },
         ),
         (datum, _) => datum.clone(),
+    }
+}
+
+/// [TYPE-11] the clause as a contract expression over `subject` in place of
+/// parameter zero's exit state [FN-4].
+pub(super) fn substitute_expanded(
+    expression: &ExpandedClauseExpression,
+    subject: InvariantSubject,
+) -> ExpandedClauseExpression {
+    match expression {
+        ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ty,
+            denotation: ParameterDenotation::ExitState,
+        }) => ExpandedClauseExpression::Datum(match subject {
+            InvariantSubject::ExitParameter(ordinal) => ExpandedClauseDatum::Parameter {
+                ordinal,
+                projections: std::iter::once(GoalProjection::Deref)
+                    .chain(projections.iter().copied())
+                    .collect(),
+                ty: *ty,
+                denotation: ParameterDenotation::ExitState,
+            },
+            InvariantSubject::Result(ordinal) => ExpandedClauseDatum::Result {
+                ordinal,
+                projections: projections.clone(),
+                ty: *ty,
+            },
+        }),
+        ExpandedClauseExpression::Operation {
+            row,
+            type_arguments,
+            const_arguments,
+            result,
+            arguments,
+        } => ExpandedClauseExpression::Operation {
+            row: *row,
+            type_arguments: type_arguments.clone(),
+            const_arguments: const_arguments.clone(),
+            result: *result,
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_expanded(argument, subject))
+                .collect(),
+        },
+        other => other.clone(),
     }
 }

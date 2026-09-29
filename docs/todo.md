@@ -77,6 +77,19 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A propagated error exit proves no exit-state postcondition its caller
+  receives.** Awaiting the owner's direction. [FN-9] leaves a propagated
+  error exit unselected, so a body that writes a reference parameter, then
+  propagates an `Err`, is never asked to prove an unrouted clause over that
+  parameter's exit state; [CALL-6] still establishes that clause on the
+  caller's normal continuation, which a call returning `Err` reaches. The
+  caller then holds a relation the callee never proved: a written `ensures
+  t^.next <= 5_u64` does this today, and [TYPE-11]'s implicit postcondition
+  over a written reference inherits it, so a caller can index past a window
+  after such a call. Found in the TYPE-11 review. The proposed change makes
+  a propagated error exit select every unrouted clause over an exit state and
+  every type invariant, judged at the `propagate` edge as a return is.
+  Resolve before the branch that carries TYPE-11 merges.
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:

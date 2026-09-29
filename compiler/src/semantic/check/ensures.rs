@@ -1,6 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
+use crate::semantic::entailment::integer_value;
 use std::collections::HashMap;
 
 use crate::FixedTerminal;
@@ -16,7 +17,7 @@ use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId, IntegerType,
+    CheckedValue, FunctionId,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
@@ -1210,20 +1211,6 @@ impl<'unit> Checker<'_, 'unit> {
             request: None,
         }))
     }
-}
-
-/// The mathematical value of one checked integer constant, whose `bits` hold
-/// the type-width two's-complement pattern.
-const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
-    let value = bits as i128;
-    if ty.signed() {
-        let width = ty.width() as u32;
-        let sign_bit = 1_u64 << (width - 1);
-        if bits & sign_bit != 0 {
-            return value - (1_i128 << width);
-        }
-    }
-    value
 }
 
 /// The type-width bit pattern of one mathematical value, or `None` when the

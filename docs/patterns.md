@@ -814,4 +814,3 @@ An invariant relates one field or measure on each side, displaced by a
 constant, over the struct's own fields; a relation to another value, such as an
 index into another table, stays a contract. Publish a field only as `public
 readonly`, so that only the declaring module writes it.
-

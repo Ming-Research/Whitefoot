@@ -1115,6 +1115,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.collect_deferred_nominal_constants(check_context, &items)?;
         self.collect_function_signatures(check_context, &items)?;
         self.collect_type_invariants(check_context)?;
+        self.judge_constant_invariants(&items)?;
         self.admit_postcondition_selectors(check_context)?;
         self.validate_generic_templates(check_context)?;
         if self.types.signatures.iter().any(|signature| {

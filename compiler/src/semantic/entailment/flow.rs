@@ -218,7 +218,6 @@ struct ArmFacts {
     goals: Vec<GoalId>,
 }
 
-/// A value initializer collecting give-edge states for its continuation.
 /// [TYPE-11] an atomic block's type invariants, owed at each edge leaving
 /// the block: its end, a `return`, a `break` of a loop around it, a `give` to
 /// a value initializer around it, and an error propagation.
@@ -228,6 +227,7 @@ struct AtomicFrame {
     invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
 }
 
+/// A value initializer collecting give-edge states for its continuation.
 struct GiveFrame {
     scope_depth: usize,
     loop_depth: usize,

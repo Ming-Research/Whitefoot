@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Write a type invariant with an explicit binder
+
+Nodes: language/checks-and-proofs, language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts
+
+Owner-approved: 2026-09-29, the owner approved the explicit binder after comparing it with an implicit `self` or `this` ("agreed on the explicit binder, it is indeed better", written in Chinese).
+
+Summary: language/checks-and-proofs adds the written form of a type invariant, `invariant name(binder): left op right;` after the struct's fields, whose relation is judged as the requirement clause of a function with the binder as its one parameter, because Whitefoot has no receiver and names every value in a clause by a declared name, so the relation reuses the requirement clause's forms, diagnostics and repairs, and the name identifies the invariant as a local invariant's name does. An implicit `self` or `this` binder is refused because no other construct has a receiver, so it would be a reserved word naming a value in one clause, and bare field names because a field name alone is a place in no other clause. The form was chosen while implementing [TYPE-11] and held as an amendment until this ruling. Nodes also names the nodes of the earlier entries this branch brings to main, because the newest entry names every node changed against main. This ruling authorizes no merge.
+
 ## 2026-09-29 Hold struct invariants at the declaring module's boundary
 
 Nodes: language/checks-and-proofs, language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts

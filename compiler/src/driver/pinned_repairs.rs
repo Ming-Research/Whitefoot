@@ -2981,6 +2981,34 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        name: "type-invariant-on-an-opaque-struct.wf",
+        rejected: br#"opaque struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: declare the invariant on a struct that is not `opaque`\n",
+        ],
+        repaired: &[br#"struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "type-invariants-share-a-name.wf",
         rejected: br#"struct Pair {
   first: u64;

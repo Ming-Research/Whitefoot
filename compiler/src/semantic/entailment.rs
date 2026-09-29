@@ -41,6 +41,8 @@ pub(crate) use state::{
     GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
     PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation,
 };
+/// The mathematical value of a checked integer constant [ENT-2].
+pub(crate) use term::integer_value;
 #[cfg(test)]
 pub(crate) use term::{
     CountedCaptureSide, MeasureBound, PlaceRoot, TermId, TermKind, ZERO, type_range,

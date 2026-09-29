@@ -1,0 +1,11 @@
+public struct Pair {
+  public readonly first: u64;
+  public readonly second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+public fn make(low: u64, high: u64) -> pair: Pair pure contract {
+  requires low <= high;
+} doc "Makes a pair from bounds in order.";
+
+public fn span(p: &Pair) -> result: u64 reads(p) doc "The distance from first to second.";

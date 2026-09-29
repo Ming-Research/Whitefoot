@@ -107,6 +107,12 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[1].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[2].production(), Production::Item);
     assert_eq!(DECISIONS[2].kind(), DecisionKind::Choice);
+    // [GRAM-2, TYPE-11]: `struct_decl` closes with its `field*` repeat and then
+    // v0.81's `type_invariant*` repeat.
+    assert_eq!(DECISIONS[12].production(), Production::StructDecl);
+    assert_eq!(DECISIONS[12].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[13].production(), Production::StructDecl);
+    assert_eq!(DECISIONS[13].kind(), DecisionKind::Repeat0);
     // [GRAM-2, TYPE-2, MOD-5]: `field := "public"? "readonly"? IDENT ":" type ";"`
     // owns two optionals of its own.
     assert_eq!(DECISIONS[14].production(), Production::Field);

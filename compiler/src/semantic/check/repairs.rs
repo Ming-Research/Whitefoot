@@ -861,6 +861,14 @@ pub(super) fn construction_invariant(case: &GoalCase<'_>) -> String {
     }
 }
 
+/// [TYPE-11] a type invariant a `const` initializer's construction owes,
+/// which its written field values decide exactly.
+pub(super) fn constant_construction_invariant(text: &str) -> String {
+    format!(
+        "`{text}` is false for the field values this constant writes: write values that satisfy it, or declare the constant with a struct that states no such invariant"
+    )
+}
+
 /// [TYPE-11] a type invariant of an object's state at an edge that leaves
 /// an atomic block.
 pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
