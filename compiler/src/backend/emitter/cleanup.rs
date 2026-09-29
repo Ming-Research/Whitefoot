@@ -93,21 +93,23 @@ fn emit_shared_drop_helper(
     );
     output.open_block("state".to_owned());
     if type_requires_cleanup(program, state)? {
-        let state_ty = output.type_name(program, state)?;
         writeln!(
             output,
-            "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}\n  %state.value = load {state_ty}, ptr %state.address",
+            "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}",
             crate::backend::SHARED_STATE_OFFSET
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        // The state is released in place: a memory-only state is never
+        // loaded (compiler/payload-enum-layout), and any other is loaded by
+        // the place job itself.
         let mut temporary = 0_u32;
         emit_cleanup_jobs(
             program,
             &mut output,
             &mut temporary,
-            vec![CleanupJob::Value {
+            vec![CleanupJob::Place {
                 ty: state,
-                operand: "%state.value".to_owned(),
+                address: "%state.address".to_owned(),
             }],
         )?;
     }
