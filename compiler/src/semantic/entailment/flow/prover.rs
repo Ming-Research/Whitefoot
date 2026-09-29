@@ -793,6 +793,122 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
+        // [ENT-4] `a == b` has no single-inequality affine normalization of
+        // its own — DIRECT and AUTO each close one affine target, never a
+        // conjunction — so it is proved exactly as [ENT-4] fixes its L0
+        // derivability and [INV-1] normalizes a source equality target: as
+        // the bound pair `a-b <= 0` and `b-a <= 0`, each submitted to the
+        // same numeric affine route an ordinary ordering leaf uses, and
+        // discharged only when both succeed.
+        if let Some(
+            [
+                (less_equal, less_equal_right),
+                (greater_equal, greater_equal_right),
+            ],
+        ) = self.affine_signed_goal_equality_targets(expression, context.affine)
+        {
+            let forward_proof = self.numeric_affine_proof(&less_equal, less_equal_right, context);
+            let reverse_proof = forward_proof
+                .is_some()
+                .then(|| self.numeric_affine_proof(&greater_equal, greater_equal_right, context))
+                .flatten();
+            if let (Some(forward_proof), Some(reverse_proof)) = (forward_proof, reverse_proof) {
+                let projection = self.vocabulary.goals.projection(goal).cloned();
+                // [ENT-4] names this combination `Equality` when the goal has
+                // a plain term-pair projection to hang it from, built from two
+                // directional bound proofs exactly as the raw-L0 route already
+                // builds one from two directional `bound_proof`s, just proved
+                // by the affine route instead; a goal whose operands are not
+                // themselves one term or constant has no such projection, so
+                // its two affine steps combine as one ordinary consequence
+                // instead, each keeping its own affine step exactly as the
+                // single-inequality route above records one.
+                let equal = match &projection {
+                    Some(Relation::Equal {
+                        left,
+                        right,
+                        difference,
+                    }) => Some((*left, *right, *difference)),
+                    _ => None,
+                };
+                let forward =
+                    self.vocabulary
+                        .derivations
+                        .intern(DerivationNode::AffineConsequence {
+                            relation: equal.map(|(left, right, difference)| {
+                                Box::new(Relation::Bound {
+                                    left,
+                                    right,
+                                    bound: difference,
+                                })
+                            }),
+                            premises: forward_proof.premises.into_boxed_slice(),
+                            parents: forward_proof.parents,
+                        });
+                let reverse =
+                    self.vocabulary
+                        .derivations
+                        .intern(DerivationNode::AffineConsequence {
+                            relation: equal.map(|(left, right, difference)| {
+                                Box::new(Relation::Bound {
+                                    left: right,
+                                    right: left,
+                                    bound: -difference,
+                                })
+                            }),
+                            premises: reverse_proof.premises.into_boxed_slice(),
+                            parents: reverse_proof.parents,
+                        });
+                let consequence = match equal {
+                    Some((left, right, _)) => {
+                        self.vocabulary
+                            .derivations
+                            .intern(DerivationNode::Equality {
+                                left,
+                                right,
+                                forward,
+                                reverse,
+                            })
+                    }
+                    None => self
+                        .vocabulary
+                        .derivations
+                        .intern(DerivationNode::AffineConsequence {
+                            relation: None,
+                            premises: Box::new([]),
+                            parents: vec![forward, reverse],
+                        }),
+                };
+                let derivation =
+                    match projection {
+                        Some(relation) => {
+                            self.vocabulary
+                                .derivations
+                                .intern(DerivationNode::GoalProjection {
+                                    goal,
+                                    sign: GoalSign::Positive,
+                                    relation,
+                                    parent: consequence,
+                                })
+                        }
+                        None => self.vocabulary.derivations.intern(
+                            DerivationNode::GoalAffineConsequence {
+                                goal,
+                                sign: GoalSign::Positive,
+                                parent: consequence,
+                            },
+                        ),
+                    };
+                return ProofResult {
+                    disposition: ProofDisposition::Proved,
+                    route: Some(ProofRoute::Affine),
+                    derivation: Some(derivation),
+                    numeric_upper_bound: None,
+                    product_interval: None,
+                };
+            }
+        }
+
         let derivation = self.signed_goal_affine_proof(
             context,
             expression,
