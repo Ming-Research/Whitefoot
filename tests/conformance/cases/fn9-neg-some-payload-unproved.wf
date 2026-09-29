@@ -4,8 +4,12 @@ alias exit_status = std::process::exit_status;
 fn any_position(data: &[u8], pos: u64) -> result: Option<u64> reads(data) contract {
   ensures when Some(value: found): found < data^.len;
 } {
-  doc "A direct Some is a selected return whose payload atom must satisfy the clause [FN-9]; nothing bounds pos, so the relation is unproved.";
-  return Some<u64>(value: pos);
+  doc "A direct Some is a selected return whose payload atom must satisfy the clause [FN-9]; pos may equal the length, so the relation is unproved.";
+  let length = data^.len;
+  if pos <= length {
+    return Some<u64>(value: pos);
+  }
+  return None<u64>();
 }
 
 fn main() -> status: ExitStatus pure {

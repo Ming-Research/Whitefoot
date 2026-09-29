@@ -33,10 +33,12 @@ fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pur
 }
 
 fn frame_bytes(width: u32, height: u32) -> result: Result<u32, PngError> pure {
-  doc "propagate's successful continuation selects the same conditional context as a match's Ok arm [ENT-5, ERR-3]: the bound binder's fields carry the published bounds.";
+  doc "propagate's successful continuation selects the same conditional context as a match's Ok arm [ENT-5, ERR-3]: the bound binder's fields carry the published bounds, and copies of them, which have affine images, multiply under ENT-6's interval product.";
   let header = propagate parse_header(width: width, height: height);
-  let stride = header.width * 4_u32;
-  let bytes = stride * header.height;
+  let columns = header.width;
+  let rows = header.height;
+  let stride = columns * 4_u32;
+  let bytes = stride * rows;
   return Ok<u32, PngError>(value: bytes);
 }
 

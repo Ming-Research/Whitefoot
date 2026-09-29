@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 fn low_half(value: u64) -> result: u32 pure contract {
   ensures result == cvt::<u64, u32>(value);
 } {
-  doc "Only a whole-type-total conversion is a relation term [ENT-2]; u64 to u32 is value-dependent, so the clause is refused.";
+  doc "Only a whole-type-total conversion is admitted in a clause [FN-8] and is a relation term [ENT-2]; u64 to u32 is value-dependent, so the postcondition clause is refused under FN-9.";
   let low = cvt.wrap::<u64, u32>(value);
   return low;
 }

@@ -33,12 +33,14 @@ fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pur
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The Ok arm selects the call's conditional context and substitutes the binder's fields for the payload root's [ENT-5], so both multiplications discharge from the published bounds with no range check.";
+  doc "The Ok arm selects the call's conditional context and substitutes the binder's fields for the payload root's [ENT-5], so both multiplications discharge from the published bounds with no range check. The products multiply copies of the fields: ENT-6's interval product reads the affine images of own integer bindings, which a field place does not have.";
   let parsed = parse_header(width: 3_u32, height: 2_u32);
   match parsed {
     Ok(value: header) => {
-      let stride = header.width * 4_u32;
-      let bytes = stride * header.height;
+      let width = header.width;
+      let height = header.height;
+      let stride = width * 4_u32;
+      let bytes = stride * height;
       let code = cvt.wrap::<u32, u8>(bytes);
       return exit_status(code: code);
     }

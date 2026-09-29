@@ -5,6 +5,10 @@ fn never(data: &[u8]) -> result: Option<u64> reads(data) contract {
   ensures when Some(value: found): found < data^.len;
 } {
   doc "A direct None is unselected, not unreachable [FN-9]: a Some clause whose function returns only None has an empty selected-return set and is refused.";
+  let length = data^.len;
+  if length == 0_u64 {
+    return None<u64>();
+  }
   return None<u64>();
 }
 
