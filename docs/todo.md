@@ -2411,3 +2411,16 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **One budget per runner class hides slow growth on faster runners.** On
+  identical compiler source the ubuntu `check/unit` stage took 123–187 s,
+  so its budget, 1.25 times the slowest run, lets a change grow a fast run by
+  about 90% before the stage trips, and the overrun may land on a later
+  change's run
+  ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  The gate's host record now prints the processor model. If the fast and
+  slow runs separate by model, give each model its own budget column, with
+  the current one kept for an unknown model, and lower the margin as far as
+  the within-model spread allows; validate that a leave-one-out over at
+  least seven runs per model trips no build or case stage. Reopen when an
+  overrun is traced to a change that earlier runs on faster machines passed,
+  or when clippy's variance overruns come more than about once a week.

@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-29 Hold verification stages to time budgets judged from the change
+
+Nodes: compiler/verification
+
+Owner-approved: 2026-09-29, the owner ruled on PR #187's cards in the session: Q6 option A (Cargo's and the test harness's own processor default), Q7 changed to 1.25 times the slowest run with a judgment on every overrun ("change it to 1.25, and add active judgment"), and Q8 option A (a green hosted gate on the exact revision is its make check), written in Chinese; the handoff also listed the refused lower gate optimization level.
+
+Summary: compiler/verification's local-parallelism decision keeps Cargo's and the test harness's default of every processor available to the process, since the host-wide lock already excludes the commands a reserve of two was for. A new decision gives every labeled stage a wall-time budget per hosted runner class, 1.25 times its slowest recorded run, which CI records without changing the stage's status and fails in a final verdict step; an overrun is judged from the change, fixed or raised with the owner, re-run once when unclear, and reported as runner variance when the change plainly cannot explain it, because seven runs of identical source varied by up to 1.55 times per stage and 3 times for clippy. A new decision makes a green hosted gate on the exact revision to be merged, a head current with main, that revision's make check. Refused: a fixed pool of two, the online processor count, job timeouts alone, timing against the merge base, failing a stage's own command, 1.5 times the slowest run, treating every overrun as a cause or a raise, and a lower gate optimization level. Evidence: [time budgets](../research/investigations/test-economy/time-budgets.md).
+
 ## 2026-09-29 Spend the recursion budget only at group calls
 
 Nodes: compiler/parallel-lowering/two-worlds, compiler/parallel-lowering

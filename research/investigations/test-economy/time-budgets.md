@@ -213,30 +213,52 @@ were measured on. The Windows steps do not run under the wrapper and have no
 budget; their step timeouts stay at 5 and 8 min, and the Windows and Linux
 io-hosts jobs' timeouts go from 30 and 45 min to 10.
 
-**Budget size.** 1.5 times the slowest run recorded, rounded up to 5 s, and
-never under 10 s. For the gate the runs are the six earlier ones and three
-of this branch (0692767b3, 4fb0b1555, e8334d394); `check/unit` uses only the
-three, because it no longer builds the ordinary library. For `io-hosts` they
-are the main runs 36509424727, 36520371632 and 36545788231 and this branch's
-three; for `compute-regression`, run 36545746305 and this branch's three. The
-spread between runs was up to 3 times for clippy and 1.4–1.7 times for the
-builds and cases, so a budget sits above the slowest run seen rather than a
-typical one; a stage that grows by half again over its slowest run, or a new
-stage without a budget, fails. Slowest runs, in seconds:
+**Budget size.** 1.25 times the slowest run recorded, rounded up to 5 s,
+and never under 10 s. For the gate the runs are seven of this branch whose
+compiler source is identical, so their differences are the runners': gate
+runs 36559339945, 36560712129, 36561430806, 36563489487, 36564932966,
+36565698118 and 36622323588, at 0692767b3 through a6d011f86. For `io-hosts`
+they are the main runs 36509424727, 36520371632 and 36545788231, this
+branch's first three, and its runs 36563489571, 36564932651, 36565698067,
+36622323301 and 36623591270; for `compute-regression`, run 36545746305 and
+this branch's three.
+
+Across the seven identical gate runs a stage's slowest run was 1.3–1.55
+times its fastest for the builds and cases, and 1.75 (ubuntu) and 3.0
+(macOS) times for clippy. The ubuntu runs clustered near their slowest with
+a tail of faster ones: `check/unit` took 181–187 s in four runs and 123–162 s
+in three, `check/corpus` 155–159 s in four and 103–125 s in three. Whether
+the faster runs had faster machines is not known: the gate's host record did
+not print the processor model until this change added it.
+
+The first budgets were 1.5 times the slowest of nine runs of different
+revisions, whose spread mixed growth with noise. Measured against identical
+source, 1.5 let a typical ubuntu `check/unit` run (181 s) grow by 57%, and
+the fastest of the seven (123 s) by more than double, before its stage
+tripped. The owner asked whether that margin was too wide and ruled for 1.25
+with a judgment on every overrun (the gate, below).
+
+A budget at 1.25 times the slowest of seven samples can still trip on
+noise. Leaving each of the seven gate runs out in turn and holding it to
+1.25 times the slowest of the other six, no build or case stage tripped; the
+clippy stage tripped twice (28.9 s against 25 s on ubuntu, 60.1 s against
+50 s on macOS), and with it `check/static` on macOS once (92.0 s against
+90 s), in two of the seven runs. An occasional clippy overrun that the
+judgment reads as runner variance is expected. Slowest runs, in seconds:
 
 | Stage | ubuntu | macOS |
 |---|---|---|
-| `check/static` | 76.7 | 92.0 |
-| `repository-invariants` | 15.0 | 18.9 |
-| `compiler/lint` | 59.4 | 60.1 |
-| `check/unit` | 187.2 | 215.1 |
-| `compiler/test-build-unit` | 105.6 | 157.2 |
-| `compiler/test-unit` | 84.7 | 73.3 |
-| `check/corpus` | 164.7 | 201.3 |
-| `compiler/test-build-corpus` | 78.2 | 104.4 |
-| `compiler/test-corpus` | 86.3 | 96.5 |
-| `check/runtime` | 12.6 | 7.9 |
-| `linux-runtime` | 31.8 | |
+| `check/static` | 49.3 | 92.0 |
+| `repository-invariants` | 18.5 | 22.5 |
+| `compiler/lint` | 28.9 | 60.1 |
+| `check/unit` | 187.2 | 222.6 |
+| `compiler/test-build-unit` | 105.6 | 147.7 |
+| `compiler/test-unit` | 81.9 | 76.6 |
+| `check/corpus` | 159.4 | 201.3 |
+| `compiler/test-build-corpus` | 75.7 | 104.4 |
+| `compiler/test-corpus` | 84.7 | 96.5 |
+| `check/runtime` | 12.6 | 6.6 |
+| `linux-runtime` | 37.5 | |
 | `performance-candidate-compiler` | 88.9 | |
 | `performance-baseline-compiler` | 80.9 | |
 | `performance-null` | 34.7 | |
@@ -245,6 +267,15 @@ stage without a budget, fails. Slowest runs, in seconds:
 
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
+
+**Judging an overrun.** A stage over its budget fails the job's verdict
+step, and the author then reads the change against the stage: added cases,
+fixtures or work on the stage's path, and the job's ranking of slowest cases
+and its host. A cause found is fixed, or its raise goes to the owner; when
+the reading is unclear, the job runs once more; and when the change plainly
+cannot slow the stage, as a prose-only change cannot slow a build, the
+overrun is reported as runner variance in the validation handed back and
+does not hold the revision back. AGENTS.md "Checks" states the steps.
 
 **Why this form.**
 
@@ -290,9 +321,11 @@ full local gate, warm, in about three.
 - Budgets are measured on hosted runners; local hosts are not gated.
 - The gate measures cold builds only. A change that slows incremental
   rebuilds, the cost of each edit in daily work, passes it.
-- Runner speed varies; a budget at 1.5 times the observed maximum can still
-  fail on an unusually slow runner. Such a failure names the stage, and a
-  second run on the same revision separates the runner from the change.
+- Runner speed varies; a budget at 1.25 times the observed maximum trips
+  on an unusually slow runner, most often in the clippy stage. The judgment
+  above separates the runner from the change. Budgets per kind of runner
+  machine would allow a tighter margin if the processor model shows that the
+  faster ubuntu runs had faster machines; recorded in `docs/todo.md`.
 - The corpus stage cannot drop below its longest case, one conformance walk
   (78 s on the local container); splitting that walk across threads is
   recorded in `docs/todo.md`.
