@@ -28,8 +28,8 @@ sh research/experiments/monitor-invariants/run.sh
 
 ## Results
 
-Checked at `c19ac6714` on Linux; the first twelve had the same verdicts at
-`0a2d00283` and `2ff9181a4`:
+Checked at `f9ad34a17`'s compiler on Linux; the first twelve had the same
+verdicts at `0a2d00283` and `2ff9181a4`:
 
 | Probe | What it tests | Verdict |
 |---|---|---|
@@ -48,6 +48,8 @@ Checked at `c19ac6714` on Linux; the first twelve had the same verdicts at
 | `slot-cursor` | a cursor `next` into a `Slots` window kept `next < slots.len` by `claim`, which reads `slots[next]` and advances with wrap-around | accepted |
 | `slot-cursor-weak-entry` | the same with only `next <= slots.len` at entry | OP-4, Unproved |
 | `slot-cursor-missed-wrap` | `claim` forgets the wrap-around | INV-1, Unproved |
+| `type-invariant-by-contract` | the cursor invariant carried through a reference by a `requires` and an `ensures` on the function that advances it, over two calls | accepted |
+| `type-invariant-without-ensures` | the same without the `ensures` | FN-8, Unproved |
 
 ## What the results show
 
@@ -65,6 +67,13 @@ fact `next < slots.len` is the only proof that `slots[next]` is in bounds
 exit obligation catches a cursor left one past the end
 (`slot-cursor-missed-wrap`). Without an invariant, each block would have to
 test the cursor at run time and choose what to do when it fails.
+
+**A contract pair can carry an invariant across calls by hand.** An
+`ensures` over a reference parameter's field and measure states the exit
+state, so `type-invariant-by-contract` keeps `next < slots.len` through two
+calls, and the second call's requirement is refused without it
+(`type-invariant-without-ensures`). A type invariant would write that pair
+once for every function of the declaring module (CONCURRENCY-MODEL.md 5.6).
 
 **The two classic mistakes are refused, each for its own reason.**
 - A block that forgets the update is refuted: the invariant is false where it
@@ -113,9 +122,10 @@ not do today.**
 ## Limits
 
 - The probes check proofs. Every accepted probe also compiles and runs;
-  only `queue-count` and `slot-cursor` observe anything, exiting with 7 (the
-  value put through the queue and taken back) and 31 (three claims over two
-  slots, 10 + 11 + 10).
+  only `queue-count`, `slot-cursor` and `type-invariant-by-contract` observe
+  anything, exiting with 7 (the value put through the queue and taken back),
+  31 (three claims over two slots, 10 + 11 + 10) and 20 (two claims over one
+  slot).
 - Only a single object's invariant is tested. Invariants over the elements of
   a storage (for example "every value in the keyspace is at most 512 MiB") are
   outside the fact language by an existing decision

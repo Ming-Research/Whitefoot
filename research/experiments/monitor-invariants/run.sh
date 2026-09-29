@@ -14,8 +14,9 @@ WHITEFOOTC=${WHITEFOOTC:-$ROOT/compiler/target/debug/whitefootc}
 
 expected() {
     case $1 in
-        queue-count | bank-values | bank-snapshot | ghost-counters | field-premise-copied | slot-cursor)
+        queue-count | bank-values | bank-snapshot | ghost-counters | field-premise-copied | slot-cursor | type-invariant-by-contract)
             echo accepted ;;
+        type-invariant-without-ensures) echo "FN-8 Unproved" ;;
         queue-missed-update) echo "INV-1 Refuted" ;;
         queue-split-transaction | bank-snapshot-without-bridge | slot-cursor-missed-wrap) echo "INV-1 Unproved" ;;
         slot-cursor-weak-entry) echo "OP-4 Unproved" ;;

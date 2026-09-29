@@ -379,6 +379,84 @@ open.
   between a context's blocks beyond "I held when I left and holds when I
   return".
 
+### 5.6 An invariant for the whole life of a value
+
+Seeing the cursor example, the owner remarked (written in Chinese,
+translated here): "this invariant bound to the struct looks quite useful; if
+it could be kept for the whole lifetime of the program, it would be very
+useful." It can be kept at every point where other code can observe the
+value, with the declaring module as the boundary, as the atomic block is the
+boundary in 5.1.
+
+**The rule.** A struct declares an invariant I over its own fields, and each
+of its fields is private or `public readonly`, so no path outside the module
+writes a field [TYPE-2, MOD-6].
+- Every construction owes I.
+- Inside the declaring module, I is owed wherever the value is handed on:
+  each exit of a function that received the value or a reference to it, each
+  call that passes it, a store into another place, and each exit of an
+  atomic block on it. Between two field writes in one body, I may be false.
+- Every function of the module that receives the value assumes I at entry.
+- Outside the module, every value of the type satisfies I. A read of one, as
+  a parameter, an element, a field or a shared object's state, gives I over
+  its fields as a fact at that read.
+
+**Why it holds.** A value has one owner, a reference never escapes the
+function that formed or received it [REF-3], and there is no global mutable
+state (`design/language/ownership`), so no code other than the body making
+two field writes can observe the value between them. An atomic block contains no wait, so no other context observes a
+state between its writes either.
+
+**Precedent.** SPARK's `Type_Invariant` draws the same boundary: GNATprove
+checks that "outside of the immediate scope of a type with an invariant, all
+values of this type are allowed by its invariant", "variables and parameters
+of a subprogram are allowed to break their invariants in the subprogram
+body", and a subprogram not visible outside the package may return with it
+broken (SPARK user's guide, "Type Contracts"). SPARK does not support the
+same invariant on a protected type (section 7); here the shared object is
+one more place the value lives.
+
+**Evidence.** Today a writer can carry such an invariant by hand, as a
+`requires` and an `ensures` on every function that takes the value.
+`type-invariant-by-contract` keeps `next < slots.len` through two calls that
+advance a cursor through a reference; without the `ensures`, the second
+call's requirement is refused (FN-8, `type-invariant-without-ensures`). The
+type invariant writes that pair once for every function of the module, and
+gives code outside the module the fact without a contract naming it. Its
+proof reach is that of contracts: difference bounds [FN-9], and an affine
+invariant needs the entry snapshot of 5.3.
+
+**What it reopens.** It reverses a recorded refusal, which needs the
+owner's ruling through the design tree:
+- `design/language/checks-and-proofs` refused "Type-level struct invariants"
+  "because every construction and field write would owe the invariant
+  again, and the relations needed are to another value, such as a table's
+  length, which a type cannot state". With the module boundary, a field write
+  owes nothing; a hand-off does, and outside the module there is no field
+  write. The second reason still holds for relations between values, such as
+  an arena's index into another table: those stay contracts. The type
+  invariant covers relations within one value, such as the cursor's.
+- Its decision that "privacy adds no implicit type invariant" stands: I is
+  written, and privacy only makes it enforceable.
+- Its refusal of quantified storage-element facts is not touched. Nothing
+  stores a fact over all elements; I is instantiated for the one element a
+  read names, as a requirement is for one call.
+- ENT-3's "no struct invariant ... exists" gains the declared invariant as a
+  source.
+
+**Effect on 5.4.** The shared-object invariant becomes this one. A block
+outside the module changes the state only through the module's functions or
+by replacing it with another value of the type, and a block inside the
+module owes I at its exits as a hand-off. The `shared` qualifier of option A
+is then unnecessary: the invariant belongs to the type.
+
+**Open.**
+- Whether a module function may opt out of assuming I, as SPARK's internal
+  subprograms may, and how that reads.
+- Whether moving out of a `public readonly` field is excluded, so that no
+  partly moved value is observed.
+- Whether an enum's variants may carry invariants.
+
 ## 6. What this changes
 
 The changes below are grouped by where they land.
@@ -570,7 +648,10 @@ Sources:
 4. Whether ghost state (erased mathematical integers) comes with the
    invariant or later. The owner chose to declare the invariant on the state
    type (5.4, option A).
-5. Whether PR #173 lands first with its progress rule withdrawn, carrying
+5. Whether the invariant holds for the whole life of a value, at the module
+   boundary (5.6), which reverses the recorded refusal of type-level struct
+   invariants and makes the shared-object invariant a special case.
+6. Whether PR #173 lands first with its progress rule withdrawn, carrying
    what still stands (section 6), and the model follows as its own change; or
    the model is built on #173 before it lands.
 
