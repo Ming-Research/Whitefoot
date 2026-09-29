@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn first_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
+  ensures result < length;
+} {
+  doc "With no requirement bounding length below, the literal edge's closed state gives v = 0 only length's type bound, so that edge delivers x <= length and not x < length. The join cannot keep a strict bound one edge lacks, and the postcondition is unproved [ENT-5, FN-9].";
+  let x = if pos < length {
+    give pos;
+  } else {
+    give 0_u64;
+  }
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

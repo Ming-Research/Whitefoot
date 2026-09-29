@@ -45,6 +45,147 @@ struct RepairPair {
 
 const REPAIRS: &[RepairPair] = &[
     // -------------------------------------------------------------------
+    // [FORM-7] a text item's one spelling and a `u8` character's range.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "character-escaped-printable.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{41}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
+            "\n  mechanical_fix: write `A` in place of `\\u{41}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 'A'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "string-escaped-newline.wf",
+        rejected: br#"const line: Array<u8, 3> = "ok\u{a}";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\n` in place of `\\u{a}`\n",
+        ],
+        repaired: &[br#"const line: Array<u8, 3> = "ok\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "character-escaped-tab.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\t` in place of `\\u{9}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\t'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "u8-character-above-ascii.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{e9}'_u32` for the character, or `233_u8` for the byte\n",
+        ],
+        repaired: &[
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 233_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "u8-character-beyond-a-byte.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{3b1}'_u32`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [CONST-2] a STRING constant's length.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "string-length-mismatch.wf",
+        rejected: br#"const usage: Array<u8, 5> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-2",
+        sentences: &[
+            "]: TextLengthMismatch\n",
+            "\n  declared_length: 5\n",
+            "\n  byte_length: 6\n",
+            "\n  mechanical_fix: this text is 6 bytes in UTF-8: write `Array<u8, 6>` where this array's type is declared, or change the text to 5 bytes\n",
+        ],
+        repaired: &[
+            br#"const usage: Array<u8, 6> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"const usage: Array<u8, 5> = "usage";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    // -------------------------------------------------------------------
     // [FN-8] an ordinary call's requirement.
     // -------------------------------------------------------------------
     RepairPair {
@@ -309,9 +450,32 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FN-8",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+            "\n  mechanical_fix: `values[0_u64..k].len` is `k` [REF-4], so this call needs `2_u64 <= k`: guard the call with `if 2_u64 <= k` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
         ],
-        repaired: &[br#"fn need(v: &[u64]) -> result: u64 pure contract {
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
+  requires 2_u64 <= v^.len;
+} {
+  return 0_u64;
+}
+
+fn caller(k: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  if k <= 4_u64 {
+    if 2_u64 <= k {
+      let r = need(v: &values[0_u64..k]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
   requires 2_u64 <= v^.len;
 } {
   return 0_u64;
@@ -331,6 +495,215 @@ fn caller(k: u64) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-length-that-is-a-difference.wf",
+        rejected: br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[start..end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[start..end].len` is `end - start` [REF-4], so this call needs `end - start <= 2_u64`: where `start <= end` holds, bind the difference with the exact `-`, `let width = end - start;` (a `-wrap` difference carries no relation to the range's length), and guard the call with `if width <= 2_u64` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+        ],
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let part = &values[start..end];
+    if part^.len <= 2_u64 {
+      let r = need(v: part);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-with-field-endpoints.wf",
+        rejected: br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = span.start <= span.end;
+  let within = span.end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[span.start..span.end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[span.start..span.end].len` is the difference of its endpoints [REF-4], and its endpoints `span.start` and `span.end` are not bindings, so no fact names that difference: copy each into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` (a `-wrap` difference carries no relation to the range's length) and establish the requirement over it\n",
+        ],
+        repaired: &[br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let start = span.start;
+  let end = span.end;
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "call-requirement-equating-range-length-differences.wf",
+        rejected: br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  if band(ordered, within) {
+    let r = pair(left: &a[s..e], right: &b[s..e]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `a[s..e].len` is `e - s` and `b[s..e].len` is `e - s` [REF-4], so this call needs `e - s == e - s`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = e - s;` (a `-wrap` difference carries no relation to the range's length), bind its range with one preceding `let`, as `let part = &a[s..e];`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings\n",
+        ],
+        repaired: &[br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  if band(ordered, within) {
+    let width = e - s;
+    let part = &a[s..e];
+    let other = &b[s..e];
+    let r = pair(left: &part^[0_u64..width], right: &other^[0_u64..width]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -2761,6 +3134,166 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(
         failure.kind(),
         CompilationFailureKind::TargetLayout,
+        "{failure}"
+    );
+}
+
+/// An allocation whose count is proved only by its type: `u64::MAX` for a
+/// `u8` element, which OP-9 accepts and no supported target can allocate.
+/// This is the program a writer met in an image decoder, where the count came
+/// from the image's dimensions.
+const UNBOUNDED_TARGET_COUNT: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+
+/// [STOR-6] the target-layout stop at an allocation the selected target
+/// cannot hold names the call, the proved bound and the largest count the
+/// target admits, and its fix is carried out by the programs below it: the
+/// same program with the count guarded in the allocating function, and with
+/// the count required there and guarded by its caller. Every supported
+/// target allocates at most `i64::MAX` bytes, and a `Slots<u8>` block spends
+/// two header words, so `i64::MAX - 16` elements fit.
+#[test]
+fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
+    super::check(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect("the type's own bound passes OP-9");
+    let failure = compile(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect_err("no supported target allocates u64::MAX bytes");
+    assert_eq!(
+        failure.kind(),
+        CompilationFailureKind::TargetLayout,
+        "{failure}"
+    );
+    assert_eq!(failure.rule_id(), None, "a target stop cites no rule");
+    let rendered = failure.to_string();
+    for sentence in [
+        "unbounded.wf:8:14: target layout failure in TargetLayout: AllocationCountExceedsTarget\n",
+        "\n  count: \"count\"\n",
+        "\n  proved_count_bound: 18446744073709551615\n",
+        "\n  target_count_limit: 9223372036854775791\n",
+        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775791, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
+    ] {
+        assert!(
+            rendered.contains(sentence),
+            "the stop no longer carries this text.\nwanted: {sentence}\ngot:    {rendered}"
+        );
+    }
+    let guarded = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  if count <= 4096_u64 {
+    let cell = box_slots_new::<u8>(capacity: count);
+    return move cell;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  return move empty;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+    let required = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  if n <= 4096_u64 {
+    let cell = make(count: n);
+    let cap = cell.inner.cap;
+    let code = cvt.wrap::<u64, u8>(cap);
+    return exit_status(code: code);
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    for (name, source) in [("guarded.wf", &guarded[..]), ("required.wf", &required[..])] {
+        let contradictions = contradictory_successes(name, source)
+            .unwrap_or_else(|rejection| panic!("{name} is rejected:\n{rejection}"));
+        assert!(
+            contradictions.is_empty(),
+            "{name} succeeds only where its state is contradictory: {contradictions:?}"
+        );
+        if let Err(failure) = compile(&[SourceInput::new(name, source)], CompilerLimits::default())
+        {
+            panic!("{name} does not build:\n{failure}");
+        }
+    }
+}
+
+/// The printed limit is the target's exact threshold: a count proved at most
+/// that number builds, and one more stops at target layout [STOR-6].
+#[test]
+fn the_printed_target_count_limit_is_the_exact_threshold() {
+    let bounded = |limit: &str| {
+        format!(
+            "fn make(count: u64) -> made: Box<Slots<u8>> pure contract {{\n  requires count <= {limit}_u64;\n}} {{\n  let cell = box_slots_new::<u8>(capacity: count);\n  return move cell;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cell = make(count: 4_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        )
+    };
+    let at_limit = bounded("9223372036854775791");
+    if let Err(failure) = compile(
+        &[SourceInput::new("at-limit.wf", at_limit.as_bytes())],
+        CompilerLimits::default(),
+    ) {
+        panic!("a count at the printed limit does not build:\n{failure}");
+    }
+    let above = bounded("9223372036854775792");
+    let failure = compile(
+        &[SourceInput::new("above-limit.wf", above.as_bytes())],
+        CompilerLimits::default(),
+    )
+    .expect_err("one more than the printed limit exceeds the target");
+    assert!(
+        failure
+            .detail()
+            .lines()
+            .any(|line| line == "target_count_limit: 9223372036854775791"),
         "{failure}"
     );
 }

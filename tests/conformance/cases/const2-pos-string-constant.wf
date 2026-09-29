@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const usage: Array<u8, 6> = "usage\n";
+
+const empty: Array<u8, 0> = "";
+
+fn main() -> status: ExitStatus pure {
+  doc "A STRING defines an Array<u8, N> constant whose N entries are the bytes of its text, and the empty STRING defines Array<u8, 0>.";
+  let first = usage[0_u64];
+  if first == 'u'_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let last = usage[5_u64];
+  if last == '\n'_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let length = usage.len;
+  if length == 6_u64 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  let none = empty.len;
+  if none == 0_u64 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

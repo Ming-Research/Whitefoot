@@ -314,6 +314,41 @@ impl CompilationFailure {
         }
     }
 
+    /// [STOR-6] a source call's allocation whose proved count bound the
+    /// selected target cannot hold, located at the call with the bound, the
+    /// target's largest admitted count and the fix that bounds the count.
+    fn allocation_count(
+        excess: crate::target::AllocationCountExcess,
+        target: TargetLayout,
+        bundle: &SourceBundle,
+    ) -> Self {
+        let count = excess.count_site;
+        let spelling = bundle
+            .span(count.source(), count.start(), count.end())
+            .ok()
+            .and_then(|span| bundle.span_bytes(span))
+            .map_or_else(
+                || "the count".to_owned(),
+                |bytes| String::from_utf8_lossy(bytes).into_owned(),
+            );
+        let issue = AllocationCountIssue {
+            count,
+            proved_count_bound: excess.proved_count_bound,
+            target_count_limit: excess.target_count_limit,
+            target: target.triple(),
+            mechanical_fix: crate::semantic::target_allocation_count(
+                &spelling,
+                excess.target_count_limit,
+            ),
+        };
+        Self {
+            stage: CompilationStage::TargetLayout,
+            kind: CompilationFailureKind::TargetLayout,
+            rule_id: None,
+            record: Box::new(Record::located(&issue, bundle, excess.site, Anchor::Start)),
+        }
+    }
+
     /// The record is located at the coordinate that rule selected.
     fn at_source<Issue: diagnostic::Report + ?Sized>(
         stage: CompilationStage,
@@ -404,8 +439,9 @@ impl CompilationFailure {
         }
     }
 
-    /// Returns where a source rejection is written, when it names a written
-    /// place: the file, line and column its summary line prints.
+    /// Returns where a source rejection, or a stop located at a written
+    /// construct such as a target-layout stop at an allocation [STOR-6], is
+    /// written: the file, line and column its summary line prints.
     #[must_use]
     pub fn location(&self) -> Option<SourceLocation> {
         self.record.location()
@@ -2309,6 +2345,24 @@ pub(crate) enum CompositionIssue {
     HeapInClosure { path: Vec<String> },
 }
 
+/// A target-layout stop at one written allocation [STOR-6]: the selected
+/// target's allocation domain cannot hold the count bound the checked program
+/// retains for this call. It is no source rejection and cites no rule
+/// [DIAG-1]; it is located at the call, whose count is what the writer bounds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AllocationCountIssue {
+    /// The count argument as written.
+    count: crate::SyntaxCoordinate,
+    /// The largest count the checked program proves for this call.
+    proved_count_bound: u64,
+    /// The largest count the selected target admits for this element type
+    /// and block header.
+    target_count_limit: u64,
+    /// The selected target.
+    target: &'static str,
+    mechanical_fix: String,
+}
+
 fn compile_selected(
     inputs: &[SourceInput<'_>],
     modules: Option<&[crate::ModuleRecord]>,
@@ -2773,6 +2827,12 @@ fn lower_selected(
             Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
+            if let BackendFailure::TargetLayout(
+                crate::target::TargetLayoutFailure::AllocationCount(excess),
+            ) = failure
+            {
+                return CompilationFailure::allocation_count(excess, target, bundle);
+            }
             let (stage, kind) = match failure {
                 BackendFailure::TargetLayout(_) => (
                     CompilationStage::TargetLayout,

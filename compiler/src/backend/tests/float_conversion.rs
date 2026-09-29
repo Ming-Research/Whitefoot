@@ -680,3 +680,87 @@ const fn converts_totally(source: NumericType, destination: NumericType) -> bool
         _ => false,
     }
 }
+
+/// [OP-6] `cvt.nearest` against the test-owned integer rounding oracle for
+/// all 20 float-destination pairs, including ties, overflow, subnormal and
+/// underflow ties, NaN and signed zero.
+#[test]
+fn every_rounding_conversion_matches_the_integer_rounding_oracle() {
+    let source = binary_value::nearest_program();
+    let llvm = compile(source.as_bytes());
+    for instruction in [
+        "fptrunc double",
+        "fpext float",
+        "sitofp i64",
+        "uitofp i64",
+        "fcmp uno",
+    ] {
+        assert!(
+            llvm.contains(instruction),
+            "rounding matrix must exercise {instruction}"
+        );
+    }
+    let output = compile_and_run(&llvm);
+    assert!(
+        output.status.success(),
+        "rounding conversion matrix failed: {:?} {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+/// [OP-8] Rounding needs no domain proof and lowers to the exact conversion's
+/// direct instruction: no validity query, round trip, Result or assumption.
+#[test]
+fn rounding_conversion_lowers_to_the_direct_instruction() {
+    let source = br#"fn narrow(value: f64) -> result: f32 pure {
+  return cvt.nearest::<f64, f32>(value);
+}
+
+fn widen(value: f32) -> result: f64 pure {
+  return cvt.nearest::<f32, f64>(value);
+}
+
+fn unsigned_wide(value: u64) -> result: f64 pure {
+  return cvt.nearest::<u64, f64>(value);
+}
+
+fn signed_single(value: i64) -> result: f32 pure {
+  return cvt.nearest::<i64, f32>(value);
+}
+
+fn same(value: f32) -> result: f32 pure {
+  return cvt.nearest::<f32, f32>(value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    for (symbol, instruction, canonicalizes) in [
+        ("narrow", " = fptrunc double ", true),
+        ("widen", " = fpext float ", true),
+        ("unsigned_wide", " = uitofp i64 ", false),
+        ("signed_single", " = sitofp i64 ", false),
+    ] {
+        let body = super::parallel::function_body(&llvm, &format!("@wf_{symbol}"));
+        assert!(body.contains(instruction), "{body}");
+        for residual in [
+            "icmp ",
+            "fcmp oeq",
+            ".sat.",
+            "insertvalue ",
+            "@llvm.assume",
+            "br i1",
+        ] {
+            assert!(!body.contains(residual), "unexpected {residual} in {body}");
+        }
+        assert_eq!(body.contains("fcmp uno"), canonicalizes, "{body}");
+    }
+    let identity = super::parallel::function_body(&llvm, "@wf_same");
+    assert!(identity.contains("select i1 true, float"), "{identity}");
+    assert!(!identity.contains("fcmp "), "{identity}");
+}

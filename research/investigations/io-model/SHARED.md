@@ -270,7 +270,7 @@ context, spread over the drivers. Only the block is serialized on the object.
 
 ## The first version
 
-The owner accepted the statement form on 2026-09-28, and specification v0.79
+The owner accepted the statement form on 2026-09-28, and specification v0.80
 states it as [SHARE-1] to [SHARE-3], with [SET-1] admitting a write rooted in
 an object's state. The implementation:
 
@@ -506,7 +506,7 @@ card and the specification revisions, taking for this card the revised
 recommendation: the language promises that progress ("all decisions
 approved, the spec revisions approved too", written in Chinese).
 
-**The rule** (specification v0.79). While a statement waits for its guard,
+**The rule** (specification v0.80). While a statement waits for its guard,
 each call whose execution contains it and that [WAIT-2] permits to run
 alongside the statements after it executes as a context, those statements
 proceed until [WAIT-2] requires the call to have completed, and every

@@ -111,7 +111,7 @@ const ENUM_ORDER: &[&str] = &[
     "entry_decl",
     "type_path",
     "callee_path",
-    // v0.79 [GRAM-4, SHARE-2]: the atomic statement.
+    // v0.80 [GRAM-4, SHARE-2]: the atomic statement.
     "atomic_stmt",
 ];
 

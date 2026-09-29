@@ -21,10 +21,12 @@ fn complete_inventory_is_pinned() {
     // v0.77 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
     // the optional `mustpar` of `for_stmt`, and the alternation of the
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
-    // v0.79's `atomic_stmt` adds its optional guard and its statement
+    // v0.79 adds a STRING arm to the existing `cvalue` alternation
+    // [CONST-2]: no decision, and nine rows for its continuations.
+    // v0.80's `atomic_stmt` adds its optional guard and its statement
     // repeat [GRAM-4, SHARE-2]: two decisions.
     assert_eq!(DECISIONS.len(), 163);
-    assert_eq!(SELECT_ROWS.len(), 7_290);
+    assert_eq!(SELECT_ROWS.len(), 7_299);
     assert_eq!(diagnostic_terminal_order().len(), 111);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -157,7 +159,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[104].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[109].production(), Production::BreakStmt);
     assert_eq!(DECISIONS[109].kind(), DecisionKind::Optional);
-    // The call-site `musttail` optional, and v0.79's `atomic_stmt` guard and
+    // The call-site `musttail` optional, and v0.80's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices.
     assert_eq!(DECISIONS[125].production(), Production::Call);
     assert_eq!(DECISIONS[125].kind(), DecisionKind::Optional);
@@ -406,6 +408,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 7_290);
+    assert_eq!(total_rows, 7_299);
     assert!(saw_atom_only);
 }

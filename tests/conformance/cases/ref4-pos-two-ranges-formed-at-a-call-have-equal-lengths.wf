@@ -1,0 +1,75 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn add_into(left: &[u64], right: &[u64], sums: &[u64]) -> result: u64 reads(left), reads(right), writes(sums) contract {
+  requires right^.len == left^.len;
+  requires sums^.len == left^.len;
+} {
+  doc "Writes left[k] + right[k] into sums[k] for every k below left^.len and returns that length. The two equalities bound right[k] and sums[k] by the one counted range over left.";
+  let count = left^.len;
+  for (k in 0_u64..count) {
+    let l = left^[k];
+    let r = right^[k];
+    set sums^[k] = l +wrap r;
+  }
+  return count;
+}
+
+fn prefix_sums(first: &[u64], second: &[u64], n: u64) -> result: u64 reads(first), reads(second) contract {
+  requires n <= first^.len;
+  requires n <= second^.len;
+} {
+  doc "Adds the first n elements of two reference parameters into a local array through three ranges formed at the call and returns sums[n - 1], or 0 when n is 0.";
+  let sums = array_filled::<u64, 8>(value: 0_u64);
+  if n <= 8_u64 {
+    let count = add_into(left: &first^[0_u64..n], right: &second^[0_u64..n], sums: &sums[0_u64..n]);
+    if 0_u64 < count {
+      let last = count - 1_u64;
+      if last < 8_u64 {
+        let value = sums[last];
+        return value;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, MSR-1, ENT-3: each range formed at a call has length hi - lo, so ranges &a.inner[0..n], &b.inner[0..n] and &c.inner[0..n] formed as arguments of one call have equal lengths, and a requirement relating two of them by == is proved exactly as it is for ranges bound by let. Both an owner's boxed windows and reference parameters are exercised; the executable observes the sums.";
+  let a = box_slots_new::<u64>(capacity: 4_u64);
+  let b = box_slots_new::<u64>(capacity: 4_u64);
+  let c = box_slots_new::<u64>(capacity: 4_u64);
+  for (i in 0_u64..4_u64) {
+    if a.inner.len < a.inner.cap {
+      place_back(window: &a.inner, value: i);
+    }
+    if b.inner.len < b.inner.cap {
+      place_back(window: &b.inner, value: 10_u64);
+    }
+    if c.inner.len < c.inner.cap {
+      place_back(window: &c.inner, value: 0_u64);
+    }
+  }
+  let n = a.inner.len;
+  if n <= b.inner.len {
+    if n <= c.inner.len {
+      let count = add_into(left: &a.inner[0_u64..n], right: &b.inner[0_u64..n], sums: &c.inner[0_u64..n]);
+      if count != 4_u64 {
+        return exit_status(code: 1_u8);
+      }
+      if 3_u64 < c.inner.len {
+        let last = c.inner[3_u64];
+        if last != 13_u64 {
+          return exit_status(code: 2_u8);
+        }
+      }
+    }
+  }
+  let x = array_filled::<u64, 5>(value: 2_u64);
+  let y = array_filled::<u64, 6>(value: 5_u64);
+  let seen = prefix_sums(first: &x[0_u64..5_u64], second: &y[0_u64..6_u64], n: 3_u64);
+  if seen != 7_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

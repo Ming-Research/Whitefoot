@@ -1,0 +1,34 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const separator: u8 = ','_u8;
+
+const digits: Array<u8, 3> =['0'_u8, '1'_u8, '2'_u8];
+
+fn digit_value(c: u8) -> value: u8 pure contract {
+  requires '0'_u8 <= c;
+  requires c <= '9'_u8;
+} {
+  let value = c - '0'_u8;
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A character literal stands wherever an integer literal of its type does: a const value and an array cvalue entry, a requires clause, a call argument and an infix operand.";
+  let two = digit_value(c: '2'_u8);
+  if two == 2_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let first = digits[0_u64];
+  if first == '0'_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let next = separator +wrap 1_u8;
+  if next == '-'_u8 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

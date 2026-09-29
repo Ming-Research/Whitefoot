@@ -484,6 +484,40 @@ impl<'unit> SyntaxView<'unit> {
             .ok_or(SyntaxViewFailure::InvalidCanonicalTree)
     }
 
+    /// The source interval of the bytes `start..end` of one token, such as
+    /// one text item of a quoted token [FORM-7].
+    pub(crate) fn token_subcoordinate(
+        &self,
+        terminal: usize,
+        start: usize,
+        end: usize,
+    ) -> Result<SyntaxCoordinate, SyntaxViewFailure> {
+        let id = self
+            .syntax
+            .classified_bundle()
+            .tokens()
+            .get(terminal)
+            .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?
+            .token()
+            .id();
+        let offset = |at: usize| {
+            u64::try_from(at)
+                .ok()
+                .and_then(|at| id.start().value().checked_add(at))
+                .filter(|at| *at <= id.end().value())
+                .map(ByteOffset::new)
+                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)
+        };
+        if start > end {
+            return Err(SyntaxViewFailure::InvalidCanonicalTree);
+        }
+        Ok(SyntaxCoordinate::new(
+            id.source(),
+            offset(start)?,
+            offset(end)?,
+        ))
+    }
+
     pub(crate) fn direct_spelling(&self, node: NodeId) -> Result<Vec<u8>, SyntaxViewFailure> {
         let mut spelling = Vec::new();
         for terminal in self.direct_token_indices(node)? {

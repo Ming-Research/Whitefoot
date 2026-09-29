@@ -775,7 +775,9 @@ fn every_retired_comparison_name_is_a_free_identifier() {
 // roles. Proof-only invariant declarations select their own lookup domain.
 #[test]
 fn operation_and_mode_names_resolve_as_header_and_body_invariants() {
-    for spelling in ["cvt", "wrap", "defined", "checked", "sat", "strict"] {
+    for spelling in [
+        "cvt", "wrap", "defined", "checked", "sat", "strict", "nearest",
+    ] {
         for header in [false, true] {
             let declaration = if header {
                 format!(
@@ -1446,7 +1448,9 @@ fn counted_range_label_is_non_enclosing_after_the_loop() {
 
 #[test]
 fn counted_range_binder_uses_the_for_binder_reservation_role() {
-    for name in ["cvt", "wrap", "defined", "checked", "sat", "strict"] {
+    for name in [
+        "cvt", "wrap", "defined", "checked", "sat", "strict", "nearest",
+    ] {
         for label in ["", " @range"] {
             let source = format!(
                 "fn probe(limit: u64) -> result: unit pure {{\n  for{label} ({name} in 0_u64..limit) {{\n    break{label};\n  }}\n  return unit;\n}}\n"

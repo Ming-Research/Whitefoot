@@ -20,10 +20,12 @@ mod repairs;
 mod requires;
 mod support;
 mod tail_calls;
+mod text_literals;
 mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
+pub(crate) use repairs::target_allocation_count;
 
 use std::collections::{HashMap, HashSet};
 
@@ -1097,6 +1099,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
     ) -> Result<CheckedProgramData, CheckStop> {
+        self.types.declarations.check_documentation_text()?;
         self.check_musttail_positions()?;
         self.check_mustpar_positions()?;
         let items = self.types.declarations.item_declarations()?;

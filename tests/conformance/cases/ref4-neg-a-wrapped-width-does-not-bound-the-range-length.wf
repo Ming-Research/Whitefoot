@@ -1,0 +1,34 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const run_ceiling: u64 = 4_u64;
+
+fn measure_run(source: &[u8]) -> result: u64 reads(source) contract {
+  requires source^.len <= run_ceiling;
+} {
+  doc "Admits only a range of at most run_ceiling elements and returns its length.";
+  return source^.len;
+}
+
+fn bounded_run(text: &[u8], start: u64, end: u64) -> result: u64 reads(text) {
+  doc "Bounds a wrapping width instead of the exact difference end - start.";
+  let ordered = start <= end;
+  let within = end <= text^.len;
+  let located = band(ordered, within);
+  if located {
+    let span = end -wrap start;
+    let small = span <= run_ceiling;
+    if small {
+      let n = measure_run(source: &text^[start..end]);
+      return n;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, ENT-3, ENT-6, FN-8: the range's length is end - start, but span = end -wrap start is not that difference to the fixed families. A wrapping subtraction receives a fresh value image, and its S7 row relates it to its operands only when their closed intervals keep the result in range, which start <= end, a relation between the operands, does not give. So span <= run_ceiling bounds nothing the requirement reads and the call is rejected; the exact subtraction under the same guard is accepted.";
+  let bytes = array_filled::<u8, 8>(value: 0_u8);
+  let n = bounded_run(text: &bytes[0_u64..8_u64], start: 2_u64, end: 5_u64);
+  return exit_status(code: 0_u8);
+}

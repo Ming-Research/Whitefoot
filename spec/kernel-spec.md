@@ -1,4 +1,4 @@
-# Kernel Specification v0.79
+# Kernel Specification v0.80
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -93,7 +93,7 @@ Every production not listed as line-bearing or block-bearing introduces no forma
 Its terminals stay on the current line unless a descendant line-bearing or block-bearing production introduces one of the boundaries prescribed above.
 No other LF or blank line is emitted.
 
-[FORM-3] Lexical classes: IDENT `[a-z][a-z0-9_]*` excluding every lowercase token spelling produced by exact fixed grammar atoms in the complete grammar; TYPEID `[A-Z][A-Za-z0-9]*`; LABEL `@[a-z][a-z0-9_]*`; OPNAME `[a-z][a-z0-9_]*\.(wrap|defined|checked|sat|strict)` (single token; the base has the raw lowercase-word shape used by IDENT and the mode suffix is a closed word set, so an OPNAME can never maximal-munch a valid field-access place `p.field`: all five suffix words are reserved from field binding [OP-1, GRAM-5]; e.g. `ineg.checked`).
+[FORM-3] Lexical classes: IDENT `[a-z][a-z0-9_]*` excluding every lowercase token spelling produced by exact fixed grammar atoms in the complete grammar; TYPEID `[A-Z][A-Za-z0-9]*`; LABEL `@[a-z][a-z0-9_]*`; OPNAME `[a-z][a-z0-9_]*\.(wrap|defined|checked|sat|strict|nearest)` (single token; the base has the raw lowercase-word shape used by IDENT and the mode suffix is a closed word set, so an OPNAME can never maximal-munch a valid field-access place `p.field`: all six suffix words are reserved from field binding [OP-1, GRAM-5]; e.g. `ineg.checked`).
 `program` and `no_heap` are exact fixed grammar atoms of `heap_decl` [GRAM-2], so both spellings leave IDENT by the exclusion above.
 
 [FORM-4] There are no comments.
@@ -108,8 +108,11 @@ For one finite bit pattern of TYPE, consider every matching decimal that rounds 
 Its canonical spelling is the candidate with the fewest ASCII bytes before `_TYPE`; a tie is resolved by lexicographically least unsigned ASCII bytes.
 This selection is total, host-independent, and unique; in particular `0.0` and `-0.0` remain distinct.
 Other examples are `1.5_f64` and `6.022e23_f64`.
-`unit`; STRING `"..."` whose interior is a sequence of items, each one raw ASCII-printable byte in U+0020..U+007E other than `"` and `\`, or one of exactly three escapes `\\ \" \n`; no other byte is legal, and each character has exactly one spelling (the escape where one is defined, the raw byte otherwise).
-STRING appears only in `doc` entries.
+`unit`.
+A text item is one raw ASCII-printable byte in U+0020..U+007E other than `\` and the quote that delimits its literal, or one escape: `\\`, that quote preceded by `\`, `\n`, `\t`, `\r`, or `\u{H}` with H one or more lowercase hexadecimal digits `[0-9a-f]`; no other byte is legal.
+A raw byte denotes its own scalar value, `\\` U+005C, the quote escape its quote, `\n` U+000A, `\t` U+0009, `\r` U+000D, and `\u{H}` the value of H read in base 16; [FORM-7] gives each value its one spelling.
+A character literal `'C'_TYPE` is exactly one text item C delimited by `'` with a mandatory suffix TYPE, `u8` or `u32`; it is an integer literal of TYPE, spelled as a character rather than in decimal, whose value is C's scalar value, e.g. `'a'_u8`, `'\n'_u8`, `'\''_u8`, and `'\u{e9}'_u32`.
+STRING `"..."` is a sequence of zero or more text items delimited by `"`, denoting the sequence of their scalar values; it is written in a `doc` entry [GRAM-2] and as a `cvalue` [CONST-2] and is not a member of `literal`, so no expression contains one.
 There are no boolean literals: `Bool` is a prelude enum (§14).
 Generic-numeric literals `0_T` and `1_T` are legal where `T` is a gparam bound by a numeric contract (`Int` or `Float`, §14), denoting T's additive and multiplicative identity; a concrete type uses `0_i32` and the like, so there is no dual spelling.
 NaN and the infinities are not literals; they are the nullary ops `fnan` and `finf` [OP-1].
@@ -117,10 +120,12 @@ NaN and the infinities are not literals; they are the nullary ops `fnan` and `fi
 [FORM-6] The token `unit` names the unit type in type position and the unit value in expression position; the grammar positions are disjoint productions, so resolution is production-local, not contextual.
 The lowercase spelling follows the primitive-type convention (TYPE-1: primitives are lowercase keywords, not TYPEIDs); the single-token value spelling follows the one-spelling convention [FORM-1] for the type's sole inhabitant.
 
-[FORM-7] Numeric-literal well-formedness.
-An integer literal `-?d_T` is legal where its signed value lies in the closed range of T (signed `[-2^(K-1), 2^(K-1)-1]`, unsigned `[0, 2^K-1]`) and it has no leading zeros: the single digit `0` is its own form, a leading `-` is legal for signed T, and `-0` is written `0`.
+[FORM-7] Literal well-formedness.
+A decimal integer literal `-?d_T` is legal where its signed value lies in the closed range of T (signed `[-2^(K-1), 2^(K-1)-1]`, unsigned `[0, 2^K-1]`) and it has no leading zeros: the single digit `0` is its own form, a leading `-` is legal for signed T, and `-0` is written `0`.
 A float literal is legal only when it has the unique canonical spelling selected by [FORM-5] and denotes a finite value of its stated TYPE.
-An out-of-range integer, a leading-zero integer, a noncanonical float spelling, or a float decimal that rounds to a non-finite value is a hard error at check time [SCOPE-2]; a literal never denotes a wrapped, truncated, saturated, or undefined value.
+A text item [FORM-5] is legal only when it denotes a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF, in that value's one spelling: the raw byte for U+0020..U+007E other than `\` and the delimiting quote; `\\`, the quote escape, `\n`, `\t`, and `\r` for U+005C, the quote, U+000A, U+0009, and U+000D; and `\u{H}` with no leading zeros, the single digit `0` being its own form, for every other value.
+A character literal of TYPE `u8` is legal only when its value is at most 0x7F, so a `u8` character is always ASCII; TYPE `u32` admits every Unicode scalar value.
+An out-of-range integer, a leading-zero integer, a noncanonical float spelling, a float decimal that rounds to a non-finite value, a text item that is noncanonical or denotes no scalar value, or a `u8` character literal above 0x7F is a hard error at check time [SCOPE-2], and each text-literal rejection carries a repair where its value has a legal spelling [DIAG-1]; a literal never denotes a wrapped, truncated, saturated, or undefined value.
 
 ## 3. Grammar
 
@@ -131,18 +136,18 @@ At each cursor it takes exactly the following maximal form; no token or trivia c
 - One or more ASCII space bytes form one trivia item.
 One LF byte forms one trivia item.
 - A lower word starts with `[a-z]` and continues through the maximal `[a-z0-9_]*` suffix.
-If that complete base is followed immediately by `.` and exactly one of `wrap`, `defined`, `checked`, `sat`, or `strict`, and the suffix is not followed by an ASCII letter, ASCII digit, or `_`, the base, dot, and suffix instead form one operation-name token.
+If that complete base is followed immediately by `.` and exactly one of `wrap`, `defined`, `checked`, `sat`, `strict`, or `nearest`, and the suffix is not followed by an ASCII letter, ASCII digit, or `_`, the base, dot, and suffix instead form one operation-name token.
 Otherwise the lower word ends before the dot.
 - An upper word starts with `[A-Z]` and continues through the maximal `[A-Za-z0-9]*` suffix.
 - A label form starts with `@`; the sigil must be followed by `[a-z]`, after which the token continues through the maximal `[a-z0-9_]*` suffix.
 - A numeric form starts with a decimal digit, or with `-` immediately followed by a decimal digit.
 It then consumes the maximal sequence of ASCII letters, ASCII digits, `_`, and `.`, plus a `+` or `-` only when that sign byte immediately follows `e` or `E`, except that when the next two bytes are `..` the numeric form ends immediately before the first dot.
 A single dot and every other numeric candidate retain the preceding maximal rule unchanged.
-Raw formation deliberately retains broad candidates such as `1e+`, `1.00_f64`, and `1.0E2_f64`; [FORM-5] and [FORM-7] decide membership and canonicality without rescanning or splitting them.
+Raw formation deliberately retains broad candidates such as `1e+`, `1.00_f64`, `1.0E2_f64`, `'ab'_i32`, and `'\u{41}'_u8`; [FORM-5] and [FORM-7] decide membership and canonicality without rescanning or splitting them.
 - An operator form starts with `+`, `*`, `/`, or `%`, or with a `-` that is immediately followed by neither a decimal digit (numeric form, unchanged) nor `>` (the `->` compound, unchanged), and continues through the maximal `[a-z]*` suffix; the suffix must be empty or one of `wrap`, `defined`, `checked`, `sat` per the closed `infix_op` list, and any other suffix is a terminal-membership rejection.
-- A STRING form starts with `"` and ends at the first unescaped `"`.
-Its interior consists only of raw bytes `0x20` through `0x7e` other than `"` and `\`, or the two-byte escapes `\\`, `\"`, and `\n`.
-An escape consumes its backslash and follower together.
+- A character form starts with `'` and a STRING form with `"`; each ends at the first unescaped occurrence of its own opening quote, after which a character form continues through the maximal `[A-Za-z0-9_]*` suffix.
+The interior of either consists only of raw bytes `0x20` through `0x7e` other than `\` and the form's own quote, or two-byte escapes: `\` followed by `\`, `n`, `t`, `r`, `u`, or the form's own quote.
+An escape consumes its backslash and follower together; the bytes that complete a `\u{H}` escape are ordinary interior bytes whose shape [FORM-5] decides.
 - `->`, `=>`, `..`, `==`, `!=`, `<=`, `>=`, and `::` are the eight compound punctuation tokens; each is formed exactly when its two bytes are adjacent, by the same maximal rule that forms `=>` from `=` and `>`.
 The byte `!` occurs in no other token: a `!` not immediately followed by `=` is a raw lexical defect.
 Otherwise each byte in `(`, `)`, `{`, `}`, `[`, `]`, `<`, `>`, `,`, `:`, `;`, `.`, `=`, `&`, and `^` is one exact punctuation token.
@@ -154,7 +159,7 @@ The quoted `"[0-9]+"` occurrences in the `const` production and the optional mul
 An external terminal denotes one predicate over one formed token.
 
 Anything that cannot take one of those forms is a raw lexical defect with the attribution and exact span in [DIAG-1].
-Raw formation gives every token exactly one context-free shape kind: lower word, upper word, label form, operation-name form, operator form, numeric form, STRING form, or one exact punctuation form.
+Raw formation gives every token exactly one context-free shape kind: lower word, upper word, label form, operation-name form, operator form, numeric form, character form, STRING form, or one exact punctuation form.
 Terminal membership then visits every formed token in source-ordinal and token order.
 For each token independently, and without consulting grammar position, name lookup, the operation table, or another token, it evaluates the complete set of exact fixed-terminal predicates and external-terminal predicates in this specification and retains every matching predicate.
 It rejects the token exactly when that retained set is empty; it never selects one preferred predicate and never tests only the predicates expected at a parser position.
@@ -346,14 +351,14 @@ A call with a normal result edge does not itself count as delivery or must-diver
 No `loop_stmt` or `for_stmt` is assumed to diverge.
 This recursion is strictly simpler than the ownership checker.
 `give e;` moves or copies `e` per [OWN-1].
-When an initializer's derived delivery mode is `own` and its type is one [ENT-2] fragment integer, a direct non-consuming bare-atom `give` additionally participates in [ENT-5]'s bounded relation delivery.
+When an initializer's derived delivery mode is `own` and its type is one [ENT-2] fragment integer, a `give` whose operand is a direct non-consuming bare atom, a typed integer literal, or an integer-typed named const additionally participates in [ENT-5]'s bounded relation delivery as its carrier.
 A local Result value follows ENT-5's conditional value transport through either initializer.
 This scalar delivery adds no typing premise and never makes a move, borrow, call, construction, subscript, projection, or computed expression into a scalar fact carrier.
-GIVE-1 still owns delivery completeness and exact mode/type agreement; only after those judgments succeed may ENT-5 substitute the atom's already evaluated value into the receiving binding.
+GIVE-1 still owns delivery completeness and exact mode/type agreement; only after those judgments succeed may ENT-5 deliver the carrier's already evaluated value to the receiving binding.
 
-For that additional fact-carrier judgment, the direct atom must be one bare tracked own-value binding of the exact receiving type: its root resolves to a body `let_stmt` binding, `for_stmt` binder, parameter, or match binder, and it carries no suffix.
-A literal, named const, const-generic constant, Z, counted capture, contract definition, symbolic result datum, projected place, consuming atom, or any other atom may still be admitted in its own grammar role but carries no relation through a value initializer.
-Replace every occurrence of the delivered binding d with the receiver x (`d ↦ x`); no receiver fact is read and no inverse substitution is formed.
+For that additional fact-carrier judgment, a bare-atom carrier must be one tracked own-value binding of the exact receiving type: its root resolves to a body `let_stmt` binding, `for_stmt` binder, parameter, or match binder, and it carries no suffix.
+A const-generic constant, Z, counted capture, contract definition, symbolic result datum, projected place, consuming atom, or any other atom may still be admitted in its own grammar role but carries no relation through a value initializer.
+Delivery replaces every occurrence of the delivered binding d with the receiver x (`d ↦ x`) and delivers the carrier equality, exactly as [ENT-5] defines.
 
 [GRAM-8] Named construction.
 A constructor `call` of struct or enum-variant type K writes every declared field of K exactly once as `IDENT ":" atom`, the IDENTs equal to K's declared field names in declared order.
@@ -404,14 +409,14 @@ A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it 
 A capability modifier and a generic parameter's capability bound are properties of a declaration and not components of a type name: two instances of one nominal have one name whether or not its declaration is marked, and no name spells a capability [PROV-6].
 
 [TYPE-4] There are no implicit conversions.
-Numeric value conversion uses the explicit `cvt`, `cvt.checked`, `cvt.defined`, and `cvt.wrap` interfaces of [OP-6].
+Numeric value conversion uses the explicit `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `cvt.nearest` interfaces of [OP-6].
 
 [TYPE-5] Statement-local typing; boundary-explicit facts.
 The factored `call` grammar denotes a construction exactly when its callee is an unqualified TYPEID application. A constructor writes any nominal arguments directly after that TYPEID, never with the function-call `::` introducer; writing the latter is a TYPE-5 error at the complete call. Its operands are named fields under GRAM-8, so a positional operand list is a GRAM-8 error there. Construction is an ordinary expression, not the callable occurrence required by an expression statement or a destructuring result-list let; either statement position rejects it under TYPE-5. These judgments preserve the constructor forms while sharing the strong-LL(2) prefix with qualified member calls.
 A `let` binder's mode and type are derived, never written: exactly the mode and type its selected right-hand side produces — an `ordinary_let_rhs` from its expression, which is always self-typed (operands are typed atoms, calls are typed by their [FN-1]/[OP-1] signatures, literals carry mandatory suffixes [FORM-5], constructions name their nominal and, when that nominal is generic, write its arguments); a `propagate_let_rhs` from the propagated Ok payload [ERR-3]; a `value_match` or `value_if` from the derived common delivery type [GIVE-1], whose delivering `give`s are inside the same `let_stmt`, so the derivation stays statement-local; and a parenthesized binder list from its `call`'s declared result ordinals, binder i at the mode and type determined by result ordinal i's declared `rtype` [GRAM-4, FN-1, CALL-4].
 A binder whose selected right-hand side is a reference instead takes that reference kind, by the same derivation and on the same statement-local ground [REF-1].
 This is unique reconstruction, not inference: no binder's type depends on a later statement, an expected type, or any use site, and no two derivations can disagree [FORM-1].
-Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
+Call sites state explicitly exactly what their callee class requires: type, const, and function arguments for user generics [FN-2], including group abbreviations; and, for exactly the retained-argument table operations — `cvt`, `cvt.checked`, `cvt.defined`, `cvt.wrap`, `cvt.nearest`, and `reinterpret` (type pairs [OP-6, OP-8]) and `finf`/`fnan` (result type) — the written arguments their rows fix, because no operand can supply them.
 A constructor `call` of a generic nominal states that nominal's type, const, and function arguments on the same ground and in every position, mandatorily: the source nominals under [FN-2], and the prelude generic nominals `Option<T>` and `Result<T, E>` through their variant constructors `None`, `Some`, `Ok`, and `Err`.
 A nullary `None()` has no operand to supply anything, and construction never consults an expected nominal type [TYPE-6], so the written arguments are the only supply there is; their absence, or a count other than the named nominal's parameter list, is a hard error citing TYPE-5 at the complete constructor `call`.
 A non-generic prelude nominal [PRE-1] has no parameters and writes no type arguments.
@@ -591,12 +596,12 @@ This keeps the const-generic forwarding path closed under the one operation: `co
 [CONST-2] A `const IDENT: type = cvalue;` item declares an immutable, program-lifetime, read-only static value, with the `cvalue` production of the fence below.
 
 ```wf-ebnf CONST-2
-cvalue := literal | IDENT | "[" cvalue ("," cvalue)* "]"
+cvalue := literal | STRING | IDENT | "[" cvalue ("," cvalue)* "]"
         | (TYPEID | type_path) targs? ("::" TYPEID)? "(" (IDENT ":" cvalue ("," IDENT ":" cvalue)*)? ")"
 ```
 
 `type` must be const-eligible: a primitive [TYPE-1], `Array<T, N>` of const-eligible T, or a source non-opaque `struct` whose every field type is const-eligible; `enum`, `Box`, `Slots`, and `Ring` are not const-eligible (a const is pure static rodata: no allocation, no drop).
-The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
+The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, or, where T is `u8`, a STRING [FORM-5] whose value is the UTF-8 encoding of its scalar values in order, one entry per byte, and whose byte length must equal N, a STRING of any other length being a hard error citing CONST-2 at that `cvalue` with a repair stating its byte length [DIAG-1]; and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
 The const-dependency graph is acyclic: consts are visible throughout their module [MOD-3], and a const whose value depends on itself through any chain of consts is a hard error citing CONST-2 at the first const in item order on that cycle. Evaluation follows the dependencies and is substitution and layout only.
 A const item is never `move`d or `set`, and no declared row may write a path rooted at one [EFF-1, EFF-5].
 It is read via a subscript, a measure member [OP-15], a field suffix, or a `&` reference [REF-1], so a const table may be passed to a consumer.
@@ -888,6 +893,7 @@ The table below is the normative inventory (columns: op, type domain, signature,
 | `cvt.checked` | all numeric pairs [OP-6] | `(Src) -> own Result<Dst, NarrowError>` | pure |
 | `cvt.defined` | all numeric pairs [OP-6] | `(Src) -> own Bool` | pure |
 | `cvt.wrap` | all integer pairs [OP-6] | `(Src) -> own Dst` | pure |
+| `cvt.nearest` | all pairs with a float destination [OP-6] | `(Src) -> own Dst` | pure |
 | `iand` `ior` `ixor` | all int T | `(T, T) -> own T` | pure |
 | `inot` | all int T | `(T) -> own T` | pure |
 | `ishl.wrap` `ishr.wrap` | all int T | `(T, u32) -> own T` | pure |
@@ -915,7 +921,7 @@ The table below is the normative inventory (columns: op, type domain, signature,
 ```
 
 Let `DotlessOperationNames` be exactly the set of distinct individual operation spellings enumerated in this rule's normative `op` column whose complete spelling satisfies IDENT and contains no dot.
-Let `ModeWords` be exactly the suffix alternatives in FORM-3's active OPNAME formation rule together with the operator-form suffixes of [GRAM-1]; in this version the two carriers share one closed set, `{wrap, defined, checked, sat, strict}`.
+Let `ModeWords` be exactly the suffix alternatives in FORM-3's active OPNAME formation rule together with the operator-form suffixes of [GRAM-1]; in this version their union is the closed set `{wrap, defined, checked, sat, strict, nearest}`.
 `ReservedLowerNames` is exactly `DotlessOperationNames` union `ModeWords`.
 
 Each distinct complete spelling in the operation table declares one operation-family identity.
@@ -993,8 +999,9 @@ The table result type is exact, and the containing construct owns any later mode
 Mode membership is table data: add/subtract/multiply have exact, defined, wrap, checked, and sat; divide/remainder have exact, defined, and checked; negate/absolute have exact, defined, wrap, and checked; shifts have exact, defined, and wrap.
 All these rows are pure.
 
-[OP-3] Float ops that ROUND carry `.strict` (IEEE 754, no reassociation, no contraction): `fadd.strict` `fsub.strict` `fmul.strict` `fdiv.strict` `fsqrt.strict` `ffma.strict`.
+[OP-3] Float arithmetic that ROUNDS carries `.strict` (IEEE 754, no reassociation, no contraction): `fadd.strict` `fsub.strict` `fmul.strict` `fdiv.strict` `fsqrt.strict` `ffma.strict`.
 Float ops that are EXACT or exact-selection are dotless: `fneg` `fabs` `fcopysign` `fmin` `fmax` `ffloor` `fceil` `ftrunc` `froundeven` `frem` and the six comparisons.
+Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix names its rounding rule.
 
 [OP-4] A subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selected type must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, or the run of T elements a range reference `&[T]` names [TYPE-9, REF-4], a runtime-capacity form and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; a subscript whose base's final selected type is not one of those indexable types is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
@@ -1050,13 +1057,23 @@ Its endpoint domain is all 64 ordered integer pairs, including identities; each 
 It carries no ConversionDomain obligation.
 A pair outside that endpoint domain is an OP-1 rejection.
 
+The total rounding conversion `cvt.nearest::<Src, Dst>(x)` returns C where D is true and the rounded value R where D is false.
+Its endpoint domain is all 20 ordered pairs whose destination is a float format, including the two float identities; the source is one numeric primitive or one symbolic type parameter with the `Int` or `Float` bound, and the destination is `f32`, `f64`, or one symbolic type parameter with the `Float` bound.
+It carries no ConversionDomain obligation.
+A pair outside that endpoint domain is an OP-1 rejection.
+On this endpoint domain D is false only in the integer-to-float and finite distinct-float-format rows, whose input denotes a finite value v.
+R is selected from candidates: the destination's finite values together with `-2^(E+1)` and `2^(E+1)`, where E is the destination's largest exponent, 127 for `f32` and 1023 for `f64`.
+A candidate is even when the least significant bit of its binary encoding is zero, and `-2^(E+1)` and `2^(E+1)` are even.
+R is the candidate nearest v and, of two equally near candidates, the even one (IEEE 754 roundTiesToEven, with gradual underflow).
+A selected `-2^(E+1)` or `2^(E+1)` yields the infinity with v's sign, and a selected zero yields the zero with v's sign.
+
 [OP-7] Operation-name convention.
 An arithmetic, logic, bit, or compare op carries a domain prefix — `i` (integer), `f` (float), `b` (Bool logic), or `e` (tag-only enum comparison, including `Bool`) — whether or not a cross-domain twin exists; the conversion interfaces of [OP-6] and `reinterpret` carry no prefix.
 The integer arithmetic and integer comparison symbols of [GRAM-5] are the one prefix-free operation class: each is an integer-only table row, so `+` and `<` never denote a float or enum operation, and `fadd.strict`, `feq`, and `eeq` keep their prefixed names.
 `Bool` participates in the `b` family for boolean logic and the `e` family for tag-only equality; the operation name, not operand inference, selects the family.
 A respelled operation's token is its one constant spelling under the same one-spelling-per-operation discipline.
 Bare infix and dotless named integer spellings, and bare `cvt`, are proof-required exact operations; `.defined` is the distinct total Bool-valued domain query, not a result mode and not an execution of the partial primitive.
-The total value-result policies remain `.wrap`, `.checked`, and `.sat` where [OP-1] lists them, and float `.strict` is unchanged.
+The total value-result policies are `.wrap`, `.checked`, `.sat`, and `.nearest` where [OP-1] lists them, and float `.strict` is unchanged.
 Signedness-parametric lowering keyed on the operand-derived selected type [OP-2] (`ishr` is `ashr` for signed T and `lshr` for unsigned T; `imin` is `smin` or `umin`) is the same discipline as the `<` = `slt`/`ult` row, not overloading.
 Nominal enum identity is likewise checked from the operand-derived selected type before `eeq`/`ene` lowering; equal representation width never makes distinct enum types interchangeable.
 
@@ -1071,6 +1088,7 @@ A shift or rotate amount is `u32`; `ishl.wrap`/`ishr.wrap` mask the amount to `a
 `iabs.wrap`, exact `iabs`, and `iabs.checked` use `llvm.abs` with is-int-min-poison false; `.wrap` returns `iK::MIN` on that edge, exact `iabs` is emitted only after its domain proof excludes the edge, and `.checked` returns `Err(Overflow())` there.
 Every arithmetic `.defined` query computes only its total comparison or overflow predicate and never executes the corresponding exact primitive.
 An admitted bare `cvt` lowers without a validity guard; the result transformations required by [OP-6] remain part of its value semantics. A checked conversion and a conversion-domain query may evaluate total conversion primitives while deciding their answer, and may evaluate a partial primitive only on a path where its domain holds.
+`cvt.nearest` lowers exactly as a bare `cvt` of the same pair would: identical endpoints copy the representation, and the LLVM `sitofp`, `uitofp`, `fpext`, and `fptrunc` instructions, emitted without constrained-environment or fast-math flags, round an inexact value to [OP-6]'s R in the default floating-point environment, which no compiled program changes.
 `reinterpret` is the LLVM bitcast instruction for cross-domain pairs (int<->float; bit-preserving, all NaN payloads and sign bits preserved) and an identity bit-relabel for same-width int<->int resign (i8<->u8, i16<->u16, i32<->u32, i64<->u64); it is the bit-preserving counterpart of value-preserving `cvt`, giving bit-level resign a home distinct from cvt's value-preserving resign.
 `fneg` is the LLVM fneg instruction (a sign-bit flip, not `fsub(0.0, x)`); `fabs` is `llvm.fabs`; `fcopysign` is `llvm.copysign`.
 `fmin`/`fmax` are `llvm.minimum`/`llvm.maximum` (IEEE-2019, NaN-propagating, negative zero ordered below positive zero, deterministic); `llvm.minnum`/`maxnum` are not used, because their signed-zero tie result is unspecified and breaks the reproducibility FORM-1 requires.
@@ -1305,7 +1323,7 @@ Grammar fixes all definitions before all requirements and all requirements befor
 
 The definition scope initially contains the function parameters, named consts, and live type and const parameters, then each earlier definition after its complete initializer.
 Every definition and clause expression must consist only of non-consuming datums, measure place forms [OP-15], [ENT-2] clause (b) places, and operation-table forms that are pure and total for every value in their selected operand domain.
-Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, and `cvt.wrap` are admitted on their respective endpoint domains by their total rows.
+Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `cvt.nearest` are admitted on their respective endpoint domains by their total rows.
 Exact addition, subtraction, and multiplication are admitted and read as operations over the mathematical integers rather than as evaluations, exactly as an `affine_expr` is [INV-1]. A clause is erased before lowering and evaluates nothing, so a row whose meaning is total over the mathematical integers states a relation where it would otherwise request an operation, and no domain obligation arises to discharge.
 Function calls, construction, move, borrow, a subscript outside a clause (b) place, mutation, control flow, allocation, and every other partial operation are inadmissible even when another clause states their domain. Exact division, remainder, negation, absolute value, and the shifts remain partial under this judgment.
 Their corresponding `.defined` queries are total and admissible.
@@ -1665,20 +1683,20 @@ Within one grammar decision, production definitions rank by their first appearan
 Numbered rules rank by their first appearance in this specification.
 
 Raw lexical scanning is quote-aware and reports the first defect at its cursor.
-If the actual byte sequence beginning at the cursor does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, the first byte always cites [FORM-2] and spans that one byte, including when the cursor is inside a STRING candidate.
-Outside a STRING candidate, a byte in `0x00..0x1f` other than LF, or byte `0x7f`, cites [FORM-2] and spans that byte.
-An exact `//` or `/*` prefix outside a STRING candidate cites [FORM-4] and spans those two bytes.
+If the actual byte sequence beginning at the cursor does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, the first byte always cites [FORM-2] and spans that one byte, including when the cursor is inside a quoted candidate, the character or STRING form [GRAM-1] being scanned.
+Outside a quoted candidate, a byte in `0x00..0x1f` other than LF, or byte `0x7f`, cites [FORM-2] and spans that byte.
+An exact `//` or `/*` prefix outside a quoted candidate cites [FORM-4] and spans those two bytes.
 A `@` not followed by `[a-z]` cites [FORM-3] and spans only the sigil.
 Any other ASCII byte that cannot begin a specified token cites [FORM-1] and spans that byte.
-Any valid non-ASCII scalar outside a STRING candidate cites [FORM-1] and spans its complete UTF-8 encoding.
+Any valid non-ASCII scalar outside a quoted candidate cites [FORM-1] and spans its complete UTF-8 encoding.
 
-After an opening `"`, `//` and `/*` are ordinary raw STRING bytes and never comment prefixes.
+After an opening quote, `//` and `/*` are ordinary raw interior bytes and never comment prefixes.
 A final backslash cites [FORM-5] and spans only that backslash.
-A backslash followed by an ASCII byte other than `\`, `"`, or `n` cites [FORM-5] and spans both bytes.
+A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the candidate's own quote cites [FORM-5] and spans both bytes.
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
-A raw ASCII byte outside the permitted STRING interior set cites [FORM-5] and spans that byte.
-At any other STRING cursor, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
-If no unescaped closing quote occurs and no earlier defect applies, the unterminated STRING cites [FORM-5] and spans from its opening quote through end of source.
+A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
+At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
+If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of source.
 Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
 Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width end-of-source interval defined above.
 
@@ -1800,7 +1818,7 @@ Its `spelling` is the complete declaration or result-candidate spelling.
 Its closed carrier roles are function, named-const, parameter, contract-definition, let, for-binder, match-binder, result-binding, route-result, field, and variant-field.
 `reserved_class` is dotless-operation or mode-word.
 A dotless-operation ordinal is the zero-based first occurrence among distinct operation-family spellings, scanning OP-1 rows top to bottom and each `op` cell left to right and skipping every later occurrence of the same spelling.
-A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`.
+A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`, `nearest`.
 Those two reserved sets are disjoint in this version.
 For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_live_lexical_ident_origins)`.
 Earlier binders and arm-entry origins are ordered by declaration-event key.
@@ -2026,11 +2044,11 @@ Every S12 fact actually established in accepted semantic flow is a required call
 `PostconditionDirectReceiver` adds the direct-set target kill and result-only post-write substitution.
 False `M(c,q)`, a rejected call, killed support or an excluded receiver creates no source fact root. Result copies and joins retain the corresponding conditional parents without re-instantiating a callee contract.
 
-For bounded value-initializer delivery, `PostconditionGive` records one eligible reaching edge, the already evaluated source value and relation root, then the forward `d ↦ x` substitution, then that edge's ordinary scope and event kills applied to every other support in that order.
+For bounded value-initializer delivery, `PostconditionGive` records one eligible reaching edge, the already evaluated carrier value and one relation root over the carrier term c [ENT-5] or, for a bare atom's carrier equality, the equality `v = d` over its given value v [ENT-2], then the forward substitution of x for c or v, then that edge's ordinary scope and event kills applied to every other support in that order.
 `PostconditionDeliveryJoin` orders all non-contradictory reaching delivery images by edge NodePath and applies exactly the ordinary [ENT-5] L0 delivery join.
 Its parents therefore need not state byte-identical relations; an `x < 8` image and an `x < 128` image may parent the joined `x < 128` root.
 Contradictory inputs use the existing contradiction root and are neutral when a non-contradictory input reaches.
-Missing edge evidence or no common joined relation creates no delivery root.
+Missing edge evidence or no common joined relation creates no delivery root, and a joined relation that the continuation's closure derives from x's joined bound on Z and the other term's bound on Z needs none.
 Kill events never become invented positive evidence.
 
 Candidate S12 and delivery nodes live only in failure-atomic semantic scratch until the current source judgment and its ordinary ownership, effect, and kill events all succeed.
@@ -2641,7 +2659,7 @@ No implementation may add a fact source, relation family, closure rule, proof ru
 No caller fact is copied into a callee: an ordinary call judges its instantiated [FN-8] goal in the caller's entering state, the callee body begins with its own proved requirement as [ENT-3] source S4, and only a separately FN-9-verified earlier-SCC summary may establish its instantiated normal-result relation back in the caller.
 A fragment type is one member of the closed integer set [OP-2]; relations are over mathematical values, so relations between terms of different fragment types are well-formed and are created only by the sources and flow transports [ENT-3, ENT-5] admit.
 
-A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) the one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, which measure it denotes)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, which measure it denotes)`. The final alternative (i) is the private integer success-payload parameter of an ENT-5 conditional Result context, typed by the Ok payload and scoped to that context; the same formal name in two contexts does not identify their values.
+A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) the one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, which measure it denotes)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, which measure it denotes)`. The final alternative (i) is the private integer success-payload parameter of an ENT-5 conditional Result context, typed by the Ok payload and scoped to that context; the same formal name in two contexts does not identify their values.
 The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the private payload parameter of ENT-5's conditional Result context. That typed parameter denotes only the success payload of the value associated with its context; parameters of distinct contexts have no shared value identity. It is compiler-owned, unwritable, carries its fragment type's standing bounds, and is substituted away at an ordinary success delivery. Neither symbolic datum creates runtime storage.
 Two places are the same term exactly when their roots resolve to the same declaration event [TYPE-6, DIAG-1] and their canonical source spellings [FORM-2] are byte-identical; a fresh binding legally reusing an expired spelling is a distinct term, and distinct spellings are distinct terms even when they resolve to overlapping storage.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
@@ -2659,10 +2677,10 @@ In particular endpoint position makes no place a term: a subscripted place is an
 The two capture terms are finite, immutable, compiler-owned, and not source bindings or source places: source cannot name, write, borrow, move, or shadow them.
 Their scope begins after their respective once-only endpoint captures and ends on every edge leaving the counted construct.
 The counted binder's compiler fact scope begins at its initialization and ends on every edge leaving the counted construct, even though [TYPE-6] makes its source name visible only in the body.
-A commit value is compiler-owned and unwritable in the same sense, and denotes the one value its `set` occurrence's right-hand side evaluated to: it exists from that evaluation, no [ENT-5] event kills it, and no later write can retarget it.
+A commit value is compiler-owned and unwritable in the same sense, and denotes the one value its `set` occurrence's right-hand side evaluated to: it exists from that evaluation, no [ENT-5] event kills it, and no later write can retarget it. A given value is compiler-owned and unwritable in the same sense and denotes the one value its `give` occurrence's operand evaluated to, with the same lifetime.
 A call datum is compiler-owned and unwritable in the same sense, and denotes the value one `own` operand of a declared relation had at its call's pre-transfer point [ENT-5]: it exists from that point, contains no place, and no [ENT-5] event kills it.
 One static term per statement is enough because [ENT-3]'s forward flow visits every statement of one function body exactly once: a loop body is walked once from the head state [ENT-5] forms before that walk, each `match` arm walks its own statements, and no statement is visited twice in one analysis.
-A commit value therefore denotes that statement's value in the one abstract evaluation the walk performs, exactly as a counted header image denotes the binder's value in an arbitrary iteration, and every fact derived about it holds of each dynamic evaluation of that statement separately.
+A commit or given value therefore denotes that statement's value in the one abstract evaluation the walk performs, exactly as a counted header image denotes the binder's value in an arbitrary iteration, and every fact derived about it holds of each dynamic evaluation of that statement separately.
 
 An FN-9 parameter datum denotes its function-entry image in the RelationTemplate but creates no snapshot term.
 Local proof may reuse the ordinary parameter term only while FN-9's entry-image stability remains live; caller publication substitutes the corresponding pre-transfer actual image independently for each referenced formal.
@@ -3102,7 +3120,7 @@ A requirement or verified postcondition fact has exactly the ordinary L0 or opaq
 An affine invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
 A write, consume, or scope exit changes or removes the current binding-to-image map but does not make an already proved theorem about the old image false; a live alias may therefore continue to use it, and a named `proof_use` source denotes exactly that immutable theorem while its invariant declaration remains in lexical scope [INV-1, PRF-1].
 Without a current value image or another retained theorem connecting an old atom to a submitted target, an unreachable old atom cannot help prove that target.
-Header assumptions are removed on every edge leaving their loop, while local invariant conclusions follow [ENT-5]'s canonical control-flow intersection independently of their proof-only names.
+Header invariant conclusions and local invariant conclusions alike follow [ENT-5]'s canonical control-flow intersection on every edge, each edge leaving their loop included, independently of their proof-only names; a header invariant's name still leaves lexical scope with the loop body [INV-1].
 The compiler neither removes one constructor and reruns the body nor computes a masked fact state to decide whether any fact was necessary.
 
 An S12 relation, a narrow-receiver relation, and a relation transported through a value initializer have exactly the ordinary L0 support of their terms after the route's stated substitutions.
@@ -3143,12 +3161,14 @@ At an ordinary control-flow or value-delivery join, align each reaching value's 
 An own match's Ok arm and propagate's successful continuation select the evaluated outcome's context: combine it with the current ordinary L0 facts, close it, substitute the receiving integer binding for the private parameter, and establish the surviving relations as ordinary facts. The Err edge establishes no success relation. FN-9 uses the same context when judging a forwarded return under its success route. Relations retain their verified call, value substitution and join parents in DIAG-2's derivation DAG; none of these events adds a runtime branch, slot, allocation, dependency or scheduling edge.
 
 Bounded relation delivery is an additional edge transfer for the integer carrier admitted by [GIVE-1], in either value initializer.
-On one reaching eligible `give d;` edge, evaluate the bare atom's value first.
-From the closed state at that point, take exactly each L0 bound or disequality whose normalized terms contain d; facts that do not contain d and opaque signed goals are not delivery candidates.
-Replace every occurrence of d with the receiving binding x before applying the give edge's ordinary scope-exit and other event kills to every remaining support.
-Thus d's own branch-scope exit cannot delete the already delivered relation, while the death of any other support deletes that relation normally.
-Close the surviving substituted relations under [ENT-4] to form that edge's delivery image.
-A non-bare, projected, consuming, computed, constructed, call, subscripted, literal, named-const, const-generic, capture, Z, contract-symbolic, wrong-mode, or wrong-type delivery forms no image; the value still follows ordinary GIVE-1 semantics.
+On one reaching eligible `give d;` edge, evaluate the carrier's value first; x is the receiving binding.
+A bare atom d is itself the carrier term c. A literal or named const d is evaluated to that occurrence's given value c [ENT-2], and `c = value(d)` is established at that point exactly as [ENT-3.S5] establishes a literal's value at a `let` binding.
+From the closed state at that point, take exactly each L0 bound or disequality whose normalized terms contain c and replace every occurrence of c in it with x; facts that do not contain c and opaque signed goals are not delivery candidates.
+A bare atom's edge also delivers its carrier equality `x = d`; a literal or named const delivers its carrier equality `x = value(d)` as one of those substituted relations.
+Then apply the give edge's ordinary scope-exit and other event kills to every remaining support.
+Thus d's own branch-scope exit cannot delete a substituted relation, while it deletes the carrier equality `x = d`, and the death of any other support deletes its relations normally.
+Close the surviving relations under [ENT-4] to form that edge's delivery image.
+A non-bare, projected, consuming, computed, constructed, call, subscripted, const-generic, capture, Z, contract-symbolic, wrong-mode, or wrong-type delivery forms no image; the value still follows ordinary GIVE-1 semantics.
 
 At the receiving `let` continuation, ordinary fact flow and its ordinary branch join remain unchanged.
 Separately join one delivery image from every reaching `give` edge of the initializer, in edge NodePath order, after the substitutions and kills above.
@@ -3156,7 +3176,7 @@ When at least one image is non-contradictory, contradictory images are neutral a
 Hence images containing `x < 8` and `x < 128` establish `x < 128`, not nothing and not `x < 8`.
 An all-contradictory image set is contradictory; an absent eligible relation on a non-contradictory edge contributes an empty image and prevents delivery of that relation.
 Add exactly the joined L0 relations to the receiver's ordinary continuation state and close once.
-This transport reads no pre-existing fact on x, forms no inverse `x ↦ d`, copies no unrelated relation, and creates no runtime operation.
+This transport reads no pre-existing fact on x, identifies x with no later value of d, copies no unrelated relation, and creates no runtime operation.
 
 Joins: at the continuation of a `match_stmt` or `value_match`, the fact state is the join of the states on every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after that edge's pre-exit closure, scope-exit kills, and surviving-state closure above; an arm every path of which leaves by `return`, `break` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
@@ -3250,8 +3270,7 @@ For a normalized affine inequality A, `DIRECT(A)` is exactly the following nonre
 Every invariant conclusion and specification-fixed automatic image is appended when established to one automatic affine-premise sequence; its source category is diagnostic evidence and never partitions proof authority.
 At a join, an inequality survives exactly when the canonically identical inequality is present on every non-contradictory input under [ENT-5]'s all-predecessor rule; contradictory inputs are neutral, and if every input is contradictory the affine sequence is empty because L0 already proves every target.
 The surviving sequence is ordered by the first occurrence of each canonical inequality in the first non-contradictory structural predecessor under the edge orders fixed above.
-For each surviving inequality and each non-contradictory predecessor, the retained representative is that predecessor's occurrence with the fewest active-loop dependencies, ties retaining insertion order; the joined dependency set is the sorted union of those representatives' dependency sets.
-This preference prevents an earlier loop-local duplicate from hiding a later loop-independent proof of the same theorem; source and derivation evidence otherwise selects diagnostic parents only.
+For each surviving inequality and each non-contradictory predecessor, the retained representative is that predecessor's first occurrence in insertion order; source and derivation evidence selects diagnostic parents only.
 At every query, canonically identical inequalities are represented once at their first occurrence in this sequence.
 Ordinary L0 relations are not copied into that list.
 
@@ -3403,7 +3422,7 @@ Their conclusions form one simultaneous batch.
 
 For the base batch, the checker submits every header target to [MSR-4]'s disposition in the complete preheader state and assumes no conclusion from that same header.
 If any base target fails, no header conclusion is published.
-After all bases succeed, the complete batch is available as the current-iteration assumption throughout the body.
+After all bases succeed, the complete batch is available as the current-iteration assumption throughout the body, and its conclusions leave the loop as [ENT-5] fixes.
 For every reachable normal backedge, the checker proves every next-header target in one batch from the complete state on that edge while the current-iteration header batch is available; a target never assumes its own unproved next-header result.
 For an ordinary loop the next-header target is the same written relation over the current backedge value images.
 For a counted loop each binder occurrence in the source relation is rendered and proved as the current binder's exact mathematical `+ 1` image, and every other mutable atom uses its current backedge image.
