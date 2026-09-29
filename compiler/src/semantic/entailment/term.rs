@@ -64,7 +64,8 @@ pub(crate) enum TermKind {
     /// identity; source can neither name nor mutate it. The flow visits that
     /// statement once, so this one term denotes its value in the single
     /// abstract evaluation the walk performs, as a counted header image does
-    /// for an arbitrary iteration.
+    /// for an arbitrary iteration. A `give` of a carrier names its given
+    /// value by the same kind at its own NodePath [ENT-2].
     CommitValue {
         commit_path: Vec<u32>,
         ty: IntegerType,

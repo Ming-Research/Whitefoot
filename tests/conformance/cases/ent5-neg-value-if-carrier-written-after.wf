@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn guard(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn stale(start: u64, other: u64, pick: Bool) -> result: u64 pure {
+  doc "Both edges deliver x = limit, so the first call is proved. The carrier equality is an ordinary fact supported by limit: the write to limit kills it, and x is not identified with the new value, so the second call's requirement is unproved [ENT-5, FN-8].";
+  let limit = start;
+  let x = if pick {
+    give limit;
+  } else {
+    give start;
+  }
+  guard(value: x, limit: limit);
+  set limit = other;
+  guard(value: x, limit: limit);
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

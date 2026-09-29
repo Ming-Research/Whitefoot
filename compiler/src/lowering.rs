@@ -208,6 +208,7 @@ impl From<CheckedConversionMode> for IrConversionMode {
             CheckedConversionMode::Checked => Self::Checked,
             CheckedConversionMode::Defined => Self::Defined,
             CheckedConversionMode::Wrap => Self::Wrap,
+            CheckedConversionMode::Nearest => Self::Nearest,
         }
     }
 }

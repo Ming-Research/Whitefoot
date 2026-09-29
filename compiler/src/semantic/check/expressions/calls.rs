@@ -107,6 +107,7 @@ impl<'unit> Checker<'_, 'unit> {
             "cvt.checked" => Some(CheckedConversionMode::Checked),
             "cvt.defined" => Some(CheckedConversionMode::Defined),
             "cvt.wrap" => Some(CheckedConversionMode::Wrap),
+            "cvt.nearest" => Some(CheckedConversionMode::Nearest),
             _ => None,
         };
         if let Some(mode) = conversion_mode {

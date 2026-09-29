@@ -369,7 +369,10 @@ for (
 
 The counted loop supplies `at < limit` in the body. Derived expressions still
 owe their own exact integer and subscript obligations. Header invariants have
-no `use` block.
+no `use` block. A header conclusion also leaves the loop on every `break`
+[ENT-5], so a scan whose position is unchanged since the head needs no
+restated bound or clamp after the loop; the invariant's name still ends with
+the loop body.
 
 Use a local invariant for a relation proved at one program point. When the
 fixed automatic families cannot combine the needed premises, direct the finite
@@ -475,10 +478,20 @@ in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 A named const may contain primitives, const-eligible structs, and
 constant-capacity `Array` values [CONST-2]. A full array literal writes every
-element:
+element; an element that denotes a character is written as a character
+literal, and a number keeps its numeric literal [FORM-5]:
 
 ```whitefoot
-const digits: Array<u8, 4> =[48_u8, 49_u8, 50_u8, 51_u8];
+const digits: Array<u8, 4> =['0'_u8, '1'_u8, '2'_u8, '3'_u8];
+```
+
+A message or other text is an `Array<u8, N>` written as a STRING, whose N is
+its UTF-8 byte length. A line feed, tab and carriage return are written `\n`,
+`\t` and `\r`, any other control or non-ASCII character `\u{H}`, and the
+checker states the right N when it differs:
+
+```whitefoot
+const usage: Array<u8, 12> = "usage: tool\n";
 ```
 
 Borrow and subscript it under the ordinary rules. Const storage is immutable;
@@ -565,7 +578,10 @@ let increment = match starts_word {
 This states Boolean dataflow directly and leaves control flow for genuine
 program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
-result [OP-2].
+result [OP-2]. A `give` of a literal, a named const or a bare integer binding
+delivers the binding's equality to it, so `increment <= 1` holds after the
+`match`, and a value-producing `if` keeps every bound that each branch's given
+value is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
@@ -664,3 +680,25 @@ the exact conversion's proof that the output equals the input. A contract may
 name the total wrapping operation in a definition; a branch proving the
 identical wrapped comparison can satisfy that requirement through ordinary
 goal identity [FN-8, ENT-2].
+
+Use `cvt.nearest::<Src, Dst>(value)` when a value is meant to become the
+nearest float of the destination format, such as an f64 color channel stored
+as f32 or a u64 count used as an f64 statistic. The destination must be a
+float type; the source may be any numeric type. It needs no proof and returns
+the exact value whenever `cvt` would, so switching a total or proved `cvt` to
+it changes no result. Otherwise it rounds to nearest with ties to even, gives
+a signed infinity past the largest finite value and a zero with the input's
+sign below the smallest subnormal, and narrows NaN to the canonical quiet NaN
+[OP-6]. Do not guard a narrowing with `cvt.defined` and a fallback value:
+almost no computed quotient is exact in f32, so the fallback is what runs.
+
+```whitefoot
+fn channel(component: u8) -> result: f32 pure {
+  let wide = cvt::<u8, f64>(component);
+  let ratio = fdiv.strict(wide, 255.0_f64);
+  return cvt.nearest::<f64, f32>(ratio);
+}
+```
+
+A rounded value supplies no proof about its input: comparing it with the
+input after widening does not discharge a later bare `cvt` of that input.

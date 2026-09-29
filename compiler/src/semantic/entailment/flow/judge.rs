@@ -145,6 +145,11 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::CallGoal(ordinal), root);
         }
         let rendered_goal = self.input.render_concrete_goal(&goal.root);
+        let range_lengths = if disposition == CallGoalDisposition::Discharged {
+            Vec::new()
+        } else {
+            self.input.range_length_readings(&goal.root)
+        };
         self.output.call_goals.push(CallGoalOutcome {
             node_path: node_path.clone(),
             callee,
@@ -157,6 +162,7 @@ impl Judging<'_, '_, '_> {
             evidence,
             derivation,
             written_before: written.written_before(disposition == CallGoalDisposition::Discharged),
+            range_lengths,
         });
         (disposition, derivation)
     }
@@ -1017,6 +1023,25 @@ impl Analyzer<'_, '_> {
                             }
                         }
                         self.output.obligations[outcome].range_partitions = partitions;
+                    }
+                    // [REF-4, MSR-1] the range this formation names before
+                    // any binding does: every resolved place of its source
+                    // extended by its own range step, in the term identity a
+                    // requirement instantiated over the argument reads.
+                    if self.output.obligations.len() == formation_start + 2
+                        && self.judging().obligations_since_discharged(formation_start)
+                    {
+                        let (root, steps) = source.place();
+                        for mut place in self.input.places.resolve(root, &steps) {
+                            place.path.push(PlaceStep::Range(*captured));
+                            self.establish_range_length(
+                                place.term_identity(),
+                                *captured,
+                                (start, end),
+                                carrier,
+                                states,
+                            );
+                        }
                     }
                 }
                 ExpressionJudgment {

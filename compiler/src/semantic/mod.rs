@@ -29,7 +29,7 @@ pub use check::check_semantics;
 pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
-pub(crate) use check::{ProofReceipts, check_semantics_with_receipts};
+pub(crate) use check::{ProofReceipts, check_semantics_with_receipts, target_allocation_count};
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
 /// The permission table the overlap lowering reads. It is the same table the
@@ -574,6 +574,32 @@ pub enum SemanticIssueKind {
     InvalidIntegerLiteral,
     /// A float literal is not FORM-5's unique finite canonical spelling.
     InvalidFloatLiteral,
+    /// [FORM-7] a text item of a character literal or STRING is not its
+    /// value's one spelling, or denotes no Unicode scalar value.
+    InvalidTextItem {
+        /// What the item fails.
+        reason: &'static str,
+        /// The repair [DIAG-1], giving the value's one spelling, present
+        /// where the item denotes a scalar value.
+        mechanical_fix: Option<String>,
+    },
+    /// [FORM-7] a `u8` character literal whose value is above 0x7F, so it is
+    /// not an ASCII character.
+    NonAsciiByteCharacter {
+        /// The repair [DIAG-1]: the same value as a `u32` character, or,
+        /// where it fits, the byte written in decimal.
+        mechanical_fix: String,
+    },
+    /// [CONST-2] a STRING whose UTF-8 encoding is not as many bytes as the
+    /// `Array<u8, N>` it defines.
+    TextLengthMismatch {
+        /// The array's declared length N.
+        declared_length: u64,
+        /// The STRING's UTF-8 byte length.
+        byte_length: u64,
+        /// The repair [DIAG-1], stating the byte length.
+        mechanical_fix: String,
+    },
     /// A named constant value does not exactly inhabit its written type.
     InvalidConstValue,
     /// Code or an annotation of another module selects, constructs or binds

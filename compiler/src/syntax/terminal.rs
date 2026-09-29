@@ -702,6 +702,7 @@ pub fn is_operation_name(spelling: &[u8]) -> bool {
         b".checked",
         b".sat",
         b".strict",
+        b".nearest",
     ]
     .iter()
     .any(|suffix| spelling.strip_suffix(*suffix).is_some_and(lower_word))
@@ -776,36 +777,31 @@ fn float_literal(spelling: &[u8]) -> bool {
 
 /// Tests the active specification `literal` grammar membership before FORM-7 value checking.
 ///
-/// Range, integer leading-zero, finite-value, and shortest-float checks are
-/// deliberately outside this predicate, as required by FORM-7.
+/// Range, integer leading-zero, finite-value, shortest-float, and text-item
+/// canonical-spelling and scalar-value checks are deliberately outside this
+/// predicate, as required by FORM-7.
 #[must_use]
 pub fn is_literal(spelling: &[u8]) -> bool {
     matches!(spelling, b"unit" | b"0_T" | b"1_T")
         || integer_literal(spelling)
         || float_literal(spelling)
+        || character_literal(spelling)
 }
 
-/// Tests active specification `STRING` membership.
+/// A character literal's shape [FORM-5]: exactly one text item between `'`
+/// quotes and the suffix `_u8` or `_u32`.
+fn character_literal(spelling: &[u8]) -> bool {
+    super::text::quoted_text(spelling, super::text::CHARACTER_QUOTE).is_some_and(|text| {
+        text.items.len() == 1 && matches!(&spelling[text.suffix_start..], b"_u8" | b"_u32")
+    })
+}
+
+/// Tests active specification `STRING` membership: zero or more text items
+/// between `"` quotes [FORM-5].
 #[must_use]
 pub fn is_string(spelling: &[u8]) -> bool {
-    if spelling.len() < 2 || spelling.first() != Some(&b'"') || spelling.last() != Some(&b'"') {
-        return false;
-    }
-    let mut cursor = 1;
-    while cursor + 1 < spelling.len() {
-        let byte = spelling[cursor];
-        if byte == b'\\' {
-            if !matches!(spelling.get(cursor + 1), Some(b'\\' | b'"' | b'n')) {
-                return false;
-            }
-            cursor += 2;
-        } else if !(0x20..=0x7e).contains(&byte) || matches!(byte, b'"' | b'\\') {
-            return false;
-        } else {
-            cursor += 1;
-        }
-    }
-    cursor + 1 == spelling.len()
+    super::text::quoted_text(spelling, super::text::STRING_QUOTE)
+        .is_some_and(|text| text.suffix_start == spelling.len())
 }
 
 #[cfg(test)]
@@ -955,6 +951,7 @@ mod tests {
             b"iadd.checked",
             b"iadd.sat",
             b"iadd.strict",
+            b"iadd.nearest",
         ] {
             assert!(is_operation_name(spelling));
         }
@@ -996,12 +993,65 @@ mod tests {
         }
     }
 
+    /// A character literal's shape is one text item and a `u8` or `u32`
+    /// suffix; which spelling its value takes, whether it is a scalar value
+    /// and whether a `u8` holds it are FORM-7's, so they are members here.
+    #[test]
+    fn character_literal_membership_is_shape_only() {
+        for spelling in [
+            b"'a'_u8".as_slice(),
+            b"'\\''_u8",
+            b"'\"'_u32",
+            b"'\\n'_u8",
+            b"'\\t'_u8",
+            b"'\\r'_u32",
+            b"'\\u{9}'_u8",
+            b"'\\u{e9}'_u32",
+            b"'\\u{41}'_u8",
+            b"'\\u{0041}'_u8",
+            b"'\\u{d800}'_u32",
+            b"'\\u{110000}'_u32",
+            b"'\\u{e9}'_u8",
+        ] {
+            assert!(is_literal(spelling), "{spelling:?}");
+        }
+        for spelling in [
+            b"''_u8".as_slice(),
+            b"'ab'_u8",
+            b"'a'_i32",
+            b"'a'_u16",
+            b"'a'",
+            b"'a' _u8",
+            b"'\\u{E9}'_u32",
+            b"'\\u{}'_u32",
+            b"'\\x09'_u8",
+        ] {
+            assert!(!is_literal(spelling), "{spelling:?}");
+        }
+    }
+
     #[test]
     fn string_membership_checks_exact_raw_bytes() {
-        for spelling in [b"\"\"".as_slice(), b"\"text\"", b"\"\\n\\\"\\\\\""] {
+        for spelling in [
+            b"\"\"".as_slice(),
+            b"\"text\"",
+            b"\"\\n\\\"\\\\\"",
+            b"\"\\t\\r\"",
+            b"\"it's\"",
+            b"\"\\u{e9}\\u{0}\"",
+            b"\"\\u{41}\"",
+        ] {
             assert!(is_string(spelling));
         }
-        for spelling in [b"text".as_slice(), b"\"\\t\"", b"\"line\nfeed\""] {
+        for spelling in [
+            b"text".as_slice(),
+            b"\"\\x09\"",
+            b"\"line\nfeed\"",
+            b"\"\\'\"",
+            b"\"\\u{E9}\"",
+            b"\"\\u{\"",
+            b"\"x\"_u8",
+        ] {
             assert!(!is_string(spelling));
         }
     }

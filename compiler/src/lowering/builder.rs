@@ -1618,6 +1618,8 @@ impl<'program> IrBuilder<'program> {
                             source_length_upper_bound: allocation
                                 .source_length_upper_bound()
                                 .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                            site: allocation.site,
+                            count_site: allocation.count_site,
                         })
                     })
                     .transpose()?;

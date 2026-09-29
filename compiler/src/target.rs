@@ -35,6 +35,35 @@ pub(crate) enum TargetLayoutFailure {
     UnsupportedHost,
     InvalidIr,
     Unrepresentable(TargetObject),
+    /// A source call's runtime-capacity allocation whose retained count
+    /// bound the selected target's allocation domain cannot hold [STOR-6].
+    AllocationCount(AllocationCountExcess),
+}
+
+#[cfg(test)]
+impl TargetLayoutFailure {
+    /// The proved count bound and the target's count limit of an allocation
+    /// the target cannot hold, for tests that pin both sides of the boundary.
+    pub(crate) const fn count_excess(self) -> Option<(u64, u64)> {
+        match self {
+            Self::AllocationCount(excess) => {
+                Some((excess.proved_count_bound, excess.target_count_limit))
+            }
+            Self::UnsupportedHost | Self::InvalidIr | Self::Unrepresentable(_) => None,
+        }
+    }
+}
+
+/// One allocating source call the selected target cannot qualify: where it
+/// and its count are written, the count bound the checked program retains
+/// for it, and the largest count the target admits for its element and block
+/// header, `(runtime_allocation_max - header) / stride`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AllocationCountExcess {
+    pub(crate) site: crate::SyntaxCoordinate,
+    pub(crate) count_site: crate::SyntaxCoordinate,
+    pub(crate) proved_count_bound: u64,
+    pub(crate) target_count_limit: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -672,15 +701,25 @@ fn validate_source_call_allocations(
                         .get(&count)
                         .copied()
                         .map_or(source_upper_bound, |bound| source_upper_bound.min(bound));
-                    let byte_upper_bound = length_upper_bound
-                        .checked_mul(allocation_layout.stride)
-                        .and_then(|slots| slots.checked_add(allocation_layout.header))
+                    // `bound * stride + header <= max` exactly when the bound
+                    // is at most `(max - header) / stride`, and that quotient
+                    // is the number the writer bounds the count by.
+                    let payload_max = layouts
+                        .target
+                        .runtime_allocation_max()
+                        .checked_sub(allocation_layout.header)
                         .ok_or(TargetLayoutFailure::Unrepresentable(
                             TargetObject::RuntimeSizedAllocation,
                         ))?;
-                    if byte_upper_bound > layouts.target.runtime_allocation_max() {
-                        return Err(TargetLayoutFailure::Unrepresentable(
-                            TargetObject::RuntimeSizedAllocation,
+                    let count_limit = element_count_max(payload_max, allocation_layout.stride);
+                    if length_upper_bound > count_limit {
+                        return Err(TargetLayoutFailure::AllocationCount(
+                            AllocationCountExcess {
+                                site: allocation.site(),
+                                count_site: allocation.count_site(),
+                                proved_count_bound: length_upper_bound,
+                                target_count_limit: count_limit,
+                            },
                         ));
                     }
                     validated.insert(*result);

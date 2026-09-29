@@ -5,6 +5,54 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Deliver value-initializer facts only where the closure cannot derive them
+
+Nodes: compiler/checker-facts, language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts, language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals, compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-29, the owner approved the checker-facts-delivery-roots amendment in the session ("approved", written in Chinese).
+
+Summary: Apply the checker-facts-delivery-roots amendment of PR #175 unchanged. compiler/checker-facts adds that value-initializer delivery materializes only relations the continuation's closure cannot derive, and that a literal carrier's given-value equality enters the edge's ordinary closure incrementally, because a literal relates its value to every term of the function: materializing each consequence tripled the retained proof of the wfgrep program, and a full closure per literal edge slowed its check by 29 percent (research/investigations/writer-lost-facts/DESIGN.md, implementation measurements). Three refused alternatives are recorded: materializing every joined consequence under a raised proof-size ceiling, delivering a literal carrier as its equality alone, and a full closure per literal edge. Nodes also names the nodes of the other entries this merge brings to main (PRs #166, #167, #168, #171 and the loop-exit entry of PR #175), because the newest entry names every node changed against main.
+
+## 2026-09-28 Add the total rounding conversion into float formats
+
+Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals
+
+Owner-approved: 2026-09-28, the owner approved the #171 decision cards (rounding-conversion, rounding-conversion-lowering) in the session handoff
+
+Summary: Apply the two reviewed amendments of PR #171 unchanged. language/numeric-conversion adds `cvt.nearest::<Src, Dst>`, total over the 20 pairs with a float destination, returning the exact conversion's value where its domain holds and otherwise the nearest destination value with ties to even, with no domain obligation and no fact about its input, and records five refused alternatives: a `.strict` suffix, an f64-to-f32 float-table row, a library rounding from the bits, a rounding bare `cvt`, and integer destinations. compiler/numeric-conversion-lowering keeps the rounding mode through checked expressions and IR and emits the exact conversion's float-destination sequence, which rounds to nearest with ties to even in the default floating-point environment compiled programs never leave, refusing a mapping to the exact mode before the IR. The [rounding comparison](../research/investigations/numeric-conversions/DESIGN.md#rounding-conversion-to-float) holds the criterion and candidates. `Nodes:` also names language/surface-form and language/surface-form/text-literals, which the entry below changes for PR #166, on which this pull request is stacked, because the newest entry names every node changed against main. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
+## 2026-09-28 Read one spelling per construct and add character and byte-string text literals
+
+Nodes: language/surface-form, language/surface-form/text-literals
+
+Owner-approved: 2026-09-28, the owner approved the #166 decision cards (surface-form, text-literals, tab and carriage-return escapes) in the session handoff
+
+Summary: Apply the two reviewed amendments of PR #166. language/surface-form's first decision now reads the one-spelling principle per construct, so the character literal `'a'_u8` and the numeric literal `97_u8` are each the one spelling of their own construct while every literal keeps one spelling of its interior; the old wording is recorded as replaced because it did not say how two constructs that denote one value are counted. Add language/surface-form/text-literals: a character literal `'C'_TYPE` with suffix `u8` or `u32` is an integer literal of TYPE, a `u8` character at most 0x7F; each Unicode scalar value has one spelling per quote; a STRING is the `cvalue` of an `Array<u8, N>` constant holding its UTF-8 encoding, with N checked and never inferred, and is never an expression; item shape is decided at token classification and value judgments at check time with a repair. With this approval the owner added the escapes `\t` (U+0009) and `\r` (U+000D), so the node's escape decision names five escaped values and `\u{9}` and `\u{d}` become noncanonical; this is the only change from the amendment as shown. The [text-literals investigation](../research/investigations/text-literals/DESIGN.md) holds the evidence and rejected alternatives. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
+
+## 2026-09-28 Locate the target-layout stop at an allocation the target cannot hold
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (located allocation-target stop) in the session handoff
+
+Summary: Apply the remaining part of the reviewed combined amendment for PR #168 unchanged. Add a decision to compiler/diagnostic-repairs: a target-layout stop at a source call whose proved allocation count the selected target cannot hold [STOR-6] is located at the call and lists the count as written, the proved bound, the largest count the target admits and a fix beside the OP-9 repair's words, with the checker handing the call's and the count's coordinates to lowering, because the stop cites no rule and is no rejection [DIAG-1] while the writer still fixes it in source by tightening the proved count. Refuse rendering the stop from the stage value's `Debug` text and a node path the driver resolves again through a side table. The OP-9 decision's reason and its refused ceiling alternative now say the stop comes only when the program is built rather than that it names nothing. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
+## 2026-09-28 Name a call-formed range's length by its endpoints in repairs
+
+Nodes: compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (range-length repair) in the session handoff
+
+Summary: Apply the reviewed amendment for PR #167 unchanged. The second decision of compiler/diagnostic-repairs now gives the unproved goal over the `len` of a range an argument forms at the call its own routes: the length is written as the difference of the range's endpoints [REF-4], guarded when that difference is one binding, bounded by a width with the exact subtraction and then guarded when it is a subtraction, re-sliced from zero by that width when the goal equates such a subtraction, and preceded by a `let` for an endpoint that is not a binding. Its grounds are that such a range has the length its endpoints give it, so naming it as a value only its occurrence identifies hid the missing bound on the difference, and that a `-wrap` width carries no relation to the endpoints [ENT-3]; the refused occurrence-local classification is added to `Rejected:`. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
+## 2026-09-28 Keep header conclusions past loop exits and deliver the give carrier equality
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts
+
+Owner-approved: 2026-09-28, the owner approved the writer-lost-facts amendments for loop exits and give carriers in the session handoff ("all the Whitefoot decisions are approved", written in Chinese).
+
+Summary: Apply two of the writer-lost-facts amendments unchanged apart from link depth. loop-fact-retention adds that a proved header invariant conclusion leaves its loop on every exit edge and survives the continuation join as a local invariant conclusion does, while the name still ends with the loop body, because the conclusion is a theorem over the exiting iteration's immutable value images; the removal accounted for 11 of the URL parser's 23 clamp blocks. automatic-facts adds that a `give d;` edge delivers the receiver's equality to d, or to the value of a literal or named-const carrier, beside the existing substitution, because `give length;` otherwise lost the bound `let bound = length; give bound;` delivers. The [investigation](../research/investigations/writer-lost-facts/DESIGN.md) holds the probes, soundness arguments and census. Specification v0.79 implements both [ENT-2, ENT-5, ENT-6, GIVE-1, INV-1, DIAG-2]. The approved `Option` success route lands with PR #169's implementation, which applies it to the tree with its specification text. Remove the accepted loop-exit amendment and the carrier part of the automatic-facts amendment. This ruling authorizes no merge.
+
 ## 2026-09-28 Bind marked waiting results and run contexts on several drivers
 
 Nodes: language/parallelism, compiler/waiting-contexts

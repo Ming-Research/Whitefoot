@@ -1730,9 +1730,8 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .direct_token_with(offset, crate::TerminalPredicate::Literal)?
         {
-            let bytes = self.declarations.tree.token_bytes(literal)?;
             let CheckedValue::Integer { bits, .. } =
-                self.declarations.parse_literal(offset, bytes)?
+                self.declarations.parse_literal(offset, literal)?
             else {
                 return self
                     .declarations

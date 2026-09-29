@@ -71,6 +71,24 @@ struct Probe {
 
 const PROBES: &[Probe] = &[
     // -------------------------------------------------------------------
+    // [FORM-7] a hexadecimal escape that denotes no scalar value has no
+    // spelling to repair to; the escapes with a repair are pinned in
+    // `driver::pinned_repairs`.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "character-surrogate.wf",
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{d800}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  reason: `\\u{H}` must denote a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF\n",
+        ],
+    },
+    // -------------------------------------------------------------------
     // [FORM-3] name slots: the lexical class a grammar position writes.
     // -------------------------------------------------------------------
     Probe {

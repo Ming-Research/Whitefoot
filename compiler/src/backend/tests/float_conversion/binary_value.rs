@@ -315,3 +315,232 @@ pub(super) fn extend_program(original: &str) -> String {
         .expect("the existing boundary program ends with its success status");
     format!("{helpers}{main}{checks}  return std::process::exit_status(code: 0_u8);\n}}\n")
 }
+
+/// The [OP-6] rounded value R, then C's special rows: the nearest candidate,
+/// ties to the even encoding, with `2^(E+1)` standing for the signed infinity
+/// and a rounded zero keeping the input's sign. Integer arithmetic only.
+fn rounded_bits(value: BinaryValue, width: u8) -> u64 {
+    let (precision, _, minimum, maximum) = format(width);
+    let BinaryValue::Finite {
+        negative,
+        significand,
+        exponent,
+    } = value
+    else {
+        return float_bits(value, width).expect("infinity and NaN have one encoding");
+    };
+    let sign = u64::from(negative) << (width - 1);
+    if significand == 0 {
+        return sign;
+    }
+    let highest = exponent + (64 - significand.leading_zeros()) as i32 - 1;
+    let mut quantum = (highest - (precision as i32 - 1)).max(minimum);
+    let mut units = if exponent >= quantum {
+        significand << (exponent - quantum)
+    } else {
+        let shift = (quantum - exponent) as u32;
+        let kept = significand.checked_shr(shift).unwrap_or(0);
+        let dropped = if shift >= 64 {
+            significand
+        } else {
+            significand & ((1_u64 << shift) - 1)
+        };
+        // Compare the dropped part with half a unit without forming 2^shift.
+        let half = 1_u128 << (shift - 1).min(100);
+        let dropped = u128::from(dropped);
+        if dropped > half || (dropped == half && kept % 2 == 1) {
+            kept + 1
+        } else {
+            kept
+        }
+    };
+    if units == 1 << precision {
+        units >>= 1;
+        quantum += 1;
+    }
+    if units == 0 {
+        return sign;
+    }
+    if quantum + (64 - units.leading_zeros()) as i32 - 1 > maximum {
+        return float_bits(BinaryValue::Infinity(negative), width).expect("infinity encodes");
+    }
+    float_bits(
+        BinaryValue::Finite {
+            negative,
+            significand: units,
+            exponent: quantum,
+        },
+        width,
+    )
+    .expect("a rounded finite value is representable")
+}
+
+/// Inputs that fall between destination values: halfway points with an even
+/// and an odd lower neighbour, the overflow tie, and the subnormal and
+/// underflow ties, together with their one-ulp neighbours.
+fn rounding_float_samples(source: NumericType, destination: NumericType) -> Vec<u64> {
+    let mut bits = float_samples(source, destination);
+    if source.width == 64 && destination.width == 32 {
+        let one = power_bits(0, 64);
+        let (precision, _, _, _) = format(64);
+        let half_unit = 1_u64 << (precision - 1 - 24);
+        for halfway in [one + half_unit, one + 3 * half_unit] {
+            bits.extend([halfway - 1, halfway, halfway + 1]);
+        }
+        let overflow_tie = float_bits(
+            BinaryValue::Finite {
+                negative: false,
+                significand: (1 << 25) - 1,
+                exponent: 103,
+            },
+            64,
+        )
+        .expect("the f32 overflow tie is a binary64 value");
+        bits.extend([overflow_tie - 1, overflow_tie, overflow_tie + 1]);
+        for (significand, exponent) in [(1, -150), (3, -150), (3, -151)] {
+            let tie = float_bits(
+                BinaryValue::Finite {
+                    negative: false,
+                    significand,
+                    exponent,
+                },
+                64,
+            )
+            .expect("subnormal-range ties are binary64 values");
+            let sign = 1 << 63;
+            bits.extend([tie - 1, tie, tie + 1, tie | sign]);
+        }
+    }
+    bits
+}
+
+fn rounding_integer_samples(source: NumericType, destination: NumericType) -> Vec<i128> {
+    let signed = source.kind == NumericKind::SignedInteger;
+    let minimum = if signed {
+        -(1_i128 << (source.width - 1))
+    } else {
+        0
+    };
+    let maximum = (1_i128 << (source.width - u8::from(signed))) - 1;
+    let precision = if destination.width == 32 { 24 } else { 53 };
+    let threshold = 1_i128 << precision;
+    let mut values = integer_samples(source, destination);
+    // An odd tie, and a value that rounds wrongly through binary64 first.
+    values.extend([threshold + 3, -threshold - 3, (1 << 60) + (1 << 36) + 1]);
+    values.retain(|value| (minimum..=maximum).contains(value));
+    values
+}
+
+/// A native program comparing every float-destination `cvt.nearest` pair
+/// with `rounded_bits`, and checking that the oracle equals the exact value
+/// wherever the exact domain holds.
+pub(super) fn nearest_program() -> String {
+    let mut helpers = String::new();
+    let mut checks = String::new();
+    let mut pairs = 0;
+    for source in NUMERIC_TYPES {
+        for destination in NUMERIC_TYPES {
+            if destination.kind != NumericKind::Float {
+                continue;
+            }
+            pairs += 1;
+            let name = format!("nearest_{}_{}", source.spelling, destination.spelling);
+            let expected_type = format!("u{}", destination.width);
+            let (input_type, input) = if source.kind == NumericKind::Float {
+                (
+                    format!("u{}", source.width),
+                    format!(
+                        "reinterpret::<u{}, {}>(input)",
+                        source.width, source.spelling
+                    ),
+                )
+            } else {
+                (source.spelling.to_owned(), "input".to_owned())
+            };
+            writeln!(
+                helpers,
+                "fn {name}(input: {input_type}, expected: {expected_type}) -> result: Bool pure {{\n  let value = {input};\n  let rounded = cvt.nearest::<{source}, {destination}>(value);\n  let observed = reinterpret::<{destination}, {expected_type}>(rounded);\n  return observed == expected;\n}}\n",
+                source = source.spelling,
+                destination = destination.spelling,
+            )
+            .expect("write rounding helper");
+            let observations: Vec<(i128, u64)> = if source.kind == NumericKind::Float {
+                rounding_float_samples(source, destination)
+                    .into_iter()
+                    .map(|bits| {
+                        let value = decode(bits, source.width);
+                        if source.spelling == destination.spelling {
+                            return (i128::from(bits), bits);
+                        }
+                        let expected = rounded_bits(value, destination.width);
+                        if let Some(exact) = float_bits(value, destination.width) {
+                            assert_eq!(expected, exact, "R agrees with C on D: {bits:#x}");
+                        }
+                        (i128::from(bits), expected)
+                    })
+                    .collect()
+            } else {
+                rounding_integer_samples(source, destination)
+                    .into_iter()
+                    .map(|value| {
+                        let finite = BinaryValue::Finite {
+                            negative: value < 0,
+                            significand: u64::try_from(value.unsigned_abs())
+                                .expect("all integer magnitudes fit u64"),
+                            exponent: 0,
+                        };
+                        let expected = rounded_bits(finite, destination.width);
+                        if let Some(exact) = float_bits(finite, destination.width) {
+                            assert_eq!(expected, exact, "R agrees with C on D: {value}");
+                        }
+                        (value, expected)
+                    })
+                    .collect()
+            };
+            for (input, expected) in observations {
+                writeln!(
+                    checks,
+                    "  if {name}(input: {input}_{input_type}, expected: {expected}_{expected_type}) {{\n  }} else {{\n    return std::process::exit_status(code: 30_u8);\n  }}",
+                )
+                .expect("write independently expected rounding observation");
+            }
+        }
+    }
+    assert_eq!(pairs, 20, "OP-6 admits cvt.nearest for exactly 20 pairs");
+    format!(
+        "{helpers}fn main() -> status: std::process::ExitStatus pure {{\n{checks}  return std::process::exit_status(code: 0_u8);\n}}\n"
+    )
+}
+
+#[test]
+fn the_rounding_oracle_matches_known_binary_values() {
+    let one = power_bits(0, 64);
+    let half_unit = 1_u64 << 28;
+    for (input, expected) in [
+        (one + half_unit, 0x3f80_0000),
+        (one + 3 * half_unit, 0x3f80_0002),
+        (one + half_unit + 1, 0x3f80_0001),
+        (0x47ef_ffff_f000_0000, 0x7f80_0000),
+        (0x47ef_ffff_efff_ffff, 0x7f7f_ffff),
+        (0x3690_0000_0000_0000, 0),
+        (0xb690_0000_0000_0000, 0x8000_0000),
+        (0x36a8_0000_0000_0000, 2),
+        (0x7fef_ffff_ffff_ffff, 0x7f80_0000),
+    ] {
+        assert_eq!(rounded_bits(decode(input, 64), 32), expected, "{input:#x}");
+    }
+    let integer = |value: u64| BinaryValue::Finite {
+        negative: false,
+        significand: value,
+        exponent: 0,
+    };
+    assert_eq!(
+        rounded_bits(integer((1 << 53) + 1), 64),
+        0x4340_0000_0000_0000
+    );
+    assert_eq!(rounded_bits(integer(u64::MAX), 64), 0x43f0_0000_0000_0000);
+    assert_eq!(
+        rounded_bits(integer((1 << 60) + (1 << 36) + 1), 32),
+        0x5d80_0001
+    );
+}
