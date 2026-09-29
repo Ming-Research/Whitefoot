@@ -75,7 +75,6 @@ _check-static:
 
 .PHONY: _check-unit
 _check-unit:
-	@$(MAKE) -C compiler build
 	@$(MAKE) -C compiler test-build-unit
 	@$(MAKE) -C compiler test-unit
 

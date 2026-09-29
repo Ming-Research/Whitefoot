@@ -165,6 +165,12 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
   Platform qualification and paired performance remain explicit separate
   responsibilities. Report the tested revision and actual groups; matching
   group names alone do not establish matching test selection.
+- [ ] **T8 — Time budgets.** A new labeled CI stage has a row in
+  `.github/time-budgets.txt` for each host it runs on. A raised budget has the
+  owner's decision; a change that makes a stage much faster lowers its budget.
+  An overrun reported as runner variance names what the change adds to that
+  stage and why it cannot account for the time. A stage kept within its budget
+  by removing coverage fails T2.
 
 ## R. Decisions — changed choices, premises or relevant evidence
 
@@ -237,7 +243,8 @@ Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
   marked ready has the owner's approval of every design-tree and
   specification change it carries, recorded in `design/log.md` and
   `spec/log.md`. If merging is requested, verify owner approval and root
-  `make check` for the exact merge tree under the existing four rules;
+  `make check`, local or the hosted gate, for the exact merge tree under the
+  existing four rules;
   neither a fast review nor a focused test run substitutes for them.
 - [ ] **V4 — Existing PR updated.** The reviewed task changes are committed
   and pushed to the existing PR branch without waiting for a reminder; its

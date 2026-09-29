@@ -1,0 +1,60 @@
+# Wall-time budgets, in seconds, for each labeled verification stage on the
+# hosted runners: ubuntu-24.04 (linux) and macos-14 (macos). `run-check.pl`
+# reads this table without changing any stage's status. In CI it records a
+# stage over its budget, or one without a row for its host, and the job's
+# final verdict step fails on that record; a local run only prints the
+# comparison.
+#
+# A budget is 1.25 times the slowest of the runs recorded in
+# research/investigations/test-economy/time-budgets.md, rounded up to 5 s,
+# and never under 10 s. AGENTS.md "Checks" says how to judge an overrun.
+# Raise a budget only with the owner's approval, as a decision in the
+# handoff; lower one in the change that makes its stage much faster. "-"
+# marks a stage that does not run on that host.
+
+label                           linux  macos  windows
+
+# gate.yml, static group
+check/static                    65     120    -
+repository-invariants           25     30     -
+spec-archives                   10     10     -
+readme-translation              10     10     -
+spec-prose-integrity            10     10     -
+guidance                        10     10     -
+source-size                     10     10     -
+design-lint                     10     10     -
+conformance                     10     10     -
+performance-instrument          10     10     -
+compiler/lint                   40     80     -
+
+# gate.yml, unit group: the library in test mode, then its cases
+check/unit                      235    280    -
+compiler/test-build-unit        135    185    -
+compiler/test-unit              105    100    -
+
+# gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
+# then their cases
+check/corpus                    200    255    -
+compiler/test-build-corpus      95     135    -
+compiler/test-corpus            110    125    -
+
+# gate.yml, runtime group
+check/runtime                   20     10     -
+
+# io-hosts.yml, completion-linux
+linux-runtime                   50     -      -
+linux-asan-ubsan                10     -      -
+linux-default-tsan              10     -      -
+linux-deque-tsan                10     -      -
+linux-runtime-tsan              10     -      -
+
+# compute-regression.yml: two cold compiler builds at two Cargo jobs, their
+# images, then the host control, the instrument's slowdown control and the
+# paired comparison
+performance-candidate-compiler  115    -      -
+performance-baseline-compiler   105    -      -
+performance-candidate-images    10     -      -
+performance-baseline-images     10     -      -
+performance-null                45     -      -
+performance-slow-control        55     -      -
+performance-comparison          45     -      -
