@@ -16,7 +16,7 @@ use crate::{
 
 use super::super::entailment::{
     CallGoalDisposition, FunctionEntailment, ObligationFamily, PostconditionDisposition,
-    SourceProofCertificateFailure, TermRead,
+    RangeEndpointReading, SourceProofCertificateFailure, TermRead,
 };
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
@@ -661,7 +661,25 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         let requires_clause = self.declarations.node_location(&outcome.requires_clause)?;
-        let mechanical_fix = repairs::call_requirement(&case);
+        let ranges = outcome
+            .range_lengths
+            .iter()
+            .map(|reading| {
+                let start = self.range_endpoint_spelling(&reading.start)?;
+                let end = self.range_endpoint_spelling(&reading.end)?;
+                Ok(repairs::RangeLength {
+                    range: format!("{}[{}..{}]", reading.base, start.0, end.0),
+                    start,
+                    end,
+                    difference_goal: reading.difference_goal.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
+        let mechanical_fix = repairs::call_requirement(
+            &case,
+            &ranges,
+            repairs::range_goal_shape(&outcome.goal.root),
+        );
         Ok(SemanticIssue {
             rule: SemanticRule::Fn8,
             location,
@@ -676,6 +694,26 @@ impl<'unit> TypeContext<'unit> {
             )),
             request: None,
         })
+    }
+    /// [REF-4, DIAG-1] one range endpoint as a repair spells it, and whether
+    /// a relation can name it. An endpoint no relation names is spelled from
+    /// the source occurrence that evaluated it, a field or element read that
+    /// the writer copies into a binding.
+    fn range_endpoint_spelling(
+        &self,
+        endpoint: &RangeEndpointReading,
+    ) -> Result<(String, bool), CheckStop> {
+        match endpoint {
+            RangeEndpointReading::Spelled(spelling) => Ok((spelling.clone(), true)),
+            RangeEndpointReading::Unspelled(Some(occurrence)) => {
+                let node = usize::try_from(*occurrence)
+                    .ok()
+                    .and_then(NodeId::from_index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Ok((self.declarations.tree.source_spelling(node)?, false))
+            }
+            RangeEndpointReading::Unspelled(None) => Ok(("?".to_owned(), false)),
+        }
     }
     /// [FN-9] the first failed exit of one relation, or its missing exit.
     fn undischarged_postcondition(

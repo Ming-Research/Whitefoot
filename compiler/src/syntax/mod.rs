@@ -13,6 +13,8 @@ mod outcome;
 mod parser;
 /// The active specification's context-free terminal partition.
 pub mod terminal;
+/// Text items shared by character literals and STRINGs [FORM-5, FORM-7].
+pub(crate) mod text;
 pub(crate) mod views;
 
 pub use classifier::classify_terminals;

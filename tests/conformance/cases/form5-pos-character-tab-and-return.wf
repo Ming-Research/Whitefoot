@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The escapes \\t and \\r denote U+0009 and U+000D in a character literal of either suffix [FORM-5].";
+  let tab = '\t'_u8 == 9_u8;
+  if tab {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let carriage = '\r'_u8 == 13_u8;
+  if carriage {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let wide_tab = '\t'_u32 == 9_u32;
+  if wide_tab {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  let wide_carriage = '\r'_u32 == 13_u32;
+  if wide_carriage {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

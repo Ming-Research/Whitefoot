@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Atom {
+  index: u64;
+  tag: u8;
+}
+
+struct Table {
+  spans: Box<Slots<u32>>;
+}
+
+fn intern(table: &Table, key: u32) -> atom: Atom writes(table) contract {
+  requires table^.spans.inner.len < table^.spans.inner.cap;
+  ensures atom.index < table^.spans.inner.len;
+} {
+  doc "CALL-4: the published relation is over the result field atom.index.";
+  let at = table^.spans.inner.len;
+  place_back(window: &table^.spans.inner, value: key);
+  return Atom(index: at, tag: 0_u8);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A write to the destination field kills the relation over it [ENT-5]: after set atom.index, nothing bounds the index, and the subscript is rejected.";
+  let spans = box_slots_new::<u32>(capacity: 4_u64);
+  let table = Table(spans: move spans);
+  let atom = intern(table: &table, key: 9_u32);
+  set atom.index = 3_u64;
+  let span = table.spans.inner[atom.index];
+  let code = cvt.wrap::<u32, u8>(span);
+  return exit_status(code: code);
+}

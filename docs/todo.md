@@ -25,16 +25,17 @@ rarely insert at the same place.
   from the modular conversion operation, which adds no proof family; reopen
   when a real caller needs this named-value form.
 
-- **Select direct rounded/saturated float conversion policies.** The
+- **Select a total float-to-integer conversion policy.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  identifies missing direct rounded-to-float semantics and cumbersome total
-  float-to-integer compositions. A rounded-to-float candidate needs explicit
-  ties, overflow, subnormal, signed-zero and NaN rules; saturation needs its own
-  NaN and rounding choice, including nonrepresentable i64 maxima. Defer from the
-  exact-conversion implementation because these select different results and
-  no concrete consumer has selected their complete surface. Reopen for a
-  float-heavy program or owner selection; compare source and emitted/native
-  behavior before choosing spellings or claiming an improvement.
+  identifies cumbersome total float-to-integer compositions; rounding into a
+  float destination is now `cvt.nearest` [OP-6], which deliberately admits no
+  integer destination. A saturating or rounding float-to-integer operation
+  needs its own NaN, rounding-direction and saturation choice, including
+  nonrepresentable i64 maxima, and `llvm.fptosi.sat` fixes only one of those
+  choices. Defer because no concrete consumer has selected the complete
+  surface; reopen for a program that converts computed floats to integers
+  (pixel coordinates, quantization), and compare source and emitted/native
+  behavior before choosing a spelling or claiming an improvement.
 
 - **Validate float and domain evidence through saved Results.** Exact
   conversions extend integer value relations only. A checked result
@@ -75,6 +76,20 @@ rarely insert at the same place.
   extensions below remain a separate question.
 
 ## Checker precision and proof cost
+
+- **A widening conversion's operand is read as any affine side.**
+  [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
+  operand only for e a term or constant. [FN-9] relation terms match that:
+  `postcondition_relation_datum` in `compiler/src/semantic/check/ensures.rs`
+  recurses to a datum. `goal_affine_side` in
+  `compiler/src/semantic/entailment/flow/goals.rs` instead reads the operand
+  as any affine side. Source cannot reach the difference today, because a
+  call argument is an atom [GRAM-5] (`cvt::<u32, u64>(x + 1_u32)` does not
+  parse), so a written operand is already a term or constant; the recursion
+  is sound in any case, since a widening conversion keeps the mathematical
+  value. The owner chose on 2026-09-29 to leave it. Narrow the recursion to
+  `goal_operand` or widen ENT-2, with a conformance case either way, when a
+  change lets a non-term operand reach a conversion.
 
 - **A module check's cost for a library interface still grows with the
   module's functions.** Reading `std::process`'s closure (the `std::io`,
@@ -411,6 +426,59 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **An instantiated goal spells a field-read range endpoint as `?`.** An
+  FN-8 goal over a range an argument formed at the call renders an endpoint
+  that is not a literal, const or binding as `?`, as in
+  `text^[?..?].len <= 16_u64` for `&text^[span.start..span.end]`, because the
+  entailment renderer has no source text for such a capture. The repair
+  already spells those endpoints from their source occurrence and says to
+  copy them into bindings; the `instantiated_goal` payload does not. Spell
+  the capture's source occurrence there too, through the same occurrence the
+  repair reads, and pin it with the field-endpoint pair in
+  `driver::pinned_repairs`. Reopen with the next change to goal rendering.
+- **An affine bound is lost at a statement join where the binding's images
+  differ.** After a scan whose `pos <= length` is known only as an affine
+  invariant conclusion, `let result = pos; if result < start { set result = start; }`
+  cannot prove `result <= length`, although each edge satisfies it: the
+  then edge holds it in L0, the false edge only as an affine theorem, the L0
+  join drops it and [ENT-6] gives `result` a fresh atom. No local invariant
+  carries it, because the two edges' conclusions are different canonical
+  inequalities. The
+  [witness](../research/investigations/writer-lost-facts/DESIGN.md#shape-6-lockstep-arrays-and-struct-fields)
+  is the limit PR #169 records for lockstep counters. Impact: writers keep
+  both clamps or must add a header relation that makes the branch dead.
+  Candidate: at a join input, project a two-atom affine conclusion over two
+  live bindings' current images into L0 before the join; validate soundness
+  against replacement and alias controls and measure closure cost first.
+  Reopen when a consumer cannot avoid the branch.
+- **A product with a struct-field operand has no interval route.** [ENT-6]
+  gives affine value images to live own integer bindings and measures only,
+  and its interval product needs both operands' images, so after
+  `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
+  `header.height <= 16384_u32`, `let stride = header.width * 4_u32;` is
+  proved but `stride * header.height` is not, and neither is a product whose
+  operand was computed from a field; copying the fields into bindings first
+  proves both. The same holds for a parameter's fields bounded by `requires`,
+  so it predates v0.80, but v0.80's field relations make it the next thing a
+  writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
+  product. Impact: one `let` per field before a nonlinear product. Candidate:
+  give a tracked field place the current-value image its binding copy would
+  have, killed with the field; validate against field writes, whole-value
+  replacement and aliases, and measure closure cost. Reopen when a program
+  cannot copy the field.
+
+- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
+  for a route the version does not admit, such as `when Err(error: e):` or a
+  variant of a program's own enum, names neither the admitted `Ok` and `Some`
+  routes nor the result types they apply to, and `InvisibleUse` for a header
+  invariant named after its loop does not say the name's scope ended with
+  the loop body [INV-1]; the Snowghost writers reported changing result
+  types and retrying certificates, which either repair would have
+  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
+  pinned with a program per alternative.
+  Found in the writer-lost-facts investigation; reopen with the next
+  diagnostics change.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -469,14 +537,17 @@ rarely insert at the same place.
   separates the one-slot cell's extra word from its helper boundary: retained
   wide removal and consumption has three 256-byte transfers in WF versus one
   in C even though both `Option<Record>` results occupy 264 bytes. The separate
-  insertion `Result<SlabHandle, Record>` occupies 280 bytes in WF's product
-  layout versus 264 in C's union ABI. Keep these distinctions when interpreting
+  insertion `Result<SlabHandle, Record>` occupied 280 bytes in WF's former
+  product layout versus 264 in C's union ABI; the union layout of
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  now makes it 264 bytes, as in C, and leaves `Option<Record>` and the
+  transfer counts unchanged. Keep these distinctions when interpreting
   timing; a cell-layout change alone cannot remove these costs. Validate
   forwarding or result placement with
   the same owning return paths, failed insertion returning the offered owner,
   partial cleanup and alias controls, checking optimized transfers and
-  same-source timings on supported toolchains. Defer general enum layout and
-  call ABI changes until that experiment establishes which transfer can be
+  same-source timings on supported toolchains. Defer call ABI
+  changes until the forwarding experiment establishes which transfer can be
   removed without changing ownership; reopen with the owning-map library or
   a workload dominated by wide Slab removal.
   The [map's exhaustive returned-owner protocol](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
@@ -665,34 +736,69 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
-- **A target-layout failure names no allocation site or admitted bound.** A
-  program whose OP-9 proof retains a count bound the selected target cannot
-  hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,
-  passes checking and stops at [STOR-6] target qualification with
-  `target layout failure in TargetLayout: TargetLayout(Unrepresentable(RuntimeSizedAllocation))`,
-  which names no source site, no proved bound and no bound the target
-  admits. The numbers exist where the check fails, in the runtime-sized
-  allocation branch of the source-call validation in
-  `compiler/src/target.rs`: the retained bound, the element's target
-  stride, the descriptor header and `runtime_allocation_max()`, which give the
-  largest admitted count `(max - header) / stride`. Design: `IrSourceCall`
-  carries the call's node path, copied from the checked call during lowering;
-  a `TargetLayoutFailure` variant carries the site, the proved bound and the
-  admitted bound (the enum is `Copy` and crosses many `?` returns, so an index
-  into a side table keeps it `Copy`); the driver renders the site as a source
-  location beside the two numbers, still as a target-layout stop and never as
-  a source rejection [STOR-6]; and
-  `u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure`
-  in `compiler/src/driver/tests.rs`, which pins today's stop by
-  `RuntimeSizedAllocation` in its detail, changes with it. No specification
-  change. Validate with a program that proves the OP-9 ceiling and calls the
-  allocating function from its entry: the failure names the allocation's call
-  site, the proved bound and the selected target's largest admitted count,
-  while the same program bounded below that count builds. Deferred because the
-  OP-9 repair no longer offers the ceiling as the bound to write, which closes
-  the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
-  found into this stop; reopen when a writer report or a program meets the
-  unlocated failure.
+- **Checking accepts a program whose build stops at target layout.** A
+  program whose [OP-9] proof retains a count bound the selected target cannot
+  hold passes `whitefootc --check` and `--check-module` and stops only when
+  built, at [STOR-6] target qualification; the stop now names the call, the
+  proved bound and the target's largest admitted count
+  (`AllocationCountExceedsTarget`), but a writer who checks before building
+  still learns of it one round late, which is what cost the Snowghost PNG
+  decoder's writer most. The specification permits a check command to
+  qualify the host target: [STOR-6] places target layout after semantic
+  publication and makes its failure no source rejection [DIAG-1], which a
+  check that also qualified the host and reported a `TargetLayout` stop
+  (never a source verdict) would respect. But `driver::check` is
+  defined as the source-verdict projection that stops before lowering, and
+  `design/compiler` records no decision on what a check command covers. Two
+  further obstacles: `--check-module` selects no entry, while target
+  qualification qualifies the lowered program an entry reaches, so a
+  module-level check has no materialization set to qualify; and qualifying
+  requires lowering, whose cost on a check has not been measured. The
+  options are qualifying the host in `--check` when an entry is selected,
+  a separate target-check option, or relying on the OP-9 repair's warning
+  that a bound near the language's limit stops at target layout. This is a
+  compiler decision for the owner; validate a chosen form with the
+  reproduction in `an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds`
+  (`compiler/src/driver/pinned_repairs.rs`) stopping at check time as a
+  `TargetLayout` stop with no rule, and the check time of the corpus
+  programs before and after. Reopen when the owner rules or another writer
+  meets a build-only target stop.
+- **A target stop inside a generic function names only the template's call.**
+  The allocation-fit record captures the call and count coordinates once,
+  from the checked template body (`allocation_fit_of_call` in
+  `compiler/src/semantic/check/expressions/calls/user.rs`), and lowering
+  copies them into every monomorphized instance, so an
+  `AllocationCountExceedsTarget` stop inside a generic function points at
+  the template's allocation and not at the call that instantiated it, while
+  a source rejection in a concrete instance names a requesting call
+  [MOD-8]. Impact: a writer whose generic container helper is instantiated
+  from several sites must find which instance carries the unbounded count.
+  Change: carry the instantiating call's coordinate with each
+  monomorphized instance's allocation record and print it as the
+  requesting call. Validate with a generic allocating helper instantiated
+  from two callers, one bounded and one not, whose stop names the unbounded
+  caller. Deferred because no writer has met it; reopen when one does.
+
+- **Union-laid-out enums: deferred refinements.**
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  is implemented: enums with two or more payload variants whose product does
+  not return in registers are unions of per-variant views and memory-only in
+  the backend (`Component` 168 to 40 bytes, `IoError` 228 to 12, the I/O
+  results 236--352 to 16--112; the
+  [results](../research/investigations/enum-union-layout/DESIGN.md#implementation-results)).
+  The investigation's timing criterion was met for the Slab and
+  priority-queue comparisons; its I/O half was waived by the owner because
+  the named I/O programs no longer compile. Deferred refinements, each to be
+  measured on its own: a first-class
+  word carrier so register-sized two-payload enums (at most 8 bytes saved in
+  the maintained programs) could also shrink, reopened by a workload storing
+  many of them; niche encoding, reopened with refined integer domains or a
+  workload dominated by `Option<Box<T>>`; a narrower tag, reopened by a
+  workload of enums whose views are less than 4-aligned; and an enum with one
+  payload variant that holds a union enum (`ReadStop`, `Option<IoError>`)
+  keeps the product form and is memory-only only because of that payload,
+  which is correct but copies it by memmove where its other fields alone
+  would be first-class, reopened if a measured path moves many of them.
 
 ## Parallel lowering and runtime
 
@@ -1211,13 +1317,20 @@ rarely insert at the same place.
   control passes, par-quicksort, and best-of-seven lowering cost. Validate
   an implementation with the investigation's implementation criterion.
 
-- **`--par` fails to build `wfgrep`.** `whitefootc --par
-  tests/programs/wfgrep.wf` stops with a backend `InvalidIr` failure on main
-  while the build without `--par` succeeds, so the flagship program has no
-  parallel build. The offers registered before the failure are
-  `name_before`'s `byte_at` pairs. Find which emitter check fires, fix the
-  emission or refuse that offer before emission with a ledger reason, and
-  validate by running wfgrep's corpus tests against a `--par` build.
+- **Offers beneath a waiting recursion carry no recursion budget.** A
+  cyclic component with a waiting member gets no budget-carrying family
+  (compiler/parallel-lowering/two-worlds), because a waiting function is a
+  resumable frame with no ordinary entry for a variant to stand behind.
+  Every activation of such a recursion therefore reaches its offers
+  unbudgeted, as a `--par-recursive-frontier off` build does: in
+  `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
+  reach `name_before`'s byte-pair offers at every depth. Whether that costs
+  anything is unmeasured; the offers are small, and a grain rule may refuse
+  them before depth matters. Validate by timing the `--par` build of
+  `wfgrep.wf` on a deep and on a wide tree against the default build and
+  against a build that withholds those offers; if the unbudgeted offers cost
+  measurable time that no grain rule removes, give waiting components a
+  budget-carrying frame variant. Reopen with that measurement.
 
 ## Platforms and host interfaces
 
@@ -1451,6 +1564,35 @@ rarely insert at the same place.
   and wire their compilation or delete them with the workflow sentence;
   reopen with the next edit of any of these files.
 
+- **A reserved spelling used as a name does not say it is reserved.** The
+  Snowghost renderer's writers found by trial that `copy`, `is` and `checked`
+  cannot name a binder [FORM-3]: `let copy = 1_u8;` and `let is = 1_u8;` stop
+  as a grammar `UnexpectedToken` expecting an IDENT at `copy`, and
+  `let checked = 1_u8;` as `ReservedName` with `class: ModeWord` and an
+  inventory ordinal, and neither says that the spelling is a fixed atom or a
+  mode word nor which grammar uses it (`capability_bound`, `result_route`,
+  the OPNAME and `infix_op` suffixes). The rejection should name the
+  reservation and the production that owns the spelling, with a repair to
+  choose another name. Validate with a pinned probe per reservation class,
+  fixed atom and mode word, in a `let`, a parameter and a field, reading
+  that a writer renames on the first round. Reopen with the next change to
+  FORM-3 attribution or name reservation.
+
+- **A runtime-formed relative path with several components cannot be
+  opened.** `std::fs::relative_path` takes only a `HostString`, which a
+  program receives as an argument, and `open_directory` and `open_file`
+  open one component each while refusing a symbolic link at every
+  component, so a program cannot open `a/b/c` from bytes it read at run
+  time, such as a file named in data, when a directory on that path is or
+  passes through a link. The Snowghost renderer met this reading resources
+  named in its input; the related root case is the linked-directory item
+  above. Lifting it needs a specification change: a `RelativePath` formed
+  from bytes, validated as `relative_path` validates a `HostString`, or a
+  multi-component open that follows links as `open_read` does. Validate with
+  a program that reads a path from a file and opens it below a directory
+  holding a link, with an enumerated link left unfollowed. Reopen when a
+  program must open data-named files below linked directories.
+
 ## Modules and libraries
 
 - **Finish and qualify the modular incremental design.** The module
@@ -1546,7 +1688,12 @@ rarely insert at the same place.
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
-  `driver::check_module` has no caller. Finalize checks every parsed node
+  `driver::check_module` has no caller. `IrRuntimeTargetObligations`'s
+  `call_site_bound` is `false` in its one constructor, so the byte checks
+  `validate_target_obligation` in `compiler/src/target.rs` keeps for a direct
+  `BufferFill`, `WindowBlockNew` or `WindowGrow` node with its own bound never
+  run; every source bound is qualified per call in
+  `validate_source_call_allocations`. Finalize checks every parsed node
   against its production again, the re-verification `design/compiler.md`
   refuses. By reading, generic validation never takes its early return,
   because the prelude's generic signatures are templates in every bundle, so
@@ -1638,14 +1785,7 @@ each is resolved by a discussion and a tree change.
   library example needs one of these boundaries. Validate matched direct/local/
   projected programs, alias and descriptor writes, joins, loop iterations and
   stronger-contract negatives before choosing an extension; do not infer a
-  general refinement system from the local-result implementation. A separate
-  FN-9 result-selector limit remains: a nominal Slab result cannot publish
-  `ensures result.cells.inner.len == 0_u64;`, whereas the direct boxed Ring
-  carrier can publish its measure. The
-  [exact rejected forms](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
-  distinguish this wrapper boundary from indexed postcondition targets and
-  from storing an already-related Result. Reopen it when a library wrapper
-  needs the relation, with direct-carrier, nested-field and stale-write controls.
+  general refinement system from the local-result implementation.
   Conditional fact representation cost is the separate compiler defect above.
   The conversion tests also retain an affine precision boundary: if `index`
   has only an affine image `first + second`, its checked integer conversion's
@@ -1725,6 +1865,12 @@ each is resolved by a discussion and a tree change.
   states the identity, and with the new intervals the exact row is provable
   wherever the step would apply. Reopen when a proof needs the identity and
   the writer cannot use the exact row.
+  A width `end -wrap start` computed under the guard `start <= end` is outside
+  even that step: the guard is a relation between the operands, and the S7
+  row reads only their separate intervals, so the width stays unrelated to a
+  range length `end - start` (conformance case
+  `ref4-neg-a-wrapped-width-does-not-bound-the-range-length`); the exact
+  subtraction under the same guard is the admitted spelling.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
@@ -1759,6 +1905,14 @@ each is resolved by a discussion and a tree change.
   kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
   whose starter can wait for it, not for an accept loop that never ends.
   Reopen when a context-serving program needs to log or report.
+- **ENT-3.S6 names only the bound range's length fact.** S6 establishes
+  `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
+  every range's one measure equals `hi - lo` and the value-image rule gives a
+  formation's length image without a binding. The checker establishes the
+  same S6 relation on the range an argument forms at its call (conformance
+  case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
+  REF-4 as the entitlement. Decide whether S6 should say so by naming every
+  formation, bound or not; reopen with the next amendment touching S6.
 
 ## Ownership redesign (candidate x1) follow-ups
 
@@ -1867,7 +2021,12 @@ condition under which it is taken up.
   full sparse-map loop still rejects its extent invariant when its
   length-preserving wrapper is inlined with an explicit extent bridge. Its
   normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. Reopen with contract-proof work: reduce the remaining
+  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
+  reduce a related refusal to two scalars incremented together under a branch
+  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
+  following from ENT-6's per-binding join images and INV-1's affine-only
+  conclusions rather than a compiler defect; Snowghost's line breaker keeps
+  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
   refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation

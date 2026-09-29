@@ -3,12 +3,13 @@ alias exit_status = std::process::exit_status;
 
 struct Block {
   count: u64;
+  sealed: Bool;
 }
 
 fn pass_block(block: Block) -> result: Block pure contract {
-  ensures result.count == block.count;
+  ensures result.sealed == block.sealed;
 } {
-  doc "FN-9 admits its specified whole-result forms, the explicit Result route and CALL-4's measures of owned descendants; an ordinary integer field of an aggregate result such as `result.count` is not a selectable result datum.";
+  doc "FN-9 admits a result's fragment-integer fields and measures as relation data [CALL-4]; a Bool field is neither, so result.sealed is no selectable result datum. Before v0.80 this case refused the integer field result.count, which CALL-4 now admits.";
   return move block;
 }
 

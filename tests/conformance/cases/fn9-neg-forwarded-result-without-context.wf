@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+enum PngError {
+  Malformed();
+}
+
+fn plain_header(width: u32, height: u32) -> result: Result<Header, PngError> pure {
+  doc "No routed clause: its call gives the returned value no conditional context.";
+  let header = Header(width: width, height: height);
+  return Ok<Header, PngError>(value: header);
+}
+
+fn checked_header(width: u32, height: u32) -> result: Result<Header, PngError> pure contract {
+  ensures when Ok(value: header): header.width >= 1_u32;
+} {
+  doc "A forwarded Result is judged in its transported context [FN-9, ENT-5]; this one has none, so the payload field keeps only its type's bounds and the clause is unproved.";
+  let parsed = plain_header(width: width, height: height);
+  return parsed;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

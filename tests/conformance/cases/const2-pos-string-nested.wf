@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Message {
+  code: u8;
+  text: Array<u8, 8>;
+}
+
+const quoted: Message = Message(code: 7_u8, text: "it's \"x\"");
+
+const rows: Array<Array<u8, 2>, 2> =["ab", "\\\n"];
+
+fn main() -> status: ExitStatus pure {
+  doc "A STRING is a cvalue wherever an Array<u8, N> is required, nested in a struct field and in an array entry; inside a STRING an apostrophe is raw and a double quote is escaped.";
+  let apostrophe = quoted.text[2_u64];
+  if apostrophe == '\''_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let quote = quoted.text[5_u64];
+  if quote == '"'_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let backslash = rows[1_u64][0_u64];
+  if backslash == '\\'_u8 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -13,17 +13,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         value: IrValueId,
     ) -> Result<(), BackendFailure> {
         if self.value_type(value) != Some(source_type)
-            || (matches!(mode, IrConversionMode::Exact | IrConversionMode::Wrap)
-                && result_type != destination_type)
+            || (matches!(
+                mode,
+                IrConversionMode::Exact | IrConversionMode::Wrap | IrConversionMode::Nearest
+            ) && result_type != destination_type)
             || (mode == IrConversionMode::Defined && result_type != IrType::Bool)
             || (mode == IrConversionMode::Wrap
                 && !matches!(
                     (source_type, destination_type),
                     (IrType::Integer { .. }, IrType::Integer { .. })
                 ))
+            || (mode == IrConversionMode::Nearest
+                && !matches!(destination_type, IrType::Float { .. }))
         {
             return Err(BackendFailure::InvalidIr);
         }
+        // [OP-8] Rounding lowers exactly as the exact conversion of the same
+        // float-destination pair: the direct cast rounds to nearest, ties to
+        // even, and the float-format NaN selection is part of both results.
+        let mode = if mode == IrConversionMode::Nearest {
+            IrConversionMode::Exact
+        } else {
+            mode
+        };
         if source_type == destination_type {
             if !matches!(source_type, IrType::Integer { .. } | IrType::Float { .. }) {
                 return Err(BackendFailure::InvalidIr);

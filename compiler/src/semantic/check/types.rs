@@ -766,10 +766,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
-            let value = self
-                .types
-                .declarations
-                .parse_literal(node, self.types.declarations.tree.token_bytes(literal)?)?;
+            let value = self.types.declarations.parse_literal(node, literal)?;
             if value.ty() == expected {
                 return Ok(value);
             }
@@ -778,6 +775,35 @@ impl<'unit> Checker<'_, 'unit> {
                 node,
                 SemanticIssueKind::InvalidConstValue,
             );
+        }
+        if let Some(literal) = self
+            .types
+            .declarations
+            .tree
+            .direct_token_with(node, TerminalPredicate::String)?
+        {
+            // [CONST-2] a STRING defines an `Array<u8, N>` and no other type.
+            let CheckedType::Array { element, length } = expected else {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Const2,
+                    node,
+                    SemanticIssueKind::InvalidConstValue,
+                );
+            };
+            if self.types.element_type(element)? != CheckedType::Integer(IntegerType::U8) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Const2,
+                    node,
+                    SemanticIssueKind::InvalidConstValue,
+                );
+            }
+            let length = length
+                .value()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            return self
+                .types
+                .declarations
+                .parse_string_constant(node, literal, expected, length);
         }
         if self
             .types
@@ -1364,11 +1390,17 @@ impl<'unit> DeclarationInventory<'unit> {
         };
         Ok(self.tree.first_child_with(*second, Production::Const)?)
     }
+    /// The value of the literal token `literal` written at `node`, judged
+    /// by [FORM-7].
     pub(super) fn parse_literal(
         &self,
         node: NodeId,
-        bytes: &[u8],
+        literal: usize,
     ) -> Result<CheckedValue, CheckStop> {
+        let bytes = self.tree.token_bytes(literal)?;
+        if bytes.first() == Some(&crate::syntax::text::CHARACTER_QUOTE) {
+            return self.parse_character_literal(node, literal);
+        }
         if bytes == b"unit" {
             return Ok(CheckedValue::Unit);
         }

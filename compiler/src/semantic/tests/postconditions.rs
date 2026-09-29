@@ -14,7 +14,7 @@ use crate::semantic::entailment::{
 use crate::semantic::model::{CheckedBodyDisposition, CheckedExpression, CheckedStatement};
 use crate::semantic::places::PlaceStep;
 
-fn assert_complete(source: &[u8]) {
+pub(super) fn assert_complete(source: &[u8]) {
     with_semantics(source, |outcome| {
         assert!(
             matches!(outcome, SemanticOutcome::Complete(_)),
@@ -23,7 +23,7 @@ fn assert_complete(source: &[u8]) {
     });
 }
 
-fn assert_fn9_unproved(source: &[u8]) {
+pub(super) fn assert_fn9_unproved(source: &[u8]) {
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue } = outcome else {
             panic!("undischarged postcondition must be an FN-9 source issue: {outcome:?}");
@@ -39,7 +39,7 @@ fn assert_fn9_unproved(source: &[u8]) {
     });
 }
 
-fn assert_fn9_refuted(source: &[u8]) {
+pub(super) fn assert_fn9_refuted(source: &[u8]) {
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue } = outcome else {
             panic!("refuted postcondition must be an FN-9 source issue: {outcome:?}");
@@ -805,22 +805,30 @@ fn main() -> status: std::process::ExitStatus pure {
 /// invalidating edge is the ordinary projected call write.
 #[test]
 fn a_projected_call_write_invalidates_its_postcondition_entry_image() {
-    let source = br#"fn overwrite(out: &i32) -> result: unit writes(out) {
-  set out^ = 1_i32;
+    // [MSR-3] v0.80 gives a bare place of a written reference parameter its
+    // exit state, which has no entry image; an own parameter's field keeps
+    // the entry-image judgment, and a call writing it through a borrow is the
+    // projected write that ends the image.
+    let source = br#"struct Cell {
+  value: i32;
+}
+
+fn overwrite(out: &Cell) -> result: unit writes(out) {
+  set out^.value = 1_i32;
   return unit;
 }
 
-fn transfer(out: &i32) -> result: i32 writes(out) contract {
-  ensures result == out^;
+fn transfer(out: Cell) -> result: i32 pure contract {
+  ensures result == out.value;
 } {
-  let before = out^;
-  overwrite(out: out);
+  let before = out.value;
+  overwrite(out: &out);
   return before;
 }
 
-fn plain(out: &i32) -> result: i32 writes(out) {
-  let before = out^;
-  overwrite(out: out);
+fn plain(out: Cell) -> result: i32 pure {
+  let before = out.value;
+  overwrite(out: &out);
   return before;
 }
 
@@ -875,12 +883,12 @@ fn main() -> status: std::process::ExitStatus pure {
                 else {
                     return None;
                 };
-                let [CheckedExpression::Binding { .. }] = arguments.as_slice() else {
+                let [_] = arguments.as_slice() else {
                     return None;
                 };
                 Some(call)
             })
-            .expect("transfer has one direct reference-argument call");
+            .expect("transfer has one direct borrowed-argument call");
         assert_eq!(event.node_path.as_ref(), Some(call));
 
         let plain = checked
@@ -2221,6 +2229,10 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule_at(source, SemanticRule::Fn9, "result == size");
 }
 
+/// [CALL-4, DIAG-1] v0.80 admits member paths below a result datum, so the
+/// clause's member path is typed as ordinary source before FN-9 judges the
+/// relation: a field of an integer result is TYPE-5's refusal at the member,
+/// where v0.79 refused the whole relation under FN-9 without typing it.
 #[test]
 fn projected_result_is_rejected_at_the_complete_final_relation() {
     let source = br#"fn projected(value: i32) -> result: i32 pure contract {
@@ -2233,9 +2245,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_rule_at(source, SemanticRule::Fn9, "result.field == value");
+    assert_rule_at(source, SemanticRule::Type5, ".field");
 }
 
+/// [TYPE-7, DIAG-1] as above: `^` on an integer result is a dereference of a
+/// non-reference, refused by the ordinary typing of the member path.
 #[test]
 fn a_nonbare_result_use_in_an_ensures_expression_is_still_rejected() {
     let source = br#"fn hidden(value: i32) -> result: i32 pure contract {
@@ -2248,7 +2262,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_rule_at(source, SemanticRule::Fn9, "result^ == value");
+    assert_rule_at(source, SemanticRule::Type7, "result^");
 }
 
 #[test]

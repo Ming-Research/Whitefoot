@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct NodeId {
+  index: u32;
+}
+
+struct Document {
+  nodes: Box<Slots<u8>>;
+}
+
+fn kind_of(document: &Document, node: NodeId) -> kind: u8 reads(document) contract {
+  requires cvt::<u32, u64>(node.index) < document^.nodes.inner.len;
+} {
+  doc "ENT-2: a widening conversion denotes its operand's value, so the requirement's comparison projects to node.index < document^.nodes.inner.len at body entry [ENT-3.S4], and the converted index discharges the subscript through S5's conversion equality.";
+  let at = cvt::<u32, u64>(node.index);
+  let kind = document^.nodes.inner[at];
+  return kind;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller's goal projects the same way; the construct placement gives root.index its literal value [MSR-3], and the append gives the length one.";
+  let nodes = box_slots_new::<u8>(capacity: 4_u64);
+  place_back(window: &nodes.inner, value: 3_u8);
+  let document = Document(nodes: move nodes);
+  let root = NodeId(index: 0_u32);
+  let kind = kind_of(document: &document, node: root);
+  return exit_status(code: kind);
+}

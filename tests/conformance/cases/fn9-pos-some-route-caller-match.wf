@@ -1,0 +1,39 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn find_space(data: &[u8]) -> result: Option<u64> reads(data) contract {
+  ensures when Some(value: found): found < data^.len;
+} {
+  doc "FN-9: an Option's success variant Some routes a clause exactly as Ok does. A direct Some uses its payload atom, and the None exit is unselected.";
+  let length = data^.len;
+  let pos = 0_u64;
+  loop (
+    invariant bounded: pos <= length
+  ) {
+    if pos >= length {
+      break;
+    }
+    let byte = data^[pos];
+    if byte == 32_u8 {
+      return Some<u64>(value: pos);
+    }
+    set pos = pos + 1_u64;
+  }
+  return None<u64>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The Some arm selects the call's conditional context [ENT-5], so the found index reads the range with no check.";
+  let backing = box_array_filled::<u8>(count: 3_u64, value: 32_u8);
+  let text = &backing.inner[0_u64..3_u64];
+  let outcome = find_space(data: text);
+  match outcome {
+    Some(value: at) => {
+      let byte = text^[at];
+      return exit_status(code: byte);
+    }
+    None() => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

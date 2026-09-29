@@ -236,6 +236,21 @@ impl GoalProjection {
     }
 }
 
+/// [ENT-2] whether one row is a widening conversion: a bare `cvt::<S, D>`
+/// with integer S and D whose pair is whole-type total [OP-6]. Such a
+/// conversion denotes its operand's mathematical value, so a relation term
+/// or a comparison-origin operand over one is that operand itself.
+pub(crate) fn widening_integer_conversion(row: &GoalOperation) -> bool {
+    matches!(
+        row,
+        GoalOperation::NumericConversion {
+            mode: CheckedConversionMode::Exact,
+            source: source @ (CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)),
+            destination: destination @ (CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)),
+        } if source.converts_totally_to(*destination)
+    )
+}
+
 /// One structural goal row and its exact selected type/domain identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum GoalOperation {

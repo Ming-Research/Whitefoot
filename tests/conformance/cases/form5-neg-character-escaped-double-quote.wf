@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A character literal escapes its own quote only; a double quote is written raw [FORM-5].";
+  let a = '\"'_u8;
+  return exit_status(code: 0_u8);
+}

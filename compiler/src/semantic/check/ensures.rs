@@ -19,7 +19,7 @@ use super::super::model::{
     CheckedValue, FunctionId, IntegerType,
 };
 use super::super::postcondition::{
-    CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation,
+    CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
     PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
     PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
     PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
@@ -36,11 +36,15 @@ use super::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectorAdmissionType {
     Fragment,
-    ResultFragment,
+    /// [FN-9] a `Result` or `Option` ordinal whose success payload supplies
+    /// data under [CALL-4]; only a routed clause may name it.
+    SuccessPayload,
     Symbolic,
-    /// [CALL-4] one declared result of measured type. Its value is no [ENT-2]
-    /// term, so only a measure over it is an admitted clause operand.
-    Measured,
+    /// [CALL-4] one declared result of measured or aggregate type. Its value
+    /// is no [ENT-2] term, so only the places its owned descendant
+    /// projections reach are admitted clause operands: a fragment-integer
+    /// place as its value and a measured place through its measures.
+    Aggregate,
     Invalid,
 }
 
@@ -640,7 +644,11 @@ impl<'unit> Checker<'_, 'unit> {
                             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
                         projections: Vec::new(),
                         ty: parameter.ty,
-                        exit_state: parameter_has_exit_state(function, parameter),
+                        denotation: if parameter_has_exit_state(function, parameter) {
+                            ParameterDenotation::ExitState
+                        } else {
+                            ParameterDenotation::EntryImage
+                        },
                     }),
                 );
             }
@@ -856,19 +864,26 @@ impl<'unit> Checker<'_, 'unit> {
 
     fn postcondition_relation_datum(expanded: &ExpandedClauseExpression) -> Option<RelationDatum> {
         match expanded {
-            // A result datum is a relation term as itself. A member path
-            // below one names storage inside the result rather than the
-            // result [CALL-4], and only [MSR-1]'s measure members are
-            // admitted terms over such a place; the measure arm below is
-            // where those arrive.
+            // [CALL-4] a result datum is a relation term as itself, or as the
+            // fragment-integer place its owned descendant projection reaches
+            // below the result: `result.width`, `made.header.width`. The
+            // clause walk admitted only struct-field and `Box` content steps;
+            // a measure member over a result place is the measure arm below.
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::Result {
                 ordinal,
                 projections,
                 ty,
-            }) if projections.is_empty() => Some(RelationDatum::Result {
-                ordinal: *ordinal,
-                ty: *ty,
-            }),
+            }) if projections.is_empty()
+                || projections.iter().all(|projection| {
+                    matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
+                }) =>
+            {
+                Some(RelationDatum::Result {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                })
+            }
             // [FN-9] a parameter or named-const datum carries field and
             // Box-content projections only: a subscripted readonly field is an
             // [ENT-2] clause (b) term a requirement may name, but no relation
@@ -890,11 +905,12 @@ impl<'unit> Checker<'_, 'unit> {
                 ordinal,
                 projections,
                 ty,
-                ..
+                denotation,
             }) => Some(RelationDatum::Parameter {
                 ordinal: *ordinal,
                 projections: projections.clone(),
                 ty: *ty,
+                denotation: *denotation,
             }),
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
                 declaration,
@@ -910,6 +926,18 @@ impl<'unit> Checker<'_, 'unit> {
                     value: value.clone(),
                     origin: origin.clone(),
                 })
+            }
+            // [ENT-2] a widening conversion denotes its operand's
+            // mathematical value, so a relation term over one is that
+            // operand's datum: `cvt::<u32, u64>(index) < spans.len` relates
+            // the u32 datum to the u64 measure directly.
+            ExpandedClauseExpression::Operation { row, arguments, .. }
+                if super::super::goal::widening_integer_conversion(row) =>
+            {
+                let [argument] = arguments.as_slice() else {
+                    return None;
+                };
+                Checker::postcondition_relation_datum(argument)
             }
             // [CALL-4] the clause operands of [FN-9] are terms, so a measure
             // over an admitted formal place is an operand with no per-family
@@ -930,9 +958,9 @@ impl<'unit> Checker<'_, 'unit> {
                         ordinal,
                         projections,
                         ty,
-                        exit_state,
+                        denotation,
                     } => (
-                        if *exit_state {
+                        if *denotation == ParameterDenotation::ExitState {
                             PostconditionPlaceRoot::ExitParameter { ordinal: *ordinal }
                         } else {
                             PostconditionPlaceRoot::Parameter { ordinal: *ordinal }
@@ -1167,16 +1195,49 @@ const fn representable_bits(ty: CheckedType, value: i128) -> Option<u64> {
     Some((value & ((1_i128 << width) - 1)) as u64)
 }
 
+/// [FN-9, CALL-4] whether one selected return's value, projected by a
+/// result datum's owned descendant projection, is inside the concrete integer
+/// fragment: an integer place, literal or success payload for a value datum,
+/// and a place for a measured one. A construction selects the operand of its
+/// field and continues below it.
+fn returned_projection_is_fragment(
+    value: &PostconditionReturnDatum,
+    projections: &[GoalProjection],
+    measured: bool,
+) -> bool {
+    match value {
+        PostconditionReturnDatum::Construct { fields } => {
+            let Some((GoalProjection::Field(field), rest)) = projections.split_first() else {
+                return false;
+            };
+            fields
+                .get(*field as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|operand| returned_projection_is_fragment(operand, rest, measured))
+        }
+        PostconditionReturnDatum::Place(_) if measured => true,
+        PostconditionReturnDatum::Place(place) => {
+            projections.is_empty() && matches!(place.ty, CheckedType::Integer(_))
+                || !projections.is_empty()
+        }
+        PostconditionReturnDatum::ResultPayload { ty } => {
+            measured || !projections.is_empty() || matches!(ty, CheckedType::Integer(_))
+        }
+        PostconditionReturnDatum::Literal { value, .. } => {
+            !measured && projections.is_empty() && matches!(value.ty(), CheckedType::Integer(_))
+        }
+        PostconditionReturnDatum::Measure(..) => !measured && projections.is_empty(),
+    }
+}
+
 impl<'unit> DeclarationInventory<'unit> {
-    /// Supplies a value-only placeholder to the ordinary expression typer.
-    /// The placeholder is discarded immediately after typing; relation
-    /// identity is rebuilt from the resolver-owned selector-use record and
-    /// never becomes a declaration, binding, or storage location.
-    pub(super) fn postcondition_result_placeholder(
+    /// The written selector use one clause atom contains and the type of the
+    /// result datum its spelling names [CALL-4], when the atom contains one.
+    fn postcondition_selector_datum(
         &self,
         check_context: &CheckContext<'_>,
         atom: NodeId,
-    ) -> Result<Option<CheckedValue>, CheckStop> {
+    ) -> Result<Option<(SourceOrigin, CheckedType)>, CheckStop> {
         let Some(context) = check_context.active_postcondition else {
             return Ok(None);
         };
@@ -1193,32 +1254,10 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(None);
         };
         // [CALL-4] the spelling names a result ordinal, and its datum type is
-        // that ordinal's. An ordinal whose datum is not a fragment integer is
-        // outside [FN-9]'s admitted operand set in this version.
+        // that ordinal's.
         let ty = Checker::active_result_datum(check_context, &usage.spelling)
             .map_or(context.result_type, |(_, ty)| ty);
-        let _ = context;
-        Ok(Some(match ty {
-            CheckedType::Integer(ty) => CheckedValue::Integer { ty, bits: 0 },
-            CheckedType::GenericInt(_) => CheckedValue::NumericIdentity { ty, one: false },
-            // [OP-15, MSR-1] a measure is a read-only `own u64` member of the
-            // measured place, so a selector atom that reads one stands for a
-            // u64 whatever the measured result's own type is. [CALL-4]
-            // already admits a result of measured type as an operand; the
-            // placeholder has to agree with the measure's type and not with
-            // the place's.
-            _ if self.selector_atom_reads_a_measure(atom)? => CheckedValue::Integer {
-                ty: super::super::model::IntegerType::U64,
-                bits: 0,
-            },
-            _ => {
-                return Checker::issue_origin(
-                    SemanticRule::Fn9,
-                    &usage.origin,
-                    SemanticIssueKind::InvalidPostconditionSelector,
-                );
-            }
-        }))
+        Ok(Some((usage.origin.clone(), ty)))
     }
     /// Whether this selector atom is a `place` whose trailing `psuffix` names
     /// one of [MSR-1]'s four measures.
@@ -1402,22 +1441,23 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(right) = Checker::postcondition_relation_term(right, operand_type) else {
             return self.invalid_postcondition_relation(final_expression);
         };
-        if left.ty() != operand_type || right.ty() != operand_type {
-            return Err(SemanticCompilerFailure::InvalidResolution.into());
-        }
-        let is_output = |term: &RelationTerm| {
-            term.contains_result()
+        // [ENT-2] a widening conversion's operand keeps its own type: the
+        // relation is over mathematical values, and the conversion's pair is
+        // whole-type total, so no other operand type reaches here.
+        let operand_matches = |term: &RelationTerm| {
+            term.ty() == operand_type
                 || matches!(
-                    term.datum,
-                    RelationDatum::Measure(
-                        _,
-                        PostconditionPlace {
-                            root: PostconditionPlaceRoot::ExitParameter { .. },
-                            ..
-                        }
-                    )
+                    (
+                        super::super::model::CheckedNumericType::from_type(term.ty()),
+                        super::super::model::CheckedNumericType::from_type(operand_type),
+                    ),
+                    (Some(source), Some(destination)) if source.converts_totally_to(destination)
                 )
         };
+        if !operand_matches(&left) || !operand_matches(&right) {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        let is_output = |term: &RelationTerm| term.contains_result() || term.datum.is_exit_state();
         if !is_output(&left) && !is_output(&right) {
             return self.invalid_postcondition_relation(final_expression);
         }
@@ -1575,6 +1615,7 @@ impl<'unit> DeclarationInventory<'unit> {
         record: &PostconditionResolutionRecord,
         admission: SelectorAdmissionType,
         ordinal: u32,
+        success_variants: &[BuiltinPreludeId],
     ) -> Result<(), CheckStop> {
         let candidate = match record.class {
             PostconditionSelectorClass::Plain => {
@@ -1582,7 +1623,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     admission,
                     SelectorAdmissionType::Fragment
                         | SelectorAdmissionType::Symbolic
-                        | SelectorAdmissionType::Measured
+                        | SelectorAdmissionType::Aggregate
                 ) {
                     return self
                         .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
@@ -1595,12 +1636,17 @@ impl<'unit> DeclarationInventory<'unit> {
             PostconditionSelectorClass::Variant => {
                 if !matches!(
                     admission,
-                    SelectorAdmissionType::ResultFragment | SelectorAdmissionType::Symbolic
+                    SelectorAdmissionType::SuccessPayload | SelectorAdmissionType::Symbolic
                 ) {
                     return self
                         .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
                 }
-                if record.variant_target != Some(ResolvedTarget::Prelude(BuiltinPreludeId::OK)) {
+                // [FN-9] the route names the success variant of the routed
+                // ordinal's own type: `Ok` of a Result, `Some` of an Option.
+                if !success_variants
+                    .iter()
+                    .any(|variant| record.variant_target == Some(ResolvedTarget::Prelude(*variant)))
+                {
                     return self
                         .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
                 }
@@ -1665,6 +1711,111 @@ impl<'unit> DeclarationInventory<'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// Supplies a value-only placeholder to the ordinary expression typer.
+    /// The placeholder is discarded immediately after typing; relation
+    /// identity is rebuilt from the resolver-owned selector-use record and
+    /// never becomes a declaration, binding, or storage location.
+    pub(super) fn postcondition_result_placeholder(
+        &self,
+        check_context: &CheckContext<'_>,
+        atom: NodeId,
+    ) -> Result<Option<CheckedValue>, CheckStop> {
+        let Some((origin, ty)) = self
+            .declarations
+            .postcondition_selector_datum(check_context, atom)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(match ty {
+            CheckedType::Integer(ty) => CheckedValue::Integer { ty, bits: 0 },
+            CheckedType::GenericInt(_) => CheckedValue::NumericIdentity { ty, one: false },
+            // [OP-15, MSR-1] a measure is a read-only `own u64` member of the
+            // measured place, so a selector atom that reads one stands for a
+            // u64 whatever the measured result's own type is. [CALL-4]
+            // already admits a result of measured type as an operand; the
+            // placeholder has to agree with the measure's type and not with
+            // the place's.
+            _ if self.declarations.selector_atom_reads_a_measure(atom)? => CheckedValue::Integer {
+                ty: super::super::model::IntegerType::U64,
+                bits: 0,
+            },
+            // [CALL-4] a fragment-integer place reached from an aggregate
+            // result through struct-field and `Box` content steps stands for
+            // a value of that field's type.
+            _ => match self.postcondition_selector_field_type(check_context, atom, ty)? {
+                Some(CheckedType::Integer(ty)) => CheckedValue::Integer { ty, bits: 0 },
+                Some(field @ CheckedType::GenericInt(_)) => CheckedValue::NumericIdentity {
+                    ty: field,
+                    one: false,
+                },
+                _ => {
+                    return Checker::issue_origin(
+                        SemanticRule::Fn9,
+                        &origin,
+                        SemanticIssueKind::InvalidPostconditionSelector,
+                    );
+                }
+            },
+        }))
+    }
+    /// [CALL-4] the type a selector atom's written member path reaches below
+    /// an aggregate result datum, when every step is a struct-field
+    /// selection or a `Box` `inner` step. An enum-payload step, a subscript,
+    /// a dereference and a step below a value of type-parameter type reach no
+    /// datum, and a bare aggregate binder is none either.
+    fn postcondition_selector_field_type(
+        &self,
+        check_context: &CheckContext<'_>,
+        atom: NodeId,
+        mut ty: CheckedType,
+    ) -> Result<Option<CheckedType>, CheckStop> {
+        let Some(place) = self
+            .declarations
+            .tree
+            .first_child_with(atom, Production::Place)?
+        else {
+            return Ok(None);
+        };
+        let suffixes = self
+            .declarations
+            .tree
+            .children_with(place, Production::Psuffix)?;
+        if suffixes.is_empty() {
+            return Ok(None);
+        }
+        for suffix in suffixes {
+            if self.declarations.tree.subscript_offset(suffix)?.is_some()
+                || matches!(
+                    self.declarations.tree.place_suffix(suffix)?,
+                    crate::syntax::views::PlaceSuffix::Dereference
+                )
+            {
+                return Ok(None);
+            }
+            let CheckedType::Nominal(nominal) = ty else {
+                return Ok(None);
+            };
+            ty = match self.nominal(nominal)?.kind {
+                // [TYPE-9] a Box has exactly one member, its content `inner`.
+                CheckedNominalKind::Box { referent, .. } => {
+                    let name = self
+                        .declarations
+                        .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
+                        .spelling();
+                    if name != "inner" {
+                        return Ok(None);
+                    }
+                    referent
+                }
+                CheckedNominalKind::Struct { .. } => {
+                    self.resolve_struct_path(check_context, std::slice::from_ref(&suffix), ty)?
+                        .1
+                }
+                _ => return Ok(None),
+            };
+        }
+        Ok(Some(ty))
+    }
     /// The indexed signatures of the function at `function`, cloned.
     fn signatures_of(
         &self,
@@ -1678,8 +1829,9 @@ impl<'unit> TypeContext<'unit> {
             .filter_map(|index| self.signatures.get(*index).cloned())
             .collect()
     }
-    /// The `Ok` payload one routed ordinal produces at a return, `None` for a
-    /// direct `Err`, and the whole value for an ordinary forwarded Result.
+    /// The success payload one routed ordinal produces at a return, `None`
+    /// for a direct failure variant, and the whole value for an ordinary
+    /// forwarded Result or Option [FN-9].
     fn postcondition_route_payload<'value>(
         &self,
         function: &FunctionSignature,
@@ -1694,29 +1846,36 @@ impl<'unit> TypeContext<'unit> {
         let CheckedType::Nominal(result_nominal) = declared.ty else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        if self
-            .prelude_types
-            .get(result_nominal.0 as usize)
-            .and_then(|entry| *entry)
-            .is_none_or(|ty| !matches!(ty, super::PreludeType::Result(_, _)))
-        {
+        if self.success_payload_type(declared.ty).is_none() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
+        let CheckedNominalKind::Enum { variants } = &self.nominal(result_nominal)?.kind else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let success = variants.iter().position(|variant| {
+            matches!(
+                variant.constructor,
+                super::super::model::CheckedConstructor::Prelude(
+                    BuiltinPreludeId::OK | BuiltinPreludeId::SOME
+                )
+            )
+        });
         match value {
             CheckedExpression::ConstructEnum {
                 nominal,
                 variant,
                 fields,
                 ..
-            } if *nominal == result_nominal && *variant == 0 && fields.len() == 1 => {
-                Ok(fields.first())
+            } if *nominal == result_nominal => {
+                if Some(*variant as usize) == success {
+                    let [payload] = fields.as_slice() else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    Ok(Some(payload))
+                } else {
+                    Ok(None)
+                }
             }
-            CheckedExpression::ConstructEnum {
-                nominal,
-                variant,
-                fields,
-                ..
-            } if *nominal == result_nominal && *variant == 1 && fields.len() == 1 => Ok(None),
             _ => Ok(Some(value)),
         }
     }
@@ -1935,17 +2094,18 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(Some(ty))
     }
-    /// Whether this nominal is a `Box` whose content the measure table gives
-    /// a row [TYPE-9, MSR-1].
-    /// [CALL-4] whether a result of this nominal type reaches a measured
-    /// place through an owned descendant projection made of struct-field
-    /// selections and `Box` `inner` steps [MSR-3]: `made.storage.len`, or
-    /// the `result.inner.len` every boxed construction record publishes. An
-    /// enum payload step reaches none, because no route selects a variant of
-    /// an unrouted result.
-    fn measured_descendant(
+    /// [CALL-4] whether a value of this nominal type supplies a datum: some
+    /// place reached from it through an owned descendant projection made of
+    /// struct-field selections and `Box` `inner` steps [MSR-3] ends at a
+    /// fragment integer or at a measured type — `result.width`,
+    /// `made.storage.len`, or the `result.inner.len` every boxed
+    /// construction record publishes. An enum payload step reaches none,
+    /// because no route selects a variant of an unrouted result, and a value
+    /// whose type is a type parameter declares no field below it.
+    fn aggregate_supplies_data(
         &self,
         nominal: super::super::model::NominalId,
+        symbolic: bool,
     ) -> Result<bool, CheckStop> {
         let mut pending = vec![nominal];
         let mut seen = std::collections::HashSet::new();
@@ -1961,7 +2121,10 @@ impl<'unit> TypeContext<'unit> {
                 _ => Vec::new(),
             };
             for child in children {
-                if child.measured().is_some() {
+                if child.measured().is_some()
+                    || matches!(child, CheckedType::Integer(_))
+                    || symbolic && matches!(child, CheckedType::GenericInt(_))
+                {
                     return Ok(true);
                 }
                 if let CheckedType::Nominal(inner) = child {
@@ -1971,17 +2134,50 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(false)
     }
-    /// Whether one declared result type can carry a route in this version:
-    /// exactly `own Result<T, E>` with T a fragment integer [FN-9, CALL-4].
-    fn postcondition_route_carrier(&self, ty: CheckedType, symbolic: bool) -> bool {
+    /// [CALL-4] whether a result of this type supplies a datum at all: a
+    /// fragment integer as its own value, a measured type through its
+    /// measures, or an aggregate through the places above.
+    fn type_supplies_data(&self, ty: CheckedType, symbolic: bool) -> Result<bool, CheckStop> {
+        Ok(match ty {
+            ty if Checker::postcondition_fragment_type(ty, symbolic) => true,
+            ty if super::expressions::flat_storage::measured_kind_of(ty).is_some() => true,
+            CheckedType::Nominal(nominal) => {
+                self.prelude_types
+                    .get(nominal.0 as usize)
+                    .and_then(|entry| *entry)
+                    .is_none()
+                    && self.aggregate_supplies_data(nominal, symbolic)?
+            }
+            _ => false,
+        })
+    }
+    /// [FN-9] the success payload type of a `Result` or `Option` result type,
+    /// `Ok` or `Some`, when that type is one of the two.
+    fn success_payload_type(&self, ty: CheckedType) -> Option<CheckedType> {
         let CheckedType::Nominal(nominal) = ty else {
-            return false;
+            return None;
         };
-        matches!(
-            self.prelude_types.get(nominal.0 as usize).and_then(|entry| *entry),
-            Some(super::PreludeType::Result(value, _))
-                if Checker::postcondition_fragment_type(value, symbolic)
-        )
+        match self
+            .prelude_types
+            .get(nominal.0 as usize)
+            .and_then(|entry| *entry)?
+        {
+            super::PreludeType::Result(value, _) | super::PreludeType::Option(value) => Some(value),
+            _ => None,
+        }
+    }
+    /// Whether one declared result type can carry a route in this version:
+    /// exactly `own Result<T, E>` or `own Option<T>` whose success payload T
+    /// supplies data under [CALL-4] [FN-9].
+    fn postcondition_route_carrier(
+        &self,
+        ty: CheckedType,
+        symbolic: bool,
+    ) -> Result<bool, CheckStop> {
+        match self.success_payload_type(ty) {
+            Some(payload) => self.type_supplies_data(payload, symbolic),
+            None => Ok(false),
+        }
     }
     /// The table positions of the signatures `eligible` names, by the path
     /// of the function each one instantiates, in table order.
@@ -2081,35 +2277,44 @@ impl<'unit> TypeContext<'unit> {
                 .iter()
                 .all(|operand| !operand.contains_result())
             && relation.operands.iter().any(|operand| {
-                matches!(
-                    &operand.datum,
-                    RelationDatum::Measure(_, PostconditionPlace {
-                        root: PostconditionPlaceRoot::ExitParameter { ordinal }, ..
-                    }) if function.parameters.get(*ordinal as usize)
-                        .is_some_and(|parameter| parameter_has_exit_state(function, parameter))
-                )
+                let ordinal = match &operand.datum {
+                    RelationDatum::Measure(
+                        _,
+                        PostconditionPlace {
+                            root: PostconditionPlaceRoot::ExitParameter { ordinal },
+                            ..
+                        },
+                    )
+                    | RelationDatum::Parameter {
+                        ordinal,
+                        denotation: ParameterDenotation::ExitState,
+                        ..
+                    } => *ordinal,
+                    _ => return false,
+                };
+                function
+                    .parameters
+                    .get(ordinal as usize)
+                    .is_some_and(|parameter| parameter_has_exit_state(function, parameter))
             });
         // [FN-9, CALL-4] the second admitted unrouted shape: a result ordinal
-        // of a measured type [MSR-1] named as a measure member and nowhere
-        // else. Every measure is u64 whatever the element type is, so such a
-        // clause is already inside the concrete integer fragment and the
-        // symbolic type argument reaches none of it. Without this a [PRE-1]
-        // construction row's `ensures result.len == 0_u64` was published to
-        // no generic body, and every window proof inside one started with no
-        // length at all.
-        let measured_result = selector.result_type.measured().is_some()
+        // of a measured or aggregate type named only through the places its
+        // owned descendant projections reach, and the routed shape whose
+        // success payload is such a type. A measure is u64 whatever the
+        // element type is and a named integer field has its declared type,
+        // so such a clause is inside the concrete integer fragment exactly
+        // when every operand below is. Without this a [PRE-1] construction
+        // row's `ensures result.len == 0_u64` was published to no generic
+        // body, and every window proof inside one started with no length at
+        // all.
+        let aggregate_result = selector.result_type.measured().is_some()
             || match selector.result_type {
-                CheckedType::Nominal(nominal) => self.measured_descendant(nominal)?,
+                CheckedType::Nominal(nominal) => self.aggregate_supplies_data(nominal, false)?,
                 _ => false,
             };
-        let measured_result_only = measured_result
-            && relation
-                .operands
-                .iter()
-                .all(|operand| !matches!(operand.datum, RelationDatum::Result { .. }));
         if (!matches!(selector.result_type, CheckedType::Integer(_))
             && !exclusive_state_only
-            && !measured_result_only)
+            && !aggregate_result)
             || relation
                 .operands
                 .iter()
@@ -2117,19 +2322,23 @@ impl<'unit> TypeContext<'unit> {
         {
             return Ok(None);
         }
-        // [CALL-4, FN-9] schema admission classifies only the result ordinals
+        // [CALL-4, FN-9] schema admission classifies only the result data
         // the relation names. An unnamed ordinal imposes no postcondition, so
         // its symbolic or affine value cannot disqualify an otherwise closed
         // integer relation over another ordinal.
-        let direct_result_ordinals = relation
+        let direct_result_data = relation
             .operands
             .iter()
             .filter_map(|operand| match &operand.datum {
-                RelationDatum::Result { ordinal, .. } => Some(*ordinal),
+                RelationDatum::Result {
+                    ordinal,
+                    projections,
+                    ..
+                } => Some((*ordinal, projections.clone())),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let measured_result_ordinals = relation
+        let measured_result_data = relation
             .operands
             .iter()
             .filter_map(|operand| match &operand.datum {
@@ -2137,9 +2346,10 @@ impl<'unit> TypeContext<'unit> {
                     _,
                     PostconditionPlace {
                         root: PostconditionPlaceRoot::Result { ordinal },
+                        projections,
                         ..
                     },
-                ) => Some(*ordinal),
+                ) => Some((*ordinal, projections.clone())),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -2151,31 +2361,22 @@ impl<'unit> TypeContext<'unit> {
         // returned on those edges (for example unit) is not evidence for it.
         let fragment_returns = exclusive_state_only
             || checked.selected_returns.iter().all(|selected| {
-                direct_result_ordinals.iter().all(|ordinal| {
+                direct_result_data.iter().all(|(ordinal, projections)| {
                     selected
                         .values
                         .get(*ordinal as usize)
                         .and_then(Option::as_ref)
-                        .is_some_and(|value| match value {
-                            PostconditionReturnDatum::ResultPayload { ty } => {
-                                matches!(ty, CheckedType::Integer(_))
-                            }
-                            PostconditionReturnDatum::Place(place) => {
-                                matches!(place.ty, CheckedType::Integer(_))
-                            }
-                            PostconditionReturnDatum::Literal { value, .. } => {
-                                matches!(value.ty(), CheckedType::Integer(_))
-                            }
-                            PostconditionReturnDatum::Measure(..) => true,
+                        .is_some_and(|value| {
+                            returned_projection_is_fragment(value, projections, false)
                         })
-                }) && measured_result_ordinals.iter().all(|ordinal| {
-                    matches!(
-                        selected
-                            .values
-                            .get(*ordinal as usize)
-                            .and_then(Option::as_ref),
-                        Some(PostconditionReturnDatum::Place(_))
-                    )
+                }) && measured_result_data.iter().all(|(ordinal, projections)| {
+                    selected
+                        .values
+                        .get(*ordinal as usize)
+                        .and_then(Option::as_ref)
+                        .is_some_and(|value| {
+                            returned_projection_is_fragment(value, projections, true)
+                        })
                 })
             });
         Ok(fragment_returns.then_some(checked))
@@ -2509,6 +2710,21 @@ impl<'unit> TypeContext<'unit> {
             // return position the three flat measures already occupy. Its
             // checked path already names the one ENT-2 place, including an
             // ordinary field, Box content, or admitted measured subscript.
+            // [FN-9, CALL-4] a returned construction hands back each field
+            // operand, an atom [GRAM-9]; a projected result datum reads the
+            // operand of the field it selects.
+            CheckedExpression::ConstructStruct { fields, .. } => {
+                let mut values = Vec::with_capacity(fields.len());
+                for field in fields {
+                    values.push(self.postcondition_return_datum(
+                        check_context,
+                        field,
+                        statement,
+                        binding_info,
+                    )?);
+                }
+                Ok(Some(PostconditionReturnDatum::Construct { fields: values }))
+            }
             CheckedExpression::ContainerMeasure { measure, root } => {
                 let Some(binding) = root.binding() else {
                     return Ok(None);
@@ -2546,13 +2762,18 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<u32, CheckStop> {
         let routed = record.class == PostconditionSelectorClass::Variant;
         if !routed {
-            let anchor = record
+            let mut anchor = None;
+            for (ordinal, (_, declared)) in record
                 .result_binders
                 .iter()
                 .zip(&signature.results)
-                .position(|(_, declared)| {
-                    Checker::postcondition_fragment_type(declared.ty, symbolic)
-                });
+                .enumerate()
+            {
+                if self.type_supplies_data(declared.ty, symbolic)? {
+                    anchor = Some(ordinal);
+                    break;
+                }
+            }
             return u32::try_from(anchor.unwrap_or(0))
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow.into());
         }
@@ -2569,13 +2790,12 @@ impl<'unit> TypeContext<'unit> {
             return u32::try_from(named)
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow.into());
         }
-        let carriers = signature
-            .results
-            .iter()
-            .enumerate()
-            .filter(|(_, declared)| self.postcondition_route_carrier(declared.ty, symbolic))
-            .map(|(ordinal, _)| ordinal)
-            .collect::<Vec<_>>();
+        let mut carriers = Vec::new();
+        for (ordinal, declared) in signature.results.iter().enumerate() {
+            if self.postcondition_route_carrier(declared.ty, symbolic)? {
+                carriers.push(ordinal);
+            }
+        }
         match carriers.as_slice() {
             [only] => {
                 u32::try_from(*only).map_err(|_| SemanticCompilerFailure::CounterOverflow.into())
@@ -2654,35 +2874,38 @@ impl<'unit> TypeContext<'unit> {
             ty if Checker::postcondition_fragment_type(ty, symbolic) => {
                 (SelectorAdmissionType::Fragment, ty)
             }
-            CheckedType::Nominal(nominal) => match self
-                .prelude_types
-                .get(nominal.0 as usize)
-                .and_then(|entry| *entry)
-            {
-                Some(super::PreludeType::Result(value, _))
-                    if Checker::postcondition_fragment_type(value, symbolic) =>
-                {
-                    (SelectorAdmissionType::ResultFragment, value)
-                }
-                // [MSR-1] admits a measure place formed with field-selection
-                // steps, and [TYPE-9] reaches a `Box`'s content by exactly
-                // one such step, `b.inner`. A result whose owned descendant
-                // reached by such steps is measured therefore supplies the
-                // same measured datum a directly measured result does: every
-                // boxed construction record's `ensures result.inner.len`,
-                // and a constructor's `ensures made.storage.len` [CALL-4].
-                _ if self.measured_descendant(nominal)? => {
-                    (SelectorAdmissionType::Measured, declared.ty)
-                }
-                _ => (SelectorAdmissionType::Invalid, declared.ty),
-            },
+            // [FN-9] a `Result` or `Option` whose success payload supplies
+            // data under [CALL-4]; its routed payload datum supplies exactly
+            // the data an unrouted result ordinal of the payload type does.
+            ty if self.postcondition_route_carrier(ty, symbolic)? => (
+                SelectorAdmissionType::SuccessPayload,
+                self.success_payload_type(ty)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+            ),
+            // [CALL-4] a result of measured or aggregate type supplies the
+            // places its owned descendant projections reach: every boxed
+            // construction record's `ensures result.inner.len`, a
+            // constructor's `ensures made.storage.len`, and an identifier's
+            // `ensures atom.index < table^.spans.inner.len`.
+            ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
             CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
-            // [CALL-4] a result of measured type is admitted, and a measure
-            // over that result place is the operand it supplies.
-            ty if super::expressions::flat_storage::measured_kind_of(ty).is_some() => {
-                (SelectorAdmissionType::Measured, ty)
-            }
             _ => (SelectorAdmissionType::Invalid, declared.ty),
+        };
+        // [FN-9] the success variant a route may name: the declared type's
+        // own for a Result or an Option, and either for a symbolic ordinal
+        // whose enum is not yet known.
+        let success_variants: &[BuiltinPreludeId] = match self
+            .success_payload_type(declared.ty)
+            .and(match declared.ty {
+                CheckedType::Nominal(nominal) => self
+                    .prelude_types
+                    .get(nominal.0 as usize)
+                    .and_then(|entry| *entry),
+                _ => None,
+            }) {
+            Some(super::PreludeType::Option(_)) => &[BuiltinPreludeId::SOME],
+            Some(_) => &[BuiltinPreludeId::OK],
+            None => &[BuiltinPreludeId::OK, BuiltinPreludeId::SOME],
         };
         self.declarations.validate_postcondition_selector(
             record,
@@ -2692,6 +2915,7 @@ impl<'unit> TypeContext<'unit> {
                 admission
             },
             ordinal,
+            success_variants,
         )?;
 
         let (candidate, variant, field) = match record.class {
@@ -2718,7 +2942,11 @@ impl<'unit> TypeContext<'unit> {
                     &field.candidate,
                     Some(variant),
                     Some(PostconditionFieldIdentity {
-                        declaration: BuiltinPreludeId::OK_VALUE,
+                        declaration: if variant == BuiltinPreludeId::SOME {
+                            BuiltinPreludeId::SOME_VALUE
+                        } else {
+                            BuiltinPreludeId::OK_VALUE
+                        },
                         origin: field.origin.clone(),
                     }),
                 )

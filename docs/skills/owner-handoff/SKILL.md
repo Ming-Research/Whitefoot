@@ -6,41 +6,51 @@ description: Hand work back to the Whitefoot owner in the owner's language - dec
 # Owner handoff
 
 The owner rules on the design and merges. A handoff exists so that the owner
-sees every decision without re-reading the work: lead with what needs the
-owner and keep supporting detail one step away, in the PR, the amendment or
-the investigation. Write in the owner's language; repository artifacts stay
-English.
+can decide without re-reading the work: lead with what needs the owner, and
+make each decision understandable from the handoff alone. Full evidence stays
+in the PR, the amendment or the investigation, but the problem, the options
+and the grounds are explained in the card itself. Write in the owner's
+language; repository artifacts stay English.
 
 Keep the handoff compact. Each part below starts with its name in bold on a
 line of its own, so none reads as part of the card before it. Under it, every
 point is a bullet that opens with its gist in bold and continues on the same
-line, with any detail in bullets indented beneath it. Never use headings or
+line, with any detail in bullets indented beneath it; a decision card's parts
+open with their labels instead. Never use headings or
 tables: headings spread one point over a screen, and a table's narrow columns
 bury the reasoning.
 
 1. **Decision cards.** One card for each amendment awaiting a ruling, each
    finding awaiting direction and each other choice the owner must make, or
-   "none". A card opens with its number and topic in bold, followed on the
-   same line by the recommendation; three indented bullets give the current
-   state, the reason and the confidence, a sentence or two each.
+   "none". A card opens with its number and the question in bold, then
+   explains before it recommends: the problem, the options, and only then the
+   recommendation, its reason and the confidence.
 
    ```markdown
-   - **#1 The question the owner decides, in one sentence.** Recommendation:
-     the choice proposed and what follows from it.
-     - Current state: what the specification, design or implementation does
-       now, and the evidence that raised the question; for an amendment or a
-       finding about a design decision, the node it concerns.
-     - Reason: why that choice fits its requirements and evidence, and what
-       it costs.
+   - **#1 The question the owner decides, in one sentence.**
+     - Problem: what this is about and why it needs a decision now, written
+       for a reader who has not seen the PR or the investigation: what the
+       component or rule does, what goes wrong or stays open, and the concrete
+       evidence (an example program, a measured number, a failing case). For
+       an amendment or a finding about a design decision, name the node, its
+       current decision and the proposed one. Explain each project term the
+       first time it appears.
+     - Options: each viable choice, what it would do and what it costs, one
+       bullet each; include the refused ones that the owner could reasonably
+       prefer.
+     - Recommendation: the choice proposed and what follows from it.
+     - Reason: why that choice fits its requirements and evidence better than
+       the other options.
      - Confidence N/5: 5 when the evidence settles the choice and 1 when it
-       rests on judgment alone, then what supports it and what could still
-       overturn it.
+       rests on judgment alone, then what supports it, what is still
+       unmeasured and what could overturn it.
    ```
 
-   Write the labels and their content in the owner's language. Link the
-   amendment or evidence that holds the problem, alternatives, tradeoffs and
-   uncertainty in full; the card summarizes them, and an alternative enters
-   the card only when it decides the recommendation.
+   Write the labels and their content in the owner's language. The Problem
+   is as long as understanding needs, usually a short paragraph or a few
+   bullets; the other parts stay brief. Link the amendment or evidence that
+   holds the full detail. A card carried from an earlier session is checked
+   against its sources before it is presented.
 2. **Result.** A few bullets: what changed, the validation actually run (full
    gate or focused, and the tested revision), what remains unverified, and the
    PR link.
