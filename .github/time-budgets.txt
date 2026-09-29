@@ -1,8 +1,9 @@
 # Wall-time budgets, in seconds, for each labeled verification stage on the
 # hosted runners: ubuntu-24.04 (linux) and macos-14 (macos). `run-check.pl`
 # reads this table without changing any stage's status. In CI it records a
-# stage over its budget, or one without a row for its host, and the job's last
-# step fails on that record; a local run only prints the comparison.
+# stage over its budget, or one without a row for its host, and the job's
+# final verdict step fails on that record; a local run only prints the
+# comparison.
 #
 # A budget is 1.5 times the slowest of the runs recorded in
 # research/investigations/test-economy/time-budgets.md, rounded up to 5 s,

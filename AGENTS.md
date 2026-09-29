@@ -398,16 +398,16 @@ Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets already do, including commands from other worktrees. It
 holds one host-wide lock, leaves Cargo and the test harness at their own
 default of every available processor unless `CARGO_BUILD_JOBS` or
-`RUST_TEST_THREADS` names fewer, prints wall, user and
-system time with a report every 30 seconds, and stops a command after 30
-minutes unless `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It
-also compares each labeled stage with its budget in `.github/time-budgets.txt`
-without changing the stage's status: CI records a stage that exceeded its
-budget or has none and fails the job in a final verdict step, and a local
-run only prints the comparison. Raising a budget is a decision for the owner; lower one
-in the change that makes its stage much faster, and give a new labeled CI
-stage its budget. Inspect an existing
-owner's PID instead of starting another heavy command, and after an
+`RUST_TEST_THREADS` names fewer, prints wall, user and system time with a
+report every 30 seconds, and stops a command after 30 minutes unless
+`WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It also compares
+each labeled stage with its budget in `.github/time-budgets.txt` without
+changing the stage's status: CI records a stage that exceeded its budget or
+has none and fails the job in a final verdict step, and a local run only
+prints the comparison. Raising a budget is a decision for the owner; lower
+one in the change that makes its stage much faster, and give a new labeled
+CI stage its budget. Inspect an existing owner's PID instead of starting
+another heavy command, and after an
 uncatchable stop inspect the recorded PID and command before removing a stale
 lock. The `gate` Cargo profile builds the Rust compiler with optimization,
 debug assertions and overflow checks; it does not change how WF source is
