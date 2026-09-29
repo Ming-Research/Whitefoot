@@ -922,6 +922,46 @@ impl Reasoning<'_, '_, '_> {
         AffineInequality::from_forms(&left, &right, &mut check).ok()
     }
 
+    /// [ENT-4] `a == b`'s bound pair `a-b <= 0` and `b-a <= 0`, each the
+    /// ordinary ordering leaf's affine target and Step 6 right term over the
+    /// same two written operands — exactly [INV-1]'s normalization of a
+    /// source equality target into two batch members, generalized to any
+    /// signed goal whose root is `==`, not only a written invariant. `None`
+    /// for any other root, a non-integer comparison, or an operand whose
+    /// affine value is unavailable; the ordinary comparison-projection and
+    /// Boolean-introduction routes judge those shapes.
+    pub(super) fn affine_signed_goal_equality_targets(
+        &mut self,
+        expression: &GoalExpression,
+        state: &AffineFlowState,
+    ) -> Option<[(AffineInequality, Option<TermId>); 2]> {
+        let GoalExpression::Operation {
+            row:
+                GoalOperation::Integer {
+                    operation: CheckedIntegerOperation::Equal,
+                    operand_type: CheckedType::Integer(_),
+                },
+            arguments,
+            result: CheckedType::Bool,
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        let [written_left, written_right] = arguments.as_slice() else {
+            return None;
+        };
+        let left = self.affine_goal_value(written_left, state)?;
+        let right = self.affine_goal_value(written_right, state)?;
+        let less_equal =
+            AffineInequality::from_forms(&left, &right, &mut AffineCheckState::new()).ok()?;
+        let greater_equal =
+            AffineInequality::from_forms(&right, &left, &mut AffineCheckState::new()).ok()?;
+        let right_term = self.goal_side(written_right).map(|(term, _)| term);
+        let left_term = self.goal_side(written_left).map(|(term, _)| term);
+        Some([(less_equal, right_term), (greater_equal, left_term)])
+    }
+
     /// Reads the mathematical value of the fixed affine subset admitted in a
     /// concrete call goal. Every place must be an unprojected current integer
     /// binding, and multiplication must have a literal/constant side.
