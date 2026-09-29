@@ -1306,8 +1306,9 @@ rarely insert at the same place.
   an actualized group, but its depth is still fixed per pool width (about
   eight levels at four workers). Snowghost's style shape B on apollo11 has
   its work under a few children of wide sibling runs, so the halvings above
-  it spend the levels and the heavy subtree runs sequentially: 1.14 times at
-  four workers, against 3.8 times with the budget off or pinned at 24
+  it spend the levels and the heavy subtree runs sequentially: a stage
+  speedup of 1.14 at four workers, while whole runs with the budget off or
+  pinned at 24 are about 3.7 to 3.8 times faster than at one worker
   ([recursion budget at splits](../research/investigations/call-offer-grain/DESIGN.md#the-recursion-budget-at-splits)).
   Candidate change: refresh the budget where offered work is taken by an
   idle worker, so depth follows demand rather than a static count; it

@@ -588,7 +588,7 @@ fn lane_frame_ledger(
                     program.elements(),
                     called.parameters().iter().map(|(_, ty)| *ty),
                     called.result(),
-                    grain.is_some_and(|grain| frontiers.spends(*callee, grain)),
+                    grain.is_some_and(|grain| frontiers.stays(*callee, grain)),
                 )
                 .map_err(BackendFailure::TargetLayout)?;
                 if !fits_parallel_lane_slot(frame) {
@@ -1435,7 +1435,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // One ordinary ABI, with a budget field only for a synthesized variant.
                 let Some(frames) =
                     ordinary_overlap_lane_frames(program, target, function, overlap, &|callee| {
-                        grain.is_some_and(|grain| frontiers.spends(callee, grain))
+                        grain.is_some_and(|grain| frontiers.stays(callee, grain))
                     })?
                 else {
                     continue;
@@ -1609,28 +1609,32 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         name: &str,
         site: IrValueId,
     ) -> (String, Option<&str>) {
-        match (self.sequential_clones, self.grain) {
-            (Some(clones), _) if clones.contains(&ordinal) => (sequential_clone_symbol(name), None),
-            (None, Some(grain)) => {
-                let (symbol, stays) = self.frontiers.callee(ordinal, name, grain);
-                let splits =
-                    self.overlap_handed_out.contains(&site) || self.is_overlap_join_site(site);
-                let budget = if splits {
-                    self.grain_next.as_deref()
-                } else {
-                    Some(BUDGET_PARAMETER)
-                };
-                (symbol, stays.then_some(budget).flatten())
-            }
-            _ => (source_symbol(name), None),
+        let (symbol, stays) = self.callee_entry(ordinal, name);
+        if !stays {
+            return (symbol, None);
         }
+        let splits = self.overlap_handed_out.contains(&site) || self.is_overlap_join_site(site);
+        let budget = if splits {
+            self.grain_next.as_deref()
+        } else {
+            Some(BUDGET_PARAMETER)
+        };
+        (symbol, budget)
     }
 
     pub(super) fn callee_symbol(&self, ordinal: u32, name: &str) -> String {
+        self.callee_entry(ordinal, name).0
+    }
+
+    /// The symbol one call names, and whether it stays inside this function's
+    /// budgeted component and so carries a budget.
+    fn callee_entry(&self, ordinal: u32, name: &str) -> (String, bool) {
         match (self.sequential_clones, self.grain) {
-            (Some(clones), _) if clones.contains(&ordinal) => sequential_clone_symbol(name),
-            (None, Some(grain)) => self.frontiers.callee(ordinal, name, grain).0,
-            _ => source_symbol(name),
+            (Some(clones), _) if clones.contains(&ordinal) => {
+                (sequential_clone_symbol(name), false)
+            }
+            (None, Some(grain)) => self.frontiers.callee(ordinal, name, grain),
+            _ => (source_symbol(name), false),
         }
     }
 

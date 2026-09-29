@@ -671,10 +671,11 @@ reference), best of three at one and four workers, stage time
 Shapes A and C have no recursive offers and match the earlier preview within
 its spread. Apollo11's B stays sequential for a second reason: its work sits
 under a few children of wide runs, so the halvings above it are real splits
-that spend the budget. Best of two, four repetitions, at four workers the
-whole run took 6.65 s with the default budget, 3.49 s with
-`--par-recursive-frontier 16`, 1.88 s with 24 and 1.93 s with the budget
-off, against 7.07 to 7.23 s at one worker. A fixed depth cannot follow an
+that spend the budget. Whole runs (setup included, which is under 0.08 s
+here) with four repetitions, best of two: at four workers they took 6.65 s
+with the default budget, 3.49 s with `--par-recursive-frontier 16`, 1.88 s
+with 24 and 1.93 s with the budget off, against 7.07 to 7.23 s at one
+worker, whole-run ratios of about 1.1, 2.1, 3.8 and 3.7. A fixed depth cannot follow an
 unbalanced tree; that is a separate budget question, recorded in
 `docs/todo.md`.
 
