@@ -1183,8 +1183,10 @@ struct wf_context {
     /* The pool block this record occupies, zero for the root's. */
     size_t pool_bytes;
     /* While the context waits for a shared object: whether it asked to
-     * write it [SHARE-3]. */
+     * write it [SHARE-3], and whether an unlock woke it to try again, so a
+     * second miss keeps its place at the head of the object's queue. */
     uint32_t shared_write;
+    uint32_t shared_woken;
     /* The one host operation the context has pending. */
     union {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
@@ -1930,13 +1932,18 @@ static void wf_context_finish(wf_context *context) {
 /* A shared object [SHARE-1]: this header, then its state at
  * WF_SHARED_STATE_OFFSET.  `holders` counts the atomic statements holding
  * it: zero when it is free, the number of readers, or WF_SHARED_WRITER.
- * Contexts that found it held wait in `waiting`, first come first served, so
- * a writer is not passed over by later readers; contexts whose guard read
- * false wait in `watching` until a statement that writes the object ends. */
+ * A statement that finds the object held spins for a bounded time, since a
+ * holder's block cannot wait and so its holder is running; one that still
+ * finds it held parks in `waiting`.  An unlock wakes the first parked
+ * statement to try again rather than handing it the object, so the object is
+ * never held by a context no driver is running, which would make every later
+ * statement park behind it; a woken statement that misses again goes back to
+ * the head of the queue.  Contexts whose guard read false wait in `watching`
+ * until a statement that writes the object ends. */
 typedef struct wf_shared {
     _Atomic uint64_t handles;
     atomic_flag lock;
-    uint64_t holders;
+    _Atomic uint64_t holders;
     wf_context *waiting_head;
     wf_context *waiting_tail;
     wf_context *watching;
@@ -1947,6 +1954,10 @@ _Static_assert(
     "a shared object's header must end before its state"
 );
 #define WF_SHARED_WRITER UINT64_MAX
+/* How many times a statement that finds its object held looks again before
+ * it parks: long enough for a block's compute, short against a park and a
+ * wake. */
+#define WF_SHARED_SPINS 256u
 
 void *wf__shared_new(uint64_t state_bytes) {
     size_t granted;
@@ -1960,6 +1971,7 @@ void *wf__shared_new(uint64_t state_bytes) {
     );
     memset(shared, 0, sizeof(*shared));
     atomic_store_explicit(&shared->handles, 1u, memory_order_relaxed);
+    atomic_store_explicit(&shared->holders, 0u, memory_order_relaxed);
     atomic_flag_clear(&shared->lock);
     shared->pool_bytes = granted;
     return shared;
@@ -1980,42 +1992,45 @@ void wf__shared_free(void *object) {
     wf_pool_give(shared, shared->pool_bytes);
 }
 
-/* Grants the object, in queue order, to the waiting contexts it can now
- * serve: one writer, or every reader up to the next writer.  Called under
- * the object's lock; returns them linked through `next`, to be made ready
- * once the lock is released. */
-static wf_context *wf_shared_grant_locked(wf_shared *shared) {
-    wf_context *granted = NULL;
-    wf_context *granted_tail = NULL;
-    while (shared->waiting_head != NULL) {
-        wf_context *next = shared->waiting_head;
-        if (next->shared_write != 0u) {
-            if (shared->holders != 0u) {
-                break;
-            }
-            shared->holders = WF_SHARED_WRITER;
-        } else {
-            if (shared->holders == WF_SHARED_WRITER) {
-                break;
-            }
-            shared->holders += 1u;
-        }
-        shared->waiting_head = next->next;
-        if (shared->waiting_head == NULL) {
-            shared->waiting_tail = NULL;
-        }
-        next->next = NULL;
-        if (granted_tail != NULL) {
-            granted_tail->next = next;
-        } else {
-            granted = next;
-        }
-        granted_tail = next;
-        if (next->shared_write != 0u) {
-            break;
-        }
+/* Whether a statement asking to write, or to read, may hold the object now.
+ * Called under the object's lock or, as a hint, without it. */
+static int wf_shared_admits(wf_shared *shared, uint32_t write) {
+    uint64_t holders = atomic_load_explicit(&shared->holders, memory_order_relaxed);
+    return write != 0u ? holders == 0u : holders != WF_SHARED_WRITER;
+}
+
+/* Parks the running context in the object's queue: at its head when an
+ * unlock woke it and it missed again, at its tail otherwise.  Called under
+ * the object's lock. */
+static void wf_shared_park_locked(wf_shared *shared, wf_context *self) {
+    self->next = NULL;
+    if (self->shared_woken != 0u && shared->waiting_head != NULL) {
+        self->next = shared->waiting_head;
+        shared->waiting_head = self;
+    } else if (shared->waiting_tail != NULL) {
+        shared->waiting_tail->next = self;
+        shared->waiting_tail = self;
+    } else {
+        shared->waiting_head = self;
+        shared->waiting_tail = self;
     }
-    return granted;
+    self->shared_woken = 0u;
+}
+
+/* Wakes the first parked statement to try again.  Called under the object's
+ * lock; returns the context to make ready once the lock is released. */
+static wf_context *wf_shared_wake_locked(wf_shared *shared) {
+    wf_context *first = shared->waiting_head;
+    if (first == NULL) {
+        return NULL;
+    }
+    shared->waiting_head = first->next;
+    if (shared->waiting_head == NULL) {
+        shared->waiting_tail = NULL;
+    }
+    first->next = NULL;
+    first->shared_woken = 1u;
+    return first;
 }
 
 static void wf_shared_ready_all(wf_context *list) {
@@ -2026,58 +2041,79 @@ static void wf_shared_ready_all(wf_context *list) {
     }
 }
 
+/* Answers 0 when the running context now holds the object, and 1 when it
+ * has parked the frame, which then suspends; the emitted code calls this
+ * again when the frame resumes. */
 int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *self = wf_context_current;
+    unsigned spins = 0u;
     if (self == NULL || frame == NULL) {
         wf_bridge_fail("an atomic statement ran outside every context");
     }
+    for (;;) {
+        if (wf_shared_admits(shared, write)) {
+            wf_spin_lock(&shared->lock);
+            if (wf_shared_admits(shared, write)) {
+                uint64_t holders = atomic_load_explicit(&shared->holders, memory_order_relaxed);
+                atomic_store_explicit(
+                    &shared->holders,
+                    write != 0u ? WF_SHARED_WRITER : holders + 1u,
+                    memory_order_relaxed
+                );
+                self->shared_woken = 0u;
+                wf_spin_unlock(&shared->lock);
+                return 0;
+            }
+            wf_spin_unlock(&shared->lock);
+        }
+        if (spins >= WF_SHARED_SPINS) {
+            break;
+        }
+        spins += 1u;
+        wf_prim_spin_hint();
+    }
     wf_spin_lock(&shared->lock);
-    if (shared->waiting_head == NULL
-        && (write != 0u
-                ? shared->holders == 0u
-                : shared->holders != WF_SHARED_WRITER)) {
-        shared->holders = write != 0u ? WF_SHARED_WRITER : shared->holders + 1u;
+    if (wf_shared_admits(shared, write)) {
+        uint64_t holders = atomic_load_explicit(&shared->holders, memory_order_relaxed);
+        atomic_store_explicit(
+            &shared->holders,
+            write != 0u ? WF_SHARED_WRITER : holders + 1u,
+            memory_order_relaxed
+        );
+        self->shared_woken = 0u;
         wf_spin_unlock(&shared->lock);
         return 0;
     }
     self->resume = frame;
     self->shared_write = write;
-    self->next = NULL;
     wf_context_parked_away = 1;
-    if (shared->waiting_tail != NULL) {
-        shared->waiting_tail->next = self;
-    } else {
-        shared->waiting_head = self;
-    }
-    shared->waiting_tail = self;
+    wf_shared_park_locked(shared, self);
     wf_spin_unlock(&shared->lock);
     return 1;
 }
 
 /* Ends one hold under the object's lock and returns the contexts to make
- * ready: those it now grants the object to, and, after a write, every
- * context watching for one. */
+ * ready: the first parked statement once the object is free, and, after a
+ * write, every context watching for one. */
 static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote) {
     wf_context *ready = NULL;
-    wf_context *granted;
+    wf_context *woken = NULL;
     if (write != 0u) {
-        shared->holders = 0u;
+        atomic_store_explicit(&shared->holders, 0u, memory_order_relaxed);
     } else {
-        shared->holders -= 1u;
+        atomic_fetch_sub_explicit(&shared->holders, 1u, memory_order_relaxed);
     }
     if (wrote) {
         ready = shared->watching;
         shared->watching = NULL;
     }
-    granted = wf_shared_grant_locked(shared);
-    if (granted != NULL) {
-        wf_context *tail = granted;
-        while (tail->next != NULL) {
-            tail = tail->next;
-        }
-        tail->next = ready;
-        ready = granted;
+    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
+        woken = wf_shared_wake_locked(shared);
+    }
+    if (woken != NULL) {
+        woken->next = ready;
+        ready = woken;
     }
     return ready;
 }
@@ -2101,9 +2137,10 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
     wf_spin_lock(&shared->lock);
     self->resume = frame;
     self->shared_write = write;
+    self->shared_woken = 0u;
     self->next = shared->watching;
-    wf_context_parked_away = 1;
     shared->watching = self;
+    wf_context_parked_away = 1;
     /* The guard wrote nothing, so no watcher has a change to see. */
     ready = wf_shared_end_hold_locked(shared, write, 0);
     wf_spin_unlock(&shared->lock);

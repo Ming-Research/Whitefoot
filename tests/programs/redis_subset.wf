@@ -491,8 +491,8 @@ fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
       set position = put_decimal(output: output, at: position, value: length);
       set position = put_word(output: output, at: position, word: &reply_crlf[0_u64..2_u64]);
       let copied_length = copied^.length;
-      for @bytes (index in 0_u64..1024_u64) {
-        if index < copied_length {
+      if copied_length <= 1024_u64 {
+        for @bytes (index in 0_u64..copied_length) {
           let byte = copied^.bytes[index];
           set position = put_byte(output: output, at: position, value: byte);
         }

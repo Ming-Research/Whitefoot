@@ -3,8 +3,9 @@
 //! A handle is one pointer to the object, whose runtime header in the
 //! completion bridge precedes its state at [`SHARED_STATE_OFFSET`]. An atomic
 //! statement acquires the object for writing, which may suspend its frame
-//! exactly as a join does; a guard that reads false watches the object, which
-//! always suspends, and the lowering acquires again when the frame resumes.
+//! exactly as a join does and asks again when the frame resumes; a guard that
+//! reads false watches the object, which always suspends, and the lowering
+//! acquires again when the frame resumes.
 //!
 //! [`SHARED_STATE_OFFSET`]: crate::backend::SHARED_STATE_OFFSET
 
@@ -90,7 +91,10 @@ impl FunctionEmitter<'_, '_> {
 
     /// An acquire or a watch: the runtime answers 0 when this context holds
     /// the object at once and 1 when it has parked the frame, which then
-    /// suspends until the runtime makes the context ready.
+    /// suspends until the runtime makes the context ready. A resumed acquire
+    /// asks again, since an unlock wakes a parked statement to try rather
+    /// than handing it the object; a resumed watch continues, and the
+    /// lowering acquires again after it.
     pub(super) fn emit_shared_wait(
         &mut self,
         result: IrValueId,
@@ -103,11 +107,14 @@ impl FunctionEmitter<'_, '_> {
         {
             return Err(BackendFailure::InvalidIr);
         }
+        let retries = entry == "wf__shared_acquire";
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
         writeln!(
             self.output,
-            "  %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
+            "  br label %{prefix}.try\n\
+             {prefix}.try:\n  \
+             %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
              %{prefix}.parked = call i32 @{entry}(ptr {}, i32 1, ptr {HANDLE})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
@@ -115,11 +122,12 @@ impl FunctionEmitter<'_, '_> {
             self.value_name(object)
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        self.emit_suspension(
-            &format!("%{prefix}.saved"),
-            &prefix,
-            &format!("{prefix}.done"),
-        )?;
+        let resumed = if retries {
+            format!("{prefix}.try")
+        } else {
+            format!("{prefix}.done")
+        };
+        self.emit_suspension(&format!("%{prefix}.saved"), &prefix, &resumed)?;
         self.output.open_block(format!("{prefix}.done"));
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
