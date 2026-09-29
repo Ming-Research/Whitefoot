@@ -10,6 +10,41 @@ they name a maintained program. A pattern explains how to express an admitted
 design; it grants no extra acceptance rule and makes no implementation-status
 claim.
 
+## First: write every independence the program has
+
+A Whitefoot program's parallelism is maximal, not chosen. Keep only the
+data dependencies the computation actually has, and write every other part
+of the work in a form the compiler proves independent: a counted loop whose
+iterations write their own slots or their own proved ranges [PAR-2], a
+recursion whose halves take disjoint ranges, or adjacent statements with
+disjoint effects [PAR-1]. Which of that work is handed to other workers,
+and at what grain, is the compiler's and its runtime's choice
+(`design/compiler/parallel-lowering.md`); the source neither names a unit of
+parallel work nor tunes the grain.
+
+The reason is arithmetic: on P cores a computation takes about its work
+divided by P plus its critical path, the longest chain of steps that must
+follow one another. A coarse unit chosen for convenience caps parallelism
+at the number of units however much work each holds; Snowghost's layout,
+split only between CSS formatting contexts, ran no faster at four workers
+than sequentially, because one context held 85 to 95 percent of each real
+page's text
+([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/690e0eb/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+
+- Do not add an order the computation does not need. A running total over
+  independent items is an associative accumulator [PAR-2], not a loop-carried
+  variable read by the next iteration; a value each item computes goes to
+  that item's own slot, not to shared state updated in turn.
+- Shorten the critical path when extra work allows it: compute speculatively
+  and correct the few items the speculation got wrong, or combine by halves
+  instead of in one chain.
+- A sequential step should name the dependency that forces it. When the
+  compiler denies a permission you expected, `--par-ledger` says which
+  condition failed; that is a design question about the data, not a reason
+  to accept the sequential lowering.
+
+P13 describes the permission judgment these forms rely on.
+
 ## P1. Put mutation in the reference parameter's effect row
 
 A reference is a local name for a path. It has no shared or exclusive marker.
