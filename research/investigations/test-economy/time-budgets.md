@@ -8,23 +8,26 @@ the gate that holds it, and lists what is left.
 
 Measurements below come from three sources, named where used:
 
-- **Hosted CI.** GitHub-hosted `ubuntu-24.04` (4 vCPU) and `macos-14`
-  (3 cores) runners. The per-stage times are the `== END <label>` lines of
+- **Hosted CI.** GitHub-hosted `ubuntu-24.04` (four processors) and
+  `macos-14` runners. The per-stage times are the `== END <label>` lines of
   gate runs 36407050293, 36481999094, 36509424729, 36520371629 and
   36545788212 on main and 36556965634 on the workflow-simplification
-  branch, all 2026-09-28 to 09-29; the history uses all 106 successful
-  `gate.yml` runs on main since 2026-09-03.
+  branch, all 2026-09-28 to 09-29, and the six runs are of different
+  revisions; the history uses all 106 successful `gate.yml` runs on main
+  since 2026-09-03.
 - **Local container.** The four-core Linux container this work ran in, at
   revision 1355610115's compiler sources, under `setpriv` without
   `dac_override`.
 - **Serial profile.** Every unit and corpus case run on one test thread on
   that container, so each gap between completions is one case's wall time.
+  That run kept `dac_override`, so three permission-denial corpus cases
+  stopped early at their precondition check; their times are lower bounds.
 
 ## History: how the gate got slower
 
 Median wall time of a successful main gate run per week: 3.3 min (week of
-09-03), 8.1, 9.1, then 5.0 and 5.1 after PR #66 regrouped the jobs on 09-16.
-The regrouping cut job-minutes per run from about 44–54 to about 17, and
+08-31), 8.1, 9.1, then 5.0 and 5.1 after PR #66 regrouped the jobs on 09-16.
+The regrouping cut job-minutes per run from about 44–54 to about 15–17, and
 since then the longest job has been `unit`, the only one still growing: on
 ubuntu 3.2–3.7 min on 09-22/23 and 4.2–4.6 min on 09-29. Over that week the
 compiler's `src` grew from 190,446 to 242,761 lines (+27%) and its `#[test]`
@@ -41,7 +44,7 @@ unit job still built the ordinary compiler first):
 | static | `repository-invariants` | 12.7–13.8 | 14.1–15.9 |
 | static | `compiler/lint` (clippy, cold) | 20–59 | 18–44 |
 | static | whole group | 38–77 | 40–72 |
-| unit | `compiler/build` (ordinary library and CLI) | 43–74 | 65–91 |
+| unit | `compiler/build` (ordinary library and CLI) | 43–74 | 64–91 |
 | unit | `compiler/test-build-unit` | 68–102 | 109–157 |
 | unit | `compiler/test-unit` | 51–85 | 58–73 |
 | unit | whole group | 162–253 | 238–322 |
@@ -60,10 +63,11 @@ cold compiler builds taking 81 and 76 s of it.
 dependency-free crate of 243,000 lines, built with optimization. The unit job
 built it twice: once as the ordinary library for the CLI binary and its tests,
 once in test mode for the library's own tests. Compilation was 148 of 211 s of
-the unit group on ubuntu and 197 of 268 s on macOS in run 36554345394.
+the unit group on ubuntu and 197 of 268 s on macOS in run 36554345394, on the
+workflow-simplification branch.
 
 **Unit cases are processor-bound.** Run serially, the 1,870 library cases and
-21 CLI cases take 244 s in total; the slowest is 6 s, and the backend modules
+21 CLI cases take 243 s in total; the slowest is 6 s, and the backend modules
 that compile and run native programs account for most of it (`ranges` 38.6 s
 over 26 cases, `deterministic_target` 24.8 s over 15). The same cases took
 126 s on two threads and 63.5 s on four in the local container: close to
@@ -74,8 +78,8 @@ take 227 s, and two of them, the conformance adapter's cases
 `a_shared_proof_receipt_cache_reaches_every_declared_source_verdict` (62 s)
 and `the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`
 (78 s), each walk every conformance case on one thread. No thread count brings
-the corpus stage below that 78 s, which is why it stays at 55–86 s on four
-hosted processors.
+the corpus stage below that 78 s, which is why it stays at 51–86 s on the
+hosted runners.
 
 **Local runs used half the processors.** `run-check.pl` defaulted Cargo jobs
 and the test pool to two, to leave capacity for other agents' commands. The
@@ -89,11 +93,11 @@ Judged by what each command does, on a four-core host:
 
 | Command | Content | Reasonable | Status |
 |---|---|---|---|
-| `make static` | reads the tree; about 21 small scripts and the design lint's tests | under 30 s | 21 s locally |
-| `make -C compiler lint` | clippy over every target | under a minute cold, seconds warm | 20–59 s cold in CI, 0.2 s warm |
+| `make static` | reads the tree; small scripts, their self-tests and the design lint's tests | under 30 s | 21 s locally for the whole static group, clippy warm |
+| `make -C compiler lint` | clippy over every target | under a minute cold, seconds warm | 18–59 s cold in CI, 16 s after an edit |
 | `make -C compiler build` / `test-build` after one edit | incremental rebuild of the edited crate | tens of seconds | see [daily loop](#daily-loop) |
-| hosted gate, end to end | two cold optimized builds per OS, 1,900 unit and 93 corpus cases, runtime fixtures | the slowest job under 5 min | 4.5–5.7 min before this change |
-| `make check` locally | the same, in sequence, on one host | a few minutes warm, under 10 cold | 11.3 min cold before this change |
+| hosted gate, end to end | two cold optimized builds per OS, 1,900 unit and 93 corpus cases, runtime fixtures | the slowest job under 5 min | 4.3–5.7 min before this change, 3.9 min after |
+| `make check` locally | the same, in sequence, on one host | a few minutes warm, under 10 cold | 11.3 min with a rebuild before this change, 3.0 min warm after |
 | `io-hosts`, `compute-regression` | platform builds and fixtures; a paired performance comparison | under 5 min each | within |
 
 The gate's time is mostly construction the language project needs (an
@@ -125,7 +129,7 @@ The CLI's 21 tests link the ordinary library. In the unit group they forced
 builds anyway for its harness. They now run in the corpus group, and the unit
 group builds only the library in test mode. Expected: the unit job loses its
 `compiler/build` stage, 43–74 s on ubuntu and 65–91 s on macOS, and the
-corpus job gains the CLI harness build and its 5 s of cases. Local `make
+corpus job gains the CLI harness build and its 3–5 s of cases. Local `make
 check` builds the same artifacts as before. Criterion: the hosted unit job
 falls by at least 40 s on both runners while the corpus job grows by at most
 20 s. Result, run 36559339945 against the six earlier runs:
@@ -137,7 +141,8 @@ falls by at least 40 s on both runners while the corpus job grows by at most
 
 The unit job met the criterion on both runners. The corpus job fell on
 ubuntu and rose 25 s on macOS, inside its earlier range of 125–196 s; one
-sample cannot separate the CLI harness from runner variance; the next run adds a second sample.
+sample cannot separate the CLI harness from runner variance, and the next run
+adds a second sample.
 
 ### Tried and withdrawn: the Windows build on every processor
 
@@ -146,9 +151,25 @@ default of every processor, run 36559339981's build took 175 s against a
 step of 157–212 s before, of which the cases take about 18 s: no
 measurable gain on one sample, so the step keeps its two jobs.
 
-### Optimization level of the `gate` profile
+### Kept: optimization level 3 for the `gate` profile
 
-Measurement in progress.
+Compilation is the largest and growing cost, so a lower optimization level
+for the `gate` profile was measured. Criterion: adopt a lower level only if,
+summed over cold construction and case execution of the unit and corpus
+groups, it saves at least 20% and neither group's cases run more than 25%
+slower. Each level was built from an empty target on the four-core container
+with CI's settings (incremental off, four jobs, four test threads); every
+case passed at every level.
+
+| `opt-level` | library tests, build | corpus and CLI, build | library cases | corpus and CLI cases | total |
+|---|---|---|---|---|---|
+| 3 (current) | 125.7 s | 71.0 s | 65.9 s | 83.3 s | 345.9 s |
+| 2 | 115.1 s | 74.6 s | 70.3 s | 81.2 s | 341.2 s |
+| 1 | 97.5 s | 61.2 s | 75.6 s | 91.0 s | 325.3 s |
+
+Level 1 builds 19% faster but runs the cases 9–15% slower, 6% overall;
+level 2 saves 1.4%. Neither meets the criterion, so the profile keeps level
+3.
 
 ## The gate
 
@@ -165,10 +186,10 @@ wrapper; their `timeout-minutes` bound them, tightened to 2 and 6 min from 5
 and 8, and the Windows and Linux io-hosts jobs from 30 and 45 min to 10.
 
 **Budget size.** About 1.5 times the slowest of the six measured runs, rounded
-up, and never under 10 s. The factor covers the observed spread between runs
-of the same revision (up to 2.9 times for clippy, typically under 1.3 for the
-builds and cases); a stage that grows by half again, or a new stage without a
-budget, fails. Growth below that accumulates until a later change crosses the
+up, and never under 10 s. The spread between those runs was up to 3 times for
+clippy and 1.4–1.7 times for the builds and cases, so a budget sits above the
+slowest run seen rather than above a typical one; a stage that grows by half
+again over its slowest run, or a new stage without a budget, fails. Growth below that accumulates until a later change crosses the
 line, and that change's author then either removes the cost or asks the owner
 to raise the budget.
 
@@ -176,7 +197,8 @@ to raise the budget.
 
 - Job `timeout-minutes` alone stops a stuck job; set at budget size it kills
   the job mid-stage and loses the results and the ranking of slowest cases,
-  and a 15-minute limit on a 4-minute job let the unit job grow for weeks.
+  and a 15-minute limit on a 4-minute job let the unit job grow by more
+  than a quarter in a week unnoticed.
 - A per-case limit would need per-case times, which stable Rust's test
   harness does not report; the gate's existing ranking of completion gaps
   gives only a lower bound, which suits diagnosis rather than a verdict.
@@ -202,7 +224,7 @@ function appended to `semantic/entailment/flow/prover.rs`, then reverted.
 | `make -C compiler test-build-unit` (incremental) | 12.4 |
 | `make -C compiler lint` | 16.4 |
 | the 160 `semantic::tests::entailment` cases, built | 5.6 |
-| `make static` | about 21 |
+| the static group, clippy warm | about 21 |
 
 An appended unused function is a light edit; the
 [compiler-architecture measurements](../compiler-architecture/DESIGN.md#f9-changing-the-compiler-costs-minutes-per-edit)
