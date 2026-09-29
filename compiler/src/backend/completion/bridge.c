@@ -1560,10 +1560,16 @@ static void wf_context_unpark(wf_driver *driver, wf_context *context) {
     }
     context->record_next = NULL;
     wf_context_unlink(&driver->parked, context);
+}
+
+/* One of this driver's host waits has ended, after its context was made
+ * ready: a driver looking for a stop that reads the lowered count then sees
+ * the context counted as ready, since this store releases the push. */
+static void wf_context_host_wait_ended(wf_driver *driver) {
     atomic_store_explicit(
         &driver->host_waits,
         atomic_load_explicit(&driver->host_waits, memory_order_relaxed) - 1u,
-        memory_order_relaxed
+        memory_order_release
     );
 }
 
@@ -1618,14 +1624,10 @@ static int wf_context_poll(wf_driver *driver, int timeout_ms) {
             }
             wf_context_unlink(&driver->polling, ready);
             driver->polling_count -= 1u;
-            atomic_store_explicit(
-                &driver->host_waits,
-                atomic_load_explicit(&driver->host_waits, memory_order_relaxed) - 1u,
-                memory_order_relaxed
-            );
             ready->poll_events = 0;
             ready->record = NULL;
             wf_context_ready(ready);
+            wf_context_host_wait_ended(driver);
             moved = 1;
         }
     }
@@ -1667,6 +1669,7 @@ static int wf_context_record_published(const wf_completion_record *record) {
         wf_context_unpark(driver, context);
         context->record = NULL;
         wf_context_ready(context);
+        wf_context_host_wait_ended(driver);
         return 1;
     }
     if (driver != NULL && wf_context_current != NULL
@@ -1704,6 +1707,7 @@ static int wf_context_harvest(wf_driver *driver) {
             wf_context_unpark(driver, context);
             context->record = NULL;
             wf_context_ready(context);
+            wf_context_host_wait_ended(driver);
             moved = 1;
         }
         context = next;
@@ -2304,7 +2308,9 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
  *
  * The pass over the drivers is not one instant, so it is a double collect:
  * each driver's idleness is read before its counts, which its thread writes
- * and its seq_cst announcement of idleness publishes, and the answer holds
+ * and its seq_cst announcement of idleness publishes, and its host waits
+ * before its ready count, since a host wait ends only after its context is
+ * ready (`wf_context_host_wait_ended`), and the answer holds
  * only if no driver entered or left idleness and no steal ended or was under
  * way between the reads of `wf_drivers_changes` around the pass. Every slot of
  * the driver table is read, not only the counted ones, because a driver that
@@ -2321,8 +2327,8 @@ static int wf_contexts_stuck(const wf_driver *self) {
             && atomic_load_explicit(&other->idle, memory_order_seq_cst) == 0u) {
             return 0;
         }
-        if (atomic_load_explicit(&other->run_count, memory_order_seq_cst) != 0u
-            || atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u) {
+        if (atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u
+            || atomic_load_explicit(&other->run_count, memory_order_seq_cst) != 0u) {
             return 0;
         }
     }

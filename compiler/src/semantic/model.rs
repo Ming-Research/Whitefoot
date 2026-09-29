@@ -2896,7 +2896,7 @@ pub(crate) struct CheckedWaiting {
     pub(crate) context_awaits: Vec<CheckedContextAwait>,
 }
 
-/// [WAIT-2] where one bound context start is joined.
+/// [WAIT-3] where one bound context start is joined.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedContextAwait {
     /// The started `let_stmt`.

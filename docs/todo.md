@@ -1366,8 +1366,8 @@ rarely insert at the same place.
   in the queue until one returns, so nine contexts whose operations wait on
   one another through pipes can stop although [WAIT-2] promises that they
   proceed. On Linux the ring carries reads, opens, closes and a socket's
-  accept, connect, receive and send, so stream writes and the immediate
-  listen, bind and half-close take a helper there
+  accept, connect, receive and send, so a stream write, a directory's next
+  entry, and the immediate listen and shutdown take a helper there
   (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
   with no ring every file operation does. Letting the pool
   grow past the ceiling while every helper is blocked, or carrying stream

@@ -47,7 +47,7 @@ impl IrBuilder<'_> {
 
     /// Awaits every bound context of the innermost block, started at or after
     /// `from` in the pending stack, whose plan joins it before the statement
-    /// at `index`, and defines its binding [WAIT-2].
+    /// at `index`, and defines its binding [WAIT-3].
     pub(super) fn await_contexts_before(
         &mut self,
         from: usize,
@@ -85,9 +85,9 @@ impl IrBuilder<'_> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)
     }
 
-    /// Lowers one started waiting `let` at `index` of its block: its call's
+    /// Lowers one bound spawn at `index` of its block: its call's
     /// arguments here, the call in a wrapper that returns its result, and a
-    /// pending await the plan places [WAIT-2].
+    /// pending await the plan places [WAIT-3].
     pub(super) fn start_bound_context(
         &mut self,
         node_path: &NodePath,
@@ -218,7 +218,7 @@ impl IrBuilder<'_> {
     }
 }
 
-/// [WAIT-2] one bound context started and not yet awaited.
+/// [WAIT-3] one bound context started and not yet awaited.
 pub(super) struct PendingContext {
     /// The binding its result defines.
     binding: BindingId,
