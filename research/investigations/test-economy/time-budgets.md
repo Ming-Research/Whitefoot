@@ -191,6 +191,42 @@ Level 1 builds 19% faster but runs the cases 9–15% slower, 6% overall;
 level 2 saves 1.4%. Neither meets the criterion, so the profile keeps level
 3.
 
+### Stop a program that never finishes
+
+A budget reads a stage's time after the stage ends; a program that never
+ends leaves nothing to read. While the waiting-context runtime was being
+changed on the spawn branch, four backend unit tests ran programs that
+waited without end: one in `cost_shape` and three in
+`deterministic_target`, all on the scripted deterministic host, which never
+completed a request the change had started waiting on. Those tests ran
+their programs with `Command::output`, which waits without limit, so the
+local gate ran for about half an hour before it was stopped by hand. Stable
+libtest printed that each test had been running for over 60 seconds, and
+never stopped one. The integration suites already ran each program as its
+own process group with both outputs drained and a 60 s deadline
+(`compiler/tests/support/process.rs`).
+
+The backend unit tests now run every program they compile through that
+owned process with the same deadline (`BoundedOutput` in
+`compiler/src/backend/tests.rs`); their calls of the host C compiler and of
+`awk` are not programs a test compiled and keep waiting as before. The
+deadline stops a program that never finishes, not a slow one: in the unit
+group at revision 3e18aee3d on the local container, 1,871 tests passed in
+56.4 s and none reached libtest's 60-second report, compilation included.
+The test `a_program_past_its_deadline_is_stopped_and_reported` stops a
+30-second sleep under a 200 ms limit and keeps a finished program's status
+and output. Two changes made at that revision, and then reverted, show what
+the checks observe:
+
+- With the deadline removed from `bounded_output_within`, that test waited
+  30.08 s for the sleep and failed.
+- With `PROGRAM_DEADLINE` set to one millisecond, 3 of the 20 `cost_shape`
+  and `deterministic_target` tests failed with `TimedOut`, among them
+  `the_output_batch_costs_one_host_write_per_full_batch`. The other 17
+  passed: the owned process reads the exit status before the deadline at
+  each poll, 5 ms apart, so a program that had exited by the first poll
+  after its deadline was not stopped.
+
 ## The gate
 
 **Mechanism.** `.github/time-budgets.txt` gives each labeled stage a
