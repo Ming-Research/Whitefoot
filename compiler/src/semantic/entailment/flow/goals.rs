@@ -454,6 +454,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { .. }
             | CheckedExpression::RangeOf { .. }
             | CheckedExpression::BorrowAddressed { .. }
+            | CheckedExpression::BorrowSegment { .. }
             | CheckedExpression::ConstructStruct { .. }
             | CheckedExpression::ConstructEnum { .. } => None,
         }

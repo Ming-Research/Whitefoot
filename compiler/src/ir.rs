@@ -88,6 +88,10 @@ pub enum IrAddressed {
     Buffer {
         element: IrElement,
     },
+    /// One `Segments<T>` block [TYPE-9], reached only through its cell.
+    Segments {
+        element: IrElement,
+    },
     /// Dense inline array storage reached through a checked borrow or target.
     Array {
         element: IrElement,
@@ -112,6 +116,7 @@ impl IrAddressed {
             Self::Float { width } => IrType::Float { width },
             Self::Nominal(id) => IrType::Nominal(id),
             Self::Buffer { element } => IrType::Buffer { element },
+            Self::Segments { element } => IrType::Segments { element },
             Self::Array { element, length } => IrType::Array { element, length },
             Self::Window {
                 shape,
@@ -133,6 +138,7 @@ impl IrAddressed {
             IrType::Float { width } => Self::Float { width },
             IrType::Nominal(id) => Self::Nominal(id),
             IrType::Buffer { element } => Self::Buffer { element },
+            IrType::Segments { element } => Self::Segments { element },
             IrType::Range { .. } | IrType::RuntimeBoxPayload { .. } => return None,
             IrType::Array { element, length } => Self::Array { element, length },
             IrType::Window {
@@ -188,6 +194,16 @@ pub enum IrType {
     /// the `Box` value is that pointer — and no value of this type is ever
     /// copied, passed, or stored.
     Buffer {
+        element: IrElement,
+    },
+    /// One `Segments<T>` block [TYPE-9]: `[len | bounds | elements]` in one
+    /// allocation, where `bounds` is `len + 1` element offsets beginning at
+    /// zero and the elements begin at the first offset past the bounds that
+    /// the element type's alignment admits (compiler/storage-representation).
+    /// Like a runtime-capacity `Array`, it is only `Box` content and is only
+    /// ever reached by pointer. Its elements are copy [OP-13], so releasing it
+    /// is one free.
+    Segments {
         element: IrElement,
     },
     /// One `&[T]` range reference [REF-4]: a pointer to the first element of
@@ -257,6 +273,7 @@ pub(crate) fn type_derives_release(
             // A runtime-capacity block is one heap object the owner frees
             // [TYPE-9, STOR-3], so it always derives a release.
             IrType::Buffer { .. }
+            | IrType::Segments { .. }
             | IrType::Window {
                 capacity: None, ..
             } => return Some(true),
@@ -870,6 +887,46 @@ pub enum IrOperation {
         value: IrValueId,
         layout_ceiling: IrLayoutCeiling,
         target_domains: IrRuntimeTargetObligations,
+    },
+    /// [OP-13] the element total of `box_segments_filled`: the sum of
+    /// `lengths`, or `2^63` where the sum is larger, which no block admits.
+    SegmentsTotal {
+        lengths: IrValueId,
+    },
+    /// [OP-13] whether `box_segments_filled` returns a block: the total and
+    /// the count of `lengths` fit the size predicate its record states,
+    /// judged with the element type's layout ceiling so that the answer is
+    /// the same on every qualified target.
+    SegmentsFits {
+        /// The cell a block would be built for.
+        nominal: IrNominalId,
+        lengths: IrValueId,
+        total: IrValueId,
+        layout_ceiling: IrLayoutCeiling,
+    },
+    /// [OP-13] `box_segments_filled` after [`Self::SegmentsFits`] held: one
+    /// `Segments<T>` block whose bounds are the running sums of `lengths` and
+    /// whose every element holds `value`, and the cell that owns it, which is
+    /// the same pointer.
+    SegmentsFill {
+        nominal: IrNominalId,
+        lengths: IrValueId,
+        total: IrValueId,
+        value: IrValueId,
+    },
+    /// [MSR-1] a `Segments` block's one measure, its segment count.
+    SegmentsMeasure {
+        segments: IrValueId,
+    },
+    /// [REF-4] the range reference over segment `index`, whose bound
+    /// `index < len` was discharged before this operation exists [OP-4].
+    SegmentSlice {
+        segments: IrValueId,
+        index: IrValueId,
+    },
+    /// [REF-4] the range reference over every element in segment order.
+    SegmentsAll {
+        segments: IrValueId,
     },
     /// [MSR-1] the one measure a runtime-capacity `Array<T>` has, read from
     /// the `len` word at the head of its block. `buffer` is the block's

@@ -1375,6 +1375,60 @@ rarely insert at the same place.
   through pipes. Reopen when a program runs more than eight such waits at
   once.
 
+- **A split loop too small to split still costs its query at every call.**
+  Snowghost's layout prototype runs `pkg::text::line_break`, whose
+  `write_run_span` loop is a synthesized range split called once per run of
+  a paragraph; its runtime work never reaches the work unit. Its layout
+  mode that hands out nothing else (L1) is 5 to 24 percent slower at two
+  and four workers than at one on every measured page. With that one loop
+  made unsplittable in a local build, the flat page's L1 took 1.52 s at
+  four workers against 1.57 s at one, where the committed build took 1.80
+  s against 1.53 s
+  ([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/7f7542f/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+  The cost is the splitter's runtime query, paid per call when workers
+  idle; the retained splitter entry of `compiler/parallel-lowering` was
+  qualified on kernels whose splits are few and large. Change to evaluate:
+  skip the query when the call's priced work is below the work unit, as the
+  caller already knows the extents it prices. Validate with the flat page's
+  L1 at one and four workers and the formal kernels' compute regression.
+  Reopen with the next range-split or dispatch change.
+
+- **Small allocations in a parallel loop slow down with more workers.** In
+  the [scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
+  a loop allocating one small buffer per item (about 200,000 allocations
+  per repetition) took 0.71 s sequentially and 1.15 s and 0.98 s at two
+  and four workers. The heap is the platform `malloc` [STOR-8], shared by
+  every worker. Change to evaluate: per-worker allocation caches in the
+  runtime, or a bump region per split chunk for allocations that die with
+  the loop. Validate with that measurement's A2 build at one, two and four
+  workers. Reopen when a measured program's per-item allocations sit on a
+  parallel loop's critical path.
+
+- **An inline range argument does not carry its length into a routed
+  postcondition.** `box_segments_filled`'s record ensures
+  `made.inner.len == lengths^.len` on `Some`. When the argument is a
+  binding, `let run = &a.inner[0_u64..3_u64];`, the caller learns the
+  segment count 3; when the same range is formed at the argument,
+  `lengths: &a.inner[0_u64..3_u64]`, `&made.inner[2_u64]` stays unproved,
+  so writers must bind the range first
+  (`tests/conformance/cases/fn9-pos-segments-routed-count.wf` binds it).
+  The formation's endpoint images are recorded under its capture, but the
+  clause instantiation reads the argument's length only through a bound
+  holder. Change: instantiate a range argument's `len` from the
+  formation's captured length as a binding's is. Validate with the inline
+  form of that case discharging the bound. Reopen with the next change to
+  call-site clause instantiation.
+
+- **An effect-row path through a segment is typed as the whole run.** The
+  effect-row resolver (`container_element_type` in
+  `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
+  such as `writes(s.inner[k])` with a value parameter `k` selects the
+  `Segments` type itself instead of a run of T. No program needs such a
+  row yet: a helper takes the segment as its own `&[T]` parameter. Change:
+  give a segment index step the range selection a range step has, and add a
+  compiler test for a row naming one segment. Reopen when a writer needs a
+  row that names one segment of a run it receives whole.
+
 - **A fixed recursion budget cannot follow an unbalanced tree.** The budget
   of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
   an actualized group, but its depth is still fixed per pool width (about
@@ -1771,6 +1825,19 @@ rarely insert at the same place.
   formed, would leave one walker; validate by identical verdicts on the
   `type11-*` cases. Found in the TYPE-11 review; reopen when a new subject or
   datum shape is added, such as a fact at an element read.
+
+- **The checker's top module passed 4,000 lines.**
+  `compiler/src/semantic/check.rs` has 4,044 lines after the `Segments`
+  arms of its expression walks. Two coherent blocks sit in it: the call
+  requirement and allocation-bound installers
+  (`install_call_requirements` through `install_expression_allocation_bounds`,
+  about 430 lines) and goal-template instantiation
+  (`instantiate_goal_expression` through `instantiate_goal_const`, about
+  730 lines). Move the instantiation block into its own `check` submodule
+  as an `impl Checker` whose entry points are `pub(super)`. Validate that
+  the move changes no behavior: identical `make check` results and a diff
+  of moved items and visibility only. Split when no open branch has large
+  edits in the file; close when it is under 4,000 lines.
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
   1,729-line inline test module, and the tests in

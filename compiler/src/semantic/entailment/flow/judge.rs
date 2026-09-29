@@ -975,6 +975,9 @@ impl Analyzer<'_, '_> {
                 let source_subscripts = match source {
                     CheckedRangeSource::Storage(root) => self.judge_place_subscripts(root, states),
                     CheckedRangeSource::Range(_) => true,
+                    CheckedRangeSource::Element(place) => {
+                        self.judge_range_element_place(place, states)
+                    }
                 };
                 if reaches_endpoints && source_subscripts {
                     let length = match source {
@@ -986,6 +989,13 @@ impl Analyzer<'_, '_> {
                             measure: CheckedMeasure::Length,
                             root: root.clone(),
                         },
+                        CheckedRangeSource::Element(place) => {
+                            CheckedExpression::RangeElementMeasure {
+                                carrier: carrier.clone(),
+                                measure: CheckedMeasure::Length,
+                                place: place.clone(),
+                            }
+                        }
                     };
                     let formation_start = self.output.obligations.len();
                     self.judging()
@@ -1059,6 +1069,40 @@ impl Analyzer<'_, '_> {
             | CheckedExpression::BorrowAddressed { root, .. } => {
                 let obligation_start = self.output.obligations.len();
                 let reached = self.judge_place_subscripts(root, states);
+                ExpressionJudgment {
+                    prepared_call: None,
+                    reached: reached
+                        && self
+                            .judging()
+                            .obligations_since_discharged(obligation_start),
+                }
+            }
+            // [OP-4, TYPE-9] a segment owes `i < len_of(s)` after the
+            // `Segments` place's own subscripts; the run of every element owes
+            // nothing more.
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                let obligation_start = self.output.obligations.len();
+                let mut reached = self.judge_place_subscripts(root, states);
+                if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                    let reaches_offset =
+                        self.judge_children_reach_parent(std::iter::once(&index.offset), states);
+                    if reached && reaches_offset {
+                        self.reasoning().establish_index_capture(
+                            index.captured,
+                            &index.offset,
+                            states,
+                        );
+                        self.judge_obligation(
+                            judged_place(root),
+                            MeasuredKind::Segments,
+                            None,
+                            &index.offset,
+                            index.obligation.clone(),
+                            states,
+                        );
+                    }
+                    reached &= reaches_offset;
+                }
                 ExpressionJudgment {
                     prepared_call: None,
                     reached: reached
@@ -1826,5 +1870,26 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
             place.path.extend(path);
             Some(place)
         }
+    }
+}
+
+/// The place one checked storage root names, as [`Analyzer::judge_place_subscripts`]
+/// walks it: a holder's referent, each field, each `Box` content and each
+/// subscript by its captured offset [REF-1].
+fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
+    let mut path = Vec::new();
+    if root.binding().is_some_and(is_holder) {
+        path.push(PlaceStep::Deref);
+    }
+    for step in &root.path {
+        path.push(match step {
+            CheckedPlaceStep::Field(field) => PlaceStep::Field(*field),
+            CheckedPlaceStep::BoxReferent(_) => PlaceStep::Deref,
+            CheckedPlaceStep::Subscript(subscript) => PlaceStep::Index(subscript.captured),
+        });
+    }
+    ResolvedPlace {
+        root: root.root,
+        path,
     }
 }

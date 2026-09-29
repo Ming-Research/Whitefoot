@@ -10,6 +10,40 @@ they name a maintained program. A pattern explains how to express an admitted
 design; it grants no extra acceptance rule and makes no implementation-status
 claim.
 
+## First: write every independence the program has
+
+A Whitefoot program's parallelism is maximal, not chosen. Keep only the
+data dependencies the computation actually has, and write every other part
+of the work in a form the compiler proves independent: a counted loop whose
+iterations write their own slots or their own proved ranges [PAR-2], a
+recursion whose halves take disjoint ranges, or adjacent statements with
+disjoint effects [PAR-1]. Which of that work is handed to other workers,
+and at what grain, is the compiler's and its runtime's choice; the source
+neither names a unit of parallel work nor tunes the grain.
+
+The reason is arithmetic: on P cores a computation takes about its work
+divided by P plus its critical path, the longest chain of steps that must
+follow one another. A coarse unit chosen for convenience caps parallelism
+at the number of units however much work each holds; Snowghost's layout,
+split only between CSS formatting contexts, ran no faster at four workers
+than sequentially, because one context held 85 to 95 percent of each real
+page's text
+([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/690e0eb/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+
+- Do not add an order the computation does not need. A running total over
+  independent items is an associative accumulator [PAR-2], not a loop-carried
+  variable read by the next iteration; a value each item computes goes to
+  that item's own slot, not to shared state updated in turn.
+- Shorten the critical path when extra work allows it: compute speculatively
+  and correct the few items the speculation got wrong, or combine by halves
+  instead of in one chain.
+- A sequential step should name the dependency that forces it. When the
+  compiler denies a permission you expected, `--par-ledger` says which
+  condition failed; that is a design question about the data, not a reason
+  to accept the sequential lowering.
+
+P13 describes the permission judgment these forms rely on.
+
 ## P1. Put mutation in the reference parameter's effect row
 
 A reference is a local name for a path. It has no shared or exclusive marker.
@@ -44,13 +78,16 @@ signatures without an interior-mutability mechanism.
 
 ## P2. Choose the storage shape from its occupancy rule
 
-The three storage shapes have different invariants [TYPE-9, WIN-1]:
+The four storage shapes have different invariants [TYPE-9, WIN-1]:
 
 - `Array<T, n>` is a full fixed run. Every element exists.
 - `Slots<T, n>` is an inline prefix window with `len` and `cap`.
 - `Ring<T, n>` is an inline wrapped window with `len`, `cap`, and `head`.
 - Omitting `n` makes a runtime-capacity form. It may exist only as the
   `inner` content of a `Box`.
+- `Segments<T>` is a run of `len` segments whose lengths are fixed when it is
+  built, stored as one contiguous run of elements. It has only the `Box`
+  content form.
 
 Use the construction and window operations instead of manufacturing a layout:
 
@@ -159,6 +196,42 @@ payloads. Consistent key laws determine ordinary map behavior, but they do
 not grant ownership or bounds authority. The
 [caller](../tests/programs/containers/hash-map-program.wf) also exercises
 non-reflexive equality, zero-sized pairs and owned callback results.
+
+Use `Segments` when each item produces a number of outputs that differs by
+item and every output belongs in one contiguous buffer: paint commands per
+box, glyphs per text run, lines per paragraph. Count each item's outputs,
+build the run from the counts, then let item i write only its own segment:
+
+```whitefoot
+for (i in 0_u64..items) {
+  let count = count_of(item: i);
+  set counts.inner[i] = count;
+}
+let made = box_segments_filled::<Cmd>(lengths: &counts.inner[0_u64..items], value: zero);
+match move made {
+  None() => {
+    return refused;
+  }
+  Some(value: out) => {
+    let segments = out.inner.len;
+    for (i in 0_u64..segments) {
+      fill(item: i, window: &out.inner[i]);
+    }
+    consume(commands: &out.inner.all);
+  }
+}
+```
+
+`&out.inner[i]` is a range reference over segment i under `i < out.inner.len`
+[OP-4, REF-4], and `&out.inner.all` is one over every element in segment
+order, which hands the joined output to a consumer without a copy. Two
+segments with distinct offsets are distinct storage, so the fill loop is an
+ordinary element map [PAR-2]. `None` means the element total passed the size
+limit [OP-13]; the elements are copy values. When the counts are known only
+by producing the outputs, and producing them twice costs too much, keep a
+per-item buffer instead: its allocations cost more, which
+[the scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
+shows.
 
 ## P3. Reach heap content through `Box.inner`
 
@@ -514,8 +587,15 @@ the checker has retained every required disjointness, bounds, and arithmetic
 proof. Failure to derive permission keeps sequential lowering and never changes
 source acceptance.
 
-For a map, partition one origin into proved-disjoint range references and make
-each helper's declared row stay within its actual range. For a reduction, keep
+For a map, let iteration i touch only element i and what lies below it, or
+partition one origin into proved-disjoint range references, and make each
+helper's declared row stay within its actual place. Below element i means any
+field, payload, `Box` content, subscript or range under it: aggregates own
+their parts, so `set items^[i].count = n;`, `update(item: &items^[i]);` and
+`fill(window: &items^[i].buf.inner[0_u64..size]);` each keep iteration i to
+its own item [PAR-2]. Reading element i - 1, writing element i + 1 or passing
+the whole run beside element i reaches another item and keeps the loop
+sequential. For a reduction, keep
 one associative and commutative accumulator update in the admitted operation
 family. Do not add locks, scheduling calls, or runtime alias tests to seek
 permission.

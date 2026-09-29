@@ -1002,6 +1002,9 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Buffer { element } => CheckedType::Buffer {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
+            CheckedType::Segments { element } => CheckedType::Segments {
+                element: self.substitute_element_regions(check_context, element, regions)?,
+            },
             CheckedType::Window {
                 shape,
                 element,
@@ -1430,7 +1433,11 @@ impl<'unit> TypeContext<'unit> {
                     pending.push((self.element_type(left)?, self.element_type(right)?));
                     left_length == right_length
                 }
-                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right }) => {
+                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right })
+                | (
+                    CheckedType::Segments { element: left },
+                    CheckedType::Segments { element: right },
+                ) => {
                     pending.push((self.element_type(left)?, self.element_type(right)?));
                     true
                 }

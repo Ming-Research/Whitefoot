@@ -1813,6 +1813,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::BoxTake { binding, .. }
         | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         CheckedExpression::BorrowAddressed { root, .. }
+        | CheckedExpression::BorrowSegment { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.binding(),
         CheckedExpression::BufferMeasure { root, .. }
@@ -1913,7 +1914,7 @@ fn collect_operand_reads(
         // Naming a path reads no content: a reference formation evaluates its
         // index and endpoint atoms, which are this expression's own children
         // and are walked below [REF-1, REF-4].
-        CheckedExpression::BorrowAddressed { .. } => {}
+        CheckedExpression::BorrowAddressed { .. } | CheckedExpression::BorrowSegment { .. } => {}
         CheckedExpression::Binding { binding, .. } => {
             read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
         }

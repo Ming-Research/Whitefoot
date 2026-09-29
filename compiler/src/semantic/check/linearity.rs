@@ -81,7 +81,7 @@ impl<'unit> TypeContext<'unit> {
         visited: &mut HashSet<NominalId>,
     ) -> Result<bool, CheckStop> {
         match ty {
-            CheckedType::Buffer { element } => {
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                 self.loan_bearing_with(self.element_type(element)?, visited)
             }
             CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
@@ -143,7 +143,7 @@ impl<'unit> TypeContext<'unit> {
                 nodes.push(current);
             }
             match current {
-                CheckedType::Buffer { element } => {
+                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                     pending.push(self.element_type(element)?);
                 }
                 // A run owns the elements of its window [BLK-1], so its
@@ -204,7 +204,9 @@ impl<'unit> TypeContext<'unit> {
                 } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
                     pending.push(self.element_type(element)?);
                 }
-                CheckedType::Buffer { element } => pending.push(self.element_type(element)?),
+                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                    pending.push(self.element_type(element)?);
+                }
                 _ => {}
             }
         }

@@ -298,7 +298,9 @@ fn type_holds_heap(
     visited: &mut HashSet<NominalId>,
 ) -> bool {
     match ty {
-        CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. } => true,
+        CheckedType::Buffer { .. }
+        | CheckedType::Window { capacity: None, .. }
+        | CheckedType::Segments { .. } => true,
         CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
             .elements
             .get(element.index())

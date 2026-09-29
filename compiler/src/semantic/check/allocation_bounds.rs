@@ -165,13 +165,29 @@ impl Checker<'_, '_> {
                     Checker::install_expression_allocation_bounds(offset, bounds)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+                if let Some(offset) = segment.offset_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+            }
             CheckedExpression::RangeOf {
                 source, start, end, ..
             } => {
-                if let super::super::model::CheckedRangeSource::Storage(root) = source {
-                    for offset in root.offsets_mut() {
-                        Checker::install_expression_allocation_bounds(offset, bounds)?;
+                match source {
+                    super::super::model::CheckedRangeSource::Storage(root) => {
+                        for offset in root.offsets_mut() {
+                            Checker::install_expression_allocation_bounds(offset, bounds)?;
+                        }
                     }
+                    super::super::model::CheckedRangeSource::Element(place) => {
+                        for offset in place.offsets_mut() {
+                            Checker::install_expression_allocation_bounds(offset, bounds)?;
+                        }
+                    }
+                    super::super::model::CheckedRangeSource::Range(_) => {}
                 }
                 Checker::install_expression_allocation_bounds(start, bounds)?;
                 Checker::install_expression_allocation_bounds(end, bounds)?;

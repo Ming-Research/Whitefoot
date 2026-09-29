@@ -49,9 +49,10 @@ pub(crate) use model::{
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
     CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
     CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
-    CheckedReleaseClass, CheckedSetTarget, CheckedStatement, CheckedTargetDomainObligation,
-    CheckedType, CheckedValue, CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell,
-    MeasuredKind, NominalId, PropagationContext, WindowShape,
+    CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect, CheckedSetTarget,
+    CheckedStatement, CheckedTargetDomainObligation, CheckedType, CheckedValue,
+    CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
+    PropagationContext, WindowShape,
 };
 
 /// Numbered rule owning one post-resolution semantic rejection.
@@ -89,8 +90,8 @@ pub enum SemanticRule {
     Type5,
     /// Constructor/variant owner agreement.
     Type6,
-    /// The three storage shapes and the cell: constant-capacity placement,
-    /// the runtime-capacity forms' `Box`-content-only position, and the
+    /// The four storage shapes and the cell: constant-capacity placement,
+    /// the runtime forms' `Box`-content-only position, and the
     /// refusal of a compiler-owned nominal's constructor `call`.
     Type9,
     /// Measures and window parts are names, not declarations: a source write

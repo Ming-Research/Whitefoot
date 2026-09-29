@@ -49,6 +49,10 @@ use super::{
     CheckStop, Checker, EffectPath, EffectSet, LocalBinding, PlaceAccess, TypedExpression,
 };
 
+/// The member of a `Segments<T>` place that names the run of every element
+/// in segment order [TYPE-9].
+const SEGMENTS_ALL: &str = "all";
+
 // [DIAG-1] same-node judgment order at a reference use: OWN-1's liveness and
 // spelling judgments are asked before REF-2's validity judgment, and REF-1
 // fixes the path a reference names before REF-2 judges that path's validity,
@@ -1012,8 +1016,41 @@ impl<'unit> Checker<'_, 'unit> {
                 accesses,
             });
         }
-        let (path, ty, carried) =
-            self.resolve_storage_path(context, suffixes, root_type, bindings, loop_depth, true)?;
+        // [TYPE-9, REF-4] the last suffix over a `Segments<T>` place selects
+        // a segment, `&s[i]`, or the run of every element, `&s.all`; each is
+        // a range reference and no storage walk continues below it.
+        let (prefix, last) = match suffixes.split_last() {
+            Some((last, prefix)) => (prefix, Some(*last)),
+            None => (suffixes, None),
+        };
+        let (mut path, ty, mut carried) =
+            self.resolve_storage_path(context, prefix, root_type, bindings, loop_depth, true)?;
+        let ty = match (last, ty) {
+            (Some(last), CheckedType::Segments { element })
+                if self.segment_selection(last)?.is_some() =>
+            {
+                return self.check_segment_borrow(
+                    context,
+                    carrier,
+                    last,
+                    CheckedContainerRoot { root, path, ty },
+                    element,
+                    carried,
+                    root_binding.as_ref(),
+                    bindings,
+                    loop_depth,
+                );
+            }
+            (Some(last), ty) => {
+                let (rest, ty, more) =
+                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true)?;
+                path.extend(rest);
+                carried.effects = carried.effects.union(more.effects);
+                carried.accesses.extend(more.accesses);
+                ty
+            }
+            (None, ty) => ty,
+        };
         let place = ResolvedPlace {
             root,
             path: path.iter().map(CheckedPlaceStep::place_step).collect(),
@@ -1064,6 +1101,127 @@ impl<'unit> Checker<'_, 'unit> {
         })
     }
 
+    /// Which selection of a `Segments<T>` place one suffix writes: `Some(true)`
+    /// for a segment subscript `[i]`, `Some(false)` for the member `all`, and
+    /// `None` for any other suffix [TYPE-9].
+    fn segment_selection(&self, suffix: NodeId) -> Result<Option<bool>, CheckStop> {
+        Ok(match self.types.declarations.tree.place_suffix(suffix)? {
+            crate::syntax::views::PlaceSuffix::Index { .. } => Some(true),
+            crate::syntax::views::PlaceSuffix::Member(_) => (self
+                .types
+                .declarations
+                .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
+                .spelling()
+                == SEGMENTS_ALL)
+                .then_some(false),
+            crate::syntax::views::PlaceSuffix::Dereference
+            | crate::syntax::views::PlaceSuffix::Range { .. } => None,
+        })
+    }
+
+    /// [REF-4, TYPE-9] `&s[i]`, the range reference over segment i under
+    /// `i < s.len` [OP-4], or `&s.all`, the range reference over every
+    /// element in segment order.
+    ///
+    /// Segment i is named as the `Segments` place extended by an index step,
+    /// so two segments with distinct offsets are distinct storage exactly as
+    /// two array elements are [OWN-7]. The run of every element is named by
+    /// a range step whose bounds no program states, so it overlaps every
+    /// segment.
+    #[allow(clippy::too_many_arguments)]
+    fn check_segment_borrow(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        carrier: NodeId,
+        suffix: NodeId,
+        base: CheckedContainerRoot,
+        element: crate::semantic::CheckedElement,
+        mut carried: super::expressions::flat_storage::CarriedOperands,
+        root_binding: Option<&LocalBinding>,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<TypedExpression, CheckStop> {
+        let segment =
+            if let Some(offset_node) = self.types.declarations.tree.subscript_offset(suffix)? {
+                let mut probe = bindings.clone();
+                let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
+                self.check_place_offset(offset_node, &offset)?;
+                let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+                    return self
+                        .types
+                        .declarations
+                        .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
+                };
+                let captured = self.body.note_capture(captured, bindings);
+                carried.effects = carried.effects.union(offset.effects);
+                carried.accesses.extend(offset.accesses);
+                crate::semantic::CheckedSegmentSelect::One(Box::new(
+                    crate::semantic::CheckedSegmentIndex {
+                        offset: offset.expression,
+                        obligation: self.types.declarations.tree.path(suffix)?.clone(),
+                        captured,
+                    },
+                ))
+            } else {
+                // Bounds no program states: two unknown values never prove
+                // equality or order, so no range or index is proved apart from
+                // this one [OWN-7].
+                crate::semantic::CheckedSegmentSelect::All(CapturedRange {
+                    start: CapturedValue::unknown(),
+                    end: CapturedValue::unknown(),
+                })
+            };
+        let step = segment.place_step();
+        let formed = ResolvedPlace {
+            root: base.root,
+            path: base
+                .path
+                .iter()
+                .map(CheckedPlaceStep::place_step)
+                .chain(std::iter::once(step))
+                .collect(),
+        };
+        let places =
+            if let Some(reference) = root_binding.and_then(|local| local.reference.as_ref()) {
+                reference
+                    .paths
+                    .iter()
+                    .cloned()
+                    .map(|mut resolved| {
+                        resolved.path.extend(formed.path.iter().copied());
+                        resolved
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![formed]
+            };
+        let element_type = self.types.element_type(element)?;
+        let expression = CheckedExpression::BorrowSegment {
+            carrier: self.types.declarations.tree.path(carrier)?.clone(),
+            root: base,
+            segment,
+            element,
+            element_type,
+        };
+        let mut accesses = carried
+            .accesses
+            .into_iter()
+            .map(PlaceAccess::operand)
+            .collect::<Vec<_>>();
+        accesses.extend(places.iter().cloned().map(|place| PlaceAccess {
+            place,
+            selected: true,
+        }));
+        Ok(TypedExpression {
+            expression,
+            mode: CheckedMode::Range,
+            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference_value: true,
+            effects: carried.effects,
+            accesses,
+        })
+    }
+
     /// [REF-4] `&x[lo..hi]`, over an indexable place or over another range
     /// reference, under `lo <= hi` and `hi <= x.len`.
     #[allow(clippy::too_many_arguments)]
@@ -1093,13 +1251,105 @@ impl<'unit> Checker<'_, 'unit> {
         let range_base =
             written_deref && root_binding.is_some_and(|local| local.mode == CheckedMode::Range);
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
-        let (source, base_places, element_type) = if range_base {
-            if !base_suffixes.is_empty() {
+        let (source, base_places, element_type) = if range_base && !base_suffixes.is_empty() {
+            // [REF-4, OP-4] an indexable place below one element of the run
+            // a range names: the element is selected as a borrow of it
+            // would be, and the storage walk continues below it.
+            let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let Some(offset_node) = self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(base_suffixes[0])?
+            else {
                 return self
                     .types
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::ReferenceFormation, place_node);
+            };
+            let mut probe = bindings.clone();
+            let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
+            self.check_place_offset(offset_node, &offset)?;
+            let captured = self.body.note_capture(
+                Checker::captured_of(offset_node, &offset.expression)
+                    .unwrap_or(CapturedValue::unknown()),
+                bindings,
+            );
+            let (path, ty, offsets) = self.resolve_storage_path(
+                context,
+                &base_suffixes[1..],
+                local.ty,
+                bindings,
+                loop_depth,
+                true,
+            )?;
+            carried.effects = offset.effects.union(offsets.effects);
+            carried.accesses.extend(offset.accesses);
+            carried.accesses.extend(offsets.accesses);
+            if matches!(
+                ty,
+                CheckedType::Window {
+                    shape: WindowShape::Ring,
+                    ..
+                }
+            ) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Ref4,
+                    suffix,
+                    SemanticIssueKind::RangeOverRing {
+                        mechanical_fix: REF4_RING,
+                    },
+                );
             }
+            let element = match ty {
+                CheckedType::Array { element, .. }
+                | CheckedType::Window { element, .. }
+                | CheckedType::Buffer { element } => self.types.element_type(element)?,
+                _ => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Op4,
+                        suffix,
+                        SemanticIssueKind::type_mismatch(
+                            "an indexable base",
+                            self.types.checked_type_name(ty)?,
+                        ),
+                    );
+                }
+            };
+            let named = local
+                .reference
+                .as_ref()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .paths
+                .iter()
+                .cloned()
+                .map(|mut place| {
+                    place.path.push(PlaceStep::Index(captured));
+                    place
+                        .path
+                        .extend(path.iter().map(CheckedPlaceStep::place_step));
+                    place
+                })
+                .collect();
+            let range_element = self.types.intern_element(local.ty)?;
+            (
+                CheckedRangeSource::Element(Box::new(crate::semantic::CheckedRangeElementPlace {
+                    root: CheckedRangeRoot {
+                        binding: local.binding,
+                        element: range_element,
+                        element_type: local.ty,
+                    },
+                    offset: offset.expression,
+                    path,
+                    ty,
+                    obligation: self.types.declarations.tree.path(base_suffixes[0])?.clone(),
+                    target_domain: CheckedTargetDomainObligation::ElementAddress,
+                    captured,
+                })),
+                named,
+                element,
+            )
+        } else if range_base {
             let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let element = self.types.intern_element(local.ty)?;
             let named = local

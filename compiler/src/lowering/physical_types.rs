@@ -76,7 +76,8 @@ pub(super) fn base_elements(
     while let Some(ty) = pending.pop() {
         if let CheckedType::Array { element, .. }
         | CheckedType::Window { element, .. }
-        | CheckedType::Buffer { element } = ty
+        | CheckedType::Buffer { element }
+        | CheckedType::Segments { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -297,6 +298,11 @@ impl<'a> PhysicalTypes<'a> {
                     element: self.element(element)?,
                 });
             }
+            CheckedType::Segments { element } => {
+                return Ok(IrType::Segments {
+                    element: self.element(element)?,
+                });
+            }
             CheckedType::Array { element, length } => {
                 return Ok(IrType::Array {
                     element: self.element(element)?,
@@ -464,7 +470,11 @@ impl<'a> PhysicalTypes<'a> {
                         .get(right.index())
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?,
                 )),
-                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right }) => {
+                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right })
+                | (
+                    CheckedType::Segments { element: left },
+                    CheckedType::Segments { element: right },
+                ) => {
                     pending.push((
                         *self
                             .data

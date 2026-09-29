@@ -282,7 +282,10 @@ impl Input<'_, '_> {
                 }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!("[{}]", self.render_offset(*offset)));
-                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
+                    // A range reference's root type is already its element
+                    // type [REF-4], so a subscript of a type that selects no
+                    // element keeps it.
+                    ty = ty.map(|ty| element_type(ty, self.context.elements).unwrap_or(ty));
                 }
                 PlaceStep::Deref => {
                     self.render_content_step(&mut rendered, &mut ty);
@@ -585,7 +588,10 @@ impl Input<'_, '_> {
                 }
                 GoalProjection::Subscript(offset) => {
                     rendered.push_str(&format!("[{}]", self.render_offset(*offset)));
-                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
+                    // A range reference's root type is already its element
+                    // type [REF-4], so a subscript of a type that selects no
+                    // element keeps it.
+                    ty = ty.map(|ty| element_type(ty, self.context.elements).unwrap_or(ty));
                 }
                 // [REF-4] the range the actual formed, spelled exactly as it
                 // was written: the range names no binding, so its two

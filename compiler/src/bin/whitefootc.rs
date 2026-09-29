@@ -14,10 +14,11 @@ use whitefoot::{
     ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering,
     RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
     SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry, check,
-    check_module_program, check_with_cache, compile_with_cache, compile_with_overlap,
-    compile_with_permission_ledger, content_digest, discover_module_sources, entry_verdict,
-    form_module_graph, module_verdict, read_graph_record, render_driver_failure,
-    render_module_interface, running_compiler_identity, split_module, stack_ledger,
+    check_module_program, check_with_cache, compile_module_program_with_permission_ledger,
+    compile_with_cache, compile_with_overlap, compile_with_permission_ledger, content_digest,
+    discover_module_sources, entry_verdict, form_module_graph, module_verdict, read_graph_record,
+    render_driver_failure, render_module_interface, running_compiler_identity, split_module,
+    stack_ledger,
 };
 
 // `HOST_LINK_LIBRARIES` is here rather than above because its one reader is
@@ -496,6 +497,22 @@ fn run_module_program(
             "a --graph build selects --entry NAME or --function pkg::module::name".to_owned(),
         )
     })?;
+    if options.par_ledger {
+        // As for a source bundle, the ledger goes to stdout and the build
+        // reads no cache, so every line describes this compilation.
+        let (module, ledger) = compile_module_program_with_permission_ledger(
+            &graph,
+            &inputs,
+            entry,
+            limits,
+            options.overlap(),
+        )
+        .map_err(Stop::Compilation)?;
+        for line in &ledger {
+            println!("{line}");
+        }
+        return Ok(Some(module));
+    }
     let front_end = std::time::Instant::now();
     let (module, reused) =
         build_module_entry(&graph, &inputs, entry, limits, options.overlap(), cache)
@@ -1637,8 +1654,11 @@ impl Options {
         {
             return Err("a module program build selects an entry: write --entry NAME, --function pkg::module::name or --check".to_owned());
         }
-        if graph.is_some() && par_ledger {
-            return Err("--par-ledger reports a source bundle build".to_owned());
+        if graph.is_some()
+            && par_ledger
+            && (check || check_modules || check_module.is_some() || render_interface.is_some())
+        {
+            return Err("--par-ledger reports a build: write --entry or --function".to_owned());
         }
         // Two streams, one stdout. The emitted module is the payload of
         // `--emit-llvm` without `-o`, so the ledger may not be interleaved
@@ -1926,6 +1946,22 @@ mod tests {
             .expect("a named output separates the module from the ledger");
         assert!(options.par_ledger);
         assert!(options.emit_llvm);
+    }
+
+    /// A module program's entry build reports its permission ledger as a
+    /// source bundle build does; a check builds nothing to report on.
+    #[test]
+    fn the_permission_ledger_reports_a_module_program_build() {
+        let options = parse(&["--graph", "modules.wfg", "--entry", "app", "--par-ledger"])
+            .expect("an entry build reports its ledger");
+        assert!(options.par_ledger && options.graph.is_some());
+        for refused in [
+            &["--graph", "modules.wfg", "--check", "--par-ledger"][..],
+            &["--graph", "modules.wfg", "--check-modules", "--par-ledger"][..],
+        ] {
+            let message = parse(refused).err().expect("a check has no ledger");
+            assert!(message.contains("--par-ledger"), "{message}");
+        }
     }
 
     /// The stack ledger is developer output on its own switch, and it is

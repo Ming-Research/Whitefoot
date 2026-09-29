@@ -586,6 +586,12 @@ pub(crate) enum CheckedType {
         /// construction and stored with the block [TYPE-9, MSR-1].
         capacity: Option<CheckedConst>,
     },
+    /// One `Segments<T>` [TYPE-9]: a run of segments of T whose boundaries
+    /// were fixed at construction. Its `len` is the segment count; a segment
+    /// is reached only as the range reference `&s[i]` forms [REF-4].
+    Segments {
+        element: CheckedElement,
+    },
 }
 
 /// Which of [TYPE-9]'s two window shapes a [`CheckedType::Window`] is.
@@ -630,7 +636,7 @@ impl CheckedType {
                     .is_some_and(|ty| ty.is_concrete(elements))
                     && capacity.is_none_or(|capacity| capacity.is_concrete())
             }
-            Self::Buffer { element } => elements
+            Self::Buffer { element } | Self::Segments { element } => elements
                 .get(element.index())
                 .is_some_and(|ty| ty.is_concrete(elements)),
             Self::Unit | Self::Bool | Self::Integer(_) | Self::Float(_) | Self::Nominal(_) => true,
@@ -643,6 +649,7 @@ impl CheckedType {
         match self {
             Self::Array { .. } => Some(MeasuredKind::ConstantArray),
             Self::Buffer { .. } => Some(MeasuredKind::RuntimeArray),
+            Self::Segments { .. } => Some(MeasuredKind::Segments),
             Self::Window {
                 shape: WindowShape::Slots,
                 capacity: Some(_),
@@ -766,7 +773,10 @@ impl CheckedMeasure {
                 MeasureCell::ExactTypeConstant
             }
             // `&[T]`: the range's element count, and nothing else [MSR-1].
-            (MeasuredKind::Range, Self::Length) => MeasureCell::ExactRuntime,
+            // `Segments<T>`: the segment count its block stores.
+            (MeasuredKind::Range | MeasuredKind::Segments, Self::Length) => {
+                MeasureCell::ExactRuntime
+            }
             // The one *bounded* cell of the whole table: the two front-moving
             // operations publish a `Ring`'s window origin two-sidedly and no
             // operation re-establishes it exactly [MSR-1, OP-10].
@@ -786,7 +796,8 @@ impl CheckedMeasure {
                 MeasuredKind::ConstantArray | MeasuredKind::RuntimeArray | MeasuredKind::Range,
                 Self::Capacity,
             )
-            | (MeasuredKind::Range, Self::Head) => MeasureCell::Absent,
+            | (MeasuredKind::Range | MeasuredKind::Segments, Self::Head)
+            | (MeasuredKind::Segments, Self::Capacity) => MeasureCell::Absent,
         }
     }
 }
@@ -813,6 +824,8 @@ pub(crate) enum MeasuredKind {
     RuntimeRing,
     /// `&[T]` [REF-4], whose one measure is `len`.
     Range,
+    /// `Segments<T>`, whose one measure is its segment count `len`.
+    Segments,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -1008,7 +1021,9 @@ pub(crate) fn type_has_copy_capability(
             CheckedType::Array { element, .. } => {
                 pending.push(*elements.get(element.index())?);
             }
-            CheckedType::Buffer { .. } | CheckedType::Window { .. } => return Some(false),
+            CheckedType::Buffer { .. }
+            | CheckedType::Window { .. }
+            | CheckedType::Segments { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.
@@ -1603,6 +1618,9 @@ pub(crate) enum CheckedRangeSource {
     Storage(CheckedContainerRoot),
     /// Re-slicing another range reference, `&part^[a..b]` [REF-4].
     Range(CheckedRangeRoot),
+    /// An indexable place below one element of the run a range reference
+    /// names, `&part^[i].field.inner[a..b]` [REF-4, OP-4].
+    Element(Box<CheckedRangeElementPlace>),
 }
 
 impl CheckedRangeSource {
@@ -1618,6 +1636,10 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => (root.root, root.place_path()),
             Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+            Self::Element(place) => (
+                super::places::PlaceRoot::Binding(place.root.binding),
+                place.place_path(),
+            ),
         }
     }
 
@@ -1627,8 +1649,53 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => root.binding(),
             Self::Range(root) => Some(root.binding),
+            Self::Element(place) => Some(place.root.binding),
         }
     }
+}
+
+/// What one segment borrow selects: one segment, or every element [TYPE-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSegmentSelect {
+    One(Box<CheckedSegmentIndex>),
+    /// `&s.all`: the run of every element, named as a range over the whole
+    /// element run whose bounds no program states, so it overlaps every
+    /// segment [OWN-7].
+    All(super::places::CapturedRange),
+}
+
+impl CheckedSegmentSelect {
+    /// The offset this selection evaluates, if any.
+    pub(crate) fn offset(&self) -> Option<&CheckedExpression> {
+        match self {
+            Self::One(index) => Some(&index.offset),
+            Self::All(_) => None,
+        }
+    }
+
+    pub(crate) fn offset_mut(&mut self) -> Option<&mut CheckedExpression> {
+        match self {
+            Self::One(index) => Some(&mut index.offset),
+            Self::All(_) => None,
+        }
+    }
+
+    /// The step this selection adds to the `Segments` place [REF-1].
+    pub(crate) const fn place_step(&self) -> super::places::PlaceStep {
+        match self {
+            Self::One(index) => super::places::PlaceStep::Index(index.captured),
+            Self::All(range) => super::places::PlaceStep::Range(*range),
+        }
+    }
+}
+
+/// The segment one `&s[i]` selects [OP-4]: its offset, the obligation
+/// `i < s.len` it owes, and the offset's immutable image [REF-1, OWN-7].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedSegmentIndex {
+    pub(crate) offset: CheckedExpression,
+    pub(crate) obligation: NodePath,
+    pub(crate) captured: super::places::CapturedValue,
 }
 
 /// One typed element place in the run a range reference names [REF-4, OP-4].
@@ -1713,7 +1780,8 @@ impl CheckedRangeElementPlace {
         match self.ty {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
-            | CheckedType::Buffer { element } => Some(element),
+            | CheckedType::Buffer { element }
+            | CheckedType::Segments { element } => Some(element),
             _ => None,
         }
     }
@@ -1830,7 +1898,8 @@ impl CheckedContainerRoot {
         match self.ty {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
-            | CheckedType::Buffer { element } => Some(element),
+            | CheckedType::Buffer { element }
+            | CheckedType::Segments { element } => Some(element),
             _ => None,
         }
     }
@@ -2250,6 +2319,17 @@ pub(crate) enum CheckedExpression {
         obligation: NodePath,
         target_domain: CheckedTargetDomainObligation,
     },
+    /// [REF-4, TYPE-9] `&s[i]`, the range reference over segment i of a
+    /// `Segments<T>` place, or `&s.all`, the range reference over every
+    /// element in segment order.
+    BorrowSegment {
+        carrier: NodePath,
+        /// The `Segments<T>` place.
+        root: CheckedContainerRoot,
+        segment: CheckedSegmentSelect,
+        element: CheckedElement,
+        element_type: CheckedType,
+    },
     BoxDeref {
         carrier: NodePath,
         nominal: NominalId,
@@ -2332,6 +2412,7 @@ impl CheckedExpression {
             | Self::BoxDeref { carrier, .. }
             | Self::BoxTake { carrier, .. }
             | Self::BorrowAddressed { carrier, .. }
+            | Self::BorrowSegment { carrier, .. }
             | Self::DerefAddressed { carrier, .. }
             | Self::ConstructStruct { carrier, .. }
             | Self::ConstructEnum { carrier, .. }
@@ -2365,7 +2446,9 @@ impl CheckedExpression {
             // [TYPE-8] `&[T]` is a reference kind, not a type: the value's
             // own type is the element type and its kind is its mode, exactly
             // as a `&[T]` parameter carries them [GRAM-2, REF-4].
-            Self::RangeOf { element_type, .. } => *element_type,
+            Self::RangeOf { element_type, .. } | Self::BorrowSegment { element_type, .. } => {
+                *element_type
+            }
             Self::RangeIndex { place, .. } | Self::BorrowRangeIndex { place, .. } => place.ty,
             Self::ReadStorage { root, .. } => root.ty,
             Self::BoxDeref { referent, .. } | Self::BoxTake { referent, .. } => *referent,
@@ -3051,6 +3134,9 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.offsets().collect(),
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            root.offsets().chain(segment.offset()).collect()
+        }
         CheckedExpression::UserCall { arguments, .. }
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
@@ -3084,6 +3170,10 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
                 .chain([start.as_ref(), end.as_ref()])
                 .collect(),
             CheckedRangeSource::Range(_) => vec![start.as_ref(), end.as_ref()],
+            CheckedRangeSource::Element(place) => place
+                .offsets()
+                .chain([start.as_ref(), end.as_ref()])
+                .collect(),
         },
         CheckedExpression::ConstructStruct { fields, .. }
         | CheckedExpression::ConstructEnum { fields, .. } => fields.iter().collect(),

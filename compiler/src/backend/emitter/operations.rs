@@ -83,6 +83,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             | IrAddressed::Integer { .. }
             | IrAddressed::Float { .. }
             | IrAddressed::Buffer { .. }
+            | IrAddressed::Segments { .. }
             // An inline window's storage lives in its owner, so a reference
             // to one addresses that storage [TYPE-9, REF-1].
             | IrAddressed::Array { .. }

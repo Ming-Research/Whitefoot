@@ -942,7 +942,9 @@ impl<'unit> TypeContext<'unit> {
                 element, capacity, ..
             } => (Some(element), capacity),
             CheckedType::Array { element, length } => (Some(element), Some(length)),
-            CheckedType::Buffer { element } => (Some(element), None),
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                (Some(element), None)
+            }
             _ if range_referent => (Some(self.intern_element(ty)?), None),
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };

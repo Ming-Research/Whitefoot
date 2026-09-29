@@ -1237,6 +1237,14 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         CheckedExpression::BorrowAddressed { root, .. } => {
             named(root.root, root.place_path(), Vec::new(), NamingForm::Borrow)
         }
+        // [REF-4] a segment borrow names the `Segments` place extended by
+        // the segment's index, or by a range over every element.
+        CheckedExpression::BorrowSegment { root, segment, .. } => named(
+            root.root,
+            root.place_path(),
+            vec![segment.place_step()],
+            NamingForm::Range,
+        ),
         CheckedExpression::BorrowRangeIndex { place, .. } => named(
             PlaceRoot::Binding(place.root.binding),
             Vec::new(),

@@ -195,15 +195,32 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         CheckedExpression::RangeOf {
             source, start, end, ..
         } => {
-            if let crate::semantic::CheckedRangeSource::Storage(root) = source {
-                bindings.extend(root.binding());
-                collect_place(root, bindings);
+            match source {
+                crate::semantic::CheckedRangeSource::Storage(root) => {
+                    bindings.extend(root.binding());
+                    collect_place(root, bindings);
+                }
+                crate::semantic::CheckedRangeSource::Element(place) => {
+                    collect_expression(&place.offset, bindings);
+                    collect_steps(&place.path, None, bindings);
+                }
+                crate::semantic::CheckedRangeSource::Range(_) => {}
             }
             collect_expression(start, bindings);
             collect_expression(end, bindings);
         }
         CheckedExpression::BufferMeasure { root, .. } => {
             bindings.insert(root.binding);
+        }
+        // [TYPE-9] a `Segments` block is only ever `Box` content, reached
+        // through the pointer its owner's slot holds, as a runtime-capacity
+        // `Array`'s is.
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            bindings.extend(root.binding());
+            collect_place(root, bindings);
+            if let Some(offset) = segment.offset() {
+                collect_expression(offset, bindings);
+            }
         }
         CheckedExpression::Constant(_)
         | CheckedExpression::NamedConstant { .. }
