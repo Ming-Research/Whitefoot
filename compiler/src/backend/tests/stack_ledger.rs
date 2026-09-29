@@ -14,6 +14,7 @@
 //! address, a frame the host reports as `dynamic`, a reserve at the top of the
 //! stack that this one does not have — this fails, loudly, with both numbers.
 
+use super::BoundedOutput;
 use std::process::Command;
 
 use super::super::{Architecture, FLOOR_STACK_BYTES, stack_ledger};
@@ -193,7 +194,7 @@ fn the_reported_ceiling_is_the_measured_one() {
                     .env("WF_WORKERS", "4")
                     .arg(mode)
                     .arg(depth.to_string())
-                    .output()
+                    .bounded_output()
                     .expect("run measured stack boundary")
             };
             let bounds = run(&format!("bounds-{thread}"), 0);

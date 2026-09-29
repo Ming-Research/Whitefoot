@@ -46,7 +46,7 @@ use whitefoot::{
     discover_module_sources, entry_verdict, form_module_graph, module_verdict,
 };
 
-use crate::support::append_runtime_objects;
+use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
 
 use super::corpus::{self, Arrangement, Case, Expectation, Verdict};
 
@@ -239,20 +239,28 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
         command.stderr(Stdio::piped());
     }
 
-    let mut child = command.spawn().expect("run conformance case executable");
+    // An owned process: its own group, both captured outputs drained, and the
+    // test deadline, so a case whose program never finishes fails as a stop
+    // rather than holding the corpus walk.
+    let mut child = ProgramChild::spawn(&mut command).expect("run conformance case executable");
     if let Some(bytes) = &arrange.stdin {
         child
-            .stdin
-            .take()
+            .take_stdin()
             .expect("standard input was piped")
             .write_all(bytes)
             .expect("supply the case's standard input");
     }
-    let status = child
-        .wait_with_output()
-        .expect("wait for conformance case executable")
-        .status;
+    let finished = child.wait_with_output();
     std::fs::remove_dir_all(&directory).expect("remove conformance invocation directory");
+    let status = match finished {
+        Ok(output) => output.status,
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            return Verdict::Stopped(format!(
+                "the program ran past the {PROGRAM_DEADLINE:?} test deadline"
+            ));
+        }
+        Err(error) => panic!("wait for conformance case executable: {error}"),
+    };
 
     status.code().map_or_else(
         || Verdict::Stopped("program terminated without an exit status".to_owned()),

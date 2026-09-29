@@ -41,6 +41,7 @@
 //! depends on [OP-10]'s uninferred window type parameter; none names a
 //! runtime-capacity `Slots` or `Ring`; and none moves out of a window slot.
 
+use super::BoundedOutput;
 use std::fmt::Write as _;
 
 use crate::target::{TargetLayout, TargetLayoutFailure};
@@ -760,7 +761,7 @@ pub(super) fn run_emitted_on_deterministic_host(
                 .iter()
                 .map(|bytes| std::ffi::OsStr::from_bytes(bytes)),
         )
-        .output()
+        .bounded_output()
         .expect("run the ordinary linked library with scripted syscalls");
     std::fs::remove_dir_all(directory).expect("remove scripted library fixture");
     DeterministicRun { output }
