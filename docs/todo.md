@@ -1242,20 +1242,22 @@ rarely insert at the same place.
   `WSAPoll` readiness wait would give it the Linux readiness route's
   behavior. Reopen when a Windows server has to run without the port.
 
-- **The progress changes cost the context echo server 3 to 4% at 1024
-  connections.** With R1 to R4 as committed, `tcp_contexts.wf` ran at 0.966
-  and 0.964 of the runtime before them in two runs of 15 interleaved passes,
-  0.968 with both runs pooled,
-  while 1 connection ran at 0.979 and 64 at 0.996 over both runs
+- **The context echo server's rate at 1024 connections moved 3 to 4%
+  between sessions.** With R1 to R4 as committed, `tcp_contexts.wf` ran at
+  0.966 and 0.964 of the runtime before them in two runs of 15 interleaved
+  passes, 0.968 with both runs pooled; with the stop check fixed, in a later
+  session, it ran at 1.044 and 0.993, 1.004 pooled, while 64 connections
+  stayed within 1% in both sessions
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
-  Candidates are the `wf__context_pass` call after every host operation its
-  start answered, the reap after every 64 resumptions, which more
-  connections reach more often, and the per-driver count of host waits.
-  Attribute it with one build per change reverted, each against the
-  committed runtime in the same interleaved passes, and then lower the cost
-  of the one that carries it, for example by counting a pass inline in the
-  frame. Reopen when a server with more than a few hundred connections is
-  measured, or before the next change to the driver loop.
+  Whether the progress changes cost anything at that width is open: the two
+  sessions disagree by more than either's spread. Settle it by running the
+  same two builds interleaved in three or more sessions; if a loss persists,
+  attribute it with one build per change reverted, the candidates being the
+  `wf__context_pass` call after every host operation its start answered, the
+  reap after every 64 resumptions, the per-driver count of host waits and
+  the stop check's change counters. Reopen when a server with more than a
+  few hundred connections is measured, or before the next change to the
+  driver loop.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
@@ -1959,7 +1961,27 @@ each is resolved by a discussion and a tree change.
   affine invariant (a sum of fields) is admitted through an entry snapshot
   (`research/experiments/monitor-invariants/`). Reopen with the first program
   that keeps invariant-bearing structs in a container, needs a repair helper,
-  or needs a sum.
+  or needs a sum. The standard library gains nothing from type invariants
+  until generic structs may carry them: every `lib/std` collection is
+  generic and every I/O type `opaque`. Even then little moves: of the
+  priority queue's contract clauses (`lib/std/collections/priority_queue/`,
+  interface and body), only `cap <= ceiling`, four `requires`, is a relation
+  every value keeps; the rest state one
+  operation's precondition (`index < len`, `len > 0`) or its effect
+  (`len == entry(len) + 1`), and the maintained programs repeat a field
+  relation at most twice. Reopen generic invariants when a generic type has
+  a relation every value keeps that several functions restate.
+- **A standard collection restates at every operation that its capacity is
+  unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
+  appears 15 times across the priority queue's interface and body
+  (`lib/std/collections/priority_queue/`), and its like 10 times in the
+  deque's and 8 in the vector's. It is no type
+  invariant, since it relates two states, and the row cannot supply it,
+  since those functions write the whole `storage`. A way to say that a
+  function preserves a measure, or a row that names the part of a window a
+  function writes, would remove most of them. Count the clauses each would
+  remove and the proofs that still hold before choosing. Reopen when a new
+  collection or a change to window operations adds more such clauses.
 - **Remaining value-evidence boundaries.** The
   [investigation](../research/investigations/result-proof-transport/DESIGN.md)
   leaves three related extensions to assess together: borrowed Result

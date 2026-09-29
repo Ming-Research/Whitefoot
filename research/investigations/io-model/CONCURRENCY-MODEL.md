@@ -891,14 +891,32 @@ where its growth case allows none. The initializer now clears it.
 **Found by the review: a stop judged from a torn view.** R4's first check
 read each driver's counts before its idleness and read the driver table
 without ordering. A driver that parked a host wait between those two reads,
-contexts between two queues during a steal, or a driver the entry was still
-publishing could then let another driver report a stop while a context
-could still proceed. No run showed it; the windows are a few instructions
-wide. The check now reads each driver's idleness before its counts, holds
-only if a count of every entry into or exit from idleness and of every
-steal is unchanged around the pass with no steal under way, and reads the
-table's slots atomically; a driver whose thread failed to start stays in the
-table, idle, instead of being released under a reader. After the change,
-100 runs each of the three progress witnesses on 1 and on 4 drivers and 60
-on the adapter route finished with no report, and both no-step programs
-still stopped with it on 1 and 4 drivers.
+contexts between two queues during a steal, a driver the entry was still
+publishing, or a context whose host wait had ended before it was made ready
+could then let another driver report a stop while a context could still
+proceed. No run showed it; the windows are a few instructions wide. The
+check now reads each driver's idleness, then its host waits, then its ready
+count, holds only if a count of every entry into or exit from idleness and
+of every steal is unchanged around the pass with no steal under way, and
+reads the table's slots atomically; a host wait ends only after its context
+is ready, and a driver whose thread failed to start stays in the table,
+idle, instead of being released under a reader. After the change, 100 runs
+each of the three progress witnesses on 1 and on 4 drivers and 60 on the
+adapter route finished with no report, and both no-step programs still
+stopped with it on 1 and 4 drivers.
+
+**Measured again with the stop check fixed.** The runtime as at 349b84f79,
+built on 812c2be36 so that nothing else differs from the committed
+measurement, against the same builds before the runtime work, in a later
+session on the same container:
+- the Redis subset, 10 rounds: server CPU 0.996 of before; SET 0.941 and
+  GET 1.067, within the client's steps of about 10%;
+- the context echo server, two runs of 15 passes, pooled: 1 connection at
+  0.995, 64 at 1.009, 1024 at 1.004 (1.044 and 0.993 in the two runs), and
+  64 KiB messages at 0.971;
+- 100 more runs of each progress witness on 4 drivers finished with no
+  report.
+
+The loss at 1024 connections that both runs of the earlier session showed
+did not appear in either run of this one, so it is not attributed to the
+runtime.
