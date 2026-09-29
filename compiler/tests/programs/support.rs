@@ -17,7 +17,7 @@ use whitefoot::{
 };
 
 use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
-pub(super) use crate::support::{ProgramChild, run_command};
+pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);
 
@@ -71,14 +71,12 @@ fn owned_children_capture_both_channels_and_enforce_their_deadline() {
     assert_eq!(output.status.code(), Some(7));
     assert_eq!(output.stdout, b"out");
     assert_eq!(output.stderr, b"err");
-    let mut command = Command::new("/bin/sh");
-    command.args(["-c", "exec sleep 30"]);
-    let child = ProgramChild::spawn_with_limit(&mut command, Duration::from_millis(50))
-        .expect("spawn deadline control");
     let started = Instant::now();
-    let error = child
-        .wait_with_output()
-        .expect_err("deadline must stop the child");
+    let error = output_within(
+        Command::new("/bin/sh").args(["-c", "exec sleep 30"]),
+        Duration::from_millis(50),
+    )
+    .expect_err("deadline must stop the child");
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     assert!(started.elapsed() < Duration::from_secs(2));
 }

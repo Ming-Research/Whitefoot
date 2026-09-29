@@ -87,57 +87,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-
-/// How long a program these tests compiled may run: the integration suites'
-/// limit for the programs they run.
-const PROGRAM_DEADLINE: Duration = Duration::from_secs(60);
-
-/// Runs a program these tests compiled as `Command::output` does, with no
-/// standard input and both outputs captured, as the integration suites' owned
-/// test process, which also stops its process group and answers `TimedOut`
-/// once `PROGRAM_DEADLINE` has passed. A program that never finishes then
-/// fails its own test instead of holding the suite until the command's limit.
-pub(super) trait BoundedOutput {
-    fn bounded_output(&mut self) -> std::io::Result<Output>;
-}
-
-impl BoundedOutput for Command {
-    fn bounded_output(&mut self) -> std::io::Result<Output> {
-        bounded_output_within(self, PROGRAM_DEADLINE)
-    }
-}
-
-fn bounded_output_within(command: &mut Command, limit: Duration) -> std::io::Result<Output> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    crate::native_test_support::ProgramChild::spawn_with_limit(command, limit)?.wait_with_output()
-}
-
-#[test]
-fn a_program_past_its_deadline_is_stopped_and_reported() {
-    let started = std::time::Instant::now();
-    let outcome = bounded_output_within(
-        Command::new("/bin/sh").args(["-c", "sleep 30"]),
-        Duration::from_millis(200),
-    );
-    let error = outcome.expect_err("a program past its deadline must not be waited for");
-    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "the deadline stopped the program: {:?}",
-        started.elapsed()
-    );
-    let finished = bounded_output_within(
-        Command::new("/bin/sh").args(["-c", "printf out; exit 3"]),
-        Duration::from_secs(10),
-    )
-    .expect("a program within its deadline finishes");
-    assert_eq!(finished.status.code(), Some(3));
-    assert_eq!(finished.stdout, b"out");
-}
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
 use crate::{
@@ -156,6 +105,23 @@ use crate::{
     classify_terminals, compile as compile_program, emit_llvm, finalize, lower_checked,
     module_requires_parallel_runtime, parse, resolve,
 };
+
+/// Runs a program these tests compiled as `Command::output` does, but as an
+/// owned test process (`compiler/tests/support/process.rs`) that is stopped
+/// after `PROGRAM_DEADLINE` and then answers `TimedOut`, so a program that
+/// never finishes fails its own test instead of holding the suite.
+pub(super) trait BoundedOutput {
+    fn bounded_output(&mut self) -> std::io::Result<Output>;
+}
+
+impl BoundedOutput for Command {
+    fn bounded_output(&mut self) -> std::io::Result<Output> {
+        crate::native_test_support::output_within(
+            self,
+            crate::native_test_support::PROGRAM_DEADLINE,
+        )
+    }
+}
 
 const SOURCE_LIMITS: SourceLimits = SourceLimits {
     max_sources: 1_024,

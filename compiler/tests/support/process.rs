@@ -1,7 +1,12 @@
 //! Owned native test processes with byte-preserving output and deadlines.
 use std::io::Read;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
+
+/// How long a test lets a program run before it stops the program and fails:
+/// far past any test program's time, so it stops a program that never
+/// finishes.
+pub(crate) const PROGRAM_DEADLINE: Duration = Duration::from_secs(60);
 
 /// A test owns its process group, continuously drains both output channels,
 /// and reaps it on success, timeout or panic. This bounds native test execution,
@@ -15,7 +20,7 @@ pub struct ProgramChild {
 
 impl ProgramChild {
     pub(crate) fn spawn(command: &mut Command) -> std::io::Result<Self> {
-        Self::spawn_with_limit(command, Duration::from_secs(60))
+        Self::spawn_with_limit(command, PROGRAM_DEADLINE)
     }
 
     pub(crate) fn spawn_with_limit(
@@ -49,6 +54,11 @@ impl ProgramChild {
             child,
             deadline: Instant::now() + limit,
         })
+    }
+
+    /// The child's standard input, when its command piped one.
+    pub(crate) fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
     }
 
     /// The operating system's identifier of the running process.
@@ -117,13 +127,17 @@ impl Drop for ProgramChild {
     }
 }
 
-pub(crate) fn run_command(command: &mut Command) -> Output {
+/// Runs `command` as `Command::output` does, with no standard input and both
+/// outputs captured, as an owned process that is stopped once `limit` has
+/// passed and then answers `TimedOut`.
+pub(crate) fn output_within(command: &mut Command, limit: Duration) -> std::io::Result<Output> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    ProgramChild::spawn(command)
-        .expect("spawn native test command")
-        .wait_with_output()
-        .expect("finish native test command within its deadline")
+    ProgramChild::spawn_with_limit(command, limit)?.wait_with_output()
+}
+
+pub(crate) fn run_command(command: &mut Command) -> Output {
+    output_within(command, PROGRAM_DEADLINE).expect("run native test command within its deadline")
 }

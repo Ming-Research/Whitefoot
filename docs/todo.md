@@ -2355,6 +2355,22 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **Nothing refuses a test that runs a compiled program without a
+  deadline.** Every current test that runs a program it compiled goes
+  through the owned process in `compiler/tests/support/process.rs`, which
+  stops it after 60 s, but a new test that calls `Command::output`,
+  `status` or `spawn` on its executable waits without limit again, and only
+  review would notice; four such waits once held a local gate for almost
+  half an hour
+  (`research/investigations/test-economy/time-budgets.md#stop-a-program-that-never-finishes`).
+  Clippy's `disallowed_methods` in a `compiler/clippy.toml` could refuse
+  those three methods, with an `#[allow]` at each call of the host C
+  compiler, `grep` or `awk` in the tests and at the driver's own calls of
+  the host toolchain. Validate that the lint fails on a restored
+  `Command::output` of a test program. Reopen when a new test program run
+  bypasses the owned process, or when the tests' process calls are next
+  reorganized.
+
 - **The design-tree skill's tests also test this project's CI script.**
   `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
   of its cases, so a project that copies `design/skill/` gets failing tests,
