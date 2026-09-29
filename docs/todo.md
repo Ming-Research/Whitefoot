@@ -411,21 +411,6 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
-- **Land the approved `Option` success route with PR #169.** The
-  [writer-lost-facts
-  investigation](../research/investigations/writer-lost-facts/DESIGN.md#shape-4-option-results)
-  proposed `when Some(value: r):` routing like `Ok`, with `Option` joining the
-  conditional transport [FN-9, ENT-5, CALL-4]; the owner approved it on
-  2026-09-28 to land together with PR #169, which rewrites the same FN-9
-  admission sentence for struct payloads; that implementation applies its two
-  approved revisions to the tree, and they are not pending amendments
-  meanwhile. The investigation's other two approved changes, header
-  conclusions leaving the loop and the `give` carrier equality, have landed.
-  Validate with the investigation's `Some` probe as conformance cases (a
-  routed `Some` with a caller match, a forwarded `Option`, a rejected `when
-  None(...)`, an unproved `Some` payload, a `None` arm selecting nothing) and
-  unchanged check time on the maintained programs. Reopen when PR #169 is
-  ready to land.
 - **An affine bound is lost at a statement join where the binding's images
   differ.** After a scan whose `pos <= length` is known only as an affine
   invariant conclusion, `let result = pos; if result < start { set result = start; }`
@@ -441,17 +426,33 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
+- **A product with a struct-field operand has no interval route.** [ENT-6]
+  gives affine value images to live own integer bindings and measures only,
+  and its interval product needs both operands' images, so after
+  `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
+  `header.height <= 16384_u32`, `let stride = header.width * 4_u32;` is
+  proved but `stride * header.height` is not, and neither is a product whose
+  operand was computed from a field; copying the fields into bindings first
+  proves both. The same holds for a parameter's fields bounded by `requires`,
+  so it predates v0.80, but v0.80's field relations make it the next thing a
+  writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
+  product. Impact: one `let` per field before a nonlinear product. Candidate:
+  give a tracked field place the current-value image its binding copy would
+  have, killed with the field; validate against field writes, whole-value
+  replacement and aliases, and measure closure cost. Reopen when a program
+  cannot copy the field.
 
 - **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for `ensures when Some(value: r):` names neither the admitted `Ok` route
-  nor the result types it applies to, and `InvisibleUse` for a header
+  for a route the version does not admit, such as `when Err(error: e):` or a
+  variant of a program's own enum, names neither the admitted `Ok` and `Some`
+  routes nor the result types they apply to, and `InvisibleUse` for a header
   invariant named after its loop does not say the name's scope ended with
   the loop body [INV-1]; the Snowghost writers reported changing result
   types and retrying certificates, which either repair would have
   shortened. Add a repair to each under `compiler/diagnostic-repairs`,
   pinned with a program per alternative.
   Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change or with the `Some` route.
+  diagnostics change.
 
 ## Containers and storage lowering
 
@@ -1656,14 +1657,7 @@ each is resolved by a discussion and a tree change.
   library example needs one of these boundaries. Validate matched direct/local/
   projected programs, alias and descriptor writes, joins, loop iterations and
   stronger-contract negatives before choosing an extension; do not infer a
-  general refinement system from the local-result implementation. A separate
-  FN-9 result-selector limit remains: a nominal Slab result cannot publish
-  `ensures result.cells.inner.len == 0_u64;`, whereas the direct boxed Ring
-  carrier can publish its measure. The
-  [exact rejected forms](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
-  distinguish this wrapper boundary from indexed postcondition targets and
-  from storing an already-related Result. Reopen it when a library wrapper
-  needs the relation, with direct-carrier, nested-field and stale-write controls.
+  general refinement system from the local-result implementation.
   Conditional fact representation cost is the separate compiler defect above.
   The conversion tests also retain an affine precision boundary: if `index`
   has only an affine image `first + second`, its checked integer conversion's
