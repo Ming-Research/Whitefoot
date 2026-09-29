@@ -8,11 +8,11 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CheckOutcome, CheckVerdict,
-    CompilationFailure, CompilerLimits, DiagnosticFormat, FLOOR_STACK_BYTES, FragmentGranularity,
-    GRAPH_FILE_NAME, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ORDINARY_VALUES_HEADER,
-    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering, RecursionBudget,
-    SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CallGrain, CheckOutcome,
+    CheckVerdict, CompilationFailure, CompilerLimits, DiagnosticFormat, FLOOR_STACK_BYTES,
+    FragmentGranularity, GRAPH_FILE_NAME, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
+    ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering,
+    RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
     SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry, check,
     check_module_program, check_with_cache, compile_with_cache, compile_with_overlap,
     compile_with_permission_ledger, content_digest, discover_module_sources, entry_verdict,
@@ -36,7 +36,7 @@ use whitefoot::{
     FLOOR_WINDOWS_RUNTIME_SOURCE, SCHED_PRIM_WINDOWS_SOURCE, WINDOWS_RUNTIME_SOURCE,
 };
 
-const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-scalar-leaf-limit N|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
+const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
 [--stack-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
 
 // The compiler walks typed source and lowering trees recursively. Windows
@@ -1315,10 +1315,9 @@ struct Options {
     /// refusal uses the parallel body's ordinary-call fallback. Windows
     /// compute offers require the native runtime at link time.
     par: bool,
-    /// Resolved scalar-leaf offer limit: 16 under --par unless overridden.
-    /// Explicit `off` keeps every otherwise eligible offer; zero still filters
-    /// leaves containing no nonconstant operations.
-    scalar_leaf_limit: Option<u32>,
+    /// Which permitted call offers `--par` publishes: the work-unit grain by
+    /// default, every permitted offer under `--par-call-grain off`.
+    call_grain: CallGrain,
     /// Opt-in ordinary-ABI sequential calls on refused compute offers.
     sequential_refusal: bool,
     /// Control over the recursion budget: `None` leaves the `--par` default,
@@ -1391,7 +1390,7 @@ impl Options {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut emit_llvm = false;
         let mut par = false;
-        let mut scalar_leaf_limit = None;
+        let mut call_grain = None;
         let mut sequential_refusal = false;
         let mut recursive_frontier = None;
         let mut no_overlap = false;
@@ -1433,21 +1432,15 @@ impl Options {
                     diagnostic_format = true;
                 }
                 "--par" => par = true,
-                "--par-scalar-leaf-limit" => {
+                "--par-call-grain" => {
                     cursor += 1;
-                    let invalid =
-                        || "--par-scalar-leaf-limit requires a nonnegative u32 or off".to_owned();
-                    let value = arguments.get(cursor).ok_or_else(invalid)?;
-                    let limit = if value == "off" {
-                        None
-                    } else {
-                        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-                            return Err(invalid());
-                        }
-                        Some(value.parse::<u32>().map_err(|_| invalid())?)
+                    let grain = match arguments.get(cursor).map(String::as_str) {
+                        Some("auto") => CallGrain::WorkUnit,
+                        Some("off") => CallGrain::Every,
+                        _ => return Err("--par-call-grain requires auto or off".to_owned()),
                     };
-                    if scalar_leaf_limit.replace(limit).is_some() {
-                        return Err("--par-scalar-leaf-limit may be written only once".to_owned());
+                    if call_grain.replace(grain).is_some() {
+                        return Err("--par-call-grain may be written only once".to_owned());
                     }
                 }
                 "--par-recursive-frontier" => {
@@ -1668,8 +1661,8 @@ impl Options {
         if par && no_overlap {
             return Err("--no-overlap and --par select opposite lowerings: write one".to_owned());
         }
-        if scalar_leaf_limit.is_some() && !par {
-            return Err("--par-scalar-leaf-limit requires --par".to_owned());
+        if call_grain.is_some() && !par {
+            return Err("--par-call-grain requires --par".to_owned());
         }
         if sequential_refusal && !par {
             return Err("--par-sequential-refusal requires --par".to_owned());
@@ -1680,11 +1673,7 @@ impl Options {
         Ok(Self {
             emit_llvm,
             par,
-            scalar_leaf_limit: if par {
-                scalar_leaf_limit.unwrap_or(Some(16))
-            } else {
-                None
-            },
+            call_grain: call_grain.unwrap_or_default(),
             sequential_refusal,
             recursive_frontier,
             no_overlap,
@@ -1719,18 +1708,18 @@ impl Options {
         } else if let Some(budget) = self.recursive_frontier {
             OverlapLowering::OnWithRecursionBudget {
                 budget,
-                maximum_scalar_leaf_operations: self.scalar_leaf_limit,
+                call_grain: self.call_grain,
                 sequential_refusal: self.sequential_refusal,
             }
         } else if self.par && self.sequential_refusal {
             OverlapLowering::OnWithSequentialRefusal {
-                maximum_scalar_leaf_operations: self.scalar_leaf_limit,
+                call_grain: self.call_grain,
             }
         } else if self.par {
-            self.scalar_leaf_limit
-                .map_or(OverlapLowering::On, |maximum_operations| {
-                    OverlapLowering::OnWithoutSmallScalarLeaves { maximum_operations }
-                })
+            match self.call_grain {
+                CallGrain::WorkUnit => OverlapLowering::OnWithCallGrain,
+                CallGrain::Every => OverlapLowering::On,
+            }
         } else {
             OverlapLowering::Off
         }
@@ -1743,8 +1732,8 @@ mod tests {
     use std::path::{Component, Path, PathBuf};
 
     use super::{
-        DiagnosticFormat, Options, OverlapLowering, RecursionBudget, Stop, requested_format,
-        require_runner, runtime_units, source_names,
+        CallGrain, DiagnosticFormat, Options, OverlapLowering, RecursionBudget, Stop,
+        requested_format, require_runner, runtime_units, source_names,
     };
 
     /// [PROG-3] a build refuses a checked module that has no runner, naming
@@ -1994,51 +1983,47 @@ mod tests {
     }
 
     #[test]
-    fn compute_leaf_default_and_explicit_overrides_select_the_expected_lowering() {
+    fn compute_call_grain_default_and_override_select_the_expected_lowering() {
         assert_eq!(
             parse(&["value.wf"]).unwrap().overlap(),
             OverlapLowering::Off
         );
         assert_eq!(
             parse(&["--par", "value.wf"]).unwrap().overlap(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16
-            }
+            OverlapLowering::OnWithCallGrain
         );
         assert_eq!(
-            parse(&["--par", "--par-scalar-leaf-limit", "off", "value.wf"])
+            parse(&["--par", "--par-call-grain", "auto", "value.wf"])
+                .unwrap()
+                .overlap(),
+            OverlapLowering::OnWithCallGrain
+        );
+        assert_eq!(
+            parse(&["--par", "--par-call-grain", "off", "value.wf"])
                 .unwrap()
                 .overlap(),
             OverlapLowering::On
         );
-        assert_eq!(
-            parse(&["--par", "--par-scalar-leaf-limit", "0", "value.wf"])
-                .unwrap()
-                .overlap(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 0
-            }
-        );
         for (arguments, expected) in [
             (
                 vec!["--par", "--par-sequential-refusal", "value.wf"],
-                Some(16),
+                CallGrain::WorkUnit,
             ),
             (
                 vec![
                     "--par",
                     "--par-sequential-refusal",
-                    "--par-scalar-leaf-limit",
+                    "--par-call-grain",
                     "off",
                     "value.wf",
                 ],
-                None,
+                CallGrain::Every,
             ),
         ] {
             assert_eq!(
                 parse(&arguments).unwrap().overlap(),
                 OverlapLowering::OnWithSequentialRefusal {
-                    maximum_scalar_leaf_operations: expected
+                    call_grain: expected
                 }
             );
         }
@@ -2047,7 +2032,7 @@ mod tests {
                 "--par",
                 "--par-recursive-frontier",
                 "8",
-                "--par-scalar-leaf-limit",
+                "--par-call-grain",
                 "off",
                 "value.wf"
             ])
@@ -2055,45 +2040,25 @@ mod tests {
             .overlap(),
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::Pinned(std::num::NonZeroU8::new(8).unwrap()),
-                maximum_scalar_leaf_operations: None,
+                call_grain: CallGrain::Every,
                 sequential_refusal: false,
             }
-        );
-        assert!(parse(&["--par-scalar-leaf-limit", "off", "value.wf"]).is_err());
-        assert!(
-            parse(&[
-                "--par",
-                "--par-scalar-leaf-limit",
-                "off",
-                "--par-scalar-leaf-limit",
-                "16",
-                "value.wf"
-            ])
-            .is_err()
         );
     }
 
     #[test]
-    fn scalar_leaf_control_requires_an_explicit_compute_invocation() {
-        let options = parse(&["--par", "--par-scalar-leaf-limit", "16", "value.wf"])
-            .expect("the scalar control is available for compute experiments");
-        assert_eq!(
-            options.overlap(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16
-            }
-        );
+    fn call_grain_control_requires_an_explicit_compute_invocation() {
         for arguments in [
-            vec!["--par-scalar-leaf-limit", "16", "value.wf"],
-            vec!["--par", "--par-scalar-leaf-limit"],
-            vec!["--par", "--par-scalar-leaf-limit", "-1", "value.wf"],
-            vec!["--par", "--par-scalar-leaf-limit", "4294967296", "value.wf"],
+            vec!["--par-call-grain", "off", "value.wf"],
+            vec!["--par", "--par-call-grain"],
+            vec!["--par", "--par-call-grain", "on", "value.wf"],
+            vec!["--par", "--par-call-grain", "16", "value.wf"],
             vec![
                 "--par",
-                "--par-scalar-leaf-limit",
-                "1",
-                "--par-scalar-leaf-limit",
-                "2",
+                "--par-call-grain",
+                "off",
+                "--par-call-grain",
+                "auto",
                 "value.wf",
             ],
         ] {
@@ -2108,8 +2073,8 @@ mod tests {
             "--par-recursive-frontier",
             "8",
             "--par-sequential-refusal",
-            "--par-scalar-leaf-limit",
-            "16",
+            "--par-call-grain",
+            "auto",
             "value.wf",
         ])
         .unwrap();
@@ -2117,7 +2082,7 @@ mod tests {
             options.overlap(),
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::Pinned(std::num::NonZeroU8::new(8).unwrap()),
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: true,
             }
         );
@@ -2125,9 +2090,7 @@ mod tests {
         // answer: one mechanism with a pinned or derived starting value.
         assert_eq!(
             parse(&["--par", "value.wf"]).unwrap().overlap(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16
-            }
+            OverlapLowering::OnWithCallGrain
         );
         assert_eq!(
             parse(&["--par", "--par-recursive-frontier", "off", "value.wf"])
@@ -2135,7 +2098,7 @@ mod tests {
                 .overlap(),
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::Off,
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
             }
         );
@@ -2148,7 +2111,7 @@ mod tests {
                 .overlap(),
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::RuntimeDerived,
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
             }
         );
@@ -2193,19 +2156,19 @@ mod tests {
     }
 
     #[test]
-    fn sequential_refusal_requires_compute_and_composes_with_leaf_control() {
+    fn sequential_refusal_requires_compute_and_composes_with_call_grain() {
         let options = parse(&[
             "--par",
             "--par-sequential-refusal",
-            "--par-scalar-leaf-limit",
-            "16",
+            "--par-call-grain",
+            "auto",
             "value.wf",
         ])
         .unwrap();
         assert_eq!(
             options.overlap(),
             OverlapLowering::OnWithSequentialRefusal {
-                maximum_scalar_leaf_operations: Some(16)
+                call_grain: CallGrain::WorkUnit
             }
         );
         for args in [

@@ -2057,11 +2057,12 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// invalid-IR failure. This is the shape of `wfgrep.wf`, whose waiting `walk`
 /// recursion reaches the byte-pair offers of `name_before`.
 ///
-/// Both `--par` policies are compiled: every eligible group, and the shipped
-/// scalar-leaf default, which keeps these offers because their callee reads a
-/// range. The excluded component is named in the ledger, the offer and its
-/// join stay in the overlapped world, and the offered read runs on a real
-/// worker while the recursion computes the same total in both worlds.
+/// Both `--par` policies are compiled: every eligible group, where the offer
+/// and its join stay in the overlapped world and the offered read runs on a
+/// real worker, and the shipped call grain, which omits the two reads as
+/// below the work unit. Neither gives the waiting component a budget family,
+/// the excluded component is named in the ledger, and the recursion computes
+/// the same total in both worlds.
 #[test]
 fn a_waiting_recursion_that_reaches_an_offer_gets_no_budget_family() {
     const SOURCE: &[u8] = br#"fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
@@ -2104,30 +2105,28 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 "#;
     let every_group = emit_with_overlap(SOURCE);
-    let shipped = super::emit_lowered(
-        SOURCE,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 16,
-        },
+    let shipped = super::emit_lowered(SOURCE, crate::OverlapLowering::OnWithCallGrain);
+    let pair = function_body(&every_group, "@wf_pair_total");
+    assert!(
+        pair.contains("call void @wf__par_publish(") && pair.contains("call void @wf__par_join("),
+        "the byte pair must still be handed out and joined:\n{pair}"
+    );
+    assert!(
+        !function_body(&shipped, "@wf_pair_total").contains("call void @wf__par_publish("),
+        "the call grain omits the two reads below the work unit"
     );
     for module in [&every_group, &shipped] {
-        let pair = function_body(module, "@wf_pair_total");
-        assert!(
-            pair.contains("call void @wf__par_publish(")
-                && pair.contains("call void @wf__par_join("),
-            "the byte pair must still be handed out and joined:\n{pair}"
-        );
         assert!(
             budget_symbols(module).is_empty(),
             "a waiting component must get no budget variant: {:?}",
             budget_symbols(module)
         );
-        assert!(
-            clone_symbols(module).contains(&"@wf__par_seq_descend".to_owned()),
-            "the waiting recursion keeps its sequential clone: {:?}",
-            clone_symbols(module)
-        );
     }
+    assert!(
+        clone_symbols(&every_group).contains(&"@wf__par_seq_descend".to_owned()),
+        "the waiting recursion keeps its sequential clone: {:?}",
+        clone_symbols(&every_group)
+    );
     let ledger = super::compile_permission_ledger(SOURCE);
     assert!(
         ledger.iter().any(|line| line
@@ -2155,27 +2154,30 @@ fn main() -> status: std::process::ExitStatus pure waits {
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
-/// Omitting cheap offers must preserve the last join site and the ordinary
-/// evaluation of every removed member, including members inside a mixed run.
+/// Omitting offers below the call grain must preserve the last join site and
+/// the ordinary evaluation of every removed member, including members inside
+/// a mixed run. `counted` recurses, so its offers stay; `increment` is a few
+/// instructions and loses its offers; `e`, the join site, is never published.
 #[test]
-fn scalar_leaf_control_keeps_mixed_chain_results_and_join_boundary() {
+fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
   return x +wrap 1_u64;
 }
 
-fn counted(x: u64) -> result: u64 pure {
-  let value = x;
-  for (i in 0_u64..17_u64) {
-    set value = value +wrap i;
+fn counted(x: u64, steps: u64) -> result: u64 pure {
+  if steps == 0_u64 {
+    return x;
   }
-  return value;
+  let fewer = steps -wrap 1_u64;
+  let below = counted(x: x, steps: fewer);
+  return below +wrap steps;
 }
 
 fn mixed(x: u64) -> result: u64 pure {
   let a = increment(x: x);
-  let b = counted(x: x);
+  let b = counted(x: x, steps: 16_u64);
   let c = increment(x: x);
-  let d = counted(x: x);
+  let d = counted(x: x, steps: 16_u64);
   let e = increment(x: x);
   let first = a +wrap b;
   let second = c +wrap d;
@@ -2192,12 +2194,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let all = super::emit_lowered(source, crate::OverlapLowering::On);
-    let filtered = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
     assert_eq!(
         function_body(&all, "@wf_mixed")
             .matches("call void @wf__par_publish(")
@@ -2223,22 +2220,33 @@ fn main() -> status: std::process::ExitStatus pure {
     let renamed = String::from_utf8(source.to_vec())
         .unwrap()
         .replace("increment", "renamed_leaf");
-    let renamed = super::emit_lowered(
-        renamed.as_bytes(),
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let renamed = super::emit_lowered(renamed.as_bytes(), crate::OverlapLowering::OnWithCallGrain);
     assert_eq!(
         function_body(&renamed, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
         2
     );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the mixed chain compiles");
+    assert_eq!(
+        ledger
+            .iter()
+            .filter(|line| line.starts_with(
+                "PAR actualization  mixed  call grain: omitted offer of increment (static work "
+            ))
+            .count(),
+        2,
+        "each omitted offer is named with its callee's static work: {ledger:?}"
+    );
 }
 
 #[test]
-fn scalar_leaf_control_drops_small_offers_without_clones() {
+fn call_grain_drops_small_offers_without_clones() {
     let source = br#"fn twice(x: u64) -> result: u64 pure {
   return x +wrap x;
 }
@@ -2253,23 +2261,13 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 1_u8);
 }
 "#;
-    let filtered = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
     let sequential = super::emit_lowered(source, crate::OverlapLowering::Off);
     assert_eq!(
         filtered, sequential,
         "pruning every offer must recover the ordinary module"
     );
-    let retained = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 0,
-        },
-    );
+    let retained = super::emit_lowered(source, crate::OverlapLowering::On);
     assert!(module_requires_parallel_runtime(&retained));
 }
 
@@ -2366,17 +2364,15 @@ fn main() -> status: std::process::ExitStatus pure {{
                 let policy = if let Some(budget) = budget {
                     crate::OverlapLowering::OnWithRecursionBudget {
                         budget,
-                        maximum_scalar_leaf_operations: Some(16),
+                        call_grain: crate::CallGrain::WorkUnit,
                         sequential_refusal: sequential,
                     }
                 } else if sequential {
                     crate::OverlapLowering::OnWithSequentialRefusal {
-                        maximum_scalar_leaf_operations: Some(16),
+                        call_grain: crate::CallGrain::WorkUnit,
                     }
                 } else {
-                    crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-                        maximum_operations: 16,
-                    }
+                    crate::OverlapLowering::OnWithCallGrain
                 };
                 let family = budget != Some(crate::RecursionBudget::Off);
                 let module = super::emit_lowered(source.as_bytes(), policy);
@@ -2524,16 +2520,16 @@ fn main() -> status: std::process::ExitStatus pure {
     let reference = emit_with_overlap(source);
     for policy in [
         crate::OverlapLowering::OnWithSequentialRefusal {
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
         },
         crate::OverlapLowering::OnWithRecursionBudget {
             budget: crate::RecursionBudget::Pinned(std::num::NonZeroU8::new(3).unwrap()),
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
             sequential_refusal: false,
         },
         crate::OverlapLowering::OnWithRecursionBudget {
             budget: crate::RecursionBudget::Off,
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
             sequential_refusal: false,
         },
     ] {

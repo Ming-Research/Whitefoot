@@ -92,10 +92,7 @@ impl RecursiveFrontiers {
         let mut component_of = vec![None; functions.len()];
         let mut components = Vec::new();
         let mut families = 0_usize;
-        for (id, mut component) in super::super::graph::components(&edges)
-            .into_iter()
-            .enumerate()
-        {
+        for (id, mut component) in crate::cycles::components(&edges).into_iter().enumerate() {
             let cyclic = component.len() > 1 || edges[component[0]].contains(&component[0]);
             if !cyclic {
                 continue;

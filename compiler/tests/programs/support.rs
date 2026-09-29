@@ -225,7 +225,7 @@ fn try_compile_programs_with_overlap_mode(
 }
 
 /// Compiles one corpus program with the [PAR-1 candidate] overlap lowering
-/// switched on without scalar-leaf suppression (`--par-scalar-leaf-limit off`).
+/// switched on with every permitted call offered (`--par-call-grain off`).
 ///
 /// [`compile_program`] is the shipped default and hands nothing out, so a case
 /// about actualization has to name this entry. The two differ in the emitted
@@ -247,9 +247,9 @@ pub fn compile_programs_with_overlap(names: &[&str]) -> whitefoot::LlvmModule {
 
 /// Compiles named sources with the ordinary `whitefootc --par` policy.
 ///
-/// The CLI suppresses eligible scalar leaves of at most 16 operations, unlike
-/// [`compile_programs_with_overlap`], which intentionally actualizes every
-/// eligible group for tests of the general lowering path.
+/// The CLI offers a call only when its callee reaches recursion or the work
+/// unit, unlike [`compile_programs_with_overlap`], which intentionally
+/// actualizes every eligible group for tests of the general lowering path.
 pub fn compile_sources_with_cli_parallel_defaults(
     sources: &[(&str, &[u8])],
 ) -> whitefoot::LlvmModule {
@@ -261,9 +261,7 @@ pub fn compile_sources_with_cli_parallel_defaults(
         compile_with_overlap(
             &inputs,
             CompilerLimits::default(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16,
-            },
+            OverlapLowering::OnWithCallGrain,
         )
         .expect("integration sources must compile")
     })

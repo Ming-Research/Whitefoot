@@ -163,13 +163,13 @@ fn emit(source: &[u8]) -> String {
 }
 
 /// [`emit`] with the [PAR-1 candidate] overlap lowering switched on, which is
-/// what `whitefootc --par --par-scalar-leaf-limit off` compiles.
+/// what `whitefootc --par --par-call-grain off` compiles.
 fn emit_with_overlap(source: &[u8]) -> String {
     emit_lowered(source, OverlapLowering::On)
 }
 
 /// The developer-channel permission ledger of one source, compiled the way
-/// `whitefootc --par --par-scalar-leaf-limit off --par-ledger` compiles it.
+/// `whitefootc --par --par-call-grain off --par-ledger` compiles it.
 ///
 /// It carries the judgment's own lines, which are the same with or without
 /// `--par`, and after them the lines this lowering added about what it

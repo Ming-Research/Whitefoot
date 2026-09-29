@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::target::TargetLayout;
 
 mod buffers;
+mod call_grain;
 mod contexts;
 mod loops;
 mod prelude;
@@ -10,7 +11,6 @@ mod probe;
 mod ranges;
 mod results;
 mod runs;
-mod scalar_grain;
 mod split;
 mod storage;
 mod targets;
@@ -75,21 +75,14 @@ pub(crate) fn lower_checked_from(
         OverlapLowering::Off => None,
         OverlapLowering::OnWithRecursionBudget { budget, .. } => Some(budget),
         OverlapLowering::On
-        | OverlapLowering::OnWithSequentialRefusal { .. }
-        | OverlapLowering::OnWithoutSmallScalarLeaves { .. } => Some(RecursionBudget::default()),
+        | OverlapLowering::OnWithCallGrain
+        | OverlapLowering::OnWithSequentialRefusal { .. } => Some(RecursionBudget::default()),
     };
-    let scalar_leaf_limit = match overlap {
-        OverlapLowering::OnWithoutSmallScalarLeaves { maximum_operations } => {
-            Some(maximum_operations)
-        }
-        OverlapLowering::OnWithSequentialRefusal {
-            maximum_scalar_leaf_operations,
-        }
-        | OverlapLowering::OnWithRecursionBudget {
-            maximum_scalar_leaf_operations,
-            ..
-        } => maximum_scalar_leaf_operations,
-        _ => None,
+    let call_grain = match overlap {
+        OverlapLowering::Off | OverlapLowering::On => CallGrain::Every,
+        OverlapLowering::OnWithCallGrain => CallGrain::WorkUnit,
+        OverlapLowering::OnWithSequentialRefusal { call_grain }
+        | OverlapLowering::OnWithRecursionBudget { call_grain, .. } => call_grain,
     };
     let overlap = match overlap {
         OverlapLowering::Off => OverlapLowering::Off,
@@ -151,7 +144,7 @@ pub(crate) fn lower_checked_from(
     // module a compiler with no such lowering emits.
     let permission = match overlap {
         OverlapLowering::On
-        | OverlapLowering::OnWithoutSmallScalarLeaves { .. }
+        | OverlapLowering::OnWithCallGrain
         | OverlapLowering::OnWithSequentialRefusal { .. }
         | OverlapLowering::OnWithRecursionBudget { .. } => Some(&checked.data.permission),
         OverlapLowering::Off => None,
@@ -201,9 +194,9 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
-    split::assign_weights(&mut functions);
-    if let Some(limit) = scalar_leaf_limit {
-        scalar_grain::prune(&mut functions, limit, &mut actualization);
+    let weights = split::assign_weights(&mut functions);
+    if call_grain == CallGrain::WorkUnit {
+        call_grain::prune(&mut functions, &weights, &mut actualization);
     }
     Ok(IrProgram {
         nominals,

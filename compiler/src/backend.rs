@@ -4,7 +4,6 @@ pub(crate) mod abi;
 pub(crate) mod emission;
 pub(crate) mod emitter;
 mod fragments;
-mod graph;
 mod runtime;
 mod stack_ledger;
 mod storage;
