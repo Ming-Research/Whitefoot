@@ -1801,18 +1801,6 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
-- **Review scope misses the conformance adapter's check-integrity group.**
-  `docs/skills/completion-review/scripts/review-scope.sh` classifies every
-  `compiler/` path as code before considering test paths. An adapter-only
-  change under `compiler/tests/conformance/` therefore omits group T even
-  though AGENTS treats that adapter as conformance evidence. Include these
-  adapter/runner paths in the T trigger and cover an adapter-only diff with
-  a scope test. Until then, reviewers must add the applicable T checks by
-  judgment; the compiler-architecture review does so. Defer the tooling
-  change from that compiler migration and reopen when review-scope routing
-  is next changed, requiring both adapter-only inclusion and ordinary-code
-  exclusion to be observed.
-
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2398,18 +2386,72 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The design-tree skill's tests also test this project's CI script.**
+  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
+  of its cases, so a project that copies `design/skill/` gets failing tests,
+  although the skill is meant to move to another project unchanged. Move
+  those cases to a `--self-test` of `design-review-base.sh` wired into
+  `make static`, as the other `.github` scripts do, and keep only the lint's
+  own cases in the skill. Validate that each moved case still fails once for
+  its intended reason. Reopen when the skill is extracted or the CI base
+  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
-  when the PR changes no specification. Local `design-lint` instead defaults
-  to the current `origin/main` tip: if it advances past the branch's merge
-  base, new upstream nodes can appear as branch deletions and trigger missing
-  approval-log coverage. Both were observed on the ownership-surface research
-  branch; explicit checks against its actual review base retain the intended
-  obligations. Select and report one pinned review base consistently with
-  `make review-scope` and hosted CI. Validate old local main, advancing remote
+  when the PR changes no specification. Local `design-lint` and
+  `design-ready` instead default to the current `origin/main` tip: if it
+  advances past the branch's merge base, new upstream nodes can appear as
+  branch deletions and trigger missing approval-log coverage in
+  `make design-ready`, and an upstream specification amendment makes its
+  specification half demand a `spec/log.md` entry the branch does not owe
+  (reasoned from the code, not yet observed). The first two were observed on the
+  ownership-surface research branch; explicit checks against its actual review
+  base retain the intended obligations. Select and report one pinned review
+  base consistently with hosted CI. Validate old local main, advancing remote
   main, an integrated branch and a real branch amendment; retain archive
   immutability, version-transition and changed-node coverage checks. Reopen
   when updating verification-base selection. This research uses the existing
   `DESIGN_REVIEW_BASE` override for the actual merge base and records default
   failures; it does not change the checks or another worktree's main ref.
+- **The corpus stage waits on one serial conformance walk.** Each of the
+  conformance adapter's two walks visits every conformance case on one
+  thread, 62 s and 78 s on the four-core container where it was profiled, so
+  there the corpus stage cannot drop below about 78 s at any thread count
+  while its other 91 cases need about 87 CPU-seconds
+  ([serial profile](../research/investigations/test-economy/time-budgets.md#where-the-time-goes)).
+  Splitting each walk's cases across the processors, keeping every case's
+  ordinary compiler path and verdict, would bring that stage near its 57-s
+  processor bound; the hosted runners, whose stage takes 51–97 s, are bounded
+  the same way. It is not the gate's critical path while the unit job is
+  longer; reopen when the corpus job becomes the longest or its budget trips.
+  This changes conformance evidence wiring, so the PR states it under
+  AGENTS.md rule 4.
+- **The Windows io-hosts steps have no time budget.** They run without
+  `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
+  (10 min) bound them, and the Windows job is now the longest CI job, 230–285
+  s, 171–195 s of it the Rust build and program cases step. Run those steps
+  under `run-check.pl` once its process-group handling is shown to work under
+  the runner's Git Bash, or wrap them in a small timer that writes the same
+  budget record, and give them rows in `.github/time-budgets.txt`. Reopen when
+  the Windows job grows past the gate's longest job by a minute or its step
+  timeout trips.
+- **Incremental rebuilds are not gated.** The time budgets measure hosted
+  cold builds, but daily work pays incremental rebuilds, 6–25 s per edit
+  today. A change that makes them slow, such as merging modules into one
+  large code-generation unit, passes every budget. Measure an edit's
+  incremental rebuild in CI or in `make check` if daily rebuilds grow past
+  about 30 s; validate that the measurement fails when incremental state is
+  discarded.
+- **One budget per runner class hides slow growth on faster runners.** On
+  identical compiler source the ubuntu `check/unit` stage took 123–187 s,
+  so its budget, 1.25 times the slowest run, lets a change grow a fast run by
+  about 90% before the stage trips, and the overrun may land on a later
+  change's run
+  ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  The gate's host record now prints the processor model. If the fast and
+  slow runs separate by model, give each model its own budget column, with
+  the current one kept for an unknown model, and lower the margin as far as
+  the within-model spread allows; validate that a leave-one-out over at
+  least seven runs per model trips no build or case stage. Reopen when an
+  overrun is traced to a change that earlier runs on faster machines passed,
+  or when clippy's variance overruns come more than about once a week.

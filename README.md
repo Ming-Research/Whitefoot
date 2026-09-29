@@ -432,8 +432,7 @@ Other options:
   line;
 - `whitefootc --help` lists the rest.
 
-To work on the language or the compiler, start from [AGENTS.md](AGENTS.md)
-and the [workflow map](docs/workflow.md).
+To work on the language or the compiler, start from [AGENTS.md](AGENTS.md).
 
 ## Related work
 
