@@ -15,7 +15,8 @@ language; repository artifacts stay English.
 Keep the handoff compact. Each part below starts with its name in bold on a
 line of its own, so none reads as part of the card before it. Under it, every
 point is a bullet that opens with its gist in bold and continues on the same
-line, with any detail in bullets indented beneath it. Never use headings or
+line, with any detail in bullets indented beneath it; a decision card's parts
+open with their labels instead. Never use headings or
 tables: headings spread one point over a screen, and a table's narrow columns
 bury the reasoning.
 
@@ -30,9 +31,10 @@ bury the reasoning.
      - Problem: what this is about and why it needs a decision now, written
        for a reader who has not seen the PR or the investigation: what the
        component or rule does, what goes wrong or stays open, and the concrete
-       evidence (an example program, a measured number, a failing case). Name
-       the node for an amendment or a finding about a design decision, and
-       explain each project term the first time it appears.
+       evidence (an example program, a measured number, a failing case). For
+       an amendment or a finding about a design decision, name the node, its
+       current decision and the proposed one. Explain each project term the
+       first time it appears.
      - Options: each viable choice, what it would do and what it costs, one
        bullet each; include the refused ones that the owner could reasonably
        prefer.
