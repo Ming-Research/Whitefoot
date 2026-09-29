@@ -1,67 +1,67 @@
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
-  let n = deref(v).len;
+  let n = v^.len;
   if n <= 1_u64 {
     return unit;
   }
   let p = partition(v: v);
   let after = p + 1_u64;
-  let smaller = &deref(v)[0_u64..p];
-  let larger = &deref(v)[after..n];
+  let smaller = &v^[0_u64..p];
+  let larger = &v^[after..n];
   quicksort(v: smaller);
   quicksort(v: larger);
   return unit;
 }
 
 fn partition(v: &[u64]) -> pivot_at: u64 writes(v) contract {
-  requires deref(v).len >= 2_u64;
-  ensures pivot_at < deref(v).len;
+  requires v^.len >= 2_u64;
+  ensures pivot_at < v^.len;
 } {
-  let n = deref(v).len;
+  let n = v^.len;
   let last = n - 1_u64;
-  let pivot = deref(v)[last];
+  let pivot = v^[last];
   let store = 0_u64;
   for (
     i in 0_u64..last,
     invariant behind: store <= i
   ) {
-    let x = deref(v)[i];
+    let x = v^[i];
     if x < pivot {
-      let displaced = deref(v)[store];
-      set deref(v)[store] = x;
-      set deref(v)[i] = displaced;
+      let displaced = v^[store];
+      set v^[store] = x;
+      set v^[i] = displaced;
       set store = store + 1_u64;
     }
   }
-  let moved = deref(v)[store];
-  set deref(v)[store] = pivot;
-  set deref(v)[last] = moved;
+  let moved = v^[store];
+  set v^[store] = pivot;
+  set v^[last] = moved;
   return store;
 }
 
 fn fill(v: &[u64]) -> result: unit writes(v) {
   let state = 88172645463325252_u64;
-  for (i in 0_u64..deref(v).len) {
+  for (i in 0_u64..v^.len) {
     let a = ishl.wrap(state, 13_u32);
     set state = ixor(state, a);
     let b = ishr.wrap(state, 7_u32);
     set state = ixor(state, b);
     let c = ishl.wrap(state, 17_u32);
     set state = ixor(state, c);
-    set deref(v)[i] = state;
+    set v^[i] = state;
   }
   return unit;
 }
 
 fn sorted(v: &[u64]) -> ok: Bool reads(v) {
-  let n = deref(v).len;
+  let n = v^.len;
   if n <= 1_u64 {
     return True();
   }
   let last = n - 1_u64;
   for (i in 0_u64..last) {
     let next = i + 1_u64;
-    let a = deref(v)[i];
-    let b = deref(v)[next];
+    let a = v^[i];
+    let b = v^[next];
     if a > b {
       return False();
     }
