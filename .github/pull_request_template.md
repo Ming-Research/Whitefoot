@@ -4,6 +4,14 @@
 For spec/conformance changes, include what changed and its selection ground
 under AGENTS.md rule 4. -->
 
+## Decisions
+
+<!-- The owner-handoff skill's ledger: every decision this PR needs from the
+owner, one line each with a stable ID (Q1, Q2, ...) never renumbered, its
+status (open; ruled, with the date and the owner's words; superseded or
+withdrawn, with the owner's agreement) and where the ruling is applied.
+Write "none" when the PR needs no decision. -->
+
 ## Design tree
 
 <!-- Explain the proposed or approved changes to the current design tree
