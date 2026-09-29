@@ -76,8 +76,8 @@ supplies the supporting detail.
 On a draft branch, change the live tree directly, in the same work as the
 implementation it governs, and keep the two consistent as the work goes.
 Writing a decision does not approve it. The owner approves at the end, when
-the finished work is handed back (Workflow step 4), and approves only what
-was shown.
+the finished work is handed back (Workflow step 4), and approves only the
+decisions shown.
 
 After the owner has ruled on every decision of the branch that needs a
 ruling, write one log entry for the approved change and only then mark the
@@ -135,23 +135,24 @@ A handoff presents, in this order:
    recommendation still open (name the ID), changed from the agreed scope
    (how and why), or not started. Research that recommends work is not that
    work.
-2. **Decision cards.** One per decision the branch adds, changes or retires,
-   oldest first, each after the cards it depends on; together they cover
-   every node the branch changed, so there is no separate list of tree
-   changes. A card whose question the owner already answered says so and
-   asks only for approval of its text. End with one line naming every open
-   ID and stating that no other decision is open.
-   A card opens with its ID and the question in bold, then:
-   - Problem: what it is about and why it needs a decision, for a reader who
-     has not seen the work: what the component or rule does, what goes wrong
-     or stays open, and the concrete evidence. Explain each project term at
-     first use.
-   - Options: each viable choice, what it does and what it costs.
-   - Recommendation and reason: the choice proposed and why it fits better.
+2. **Decision cards.** One per open decision the branch adds, changes or
+   retires, oldest first, each after the cards it depends on, so there is no
+   separate list of tree changes. A decision the owner already ruled on
+   needs no card; the restated ledger shows it approved. End with one line
+   naming every open ID and stating that no other decision is open. A card
+   opens with its ID and the question in bold, then three parts:
+   - Problem: the problem itself, for a reader who has not seen the work:
+     what the component or rule does, what goes wrong or stays open, and the
+     concrete evidence. Explain each project term at first use.
+   - Options: A, B and on, the recommended one marked. Each says what it
+     does and what it costs, then why it is recommended or why not.
    - Confidence N/5: 5 when evidence settles it, 1 when it rests on judgment,
-     and what could overturn it.
-   - Tree change: the node path, then its lines before and after, quoted as
-     written; approving the card approves this text.
+     with the reason and what could overturn it.
+
+   The tree records the ruling: the chosen option becomes the node's
+   `Decision:` and each refused option worth remembering a `Rejected:` item,
+   with the reasons the card gave. A node edit that changes no decision
+   needs no card.
 3. The parts the project adds, such as its other approved artifacts, the
    validation run and what the work found along the way. They cite a card by
    its ID instead of repeating its reasons.
@@ -176,8 +177,7 @@ reasoning.
    and one that changes the agreed scope goes into the handoff's status.
    Review again only what a fix changed in behavior, a rule or a decision;
    recheck other fixes yourself.
-4. Hand off (Owner decisions). The owner rules on every card, and so on
-   every tree change.
+4. Hand off (Owner decisions). The owner rules on every open card.
 5. Write the log entry, mark ready once the readiness check and the project's
    CI pass, and leave the merge to the project's merge rules.
 
