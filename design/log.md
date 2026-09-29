@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Spend the recursion budget only at group calls
+
+Nodes: compiler/parallel-lowering/two-worlds, compiler/parallel-lowering
+
+Owner-approved: 2026-09-29, the owner approved decision card 1 of PR #177, the recursion-budget-at-splits amendment, in the session (written in Chinese).
+
+Summary: Apply the recursion-budget-at-splits amendment unchanged apart from its replacement note. compiler/parallel-lowering/two-worlds replaces the budget decision's "intra-component calls and callbacks decrement it" with a decrement only at calls in an actualized statement group (a published member's callback, the inline member and its refused edge), while any other call into the component passes the budget on, because the budget bounds how deeply offers nest and a call outside every group offers nothing: the per-call decrement spent the default budget on a deep document's one-child descents and held Snowghost's preorder style traversal to 1.04 times at four workers on ecma262 and 2.57 on html5, and the new rule reaches 3.10 and 3.67 (research/investigations/call-offer-grain/DESIGN.md, the recursion budget at splits). Two refused alternatives are recorded: the per-call decrement, and keeping it with a larger default budget. A fixed depth still cannot follow an unbalanced tree (apollo11), recorded in docs/todo.md. Nodes also names compiler/parallel-lowering, the node of this PR's earlier call-grain entry, because the newest entry names every node changed against main. This ruling authorizes no merge.
+
 ## 2026-09-29 Offer a call only when its callee recurses or reaches the work unit
 
 Nodes: compiler/parallel-lowering
