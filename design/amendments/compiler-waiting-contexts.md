@@ -1,0 +1,10 @@
+Node: compiler/waiting-contexts
+
+Decision: A shared object is one block of the context runtime's pool holding a header (handle count, lock word, holder count, parked and watching contexts) and then the state, an atomic statement counts a handle of its own before it acquires and releases it after it unlocks on every edge that leaves its block, and a handle's release drops the state and returns the block when it was the last, because the runtime every build links never calls the program's allocator [STOR-8] and a block may move or release the handle it was reached through, instead of allocating objects with the program's heap or refusing a block that touches its target place.
+
+Decision: A statement that finds its object held spins for a bounded time and then parks its context, and an unlock wakes the first parked statement to try again, which keeps its place at the queue's head if it misses again, because a holder's block cannot wait, so a holder is always running and finishes within its block's compute, while handing the object to a parked context left it held by a context no driver was running and made 97 percent of the Redis subset's pipelined acquires park on two drivers, against 0.6 percent after this change, which doubled that rate ([Experiment 7](../../research/investigations/io-model/SHARED.md#the-acquire-without-a-convoy-results)), instead of a first-come handoff that keeps strict arrival order.
+
+Decision: A statement whose guard reads false parks among the object's watching contexts, which every statement that writes the object wakes when it ends, and a woken statement acquires the object again and evaluates its guard again, because a guard writes nothing, so only a write can change its answer, and it re-reads the state it takes effect in, instead of a condition the writer signals by name.
+
+Rejected:
+- A first-come queue that hands the object to the parked context at its head: rejected because the object then stays held until a driver resumes that context, and every statement that arrives meanwhile parks behind it ([Experiment 7](../../research/investigations/io-model/SHARED.md#attribution)).

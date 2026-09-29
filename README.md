@@ -327,14 +327,15 @@ Safe, fast and small are the core. These are the other things worth knowing.
   object that several contexts may hold, and its value is reached only
   inside `atomic s = &handle { … }`, whose block runs with the object to
   itself and takes effect at one point. The block cannot wait, so no context
-  holds an object while it waits for the host or for another object, and
-  deadlock between objects cannot be written. `when` makes the statement wait
+  holds an object while it waits for the host or for another object, and a
+  lock-order deadlock cannot be written. `when` makes the statement wait
   until a condition on the value holds, and the block may rely on it, as in a
   queue whose consumer takes an item only when one is there
   (`tests/programs/shared_objects.wf`). A Redis subset written this way,
   `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace
-  (`tests/programs/redis_subset.wf`), kept up with `redis-server` on the same
-  two cores under `redis-benchmark`
+  (`tests/programs/redis_subset.wf`), served `SET` and `GET` at least as fast
+  as `redis-server` on the same two cores of one four-CPU host under
+  `redis-benchmark`, with and without pipelining
   ([Experiment 7](research/investigations/io-model/SHARED.md#experiment-7-a-redis-subset)).
   Still open: a statement over several objects, and letting statements that
   only read run at the same time.

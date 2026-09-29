@@ -413,6 +413,10 @@ impl<'a> PhysicalTypes<'a> {
                             }
                         }
                         (CheckedNominalKind::Opaque, CheckedNominalKind::Opaque) => {}
+                        (
+                            CheckedNominalKind::Shared { state: left },
+                            CheckedNominalKind::Shared { state: right },
+                        ) => pending.push((*left, *right)),
                         _ => return Ok(false),
                     }
                 }

@@ -1182,10 +1182,9 @@ struct wf_context {
     wf_context_chunk *spare;
     /* The pool block this record occupies, zero for the root's. */
     size_t pool_bytes;
-    /* While the context waits for a shared object: whether it asked to
-     * write it [SHARE-3], and whether an unlock woke it to try again, so a
-     * second miss keeps its place at the head of the object's queue. */
-    uint32_t shared_write;
+    /* While the context waits for a shared object: whether an unlock woke
+     * it to try again, so a second miss keeps its place at the head of the
+     * object's queue [SHARE-3]. */
     uint32_t shared_woken;
     /* The one host operation the context has pending. */
     union {
@@ -1932,6 +1931,8 @@ static void wf_context_finish(wf_context *context) {
 /* A shared object [SHARE-1]: this header, then its state at
  * WF_SHARED_STATE_OFFSET.  `holders` counts the atomic statements holding
  * it: zero when it is free, the number of readers, or WF_SHARED_WRITER.
+ * The entries take a read or a write request, but lowering makes only write
+ * requests today, so the read path runs in no program (docs/todo.md).
  * A statement that finds the object held spins for a bounded time, since a
  * holder's block cannot wait and so its holder is running; one that still
  * finds it held parks in `waiting`.  An unlock wakes the first parked
@@ -2086,7 +2087,6 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         return 0;
     }
     self->resume = frame;
-    self->shared_write = write;
     wf_context_parked_away = 1;
     wf_shared_park_locked(shared, self);
     wf_spin_unlock(&shared->lock);
@@ -2136,7 +2136,6 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
     }
     wf_spin_lock(&shared->lock);
     self->resume = frame;
-    self->shared_write = write;
     self->shared_woken = 0u;
     self->next = shared->watching;
     shared->watching = self;

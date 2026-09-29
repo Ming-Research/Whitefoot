@@ -1200,8 +1200,9 @@ rarely insert at the same place.
   writing
   (`design/amendments/language-waiting-shared-objects.md`, the provisional
   read/write decision). Readers that contend then wait for one another.
-  The runtime already admits readers together; deciding it needs a measured
-  workload where readers contend, compared with
+  The runtime's entries take a read request, but lowering makes none, so
+  that path runs in no program; deciding it needs a measured workload where
+  readers contend, compared with
   a lowering that acquires for reading when the block writes no path rooted
   at the binding. Reopen when a program's atomic statements that only read
   are seen to queue.

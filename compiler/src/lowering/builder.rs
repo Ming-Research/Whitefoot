@@ -548,9 +548,9 @@ fn contains_tail_transfer(statements: &[CheckedStatement]) -> bool {
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().any(|arm| contains_tail_transfer(&arm.body))
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            contains_tail_transfer(body)
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => contains_tail_transfer(body),
         _ => false,
     })
 }

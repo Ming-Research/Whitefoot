@@ -348,7 +348,9 @@ Redis does) before any line reports a rate, and then runs `ROUNDS` interleaved
 passes of `SET` and `GET` without pipelining and with 16 requests per
 pipeline. The servers and the client are pinned to disjoint CPUs; the output
 is `redis-benchmark`'s CSV line per run, prefixed with the server line, the
-pass and the pipeline depth. It is removed with the experiment's record.
+pass and the pipeline depth. `redis-samples.csv` holds the raw output of the
+experiment's runs, including its attribution runs. Both are removed with the
+experiment's record.
 
 ## Reproducing
 

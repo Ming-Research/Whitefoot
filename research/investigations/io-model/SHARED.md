@@ -84,7 +84,7 @@ atomic_stmt := "atomic" IDENT "=" "&" place ("when" expr)? block
 
 ### What the writer sees: a Redis subset
 
-Proposed syntax, not yet checked. `Bytes` stands for the program's own
+The sketch as first proposed; `tests/programs/redis_subset.wf` is the checked program Experiment 7 wrote from it. `Bytes` stands for the program's own
 byte-string type, and `...` for ordinary parsing and encoding code.
 
 ```wf
@@ -162,7 +162,7 @@ The rules this adds, as they would read in the specification:
      the handle it was reached through.
    - The binding's validity ends with the block [REF-2].
    - An atomic statement is admitted only in the body of a waiting function
-     and counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2].
+     and counts as a waiting call for [WAIT-1], [PAR-1], [PAR-2] and [PAR-4].
    - Its block and guard contain no waiting call and no atomic statement.
    - Its guard writes nothing.
 3. **Meaning.**
@@ -300,18 +300,23 @@ an object's state. The implementation:
 Evidence on this host. `tests/programs/shared_objects.wf` has 16 contexts
 each add one 20,000 times to one `Shared<u64>`, and four producers and four
 consumers pass 20,000 values through a guarded `Shared<Ring<u64, 8>>`; its
-program test runs it three times each on one driver and on four. Outside the
-repository, the same two workloads were run three times each on 1, 2, 4 and 8
-drivers and always reached their sums, and with the acquire made to succeed
-without the lock every 8-driver run of the counter failed. The consumer
-without its guard is refused (FN-8, `take_front`'s requirement).
+program test runs it three times each on one driver and on four. By hand, and
+not kept, the same two workloads ran three times each on 1, 2, 4 and 8 drivers
+and always reached their sums, and with the acquire made to succeed without
+the lock every 8-driver run of the counter failed. The consumer without its
+guard is refused (FN-8, `take_front`'s requirement).
 
 ThreadSanitizer finds no race in the program on 2, 4 and 8 drivers when both
 the runtime and the emitted module are instrumented. The emitted module needs
 the `sanitize_thread` attribute added to its functions: clang instruments only
 functions that carry it, so a module compiled from IR without it checks the
 runtime alone. With the lock removed, the instrumented build reports the
-write-write race on the counter's state, so the check can fail.
+write-write race on the counter's state, so the check can fail. The runs were
+made by hand: `whitefootc --emit-llvm` for the module, `sanitize_thread` added
+to each of its attribute groups, and the module compiled with the runtime's
+units (`wf_floor.c`, `ordinary_values`, `sched/`, `completion/`) under
+`clang -fsanitize=thread`, first on the handoff lock and again on the lock
+that spins and retries.
 
 ## Experiment 7: a Redis subset
 
@@ -384,7 +389,9 @@ comparisons, each run on the same pinning.
 `PING`, which takes no atomic statement, ran at the client's ceiling of about
 two million requests per second on one driver and on two, while `SET` fell
 from 799,361 and 726,744 on one driver to 469,704 and 469,814 on two. A build
-of the same subset whose runtime counts acquires (not kept) found that on one
+of the same subset whose runtime counts, per driver, the acquires and the
+parks in `wf__shared_acquire` and prints them when the server is stopped (a
+scratch patch, not kept; its output is in `redis-samples.csv`) found that on one
 driver no acquire parks, as the design says, and on two drivers 786,734 of a
 million `SET` acquires parked without pipelining and 964,457 with 16 per
 pipeline. The first-come queue hands the object straight to the context at
@@ -419,7 +426,8 @@ the first run's build with only that change undone:
 ### The acquire without a convoy: results
 
 Both comparisons ran on the counting build, the changed and unchanged
-variants interleaved, requests per second.
+variants interleaved, requests per second; the raw output of every run in this
+experiment is `research/experiments/io-completion-bench/redis-samples.csv`.
 
 - **The convoy is gone: met.** On the first run's program, with 16 per
   pipeline, two drivers reached 999,001 `SET`s per second in both passes
@@ -442,11 +450,17 @@ variants interleaved, requests per second.
 | subset, 2 drivers | 153,775 / 166,583 | 159,949 / 153,799 | 799,361 / 799,361 | 998,004 / 999,001 |
 | subset, 1 driver | 99,980 / 108,085 | 102,543 / 102,270 | 664,452 / 570,776 | 665,779 / 666,223 |
 
+The host: 4 CPUs (Intel Xeon at 2.80 GHz), Linux 6.18, redis-server and
+redis-benchmark 7.0.15, clang 18.1.3.
+
 Every criterion is met. The correctness pass held on every line. Without
 pipelining two drivers reached 1.38 and 1.54 times the reference for `SET`
 and 1.40 and 1.46 for `GET`, and 1.54 and 1.54 times one driver for `SET`
 and 1.56 and 1.50 for `GET`. With 16 per pipeline two drivers reached 1.40
-times the reference for `SET` and 1.50 and 1.75 for `GET`.
+times the reference for `SET` and 1.50 and 1.75 for `GET`. The reference
+moved between runs: its pipelined `SET` rate was 665,779 in the first run and
+570,451 in the second, and against the first run's figure the second run's
+subset would be 1.20 times it.
 
 The reference runs its protocol work on one thread. Not a criterion, but the
 comparison the result invites: `redis-server` with `--io-threads 2
@@ -476,7 +490,8 @@ and encoding that a library would hold.
 2. Several objects in one statement, above.
 3. Reader concurrency. Whether statements that only read should share the
    object is a runtime choice to measure on a workload where readers
-   contend; the runtime already admits readers together.
+   contend; the runtime's entries take a read request, but lowering makes
+   none, so that path runs in no program.
 4. `nodrop` state and taking the value back (`shared_into`, which returns the
    state when its caller holds the last handle).
 5. An invariant the object declares and every block preserves.

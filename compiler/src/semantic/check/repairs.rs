@@ -457,9 +457,9 @@ fn returned_value<'a>(
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().find_map(|arm| returned_value(&arm.body, path))
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            returned_value(body, path)
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => returned_value(body, path),
         _ => None,
     })
 }

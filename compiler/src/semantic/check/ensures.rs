@@ -1077,6 +1077,23 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                     Checker::collect_postcondition_binding_info(body, bindings);
                 }
+                // [SHARE-2] the binding is a reference to the object's state,
+                // read through as a reference match binder is.
+                CheckedStatement::Atomic {
+                    binding,
+                    state,
+                    body,
+                    ..
+                } => {
+                    bindings.insert(
+                        *binding,
+                        PostconditionBindingInfo {
+                            ty: *state,
+                            implicit_deref: true,
+                        },
+                    );
+                    Checker::collect_postcondition_binding_info(body, bindings);
+                }
                 _ => {}
             }
         }
@@ -2370,15 +2387,15 @@ impl<'unit> TypeContext<'unit> {
                     }
                 }
                 CheckedStatement::Loop { body, .. }
-                | CheckedStatement::CountedRange { body, .. } => self
-                    .collect_postcondition_returns(
-                        context,
-                        selector,
-                        named,
-                        body,
-                        binding_info,
-                        selected,
-                    )?,
+                | CheckedStatement::CountedRange { body, .. }
+                | CheckedStatement::Atomic { body, .. } => self.collect_postcondition_returns(
+                    context,
+                    selector,
+                    named,
+                    body,
+                    binding_info,
+                    selected,
+                )?,
                 _ => {}
             }
         }

@@ -1212,13 +1212,6 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
-    /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
-    ///
-    /// The modifier is a written one, and [GRAM-2] admits it on a source
-    /// `struct_decl` exactly as on the prelude's own opaque structs, so the
-    /// written token decides it first. The prelude-file test stays beside it
-    /// because the prelude's opaque declarations are read through a record
-    /// reader that fixes the modifier by its phase rather than by a token.
     /// Whether `node` is an opaque struct the prelude declares [PRE-1].
     fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
         let source = self.tree.coordinate(node)?.source();
@@ -1231,6 +1224,13 @@ impl<'unit> DeclarationInventory<'unit> {
             .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
     }
 
+    /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
+    ///
+    /// The modifier is a written one, and [GRAM-2] admits it on a source
+    /// `struct_decl` exactly as on the prelude's own opaque structs, so the
+    /// written token decides it first. The prelude-file test stays beside it
+    /// because the prelude's opaque declarations are read through a record
+    /// reader that fixes the modifier by its phase rather than by a token.
     fn is_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
         if self
             .tree
@@ -1239,14 +1239,7 @@ impl<'unit> DeclarationInventory<'unit> {
         {
             return Ok(true);
         }
-        let source = self.tree.coordinate(node)?.source();
-        Ok(self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
-            .file(source)
-            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
+        self.is_prelude_opaque_declaration(node)
     }
     fn nominal_type_descendants(&self, node: NodeId) -> Result<Vec<NodeId>, CheckStop> {
         let mut nested = self.tree.descendants_with(node, Production::Type)?;

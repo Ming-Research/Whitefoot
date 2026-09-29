@@ -1516,6 +1516,7 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
             | CheckedStatement::PropagateLet { binding, .. }
             | CheckedStatement::ValueMatchLet { binding, .. } => out.push(*binding),
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
+            CheckedStatement::Atomic { binding, .. } => out.push(*binding),
             _ => {}
         }
         if let CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } =

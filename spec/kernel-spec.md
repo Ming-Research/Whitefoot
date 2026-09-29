@@ -1457,7 +1457,7 @@ An unmarked call carries no tail-transfer guarantee. The guarantee bounds only s
 [WAIT-1] Waiting functions.
 The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
 A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
-A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1]. An atomic statement [SHARE-2] counts as a waiting call for this rule, and one in the body of a function that does not wait is the same hard error at that `atomic_stmt`.
+A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
 A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1], which [WAIT-2] permits an implementation to execute in a context of its own.
 The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
@@ -2055,7 +2055,7 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 [CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
 The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
-A shared object's state [SHARE-1] belongs to no context, and the atomic statement [SHARE-2] is the only form that reaches it; it adds no overlap permission.
+A shared object [SHARE-1] adds no overlap permission.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
 Read/read overlap is admitted.
@@ -2152,14 +2152,14 @@ A shared object's state is storage of no binding and belongs to no context [WAIT
 An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `IDENT`; a block; and optionally a guard, the `expr` after `when`.
 The target has type `Shared<T>`, and the statement reads the target place when it begins. The object stays live until the statement completes, whatever its block does with the target place [SHARE-1].
 The binding is a reference variable of kind `&T` whose path is the state of the object the target names [REF-1]. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
-An atomic statement counts as a waiting call for [WAIT-1], [PAR-1], [PAR-2] and [PAR-4]. Its guard and its block contain no waiting call and no atomic statement.
+An atomic statement counts as a waiting call for [WAIT-1], [PAR-1], [PAR-2] and [PAR-4], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`. Its guard and its block contain no waiting call and no atomic statement.
 The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt` or guard `expr`, with a repair [DIAG-1].
 The statement's footprint is its target place, read, together with the footprint of its guard and block from which every path rooted at the object's state is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
 Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
-The atomic statements on one object take effect in one order. The order in which the statements of different contexts take effect is an input of the execution [WAIT-2], and the statements of one context take effect in its source order.
+The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
