@@ -783,6 +783,10 @@ fn emit_recursion_budget_entry(
 const GRAIN_ENTRY_LABEL: &str = "par.grain";
 const GRAIN_SPENT_LABEL: &str = "par.grain.spent";
 
+/// A budget-carrying variant's trailing parameter: the levels its activation
+/// was handed, which a call outside every group passes on unchanged.
+const BUDGET_PARAMETER: &str = "%wf.budget";
+
 /// The spelling of the no-capture parameter attribute this build's assembler
 /// accepts, probed at build time (compiler/backend-facts). LLVM 21 renamed
 /// `nocapture` to `captures(none)` and no version is pinned here.
@@ -1589,25 +1593,45 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// In the clone world a call to a function that also has a clone names the
     /// clone, which is what keeps a clone's whole dynamic extent inside the
     /// sequential world. Inside a budgeted world a call that stays in the
-    /// component names the callee's variant and spends one level; a call that
-    /// leaves it enters that callee's ordinary symbol, which obtains a budget
-    /// of its own. Other calls use the shared original.
-    pub(super) fn callee_target(&self, ordinal: u32, name: &str) -> (String, Option<&str>) {
+    /// component names the callee's variant; a call that leaves it enters that
+    /// callee's ordinary symbol, which obtains a budget of its own. Other calls
+    /// use the shared original.
+    ///
+    /// A call that stays in the component spends one level only when `site`,
+    /// its result, is a member of a group this function hands out from: the
+    /// budget bounds how deep offers nest, and a call outside every group
+    /// offers nothing, so it passes the caller's levels on unchanged. A
+    /// recursion that descends through many levels before it reaches a split
+    /// then still has its levels at the split.
+    pub(super) fn callee_target(
+        &self,
+        ordinal: u32,
+        name: &str,
+        site: IrValueId,
+    ) -> (String, Option<&str>) {
         match (self.sequential_clones, self.grain) {
             (Some(clones), _) if clones.contains(&ordinal) => (sequential_clone_symbol(name), None),
             (None, Some(grain)) => {
-                let (symbol, spends) = self.frontiers.callee(ordinal, name, grain);
-                (
-                    symbol,
-                    spends.then_some(self.grain_next.as_deref()).flatten(),
-                )
+                let (symbol, stays) = self.frontiers.callee(ordinal, name, grain);
+                let splits =
+                    self.overlap_handed_out.contains(&site) || self.is_overlap_join_site(site);
+                let budget = if splits {
+                    self.grain_next.as_deref()
+                } else {
+                    Some(BUDGET_PARAMETER)
+                };
+                (symbol, stays.then_some(budget).flatten())
             }
             _ => (source_symbol(name), None),
         }
     }
 
     pub(super) fn callee_symbol(&self, ordinal: u32, name: &str) -> String {
-        self.callee_target(ordinal, name).0
+        match (self.sequential_clones, self.grain) {
+            (Some(clones), _) if clones.contains(&ordinal) => sequential_clone_symbol(name),
+            (None, Some(grain)) => self.frontiers.callee(ordinal, name, grain).0,
+            _ => source_symbol(name),
+        }
     }
 
     /// The budget-carrying variant's entry: test the levels this activation

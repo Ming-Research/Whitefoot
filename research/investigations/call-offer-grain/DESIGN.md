@@ -623,8 +623,60 @@ leaves with at most 16 operations from compute offers, which the rule
 replaces, and the decision that no universal grain policy is selected, whose
 grounds this measurement changes for call offers. Sequential refusal stays
 opt-in, and `parallel-lowering/parallel-runtime.md` and
-`parallel-lowering/two-worlds.md` are unchanged. The revision goes to the
-owner as an amendment once the remaining measurements pass.
+`parallel-lowering/two-worlds.md` are unchanged by the grain. The owner
+approved the revision, which now stands in the live node; the recursion
+budget's revision of `two-worlds.md` follows in
+[the recursion budget at splits](#the-recursion-budget-at-splits).
+
+## The recursion budget at splits
+
+With the grain in place, Snowghost's style shape B (a preorder recursion that
+styles an element and then halves the run of its children) reached 1.04
+times at four workers on ecma262 and apollo11 and 2.57 on html5, against
+3.76 and 3.81 on the first two with `--par-recursive-frontier off`
+([Snowghost concurrency preview](https://github.com/mbbill/Snowghost/blob/9a6b78e/research/investigations/concurrency/DESIGN.md#preview-with-the-call-grain)).
+The budget of `design/compiler/parallel-lowering/two-worlds.md`, about eight
+levels at four workers, was decremented by every call into the recursive
+component, so the one-child descents of a deep document spent it before the
+wide runs below them. The change decrements it only at calls in an
+actualized statement group, the only calls that offer; a call outside every
+group passes the caller's levels on. The criterion was recorded in
+`docs/todo.md` before the change: shape B on the three pages must improve,
+and the formal kernels' recursive offers must keep their times.
+
+Emission. Of 82 programs (the maintained programs under `tests/programs`
+and the parallel quicksort experiment) built with `--par` before and after
+the change, it alters one module: `tests/programs/compute/radix_scatter.wf`, whose
+`pack_chunks` reaches `pack_payload` through a match arm outside every group
+and now passes its levels on. Its timing is the compute-regression job's
+comparison on the PR. `only_a_group_member_spends_a_recursion_budget_level`
+in `compiler/src/backend/tests/parallel.rs` fails under the former rule.
+
+Shape B, with the prototype of Snowghost commit 9a6b78e (parent by
+reference), best of three at one and four workers, stage time
+(T(2) - T(0)) / 2, under the check lock:
+
+| Page | Shape | W1 (s) | W4 (s) | Speedup | Before |
+|---|---|---:|---:|---:|---:|
+| ecma262 | A | 2.882 | 0.843 | 3.42 | |
+| ecma262 | B | 2.960 | 0.954 | 3.10 | 1.04 |
+| ecma262 | C | 2.995 | 0.802 | 3.73 | |
+| html5 | A | 3.789 | 1.057 | 3.58 | |
+| html5 | B | 4.043 | 1.103 | 3.67 | 2.57 |
+| html5 | C | 3.956 | 1.058 | 3.74 | |
+| apollo11 | A | 1.722 | 0.489 | 3.52 | |
+| apollo11 | B | 1.795 | 1.574 | 1.14 | 1.04 |
+| apollo11 | C | 1.732 | 0.453 | 3.82 | |
+
+Shapes A and C have no recursive offers and match the earlier preview within
+its spread. Apollo11's B stays sequential for a second reason: its work sits
+under a few children of wide runs, so the halvings above it are real splits
+that spend the budget. Best of two, four repetitions, at four workers the
+whole run took 6.65 s with the default budget, 3.49 s with
+`--par-recursive-frontier 16`, 1.88 s with 24 and 1.93 s with the budget
+off, against 7.07 to 7.23 s at one worker. A fixed depth cannot follow an
+unbalanced tree; that is a separate budget question, recorded in
+`docs/todo.md`.
 
 ## Found along the way
 

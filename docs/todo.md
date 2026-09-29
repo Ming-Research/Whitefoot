@@ -1301,28 +1301,25 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
-- **The recursion budget is spent by calls that offer nothing.** The
-  budget of `compiler/parallel-lowering/two-worlds` (about eight levels at
-  four workers) is decremented by every call inside a recursive component,
-  so a recursion that descends through many one-child levels before it
-  reaches wide runs spends it without handing anything out. Snowghost's
-  style shape B, a preorder halving over the document, reaches 3.76 and
-  3.81 at four workers on ecma262 and apollo11 with
-  `--par-recursive-frontier off` but 1.04 with the default budget, and 2.57
-  on html5, whose wide runs sit near the root
-  ([Snowghost concurrency preview](https://github.com/mbbill/Snowghost/blob/9a6b78e/research/investigations/concurrency/DESIGN.md#preview-with-the-call-grain)).
-  Change: decrement the budget only at a hand-out, so a sequential descent
-  keeps it for the level that splits; this revises that node's decision and
-  needs the owner's ruling. Validate with shape B on the three pages and the
-  formal kernels, whose recursive offers must keep their times. Reopen with
-  the Snowghost style measurement or the next recursion-budget change.
+- **A fixed recursion budget cannot follow an unbalanced tree.** The budget
+  of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
+  an actualized group, but its depth is still fixed per pool width (about
+  eight levels at four workers). Snowghost's style shape B on apollo11 has
+  its work under a few children of wide sibling runs, so the halvings above
+  it spend the levels and the heavy subtree runs sequentially: 1.14 times at
+  four workers, against 3.8 times with the budget off or pinned at 24
+  ([recursion budget at splits](../research/investigations/call-offer-grain/DESIGN.md#the-recursion-budget-at-splits)).
+  Candidate change: refresh the budget where offered work is taken by an
+  idle worker, so depth follows demand rather than a static count; it
+  revises that node and needs a measured comparison on the formal recursive
+  kernels (quadrature, merge sort, quicksort) and shape B. Reopen with the
+  next Snowghost style measurement or recursion-budget change.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
   or its static work reaches the 150,000 work unit
-  ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results));
-  the amendment to `design/compiler/parallel-lowering.md` awaits the
-  owner's ruling. Two known limits no measured program exercises: a
+  ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
+  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
   non-recursive helper whose work is large only through its runtime extents
   loses its offer, and a cheap call into a recursive component keeps one;
   and a callee that reaches recursion only by starting a waiting context is

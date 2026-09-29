@@ -2364,6 +2364,59 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(module_requires_parallel_runtime(&retained));
 }
 
+/// The recursion budget bounds how deep offers nest, so only a call in a group
+/// spends a level. `tree` descends a spine of forty lone calls before it
+/// splits; were each of them to spend a level, the default budget would be
+/// gone before the first split and every pair below it would run inline.
+#[test]
+fn only_a_group_member_spends_a_recursion_budget_level() {
+    let source = br#"fn tree(n: u64, spine: u64) -> result: u64 pure contract {
+  requires n <= 6_u64;
+} {
+  if spine > 0_u64 {
+    let fewer = spine - 1_u64;
+    let below = tree(n: n, spine: fewer);
+    return below;
+  }
+  if n == 0_u64 {
+    return 1_u64;
+  }
+  let m = n - 1_u64;
+  let left = tree(n: m, spine: 0_u64);
+  let right = tree(n: m, spine: 0_u64);
+  return left +wrap right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = tree(n: 6_u64, spine: 40_u64);
+  if result == 64_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let module = emit_with_overlap(source);
+    let body = function_body(&module, "@wf__par_budget_tree");
+    let calls: Vec<&str> = body
+        .lines()
+        .filter(|line| line.contains("call i64 @wf__par_budget_tree("))
+        .collect();
+    let passed = |budget: &str| {
+        calls
+            .iter()
+            .filter(|line| line.ends_with(&format!(", i64 {budget})")))
+            .count()
+    };
+    // The spine call passes its levels on; the inline member and its refused
+    // edge spend one. The published member spends its level in the thunk.
+    assert_eq!(passed("%wf.budget"), 1, "{body}");
+    assert_eq!(passed("%wf.budget.next"), 2, "{body}");
+    assert_eq!(calls.len(), 3, "{body}");
+    assert!(body.contains("call void @wf__par_publish("), "{body}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 /// One pinned budget, as the matrix below writes it.
 fn pinned(levels: u8) -> crate::RecursionBudget {
     crate::RecursionBudget::Pinned(std::num::NonZeroU8::new(levels).expect("a positive budget"))

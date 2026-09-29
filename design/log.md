@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Offer a call only when its callee recurses or reaches the work unit
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: 2026-09-29, the owner approved the call-offer-grain amendment of PR #177 in the session ("the improvements above should all go in", written in Chinese).
+
+Summary: Apply the call-offer-grain amendment unchanged apart from its replacement notes. compiler/parallel-lowering replaces the scalar-leaf decision with the call grain: under --par a permitted statement-group call is offered only when its callee belongs to or reaches a cyclic call component or its static work summary reaches the 150,000-unit work unit, `--par-call-grain off` offers every permitted call and `--par-ledger` names each omitted offer, because 99 percent of the first large real program's call offers called callees of static weight at most 100 and made its page setup up to 37 times slower at four workers than at one, while the rule kept every measured page's setup within 5 percent or 10 ms of its one-worker time and left the formal kernels byte-identical (research/investigations/call-offer-grain/DESIGN.md, implementation results). It also replaces the sequential-refusal decision with one that keeps refusal off and records the grain's two known provisional limits and their reopening condition, and adds five refused alternatives: the scalar-leaf limit, pricing without a recursion exemption, offering only callees that reach a loop or recursion, sequential refusal by default, and stopping publication from unprofitable call sites at run time. This ruling authorizes no merge.
+
 ## 2026-09-29 Exclude waiting recursions from the budget family and carry Result and Option payload data lazily
 
 Nodes: compiler/parallel-lowering/two-worlds, compiler/checker-facts, language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, compiler/payload-enum-layout
