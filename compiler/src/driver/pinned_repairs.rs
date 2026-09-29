@@ -2981,6 +2981,84 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        name: "propagation-leaves-a-type-invariant-false.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  let inner = propagate outcome;
+  set t^.next = 0_u64;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-9",
+        sentences: &[
+            "]: UndischargedPostcondition\n",
+            "\n  mechanical_fix: the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  set t^.next = 0_u64;
+  let inner = propagate outcome;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
         name: "type-invariant-on-an-opaque-struct.wf",
         rejected: br#"opaque struct Span {
   first: u64;

@@ -804,8 +804,9 @@ fn advance(t: &Table) -> result: u64 reads(t.slots), writes(t.next) {
 
 Every function taking a `Table` or a `&Table` receives the relation at entry,
 which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
-value on: at its returns when it writes the value, at each call passing it, and
-at `shared_new`. Every construction owes it too. Between two field writes of
+value on: at its returns and its `propagate` error exits when it writes the
+value, at each call passing it, and at `shared_new`. Every construction owes it
+too. Between two field writes of
 one body the relation may be false, since no other code can see the value
 there. A shared object's state keeps it the same way: each atomic block
 receives it at entry and owes it at every edge that leaves the block.

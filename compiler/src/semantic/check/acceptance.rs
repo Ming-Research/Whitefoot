@@ -805,14 +805,25 @@ impl<'unit> TypeContext<'unit> {
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
                     disposition,
-                    mechanical_fix: repairs::postcondition(
-                        repair,
-                        repairs::returns_call_result(
-                            function,
-                            &exit.statement,
-                            &self.editable_functions()?,
-                        ),
-                    ),
+                    mechanical_fix: if self
+                        .declarations
+                        .tree
+                        .node_with_path(&exit.statement)
+                        .map(|node| self.declarations.tree.production(node))
+                        .transpose()?
+                        == Some(Production::ReturnStmt)
+                    {
+                        repairs::postcondition(
+                            repair,
+                            repairs::returns_call_result(
+                                function,
+                                &exit.statement,
+                                &self.editable_functions()?,
+                            ),
+                        )
+                    } else {
+                        repairs::propagated_postcondition(repair)
+                    },
                 },
             )),
             request: None,

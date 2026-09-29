@@ -2568,6 +2568,18 @@ impl<'unit> TypeContext<'unit> {
                         values,
                     });
                 }
+                // [FN-9, ERR-3] an unrouted clause also selects a
+                // propagated error exit, whose returned value is the
+                // propagated outcome and therefore no result datum.
+                CheckedStatement::PropagateLet { node_path, .. } if selector.variant.is_none() => {
+                    if !named.is_empty() {
+                        return self.declarations.invalid_postcondition_return(node_path);
+                    }
+                    selected.push(SelectedPostconditionReturn {
+                        statement: node_path.clone(),
+                        values: vec![None; function.results.len().max(1)],
+                    });
+                }
                 CheckedStatement::Match { arms, .. }
                 | CheckedStatement::ValueMatchLet { arms, .. } => {
                     for arm in arms {

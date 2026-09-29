@@ -900,6 +900,19 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
     }
 }
 
+/// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
+/// propagated outcome with the state the body has reached there.
+pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str {
+    match disposition {
+        Disposition::Refuted => {
+            "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
+        }
+        Disposition::Unproved => {
+            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition every exit satisfies"
+        }
+    }
+}
+
 /// [FN-9] a clause whose route no normal return selects.
 pub(super) const NO_SELECTED_EXIT: &str = "no `return` of this function delivers a value this clause's route selects: return such a value on some path, or delete the clause";
 

@@ -682,6 +682,15 @@ impl Analyzer<'_, '_> {
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 // [TYPE-11] the error edge returns, leaving any atomic block.
                 self.judge_atomic_exit(node_path, state);
+                // [FN-9] and it is a selected return of every unrouted
+                // clause, judged over the state that edge leaves with.
+                self.judging().judge_postcondition_return(
+                    node_path,
+                    state,
+                    None,
+                    judgment.reached,
+                    &[],
+                );
                 self.declare(*binding);
                 if let Some(result) = result {
                     self.reasoning()

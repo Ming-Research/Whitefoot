@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Owe unrouted postconditions at propagated exits and restate the type-invariant decisions
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/requires-entry-contract, language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts
+
+Owner-approved: 2026-09-29, the owner approved decision cards 1, 2 and 3 of the TYPE-11 review as recommended ("cards 1, 2 and 3 all approved, do as recommended", written in Chinese).
+
+Summary: Card 1: language/checks-and-proofs/requires-entry-contract adds the decision that an unrouted postcondition, and so a type invariant over a written reference parameter, holds at every propagated error exit as at every explicit return, because [CALL-6] gives it to the caller on its normal continuation, which a call returning Err reaches; before, [FN-9] left the propagated exit unselected, so a caller could hold an exit-state relation the callee never proved, which the review showed with a subscript past a window. Card 3: language/checks-and-proofs restates two decisions the review found wanting in wording only: the contracts decision's reason now names a callable's own contract and the invariants its parameter and result types declare as the facts crossing a call, and the type-invariant decision is shortened, keeping the construction obligation, its reasons and its refused alternatives while [TYPE-11] lists the hand-off points. Card 2 changed only the specification's failure citation for TYPE-11 and touches no node. Nodes also names the nodes of the earlier entries this branch brings to main, because the newest entry names every node changed against main. This ruling authorizes no merge.
+
 ## 2026-09-29 Write a type invariant with an explicit binder
 
 Nodes: language/checks-and-proofs, language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts

@@ -77,30 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **A propagated error exit proves no exit-state postcondition its caller
-  receives.** Awaiting the owner's direction. [FN-9] leaves a propagated
-  error exit unselected, so a body that writes a reference parameter, then
-  propagates an `Err`, is never asked to prove an unrouted clause over that
-  parameter's exit state; [CALL-6] still establishes that clause on the
-  caller's normal continuation, which a call returning `Err` reaches. The
-  caller then holds a relation the callee never proved: a written `ensures
-  t^.next <= 5_u64` does this today, and [TYPE-11]'s implicit postcondition
-  over a written reference inherits it, so a caller can index past a window
-  after such a call. Found in the TYPE-11 review. The proposed change makes
-  a propagated error exit select every unrouted clause over an exit state and
-  every type invariant, judged at the `propagate` edge as a return is.
-  Resolve before the branch that carries TYPE-11 merges.
-- **TYPE-11's failure citation disagrees with its verdicts.** Awaiting the
-  owner's direction. [TYPE-11] judges a construction "as an [FN-8]
-  requirement is judged at a call" and an atomic block's leaving edge "as an
-  [INV-1] invariant", and says a failure is "the rejection of the rule the
-  occurrence is judged under", which reads as FN-8 and INV-1; the checker and
-  the manifest cite TYPE-11 for both, and an atomic statement has one
-  occurrence per leaving edge rather than one per statement. Found in the
-  TYPE-11 review. The proposed change is one sentence in TYPE-11 saying that
-  a construction's and a leaving edge's failures cite TYPE-11, each keyed by
-  its construction or edge, which keeps the verdicts. Resolve with the
-  propagated-exit item above.
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
