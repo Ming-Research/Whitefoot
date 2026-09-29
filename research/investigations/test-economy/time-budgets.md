@@ -129,9 +129,10 @@ case execution on the four-core container drops by at least 30% against two
 threads with every case passing. Result, from the same warm target:
 `compiler/test-unit` 126 s → 63.5 s (−50%), `compiler/test-corpus`
 122 s → 84 s (−31%, held at the conformance walk), 248 s → 148 s together
-(−40%), every case passing. The whole warm `make check` took 182 s. CI
-already set both to the runner's processors in `gate.yml`; that step is
-removed because the wrapper now does the same.
+(−40%), every case passing. The whole warm `make check` took 182 s.
+`gate.yml` had set both to the runner's processor count in a step of its
+own; that step is removed, since Cargo and the harness default to the same
+count there.
 
 ### Run the CLI's tests with the corpus
 
@@ -200,9 +201,13 @@ stage's own exit status, because some steps read it: the slowdown control of
 control reads any failure as an inconclusive host. `gate.yml`,
 `io-hosts.yml` and `compute-regression.yml` name a record file in
 `WHITEFOOT_TIME_BUDGET_RECORD`; the wrapper appends to it every stage over its
-budget or without one for its host, or an unreadable table, and each job's
-last step, `run-check.pl --budget-verdict`, fails on a nonempty record after
-every stage has run. Without a record, as in local runs, the wrapper only
+budget or without one for its host, or an unreadable table, and a final
+verdict step in each job, `run-check.pl --budget-verdict`, fails on a
+nonempty record after
+every stage has run. The record must be an absolute path the wrapper can
+open before the stage starts, so a bad record stops the command at once
+instead of changing a finished stage's status. Without a record, as in
+local runs, the wrapper only
 prints the comparison, because a local host is not the runner the budgets
 were measured on. The Windows steps do not run under the wrapper and have no
 budget; their step timeouts stay at 5 and 8 min, and the Windows and Linux
@@ -238,7 +243,7 @@ stage without a budget, fails. Slowest runs, in seconds:
 | `performance-slow-control` | 41.8 | |
 | `performance-comparison` | 33.9 | |
 
-Every other stage's slowest run was under 6.7 s, so its budget is the 10-s
+Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
 **Why this form.**

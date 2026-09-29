@@ -372,10 +372,10 @@ preserve the full gate before merge.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
-  push, and its green run on the exact revision to be merged, a head
-  current with `main`, is that revision's `make check`; run it locally to
-  reproduce a failure or when CI is unavailable. It needs `python3`, LLD on Linux (`ld.lld`) and the `time`
-  utility.
+  push, and its green run on the exact revision to be merged, a head current
+  with `main`, is that revision's `make check`; run it locally to reproduce a
+  failure or when CI is unavailable. It needs `python3`, LLD on Linux
+  (`ld.lld`) and the `time` utility.
 - `make design-ready`, before marking ready and in `design-readiness.yml` on
   ready PRs and main: approved tree and specification changes.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
@@ -403,8 +403,8 @@ system time with a report every 30 seconds, and stops a command after 30
 minutes unless `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It
 also compares each labeled stage with its budget in `.github/time-budgets.txt`
 without changing the stage's status: CI records a stage that exceeded its
-budget or has none and fails the job in its last step, and a local run only
-prints the comparison. Raising a budget is a decision for the owner; lower one
+budget or has none and fails the job in a final verdict step, and a local
+run only prints the comparison. Raising a budget is a decision for the owner; lower one
 in the change that makes its stage much faster, and give a new labeled CI
 stage its budget. Inspect an existing
 owner's PID instead of starting another heavy command, and after an

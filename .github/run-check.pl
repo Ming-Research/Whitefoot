@@ -8,8 +8,12 @@ use File::Basename qw(dirname);
 use POSIX qw(WNOHANG setpgid);
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep);
 
-@ARGV >= 2 or die "usage: run-check.pl LABEL COMMAND [ARG ...] | --budget-verdict RECORD\n";
-budget_verdict($ARGV[1]) if $ARGV[0] eq '--budget-verdict' && @ARGV == 2;
+my $usage = "usage: run-check.pl LABEL COMMAND [ARG ...] | --budget-verdict RECORD\n";
+@ARGV >= 2 or die $usage;
+if ($ARGV[0] eq '--budget-verdict') {
+    @ARGV == 2 && $ARGV[1] ne '' or die $usage;
+    budget_verdict($ARGV[1]);
+}
 my $label = shift;
 my $lock = $ENV{WHITEFOOT_CHECK_LOCK_DIR} // "/tmp/whitefoot-check-$<.lock";
 my $owner_pid = $$;
@@ -51,6 +55,13 @@ $ENV{WHITEFOOT_CHECK_LOCK_DIR} = $lock;
 # every processor available to this process, unless the caller names fewer:
 # the lock above already keeps other heavy commands off the host.
 my $budget_record = $ENV{WHITEFOOT_TIME_BUDGET_RECORD} // '';
+if ($budget_record ne '') {
+    # Checked before the stage runs, so a record that cannot be written stops
+    # the command here instead of changing a finished stage's status.
+    $budget_record =~ m{^/} or die "WHITEFOOT_TIME_BUDGET_RECORD must be an absolute path\n";
+    open my $record, '>>', $budget_record or die "open budget record $budget_record: $!\n";
+    close $record;
+}
 my $budget_file = $ENV{WHITEFOOT_TIME_BUDGET_FILE} // dirname(__FILE__) . '/time-budgets.txt';
 my %hosts = (linux => 'linux', darwin => 'macos', MSWin32 => 'windows', msys => 'windows', cygwin => 'windows');
 my $host = $hosts{$^O} // $^O;
@@ -127,8 +138,8 @@ exit $code;
 # time-budgets.txt. The budget never changes the command's own exit status,
 # which some callers read. CI names a record file in
 # WHITEFOOT_TIME_BUDGET_RECORD: a stage over its budget, or one without a
-# budget for this host, is appended there, and the job's last step fails on a
-# nonempty record, after every stage has run. Without a record the budget is
+# budget for this host, is appended there, and the job's final verdict step
+# fails on a nonempty record, after every stage has run. Without a record the budget is
 # only printed, since a local host is not the runner it was measured on.
 sub check_budget {
     my ($label, $elapsed) = @_;
