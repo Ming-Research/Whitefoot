@@ -1251,6 +1251,20 @@ rarely insert at the same place.
   that they publish the expected sums. Reopen before the next read-path
   measurement.
 
+- **The progress changes cost the context echo server about 3% at 1024
+  connections.** With R1 to R4 as committed, `tcp_contexts.wf` ran at 0.966
+  and 0.964 of the runtime before them in two runs of 15 interleaved passes,
+  while 1 connection ran at 0.979 and 64 at 0.996 over both runs
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
+  Candidates are the `wf__context_pass` call after every host operation its
+  start answered, the reap after every 64 resumptions, which more
+  connections reach more often, and the per-driver count of host waits.
+  Attribute it with one build per change reverted, each against the
+  committed runtime in the same interleaved passes, and then lower the cost
+  of the one that carries it, for example by counting a pass inline in the
+  frame. Reopen when a server with more than a few hundred connections is
+  measured, or before the next change to the driver loop.
+
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
   `waiting_echo --threads 1` in Experiment 2, 0.84 and 0.93 in Experiment 3

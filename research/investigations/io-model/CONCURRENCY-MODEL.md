@@ -801,7 +801,10 @@ or its cost is brought to the owner; it is not adopted silently.
 
 Each witness program was built with the compiler before the runtime work
 (dac9f07c1) and after it, and run on this four-core container. A run that
-did not finish was stopped after 10 s. The programs are maintained in
+did not finish was stopped after 10 s. The runs and costs marked "committed"
+used the runtime as committed, at 9bbdeed5c; the others used a first build
+whose lowering of R2 was replaced before any commit (see the end of this
+section). The programs are maintained in
 `tests/programs`, and `compiler/tests/programs/contexts.rs` runs them.
 
 - **R1.** `pipe_contexts.wf` takes one pipe as both its standard input and
@@ -809,27 +812,32 @@ did not finish was stopped after 10 s. The programs are maintained in
   256 KiB, four times what the pipe holds, in one request.
   - Before, it stopped on every route: the ring on 1 and on 4 drivers, and
     the adapter.
-  - After, it finished 8 times in 8 on each.
+  - After, it finished 8 times in 8 on each, and committed 5 in 5.
   - Cost: the named read benchmark no longer compiles (recorded in
     `docs/todo.md`). A scratch single-context loop over eight 64 MiB files
     in 64 KiB reads, warm, 11 and then 15 interleaved runs, took 0.996 and
     0.979 of its earlier median time.
 - **R2.** `poll_contexts.wf` polls an object for a spawned producer's write.
   - Before, it ran without end on 1 driver and finished on 4.
-  - After, it finished 5 times in 5 on each.
+  - After, it finished 5 times in 5 on each, and committed 5 in 5 again.
   - Cost: the Redis subset at 2 drivers, 16 per pipeline, 3 million
     requests, 10 interleaved rounds. The client prints rates in steps of
     about 10% at this length, so the server's CPU time over each run is the
     finer measure. After R1 and R2: SET 1.11, GET 1.000 and CPU 0.987 of
-    before. With the final runtime: SET 1.062, GET 1.000, CPU 0.990.
+    before. Committed: SET 1.001, GET 1.000, CPU 0.978.
 - **R3.** `busy_contexts.wf`: two contexts hand a guard back and forth until
   a third context's read completes.
   - Before, it ran without end on every route.
-  - After, it finished 8 times in 8 on each.
+  - After, it finished 8 times in 8 on each, and committed 5 in 5.
   - Cost: the context echo server, 15 interleaved passes. With R1 to R3,
     64 connections ran at 0.958 of before, outside the criterion, and 1024
-    connections at 1.082. With the final runtime, 1 connection ran at
-    1.009, 64 at 0.981, 1024 at 0.980, and 64 KiB messages at 0.992.
+    connections at 1.082. On the first build of the whole runtime, 1
+    connection ran at 1.009, 64 at 0.981, 1024 at 0.980, and 64 KiB
+    messages at 0.992. Committed, two runs of 15 passes, pooled: 1
+    connection at 0.979, 64 at 0.996, meeting the criterion, 64 KiB
+    messages at 1.047, and 1024 at 0.968, 0.966 and 0.964 in the two runs.
+    That loss repeated, lies outside the criterion's case, and is not
+    attributed; `docs/todo.md` records it.
   - An attribution run with and without the periodic reap was cut short by
     the shutdown defect below, and was not repeated once the final runtime
     met the criterion.
@@ -837,8 +845,9 @@ did not finish was stopped after 10 s. The programs are maintained in
   statement sets.
   - Before, both stopped with the report on 1 driver, and 4 drivers ran
     them until they were killed.
-  - After, both stop with the report on 1 and on 4 drivers.
-  - A server idle in `accept` ran 3 s with no report on every route.
+  - After, both stop with the report on 1 and on 4 drivers, committed too.
+  - A server idle in `accept` ran 3 s with no report on every route,
+    committed too.
   - The first version counted host waits in one shared counter that every
     park and unpark updated. Each driver now keeps its own count, which only
     its thread writes and another reads once it is idle. That version was
@@ -854,4 +863,23 @@ existed wherever helpers ran beside several drivers, such as a pinned
 
 The fix: a notifier counts itself before it reads the driver count, and
 `wf_drivers_end` lowers the count and waits for the notifiers before it
-releases anything. The 32 final echo passes and every witness run finished.
+releases anything. Every echo pass and witness run after it finished.
+
+**Found by the unit tests: a finished operation sent to a wait.** R2's
+first lowering sent every start answer except "the start wrote the result"
+to `wf__context_wait`, so that an operation its start had completed would be
+counted there as a wait that did not suspend. Four backend unit tests run
+their programs on a scripted deterministic host that never marks such a
+record complete, so the wait parked their contexts for good, and the local
+gate ran on until it was stopped by hand. The emitted code now sends both
+answers a start gives at once to `wf__context_pass`, which reads no record,
+and only a pending operation reaches the wait. That lowering was replaced
+before any commit; the witness runs and the costs above were measured again
+on the one committed.
+
+**Found by the runtime harness: a field left unset.**
+`wf_file_adapter_init` set every field but the context hold R1 added. A
+compiled program keeps its adapter in zeroed static storage
+(`wf_bridge_adapter`), so no program run was affected; the completion
+harness keeps adapters on the stack, read a nonzero hold, and grew a helper
+where its growth case allows none. The initializer now clears it.
