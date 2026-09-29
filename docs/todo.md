@@ -1301,6 +1301,37 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
+- **A split loop too small to split still costs its query at every call.**
+  Snowghost's layout prototype runs `pkg::text::line_break`, whose
+  `write_run_span` loop is a synthesized range split called once per run of
+  a paragraph; its runtime work never reaches the work unit. Its layout
+  mode that hands out nothing else (L1) is 5 to 24 percent slower at two
+  and four workers than at one on every measured page. With that one loop
+  made unsplittable in a local build, the flat page's L1 took 1.52 s at
+  four workers against 1.57 s at one, where the committed build took 1.80
+  s against 1.53 s
+  ([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/7f7542f/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+  The cost is the splitter's runtime query, paid per call when workers
+  idle; the retained splitter entry of `compiler/parallel-lowering` was
+  qualified on kernels whose splits are few and large. Change to evaluate:
+  skip the query when the call's priced work is below the work unit, as the
+  caller already knows the extents it prices. Validate with the flat page's
+  L1 at one and four workers and the formal kernels' compute regression.
+  Reopen with the next range-split or dispatch change.
+
+- **Loop permission denies a write to a field of element i.** [PAR-2]
+  admits, as a counted loop's element write, only a direct `Array` or
+  `Slots` subscript, so `set a^[i].f = v` denies although it writes inside
+  element i's range, while `set a^[i] = v` is permitted. Minimal witness: a
+  loop over `&[P]`, where `P` has a field `n: u64`, that sets
+  `a^[i].n = i` is denied with "writes storage that is neither introduced
+  by the iteration nor the accumulator". Snowghost's layout prototype kept
+  its paragraphs' line counts in a separate array to get its paragraph loop
+  split. Change: extend the element family to a field path below the
+  affine subscript, the refined footprint staying within the element's
+  range; a specification amendment. Reopen when a second program needs it
+  or the vocabulary work shapes element records.
+
 - **A fixed recursion budget cannot follow an unbalanced tree.** The budget
   of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
   an actualized group, but its depth is still fixed per pool width (about
