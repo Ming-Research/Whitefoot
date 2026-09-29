@@ -2250,6 +2250,94 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A permitted recursive pair whose lane frame exceeds the runtime slot hands
+/// nothing out, and the ledger says which offer and how many bytes. The same
+/// recursion with a 192-byte argument fits and is handed out with no such line;
+/// with a 256-byte argument the frame is 304 bytes: 288 of arguments, the
+/// `Bool` result, and the `u64` budget its variant carries into its own
+/// component.
+#[test]
+fn a_call_group_over_the_lane_slot_is_named_in_the_ledger() {
+    let source = |words: usize| {
+        format!(
+            "struct Big {{
+  words: Array<u64, {words}>;
+}}
+
+fn fill(out: &[u64], lo: u64, hi: u64, parent: Big) -> ok: Bool writes(out) {{
+  let length = out^.len;
+  if hi <= lo {{
+    return length == 0_u64;
+  }}
+  let count = hi - lo;
+  if count == 1_u64 {{
+    if length == 0_u64 {{
+      return False();
+    }}
+    set out^[0_u64] = lo;
+    return True();
+  }}
+  let half = count / 2_u64;
+  let within = half <= length;
+  if within {{
+  }} else {{
+    return False();
+  }}
+  let middle = lo + half;
+  let first = &out^[0_u64..half];
+  let second = &out^[half..length];
+  let left = fill(out: first, lo: lo, hi: middle, parent: parent);
+  let right = fill(out: second, lo: middle, hi: hi, parent: parent);
+  let both = band(left, right);
+  return both;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let whole = &cells.inner[0_u64..8_u64];
+  let words = array_filled::<u64, {words}>(value: 0_u64);
+  let big = Big(words: words);
+  let ok = fill(out: whole, lo: 0_u64, hi: 8_u64, parent: big);
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    let lane_lines = |ledger: &[String]| {
+        ledger
+            .iter()
+            .filter(|line| line.contains("lane frame:"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let fits = source(24);
+    let fits_ledger = super::compile_permission_ledger(fits.as_bytes());
+    assert!(lane_lines(&fits_ledger).is_empty(), "{fits_ledger:?}");
+    assert!(
+        emit_with_overlap(fits.as_bytes()).contains("call void @wf__par_publish("),
+        "a frame with a 192-byte argument fits the slot and is handed out"
+    );
+    let wide = source(32);
+    let wide_ledger = super::compile_permission_ledger(wide.as_bytes());
+    assert!(
+        wide_ledger
+            .iter()
+            .any(|line| line.contains("PAR permitted") && line.contains("pair(fill, fill)")),
+        "the pair stays permitted: {wide_ledger:?}"
+    );
+    assert_eq!(
+        lane_lines(&wide_ledger),
+        vec![
+            "PAR actualization  fill  lane frame: offer of fill needs 304 bytes aligned to 8, over the 256-byte lane slot; its group of 1 offers runs as ordinary calls"
+                .to_owned()
+        ]
+    );
+    assert!(
+        !emit_with_overlap(wide.as_bytes()).contains("call void @wf__par_publish("),
+        "nothing is handed out"
+    );
+}
+
 #[test]
 fn call_grain_drops_small_offers_without_clones() {
     let source = br#"fn twice(x: u64) -> result: u64 pure {

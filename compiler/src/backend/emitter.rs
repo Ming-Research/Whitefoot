@@ -32,9 +32,9 @@ use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Sign
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, is_stored_aggregate};
 use crate::target::{
-    TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout, TargetLayoutFailure,
-    TargetStorageType, parallel_lane_frame_layout, plan_target_frame, validate_program,
-    validate_static_storage,
+    LANE_FRAME_BYTES, TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout,
+    TargetLayoutFailure, TargetStorageType, fits_parallel_lane_slot, parallel_lane_frame_extent,
+    parallel_lane_frame_layout, plan_target_frame, validate_program, validate_static_storage,
 };
 use crate::{
     IrAddressed, IrAllocationObligations, IrArrayRoot, IrBlock, IrBlockId, IrBooleanOperation,
@@ -545,11 +545,67 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.append(floor_runtime_fallback()?);
     text.text("\n");
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    let mut ledger = frontiers.ledger().to_vec();
+    ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     Ok(LlvmModule {
         text: text.render(),
         model: text,
-        ledger: frontiers.ledger().to_vec(),
+        ledger,
     })
+}
+
+/// `--par-ledger` lines for the call groups the emitter hands out nothing
+/// from because a member's lane frame does not fit the runtime's slot.
+///
+/// [`ordinary_overlap_lane_frames`] declines such a group whole, and the calls
+/// run where they stand; without a line the permitted group would vanish from
+/// the build with no reason given. Each function is asked with the budget
+/// field its emitted body carries: a budget-family member's body is its
+/// variant, whose offers into its own component carry one more `u64`.
+fn lane_frame_ledger(
+    program: &IrProgram,
+    target: TargetLayout,
+    frontiers: &RecursiveFrontiers,
+) -> Result<Vec<String>, BackendFailure> {
+    let mut lines = Vec::new();
+    for (ordinal, function) in program.functions().iter().enumerate() {
+        let grain = frontiers.grain(ordinal);
+        for overlap in function.overlaps() {
+            for member in overlap.handed_out() {
+                let Some(IrOperation::Call {
+                    function: callee, ..
+                }) = definition_operation(function, *member)
+                else {
+                    continue;
+                };
+                let called = program
+                    .functions()
+                    .get(*callee as usize)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                let frame = parallel_lane_frame_extent(
+                    target,
+                    program.nominals(),
+                    program.elements(),
+                    called.parameters().iter().map(|(_, ty)| *ty),
+                    called.result(),
+                    grain.is_some_and(|grain| frontiers.spends(*callee, grain)),
+                )
+                .map_err(BackendFailure::TargetLayout)?;
+                if !fits_parallel_lane_slot(frame) {
+                    lines.push(format!(
+                        "PAR actualization  {}  lane frame: offer of {} needs {} bytes aligned to {}, over the {LANE_FRAME_BYTES}-byte lane slot; its group of {} offers runs as ordinary calls",
+                        function.name(),
+                        called.name(),
+                        frame.size(),
+                        frame.align(),
+                        overlap.handed_out().len(),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// The bytes an allocation refusal writes before aborting.
