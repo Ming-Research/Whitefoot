@@ -1313,6 +1313,18 @@ rarely insert at the same place.
   Redis subset's pipelined rate is the measurement to make first. Reopen when
   a program's contexts starve behind one that never suspends.
 
+- **A driver reaps host completions only when no context is ready.**
+  `wf_context_drive` harvests the ring and publishes completions only in its
+  idle branch (design/compiler/waiting-contexts, the ring-entry decision), so
+  on one driver two contexts that wake each other through guards forever keep
+  a third, whose host outcome has arrived, from ever running. That breaks
+  [SHARE-3]'s promise that a context waiting for nothing proceeds, whose
+  premise the two looping contexts meet. Reaping after some number of context
+  runs without an idle pass would keep it; the change revises a compiler
+  decision measured on the echo servers, so its cost there is the
+  measurement to make first. Reopen before a program relies on guard
+  ping-pong beside host waits, or with the yield budget above.
+
 - **A bound context is joined before the whole statement that needs it.**
   A `let`-bound call is joined before the first later statement of its block
   that names the binding or may leave the block, so in

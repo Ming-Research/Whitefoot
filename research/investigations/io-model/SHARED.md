@@ -510,8 +510,9 @@ approved, the spec revisions approved too", written in Chinese).
 **The rule** (specification v0.80). While a statement waits for its guard,
 each call whose execution contains it and that [WAIT-2] permits to run
 alongside the statements after it executes as a context, and the starter
-waits for the call only before or within a statement that holds a point at
-which [WAIT-2] requires the call to have completed. While every context keeps
+waits for the call only before or within a statement that names the call's
+binding or holds a point at which [WAIT-2] requires the call to have
+completed. While every context keeps
 reaching its completion or a wait for a false guard, an unfinished context or
 a host operation whose outcome has not arrived, every context that waits for
 nothing proceeds, and a statement with no guard, or whose guard is true from
@@ -525,10 +526,14 @@ on its driver; the premise names only the waits that suspend. A `let`-bound
 call is joined before the whole statement that uses its result or leaves the
 block, not inside it on the path that does (`WAITS.md`, "A bound context is
 joined where its result is first used"), so an atomic statement inside that
-statement, ahead of the use, does not run first. Both limits are recorded in
-`docs/todo.md`. A statement whose guard only its own context's later statement makes
-true, or two contexts each waiting for the other's write, still wait for
-good: the promise covers progress other contexts can make, not a cycle.
+statement, ahead of the use, does not run first. Both limits are recorded
+in `docs/todo.md`, with a third the runtime still owes: a driver reaps host
+completions only when no context is ready, so two contexts that wake each
+other through guards forever keep a third, whose host outcome has arrived,
+from running on their driver. A statement whose guard only its own context's
+later statement makes true, or two contexts each waiting for the other's
+write, still wait for good: the promise covers progress other contexts can
+make, not a cycle.
 
 **What the compiler had to change.** Three places kept that promise only by
 accident, and each change was checked by making it fail once:
