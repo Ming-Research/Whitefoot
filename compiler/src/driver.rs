@@ -2219,6 +2219,32 @@ pub fn compile_module_program(
     build_module_entry(graph, inputs, entry, limits, overlap, None).map(|(module, _)| module)
 }
 
+/// [`compile_module_program`] plus the permission ledger of that entry's
+/// compilation, as [`compile_with_permission_ledger`] reports it for a source
+/// bundle. The ledger is developer output: this path reads and writes no
+/// build cache, so every line comes from this compilation.
+pub fn compile_module_program_with_permission_ledger(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    entry: ModuleEntry<'_>,
+    limits: CompilerLimits,
+    overlap: crate::OverlapLowering,
+) -> Result<(LlvmModule, Vec<String>), CompilationFailure> {
+    let inputs = &with_library_records(graph, inputs);
+    let selection = entry_selection(graph, entry)?;
+    let (modules, selected) = composition_inputs(graph, inputs, selection.module);
+    require_module_verdicts(graph, inputs, &modules, limits, None)?;
+    compile_selected(
+        &selected,
+        Some(graph.modules()),
+        limits,
+        overlap,
+        &selection,
+        None,
+    )
+    .map(|reported| (reported.module, reported.ledger))
+}
+
 /// Compiles one entry's composition to textual LLVM [MOD-9, PROG-3], reusing
 /// the module a cache recorded for exactly the same composition, lowering
 /// options and compiler, and reporting whether it did. Only a successful
