@@ -728,3 +728,29 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_complete(source);
 }
+
+#[test]
+fn a_struct_result_publishes_its_boxed_slots_field_length() {
+    let source = |length: &str| {
+        format!(
+            "struct Slab {{
+  cells: Box<Slots<u8>>;
+}}
+
+fn make() -> result: Slab pure contract {{
+  ensures result.cells.inner.len == {length};
+}} {{
+  let cells = box_slots_new::<u8>(capacity: 4_u64);
+  return Slab(cells: move cells);
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let slab = make();
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    assert_complete(source("0_u64").as_bytes());
+    assert_fn9_refuted(source("1_u64").as_bytes());
+}

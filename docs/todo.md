@@ -1265,9 +1265,9 @@ rarely insert at the same place.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
-  (the waiting-recursion-budget amendment to
-  compiler/parallel-lowering/two-worlds), because a waiting function is a
-  resumable frame with no ordinary entry for a variant to stand behind. Every activation of such a recursion therefore reaches its offers
+  (compiler/parallel-lowering/two-worlds), because a waiting function is a
+  resumable frame with no ordinary entry for a variant to stand behind.
+  Every activation of such a recursion therefore reaches its offers
   unbudgeted, as a `--par-recursive-frontier off` build does: in
   `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
   reach `name_before`'s byte-pair offers at every depth. Whether that costs

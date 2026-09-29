@@ -380,7 +380,7 @@ Binder modes remain derived by [OWN-13] (not written), a reference-mode binder n
 A nullary variant is written `K()`.
 
 The `result_route` owns exactly one `fieldbind`, so zero-field and multi-field route shapes do not derive.
-FN-9, not GRAM-10, owns that route after its leading TYPEID resolves: it admits exactly `Ok(value: IDENT)` for a concrete `Result<T, E>` whose T is one entailment-fragment integer type.
+FN-9, not GRAM-10, owns that route after its leading TYPEID resolves: it admits exactly the success routes [FN-9] states.
 A misspelled field is therefore an FN-9 rejection at the `fieldbind`, as [DIAG-1] fixes; no match arm or runtime binder is formed.
 Every other successfully resolved variant, payload type, nested projection, or route is outside the postcondition boundary and is rejected by FN-9 rather than generalized through this rule.
 
