@@ -2240,6 +2240,21 @@ condition under which it is taken up.
   kill to follow the term's support, as measure atoms do. Validate with paired published and local cases, a kill of
   each support member, and unchanged verdicts elsewhere; reopen when an
   index-based program needs one of these surfaces.
+- **Affine premises over a reference parameter's fields do not reach the
+  body.** `requires s^.a + s^.b <= 100_u64` over the fields of `&Accounts`
+  gives the body no premise that bounds `b + n` after `let b = s^.b`, while
+  the same `requires` over value parameters does, and stated over entry
+  values tied to the fields by L0 equalities it does too. A smaller case: an
+  L0 `requires s^.a >= n` does not discharge `s^.a - n` written on the
+  place, but does after `let a = s^.a`.
+
+  `research/experiments/monitor-invariants/` holds both as probes
+  (`bank-field-premise`, `field-premise-direct`). The first is the
+  readonly-field gap above for a plain field: affine images of place terms
+  need kills that follow their support. A monitor invariant over a sum of
+  fields needs it, or an entry snapshot. Reopen with the object invariant, or when a contract over a
+  structure's fields needs a sum.
+
 - **FN-9 relations read a formal subscript as an unknown offset.** A
   published relation over `rows^[i].len` with `i` a formal renders as
   `entry(rows)^[?].len`: the body side and the caller side

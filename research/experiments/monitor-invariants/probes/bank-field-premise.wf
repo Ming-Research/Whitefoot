@@ -1,0 +1,26 @@
+struct Accounts {
+  a: u64;
+  b: u64;
+}
+
+fn transfer(s: &Accounts, n: u64) -> result: unit writes(s.a), writes(s.b) contract {
+  requires s^.a + s^.b <= 100_u64;
+  requires s^.a + s^.b >= 100_u64;
+  requires s^.a >= n;
+} {
+  let a = s^.a;
+  let b = s^.b;
+  let a_next = a - n;
+  let b_next = b + n;
+  set s^.a = a_next;
+  set s^.b = b_next;
+  let a_now = s^.a;
+  let b_now = s^.b;
+  invariant kept_low: a_now + b_now <= 100_u64;
+  invariant kept_high: a_now + b_now >= 100_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

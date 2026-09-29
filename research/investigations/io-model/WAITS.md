@@ -860,6 +860,12 @@ rule as stated below
 
 ### The program means its sequential execution
 
+The owner reopened this for waiting calls on 2026-09-29: a bounded buffer
+between two contexts has no sequential schedule, so the sequential meaning
+cannot define concurrent I/O. `CONCURRENCY-MODEL.md` proposes that spawned
+contexts are concurrent while computation keeps this meaning; the section
+below stays as the grounds of the current rule.
+
 Agreed with the owner on 2026-09-28. The meaning of a program is the meaning
 of its sequential execution. Every concurrency the implementation adds, an
 overlapped statement, a started context, where a context runs and on which

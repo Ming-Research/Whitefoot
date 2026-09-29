@@ -130,6 +130,18 @@ completion criterion were refused.
   references. A first full campaign ran on 2026-08-28, while PAR-3 still
   existed; its results are not recorded in this bundle, and no full campaign
   has been recorded since. Not a gate and not reachable from `make check`.
+- `monitor-invariants/` — whether today's proof machinery discharges the
+  per-block obligations of a monitor invariant on a shared object, for
+  `research/investigations/io-model/CONCURRENCY-MODEL.md`. Twelve probes stand
+  in for the missing entry fact with an `if` or a helper's `requires` and state
+  the invariant at the exit with an `invariant` statement. Results:
+  - a difference-bound invariant over fields and measures proves end to end;
+  - a missed update is refuted and a split transaction unproved;
+  - an affine invariant over fields needs an entry snapshot and one bridging
+    step.
+
+  [`RESULTS.md`](monitor-invariants/RESULTS.md) has the table; `run.sh`
+  rechecks the verdicts by hand. Not a gate.
 - `blind-writer/` — the standing corpus of what unguided writers write, one
   dated directory per trial. The 2026-08-28 trial gave a writer with no prior
   Whitefoot exposure the v0.38 spec, `docs/patterns.md`, the gate binary and
