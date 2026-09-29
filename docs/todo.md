@@ -1262,6 +1262,21 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
+- **Offers beneath a waiting recursion carry no recursion budget.** A
+  cyclic component with a waiting member gets no budget-carrying family
+  (the waiting-recursion-budget amendment to
+  compiler/parallel-lowering/two-worlds), because a waiting function is a
+  resumable frame with no ordinary entry for a variant to stand behind. Every activation of such a recursion therefore reaches its offers
+  unbudgeted, as a `--par-recursive-frontier off` build does: in
+  `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
+  reach `name_before`'s byte-pair offers at every depth. Whether that costs
+  anything is unmeasured; the offers are small, and a grain rule may refuse
+  them before depth matters. Validate by timing the `--par` build of
+  `wfgrep.wf` on a deep and on a wide tree against the default build and
+  against a build that withholds those offers; if the unbudgeted offers cost
+  measurable time that no grain rule removes, give waiting components a
+  budget-carrying frame variant. Reopen with that measurement.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
