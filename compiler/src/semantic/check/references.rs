@@ -1077,13 +1077,105 @@ impl<'unit> Checker<'_, 'unit> {
         let range_base =
             written_deref && root_binding.is_some_and(|local| local.mode == CheckedMode::Range);
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
-        let (source, base_places, element_type) = if range_base {
-            if !base_suffixes.is_empty() {
+        let (source, base_places, element_type) = if range_base && !base_suffixes.is_empty() {
+            // [REF-4, OP-4] an indexable place below one element of the run
+            // a range names: the element is selected as a borrow of it
+            // would be, and the storage walk continues below it.
+            let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let Some(offset_node) = self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(base_suffixes[0])?
+            else {
                 return self
                     .types
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::ReferenceFormation, place_node);
+            };
+            let mut probe = bindings.clone();
+            let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
+            self.check_place_offset(offset_node, &offset)?;
+            let captured = self.body.note_capture(
+                Checker::captured_of(offset_node, &offset.expression)
+                    .unwrap_or(CapturedValue::unknown()),
+                bindings,
+            );
+            let (path, ty, offsets) = self.resolve_storage_path(
+                context,
+                &base_suffixes[1..],
+                local.ty,
+                bindings,
+                loop_depth,
+                true,
+            )?;
+            carried.effects = offset.effects.union(offsets.effects);
+            carried.accesses.extend(offset.accesses);
+            carried.accesses.extend(offsets.accesses);
+            if matches!(
+                ty,
+                CheckedType::Window {
+                    shape: WindowShape::Ring,
+                    ..
+                }
+            ) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Ref4,
+                    suffix,
+                    SemanticIssueKind::RangeOverRing {
+                        mechanical_fix: REF4_RING,
+                    },
+                );
             }
+            let element = match ty {
+                CheckedType::Array { element, .. }
+                | CheckedType::Window { element, .. }
+                | CheckedType::Buffer { element } => self.types.element_type(element)?,
+                _ => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Op4,
+                        suffix,
+                        SemanticIssueKind::type_mismatch(
+                            "an indexable base",
+                            self.types.checked_type_name(ty)?,
+                        ),
+                    );
+                }
+            };
+            let named = local
+                .reference
+                .as_ref()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .paths
+                .iter()
+                .cloned()
+                .map(|mut place| {
+                    place.path.push(PlaceStep::Index(captured));
+                    place
+                        .path
+                        .extend(path.iter().map(CheckedPlaceStep::place_step));
+                    place
+                })
+                .collect();
+            let range_element = self.types.intern_element(local.ty)?;
+            (
+                CheckedRangeSource::Element(Box::new(crate::semantic::CheckedRangeElementPlace {
+                    root: CheckedRangeRoot {
+                        binding: local.binding,
+                        element: range_element,
+                        element_type: local.ty,
+                    },
+                    offset: offset.expression,
+                    path,
+                    ty,
+                    obligation: self.types.declarations.tree.path(base_suffixes[0])?.clone(),
+                    target_domain: CheckedTargetDomainObligation::ElementAddress,
+                    captured,
+                })),
+                named,
+                element,
+            )
+        } else if range_base {
             let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let element = self.types.intern_element(local.ty)?;
             let named = local

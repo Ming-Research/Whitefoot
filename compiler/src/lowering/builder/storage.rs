@@ -183,9 +183,16 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         CheckedExpression::RangeOf {
             source, start, end, ..
         } => {
-            if let crate::semantic::CheckedRangeSource::Storage(root) = source {
-                bindings.extend(root.binding());
-                collect_place(root, bindings);
+            match source {
+                crate::semantic::CheckedRangeSource::Storage(root) => {
+                    bindings.extend(root.binding());
+                    collect_place(root, bindings);
+                }
+                crate::semantic::CheckedRangeSource::Element(place) => {
+                    collect_expression(&place.offset, bindings);
+                    collect_steps(&place.path, None, bindings);
+                }
+                crate::semantic::CheckedRangeSource::Range(_) => {}
             }
             collect_expression(start, bindings);
             collect_expression(end, bindings);

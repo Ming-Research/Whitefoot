@@ -39,6 +39,22 @@ impl IrBuilder<'_> {
                 }
             }
             CheckedRangeSource::Range(root) => self.range_root(root)?,
+            // [REF-4] an indexable place below an element of a range's run:
+            // that place is addressed through the range, then formed as a
+            // storage source is.
+            CheckedRangeSource::Element(place) => {
+                let address = self.lower_range_address(
+                    &place.root,
+                    &place.offset,
+                    &place.path,
+                    place.target_domain,
+                )?;
+                if matches!(lower_type(self.erasure, place.ty)?, IrType::Buffer { .. }) {
+                    self.define(ty, IrOperation::SliceFromBuffer { buffer: address })?
+                } else {
+                    self.define(ty, IrOperation::SliceFromRun { run: address })?
+                }
+            }
         };
         if self.value_type(slice)? != ty {
             return Err(LoweringFailure::InvalidCheckedProgram);

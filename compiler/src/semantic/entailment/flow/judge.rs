@@ -974,6 +974,9 @@ impl Analyzer<'_, '_> {
                 let source_subscripts = match source {
                     CheckedRangeSource::Storage(root) => self.judge_place_subscripts(root, states),
                     CheckedRangeSource::Range(_) => true,
+                    CheckedRangeSource::Element(place) => {
+                        self.judge_range_element_place(place, states)
+                    }
                 };
                 if reaches_endpoints && source_subscripts {
                     let length = match source {
@@ -985,6 +988,13 @@ impl Analyzer<'_, '_> {
                             measure: CheckedMeasure::Length,
                             root: root.clone(),
                         },
+                        CheckedRangeSource::Element(place) => {
+                            CheckedExpression::RangeElementMeasure {
+                                carrier: carrier.clone(),
+                                measure: CheckedMeasure::Length,
+                                place: place.clone(),
+                            }
+                        }
                     };
                     let formation_start = self.output.obligations.len();
                     self.judging()

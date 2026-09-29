@@ -325,6 +325,7 @@ impl Records<'_> {
                 match source {
                     CheckedRangeSource::Storage(root) => self.container_root(root),
                     CheckedRangeSource::Range(_) => {}
+                    CheckedRangeSource::Element(place) => self.range_element_place(place),
                 }
                 self.source(
                     SemanticRule::Ref4,

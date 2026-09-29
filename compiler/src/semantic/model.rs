@@ -1597,6 +1597,9 @@ pub(crate) enum CheckedRangeSource {
     Storage(CheckedContainerRoot),
     /// Re-slicing another range reference, `&part^[a..b]` [REF-4].
     Range(CheckedRangeRoot),
+    /// An indexable place below one element of the run a range reference
+    /// names, `&part^[i].field.inner[a..b]` [REF-4, OP-4].
+    Element(Box<CheckedRangeElementPlace>),
 }
 
 impl CheckedRangeSource {
@@ -1612,6 +1615,10 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => (root.root, root.place_path()),
             Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+            Self::Element(place) => (
+                super::places::PlaceRoot::Binding(place.root.binding),
+                place.place_path(),
+            ),
         }
     }
 
@@ -1621,6 +1628,7 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => root.binding(),
             Self::Range(root) => Some(root.binding),
+            Self::Element(place) => Some(place.root.binding),
         }
     }
 }
@@ -3061,6 +3069,10 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
                 .chain([start.as_ref(), end.as_ref()])
                 .collect(),
             CheckedRangeSource::Range(_) => vec![start.as_ref(), end.as_ref()],
+            CheckedRangeSource::Element(place) => place
+                .offsets()
+                .chain([start.as_ref(), end.as_ref()])
+                .collect(),
         },
         CheckedExpression::ConstructStruct { fields, .. }
         | CheckedExpression::ConstructEnum { fields, .. } => fields.iter().collect(),
