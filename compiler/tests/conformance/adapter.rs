@@ -256,8 +256,7 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
         Ok(output) => output.status,
         Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
             return Verdict::Stopped(format!(
-                "the program ran past the {} s test deadline",
-                PROGRAM_DEADLINE.as_secs()
+                "the program ran past the {PROGRAM_DEADLINE:?} test deadline"
             ));
         }
         Err(error) => panic!("wait for conformance case executable: {error}"),
