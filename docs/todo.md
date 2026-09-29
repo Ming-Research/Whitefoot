@@ -1184,7 +1184,7 @@ rarely insert at the same place.
   from that order: an oversized candidate's finished graph is transferred into
   its parent with every `IrFunction` field remapped by hand, ordinals are
   reserved late and the ledger rotates. Offer policy is spread over lowering,
-  a scalar-leaf post-pass, the emitter's lane-fit filter and the launcher, and
+  a call-grain post-pass, the emitter's lane-fit filter and the launcher, and
   the clone set is computed three times. Lowering the ordinary graph first and
   actualizing in one IR-to-IR pass whose plan the emitter only renders (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.1) removes
@@ -1308,8 +1308,10 @@ rarely insert at the same place.
   the amendment to `design/compiler/parallel-lowering.md` awaits the
   owner's ruling. Two known limits no measured program exercises: a
   non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one.
-  Validate either by a program whose four-worker time loses to its
+  loses its offer, and a cheap call into a recursive component keeps one;
+  and a callee that reaches recursion only by starting a waiting context is
+  not seen as recursive, since neither this pass nor the recursion frontier
+  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
@@ -1320,8 +1322,9 @@ rarely insert at the same place.
   unbudgeted, as a `--par-recursive-frontier off` build does. In
   `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
   reached `name_before`'s byte-pair offers at every depth; the call grain now
-  omits those offers (static work 4), so no maintained program has an offer
-  beneath a waiting recursion, and whether one costs anything is unmeasured.
+  omits those offers (static work 4), so wfgrep, the one maintained program
+  known to have such offers, no longer does, and whether one costs anything
+  is unmeasured.
   Validate with a program whose waiting recursion reaches an offer the grain
   keeps, timed on a deep and on a wide input against a build that withholds
   the offer; if the unbudgeted offers cost measurable time, give waiting

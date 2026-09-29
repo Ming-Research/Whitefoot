@@ -571,7 +571,7 @@ fn receipts_for(
 /// own channel: it participates in no mandatory record, changes no accepted
 /// program, and selects no lowering. Permission verdicts are independent of
 /// the actualization policy; additional actualization lines describe that
-/// policy's choices, including omitted scalar-leaf offers. The compiler's
+/// policy's choices, including call offers omitted by the call grain. The compiler's
 /// `--par-ledger` switch is its caller outside tests.
 pub fn compile_with_permission_ledger(
     inputs: &[SourceInput<'_>],

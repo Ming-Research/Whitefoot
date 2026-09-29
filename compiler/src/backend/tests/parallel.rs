@@ -2127,6 +2127,11 @@ fn main() -> status: std::process::ExitStatus pure waits {
         "the waiting recursion keeps its sequential clone: {:?}",
         clone_symbols(&every_group)
     );
+    assert!(
+        clone_symbols(&shipped).is_empty(),
+        "with every offer omitted no function reaches a hand-out, so none is cloned: {:?}",
+        clone_symbols(&shipped)
+    );
     let ledger = super::compile_permission_ledger(SOURCE);
     assert!(
         ledger.iter().any(|line| line

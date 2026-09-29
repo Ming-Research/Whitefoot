@@ -424,7 +424,9 @@ of small sorts, read 0.030 to 0.037 s in every arm.
 Not measured: par-quicksort, because main's copy of the program no longer
 compiles (`quicksort.wf:2:19: error[GRAM-5]`, the retired `deref(v)`
 spelling); the radix-scatter oracle, whose link failed and was not
-diagnosed; and `wfgrep`, whose `--par` build stops in the backend on main.
+diagnosed; and `wfgrep`, whose `--par` build stopped in the backend on main.
+The implementation results below measure par-quicksort and `wfgrep` on a
+main that has both fixes.
 
 ### Lowering cost (criterion 3)
 
@@ -585,7 +587,7 @@ the same checksums as main's build.
 **Criterion 2: met.** The five formal kernels are byte-identical, so they need
 no timing; the hosted `compute regression` job on `b4917910`, which runs
 `tests/performance/compare.sh` against the merge base after its identical-image
-control, passed. The 24 changed programs that run without a network peer were
+control, passed. The 25 changed programs that run without a network peer were
 timed as whole processes, best of seven, at one, two and four workers, beside an
 identical copy of main's image. The first block is void (`wfgrep` was given an
 absolute root, which it refuses). The second is inconclusive under the recorded
@@ -626,9 +628,10 @@ owner as an amendment once the remaining measurements pass.
 
 ## Found along the way
 
-- `whitefootc --par tests/programs/wfgrep.wf` stops on main with a backend
-  `InvalidIr` failure; the build without `--par` succeeds. An instrumented
-  build registers three offers in `name_before` before the failure.
-- `research/experiments/par-quicksort/quicksort.wf` no longer compiles on
-  main: it still spells dereference `deref(v)`; replacing each with `v^`
-  keeps every line number.
+- `whitefootc --par tests/programs/wfgrep.wf` stopped on main with a backend
+  `InvalidIr` failure; the build without `--par` succeeded. An instrumented
+  build registered three offers in `name_before` before the failure. Fixed on
+  main by PR #182 before the implementation was measured.
+- `research/experiments/par-quicksort/quicksort.wf` no longer compiled on
+  main: it still spelled dereference `deref(v)`. Fixed on main by PR #183
+  before the implementation was measured.
