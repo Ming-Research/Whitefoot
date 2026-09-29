@@ -913,8 +913,9 @@ formation of the binding names it, so the join precedes every use, the
 release at the block's end included, and a context started in a loop body is
 joined before the next iteration reuses its result slot. A statement that
 waits does not end the run: two marked fetches both proceed until the
-statement that combines their results. The context writes its result into a slot of the starting
-frame, which outlives the context because the join precedes every exit.
+statement that combines their results. The context writes its result into a
+slot of the starting frame, which outlives the context because the join
+precedes every exit.
 
 Evidence: `two_bound_fetches_proceed_together_on_both_routes`
 (`compiler/tests/programs/network.rs`) runs `tcp_gather.wf` against two

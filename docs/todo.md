@@ -1302,6 +1302,28 @@ rarely insert at the same place.
   on hand-made contexts. Reopen when the lock changes again or a handoff
   defect is suspected.
 
+- **A context that never suspends holds back its driver.** Drivers do not
+  preempt, and a waiting call the host or an object answers at once does not
+  suspend, so a context that loops on such calls, or computes forever, keeps
+  the other contexts on its driver waiting; [SHARE-3]'s progress promise
+  therefore assumes every context keeps reaching a wait for a false guard, an
+  unfinished context or a pending host operation. A yield after some number
+  of waiting calls that did not suspend, taken only when another context is
+  ready, would let the promise count every waiting call; its cost on the
+  Redis subset's pipelined rate is the measurement to make first. Reopen when
+  a program's contexts starve behind one that never suspends.
+
+- **A bound context is joined before the whole statement that needs it.**
+  A `let`-bound call is joined before the first later statement of its block
+  that names the binding or may leave the block, so in
+  `let seen = consume(…); if go { atomic … { … } return seen; }` the call is
+  joined before the `if`, and the atomic statement that would make its guard
+  true never runs: [SHARE-3] promises progress only up to such a statement.
+  Joining on the path inside the statement instead was refused because later
+  code would merge a joined and an unjoined path
+  (`research/investigations/io-model/WAITS.md`). Reopen when a program needs
+  the use and the enabling statement in one compound statement.
+
 - **With several drivers, a program whose every context waits on another
   one hangs instead of stopping.** On one driver, when no context is ready
   and none waits for the host, the bridge stops the program with "every
