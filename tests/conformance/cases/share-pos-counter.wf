@@ -7,11 +7,11 @@ fn bump(counter: Shared<u8>) -> result: unit pure waits {
 
 fn bump_three(counter: &Shared<u8>) -> result: unit reads(counter) waits {
   let first = shared_share::<u8>(shared: counter);
-  mustpar bump(counter: move first);
+  spawn bump(counter: move first);
   let second = shared_share::<u8>(shared: counter);
-  mustpar bump(counter: move second);
+  spawn bump(counter: move second);
   let third = shared_share::<u8>(shared: counter);
-  mustpar bump(counter: move third);
+  spawn bump(counter: move third);
   return unit;
 }
 

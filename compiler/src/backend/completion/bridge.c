@@ -924,7 +924,7 @@ static void wf_bridge_park(uint64_t observed_epoch) {
 /* ------------------------------------------------------- waiting contexts */
 
 /* Contexts [WAIT-2]: the root, which runs the entry on the floor's thread,
- * and every call a `mustpar` statement starts [PAR-4].
+ * and every call a spawn starts [WAIT-3].
  *
  * A context is a chain of resumable frames
  * (design/compiler/waiting-contexts.md).  Every waiting function
@@ -1769,7 +1769,7 @@ int wf__context_wait(void *operation, void *frame) {
     return 1;
 }
 
-/* [PAR-4] reserves a new context and returns the block its call's arguments
+/* [WAIT-3] reserves a new context and returns the block its call's arguments
  * are stored in; `wf__context_launch` starts it.  No source outcome can
  * refuse a start, so memory the host will not reserve ends the program. */
 void *wf__context_prepare(uint64_t bytes) {

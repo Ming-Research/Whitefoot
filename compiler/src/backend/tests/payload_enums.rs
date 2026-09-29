@@ -543,9 +543,9 @@ fn memory_only_values_are_never_first_class() {
 
 /// A waiting program whose waiting calls take and return union-laid-out
 /// enums (design/compiler/waiting-contexts.md): `build` returns one through
-/// its destination to a direct waiting call, two bound `mustpar` starts
-/// construct one each in the starting frame's slot, which their awaits move
-/// into the bindings [WAIT-2], a third bound start's binding is released
+/// its destination to a direct waiting call, two bound spawns construct
+/// one each in the starting frame's slot, which their awaits move into the
+/// bindings [WAIT-3], a third bound start's binding is released
 /// without being read, and an unbound start takes one by value into its
 /// context's argument block, whose wrapper consumes it. `Piece` is a union
 /// enum nested in `Holder`'s `Nested` variant.
@@ -621,11 +621,11 @@ fn weight(holder: Holder) -> result: u64 pure waits {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let direct = build(kind: 0_u64, seed: 3_u64);
-  let first = mustpar build(kind: 2_u64, seed: 5_u64);
-  let second = mustpar build(kind: 1_u64, seed: 7_u64);
+  let first = spawn build(kind: 2_u64, seed: 5_u64);
+  let second = spawn build(kind: 1_u64, seed: 7_u64);
   let given = build(kind: 0_u64, seed: 9_u64);
-  mustpar weight(holder: move given);
-  let kept = mustpar build(kind: 2_u64, seed: 11_u64);
+  spawn weight(holder: move given);
+  let kept = spawn build(kind: 2_u64, seed: 11_u64);
   let direct_weight = weight(holder: move direct);
   if direct_weight != 7_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -709,7 +709,7 @@ fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
 fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
   for @start (index in 0_u64..4_u64) {
     let handle = shared_share::<Holder>(shared: held);
-    mustpar fill(held: move handle, seed: index);
+    spawn fill(held: move handle, seed: index);
   }
   return unit;
 }

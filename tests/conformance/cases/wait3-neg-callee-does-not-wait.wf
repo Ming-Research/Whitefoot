@@ -1,0 +1,8 @@
+fn weigh(weight: u8) -> result: u8 pure {
+  return weight;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let weight = spawn weigh(weight: 7_u8);
+  return std::process::exit_status(code: weight);
+}

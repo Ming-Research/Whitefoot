@@ -227,7 +227,7 @@ void *wf__context_operation(void);
  * returns nonzero, after which the frame suspends. */
 int wf__context_wait(void *operation, void *frame);
 
-/* [PAR-4] a context start: `wf__context_prepare` makes the context and
+/* [WAIT-3] a context start: `wf__context_prepare` makes the context and
  * returns an argument block of `bytes` from its arena, and
  * `wf__context_launch` calls `start` on that block, in the new context, to
  * make its outermost frame, and makes it ready.  `group` is the two words

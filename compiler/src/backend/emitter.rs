@@ -495,7 +495,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         text.text("\n");
         text.append(frames::frame_runtime_declarations());
     }
-    // [PAR-4] a module that starts no context names no context thunk.
+    // [WAIT-3] a module that starts no context names no context thunk.
     if thunks.starts_contexts() {
         text.text("\n");
         text.append(thunks.take_context_definitions());

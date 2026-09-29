@@ -8,7 +8,7 @@ fn consume(cell: Shared<u8>) -> result: u8 pure waits {
 
 fn run(cell: &Shared<u8>) -> result: u8 reads(cell) waits {
   let watched = shared_share::<u8>(shared: cell);
-  let seen = consume(cell: move watched);
+  let seen = spawn consume(cell: move watched);
   for @write (round in 0_u64..2_u64) {
     atomic value = &cell^ {
       set value^ = value^ +wrap 3_u8;

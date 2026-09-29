@@ -2012,8 +2012,8 @@ each is resolved by a discussion and a tree change.
   observed. The admitted candidates are a context writing an output of its
   own, a record sink whose observation is the set of records rather than
   their order, and a result that the starter joins where it uses it, which
-  kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
-  whose starter can wait for it, not for an accept loop that never ends.
+  [WAIT-3] admits as `let r = spawn f(…)` but only for a call whose starter
+  can wait for it, not for an accept loop that never ends.
   Reopen when a context-serving program needs to log or report.
 - **ENT-3.S6 names only the bound range's length fact.** S6 establishes
   `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that

@@ -813,7 +813,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
             let factory = factory_share(factory: &handles);
             let handle = shared_share::<Store>(shared: &keyspace);
-            mustpar serve(connection: move connection, factory: move factory, store: move handle);
+            spawn serve(connection: move connection, factory: move factory, store: move handle);
           }
           Err(error: problem) => {
             break @accepting;

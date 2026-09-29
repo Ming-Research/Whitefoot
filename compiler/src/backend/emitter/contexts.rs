@@ -1,8 +1,7 @@
-//! [PAR-4] lowering of a started context and of the join every activation
-//! that starts one owes before it leaves.
+//! [WAIT-3] lowering of a spawn's context and of the join every activation
+//! that spawns owes before it leaves.
 //!
-//! A started waiting call, marked `mustpar` or reaching a guard [SHARE-3],
-//! reaches the target as
+//! A spawned waiting call reaches the target as
 //! [`IrOperation::ContextStart`] over a synthesized wrapper that takes the
 //! call's arguments by value, makes the call and drops its result. The
 //! wrapper waits, so it is a resumable frame like every waiting function

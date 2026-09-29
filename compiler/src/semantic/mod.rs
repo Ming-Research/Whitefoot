@@ -77,8 +77,8 @@ pub enum SemanticRule {
     Mod5,
     /// A public signature naming an unpublished field [MOD-6].
     Mod6,
-    /// `mustpar`: its position and the condition its form states.
-    Par4,
+    /// Spawns: their position and their callee's conditions.
+    Wait3,
     /// Atomic statements: the target's type, and a guard or block free of
     /// waiting calls, nested atomic statements and guard writes.
     Share2,
@@ -268,7 +268,7 @@ impl SemanticRule {
             Self::Fn9 => "FN-9",
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
-            Self::Par4 => "PAR-4",
+            Self::Wait3 => "WAIT-3",
             Self::Share2 => "SHARE-2",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
@@ -356,8 +356,8 @@ impl SemanticRule {
             Self::Err2 => Self::Err3,
             Self::Err3 => Self::Mod5,
             Self::Mod5 => Self::Mod6,
-            Self::Mod6 => Self::Par4,
-            Self::Par4 => Self::Share2,
+            Self::Mod6 => Self::Wait3,
+            Self::Wait3 => Self::Share2,
             Self::Share2 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
@@ -433,7 +433,7 @@ impl SemanticRule {
             Self::Err3 => 52,
             Self::Mod5 => 53,
             Self::Mod6 => 54,
-            Self::Par4 => 55,
+            Self::Wait3 => 55,
             Self::Share2 => 56,
             Self::Ent2 => 57,
             Self::Msr3 => 58,
@@ -1103,10 +1103,9 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A `mustpar` statement failed its position or its form's condition
-    /// [PAR-4].
-    InvalidMustpar {
-        /// The failed condition, or the denied permission's reason.
+    /// A spawn failed its position or its callee's condition [WAIT-3].
+    InvalidSpawn {
+        /// The failed condition.
         condition: String,
     },
     /// A call-site tail-transfer guarantee failed its named condition.

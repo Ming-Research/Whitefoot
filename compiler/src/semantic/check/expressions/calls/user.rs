@@ -255,10 +255,8 @@ impl<'unit> Checker<'_, 'unit> {
         if signature.waits {
             let call = self.types.declarations.tree.path(node)?.clone();
             self.body.waiting.calls.push(call);
-            if self.types.declarations.is_mustpar_marked(node)? {
-                self.check_waiting_mustpar(check_context, node, signature)?;
-            } else {
-                self.record_context_candidate(check_context, node, signature)?;
+            if self.types.declarations.is_spawn(node)? {
+                self.check_spawn(check_context, node, signature)?;
             }
         }
         let target = signature.id;

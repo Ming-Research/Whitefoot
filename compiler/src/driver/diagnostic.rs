@@ -893,7 +893,7 @@ impl Report for SemanticIssueKind {
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
-            InvalidMustpar { condition };
+            InvalidSpawn { condition };
             InvalidMusttail { condition, subject };
             PolymorphicRecursion { cycle, mechanical_fix };
             UnreachableStatement;

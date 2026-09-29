@@ -688,7 +688,7 @@ struct IrBuilder<'program> {
     synthesis: &'program SynthesisCell,
     /// The source function this body belongs to, for the actualization ledger.
     function_name: &'program str,
-    /// [PAR-4] the statements of this body that start a context. Empty in
+    /// [WAIT-3] the statements of this body that start a context. Empty in
     /// every synthesized function: a wrapper, chunk or splitter starts none.
     context_starts: Vec<NodePath>,
     /// [WAIT-2] for each started waiting `let`, how many statements after it
@@ -1197,7 +1197,7 @@ impl<'program> IrBuilder<'program> {
                             .tail_entry
                             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                         // A self transfer replaces this activation, which is
-                        // an exit [PAR-4, SHARE-2].
+                        // an exit [WAIT-3, SHARE-2].
                         self.leave_atomics(0)?;
                         self.join_contexts()?;
                         self.terminate(IrTerminator::Jump {

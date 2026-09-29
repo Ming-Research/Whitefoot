@@ -107,7 +107,7 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("set", "Set"),
         ("return", "Return"),
         ("musttail", "Musttail"),
-        ("mustpar", "Mustpar"),
+        ("spawn", "Spawn"),
         ("waits", "Waits"),
         ("loop", "Loop"),
         ("break", "Break"),

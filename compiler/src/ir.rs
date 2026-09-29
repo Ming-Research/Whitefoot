@@ -783,14 +783,14 @@ pub enum IrOperation {
         function: u32,
         arguments: Vec<IrValueId>,
     },
-    /// [PAR-4] starts `function`, a synthesized wrapper taking exactly
+    /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
     /// `arguments` by value and returning `Unit`, in a context of its own;
     /// the activation continues without waiting for it. Defines `Unit`.
     ContextStart {
         function: u32,
         arguments: Vec<IrValueId>,
     },
-    /// [PAR-4] waits until every context this activation started has
+    /// [WAIT-3] waits until every context this activation started has
     /// finished. It stands before every exit of an activation that starts
     /// one. Defines `Unit`.
     ContextJoin,

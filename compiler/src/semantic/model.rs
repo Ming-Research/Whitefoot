@@ -2776,8 +2776,8 @@ pub(crate) struct CheckedFunction {
     /// Finite optional [PAR-1] range questions planned from the complete
     /// structural footprints before entailment walks their first statements.
     pub(crate) permission_separation_queries: Vec<super::permission::PermissionSeparationQuery>,
-    /// [WAIT-1, PAR-4] whether this function waits, which of its calls wait,
-    /// and what its `mustpar` markers state.
+    /// [WAIT-1, WAIT-3] whether this function waits, which of its calls
+    /// wait, and which of its statements spawn.
     pub(crate) waiting: CheckedWaiting,
     /// Every mandatory obligation of the completed function, which the
     /// analysis answers one by one and acceptance requires discharged.
@@ -2789,12 +2789,11 @@ pub(crate) struct CheckedFunction {
     pub(crate) entailment: super::entailment::FunctionEntailment,
 }
 
-/// [WAIT-1, PAR-4] the waiting facts of one function body, in source order.
+/// [WAIT-1, WAIT-3] the waiting facts of one function body, in source order.
 ///
 /// Permission reads `calls` to deny overlap to a statement that waits, and
-/// the `mustpar` validation reads `independent` against the finished
-/// permission table. Lowering reads `waits`, `context_starts` and
-/// `context_awaits`; nothing else here reaches it.
+/// plans the joins of `context_starts`. Lowering reads `waits`,
+/// `context_starts` and `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
     /// Whether the declaration writes `waits` [WAIT-1].
@@ -2802,35 +2801,16 @@ pub(crate) struct CheckedWaiting {
     /// Every call whose selected callee waits, by call node: through a
     /// function-kind formal, the formal's `waits` decides [WAIT-1].
     pub(crate) calls: Vec<NodePath>,
-    /// Every construct a `mustpar` marks under PAR-4's first two forms, whose
-    /// statement the permission judgment must permit.
-    pub(crate) independent: Vec<CheckedMustpar>,
-    /// Every `expr_stmt` or `let_stmt` PAR-4's third form marks, which this
-    /// compiler runs as a context of its own [WAIT-2], and every candidate
-    /// below whose callee may wait for an atomic statement's guard [SHARE-3].
+    /// Every `expr_stmt` or `let_stmt` whose call is a spawn, which starts a
+    /// context [WAIT-3].
     pub(crate) context_starts: Vec<NodePath>,
-    /// Every unmarked `expr_stmt` or `let_stmt` whose call [WAIT-2] permits
-    /// to execute alongside the statements after it, with its callee; the
-    /// checker adds a candidate to `context_starts` once every body is
-    /// checked and its callee is known to reach a guard or not.
-    pub(crate) context_candidates: Vec<CheckedContextCandidate>,
     /// Where each `let_stmt` of `context_starts` waits for its context: the
     /// number of statements after it in its block at which the binding is
     /// first named or the block may be left, or `None` when no later
     /// statement of the block is either, so the context is joined at the
-    /// block's end. The permission analysis fills it after the checker, so
-    /// the join precedes every read, write and release of the binding
-    /// [WAIT-2] and no statement before them [SHARE-3].
+    /// block's end, as [WAIT-3] places the join. The permission analysis
+    /// fills it after the checker.
     pub(crate) context_awaits: Vec<CheckedContextAwait>,
-}
-
-/// [WAIT-2, SHARE-3] one unmarked call the permission covers.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedContextCandidate {
-    /// The `expr_stmt` or `let_stmt` holding the call.
-    pub(crate) statement: NodePath,
-    /// The selected callee.
-    pub(crate) callee: FunctionId,
 }
 
 /// [WAIT-2] where one bound context start is joined.
@@ -2841,19 +2821,6 @@ pub(crate) struct CheckedContextAwait {
     /// How many statements after it the join stands before, within its
     /// block; `None` joins at the block's end.
     pub(crate) before: Option<u32>,
-}
-
-/// One `mustpar` whose statement is proved by [PAR-1] or [PAR-2].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedMustpar {
-    /// The marked statement: the `for_stmt`, or the `expr_stmt` or `let_stmt`
-    /// holding the marked call.
-    pub(crate) statement: NodePath,
-    /// The marked node a refusal cites: the `for_stmt` or the `call`.
-    pub(crate) marker: NodePath,
-    /// Whether the marker stands on a `for_stmt` [PAR-2] rather than a call
-    /// [PAR-1].
-    pub(crate) counted_loop: bool,
 }
 
 /// One [OWN-7] separation question the checker could not settle by syntax.

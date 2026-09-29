@@ -13,7 +13,7 @@ fn bump_many(counter: Shared<u64>) -> result: unit pure waits {
 fn count_together(counter: &Shared<u64>) -> result: unit reads(counter) waits {
   for @start (index in 0_u64..16_u64) {
     let handle = shared_share::<u64>(shared: counter);
-    mustpar bump_many(counter: move handle);
+    spawn bump_many(counter: move handle);
   }
   return unit;
 }
@@ -43,10 +43,10 @@ fn consume(queue: Shared<Ring<u64, 8>>, total: Shared<u64>) -> result: unit pure
 fn pass_along(queue: &Shared<Ring<u64, 8>>, total: &Shared<u64>) -> result: unit reads(queue), reads(total) waits {
   for @start (index in 0_u64..4_u64) {
     let produced = shared_share::<Ring<u64, 8>>(shared: queue);
-    mustpar produce(queue: move produced);
+    spawn produce(queue: move produced);
     let consumed = shared_share::<Ring<u64, 8>>(shared: queue);
     let summed = shared_share::<u64>(shared: total);
-    mustpar consume(queue: move consumed, total: move summed);
+    spawn consume(queue: move consumed, total: move summed);
   }
   return unit;
 }

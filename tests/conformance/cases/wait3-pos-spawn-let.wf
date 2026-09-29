@@ -1,11 +1,13 @@
-fn close_it(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit pure waits {
+fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u8) -> result: u8 pure waits {
   std::fs::close_directory(factory: &factory, directory: move directory);
-  return unit;
+  return weight;
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   let factory = std::io::factory_share(factory: &handles);
-  mustpar close_it(factory: move factory, directory: move cwd);
-  return std::process::exit_status(code: 0_u8);
+  let weight = spawn weigh(factory: move factory, directory: move cwd, weight: 7_u8);
+  let other = 5_u8;
+  let total = weight +wrap other;
+  return std::process::exit_status(code: total);
 }

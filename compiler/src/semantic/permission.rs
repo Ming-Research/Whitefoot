@@ -331,11 +331,7 @@ pub(crate) struct FunctionPermissions {
     /// The [PAR-2] verdict of every counted loop of this function, in source
     /// order.
     pub(crate) loops: Vec<LoopPermission>,
-    /// [PAR-4] the verdict of every `mustpar` call statement with the
-    /// statement after it, or `None` where no statement follows in its block.
-    /// Acceptance reads it; the ledger does not print it.
-    pub(crate) marked: Vec<(NodePath, Option<PermissionVerdict>)>,
-    /// [WAIT-2] where each started waiting `let` is joined, in source order.
+    /// [WAIT-3] where each bound spawn is joined, in source order.
     /// The checker installs it on the function for lowering.
     pub(crate) context_awaits: Vec<super::model::CheckedContextAwait>,
 }
@@ -530,30 +526,14 @@ impl<'check> Program<'check> {
             pairs: Vec::new(),
             runs: Vec::new(),
             loops: Vec::new(),
-            marked: Vec::new(),
             context_awaits: Vec::new(),
         };
-        let marked = function
-            .waiting
-            .independent
-            .iter()
-            .filter(|marked| !marked.counted_loop)
-            .map(|marked| &marked.statement)
-            .collect::<Vec<_>>();
         let mut blocks = vec![function.body.as_deref().unwrap_or_default()];
         while let Some(block) = blocks.pop() {
             self.analyze_block(
                 &places,
                 &function.waiting.calls,
                 block,
-                &function.entailment.permission_separations,
-                &mut permissions,
-            );
-            self.judge_marked(
-                &places,
-                &function.waiting.calls,
-                block,
-                &marked,
                 &function.entailment.permission_separations,
                 &mut permissions,
             );
@@ -641,44 +621,13 @@ impl<'check> Program<'check> {
         self.collect_runs(&classified, proofs, permissions);
     }
 
-    /// [PAR-4] the verdict of every `mustpar` call statement of one block
-    /// with its successor, whatever the successor's form. The ledger's pairs
-    /// omit an adjacency neither member of which is a named call, and a
-    /// marker must still be answered there.
-    fn judge_marked(
-        &self,
-        places: &PlaceMap,
-        waiting: &[NodePath],
-        block: &'check [CheckedStatement],
-        marked: &[&NodePath],
-        proofs: &[PermissionSeparationProof],
-        permissions: &mut FunctionPermissions,
-    ) {
-        for (index, statement) in block.iter().enumerate() {
-            let Some(node) = statement_node_path(statement) else {
-                continue;
-            };
-            if !marked.contains(&node) {
-                continue;
-            }
-            let verdict = block.get(index + 1).map(|next| {
-                self.judge(
-                    &self.classify_waiting(places, waiting, statement),
-                    &self.classify_waiting(places, waiting, next),
-                    proofs,
-                )
-            });
-            permissions.marked.push((node.clone(), verdict));
-        }
-    }
-
-    /// [WAIT-2] where each started waiting `let` of one block is joined:
-    /// before the first later statement of the block that
-    /// [`Self::requires_bound_result`] finds needs its result, and otherwise
-    /// at the block's end. A statement that waits, or that holds a block, is
-    /// looked into rather than refused: the permission lets the call proceed
-    /// alongside later statements, waiting ones included, and only a use of
-    /// its binding or a way out of its block needs its result.
+    /// [WAIT-3] where each bound spawn of one block is joined: before the
+    /// first later statement of the block that
+    /// [`Self::requires_bound_result`] finds names its binding or leaves the
+    /// block, and otherwise at the block's end. A statement that waits, or
+    /// that holds a block, is looked into rather than refused, since the
+    /// join's place is observable: a join too early would wait for a context
+    /// whose guard only a later statement makes true.
     fn plan_context_awaits(
         &self,
         places: &PlaceMap,
@@ -710,17 +659,15 @@ impl<'check> Program<'check> {
         }
     }
 
-    /// Whether a later statement of a bound start's block requires the
-    /// context to have completed before it [WAIT-2]: the statement may leave
-    /// the block, which releases the binding, or an expression, set target or
-    /// statement it holds names the binding, which every read, write, release
-    /// and reference formation of it does, since nothing reaches the binding
-    /// before a statement names it. A resolved footprint that reaches the
-    /// binding also requires it, as a second account of the same accesses. A
-    /// compound statement is looked into rather than refused, and an
-    /// unresolved footprint is no reason to wait, so the starter never waits
-    /// for the context before the point [WAIT-2] requires, which is what lets
-    /// a statement that makes the context's guard true run first [SHARE-3].
+    /// Whether a later statement of a bound spawn's block is where [WAIT-3]
+    /// joins the context: the statement may leave the block, which releases
+    /// the binding, or an expression, set target or statement it holds names
+    /// the binding, which every read, write, release and reference formation
+    /// of it does, since nothing reaches the binding before a statement names
+    /// it. A resolved footprint that reaches the binding also requires it, as
+    /// a second account of the same accesses. A compound statement is looked
+    /// into rather than refused, and an unresolved footprint is no reason to
+    /// wait, so the starter never joins before the point [WAIT-3] fixes.
     fn requires_bound_result(
         &self,
         places: &PlaceMap,
@@ -791,6 +738,9 @@ impl<'check> Program<'check> {
             }
             CheckedStatement::Break { target, .. } => !inner.loops.contains(target),
             CheckedStatement::Give { value, .. } => inner.values == 0 || expression(value),
+            // The permission judgment does not classify a statement that
+            // binds a result list [CALL-4], but its one value is all it reads.
+            CheckedStatement::DestructuringLet { value, .. } => expression(value),
             _ => match self.classify(places, statement).footprint {
                 Err(_) => true,
                 Ok(footprint) => leaf_names(statement, binding) || reaches(&footprint),
@@ -1078,7 +1028,7 @@ impl<'check> Program<'check> {
             }
             // [SHARE-2] an atomic statement counts as a waiting call, which
             // `classify_waiting` refuses by its node; the join plan looks
-            // into it instead [SHARE-3].
+            // into it instead [WAIT-3].
             CheckedStatement::Atomic { node_path, .. } => (
                 Some(node_path),
                 None,
@@ -1251,17 +1201,6 @@ impl<'check> Program<'check> {
             let node = call.argument_nodes.get(index).unwrap_or(call.call);
             collect_operand_reads(places, argument, node, footprint);
         }
-    }
-}
-
-/// The node of a statement that carries one, as [`PermissionSite::statement`]
-/// names it.
-fn statement_node_path(statement: &CheckedStatement) -> Option<&NodePath> {
-    match statement {
-        CheckedStatement::Let { node_path, .. }
-        | CheckedStatement::Evaluate { node_path, .. }
-        | CheckedStatement::DropExpression { node_path, .. } => Some(node_path),
-        _ => None,
     }
 }
 

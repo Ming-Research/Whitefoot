@@ -260,7 +260,7 @@ expr_stmt   := call ";"
 return_stmt := "return" expr ("," expr)* ";"
 loop_stmt   := "loop" LABEL? ("(" header_invariant ("," header_invariant)* ")")?
                "{" stmt* "}"
-for_stmt    := "mustpar"? "for" LABEL? "(" for_binding ("," header_invariant)* ")"
+for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ")"
                "{" stmt* "}"
 for_binding := IDENT "in" atom ".." atom
 header_invariant := "invariant" IDENT ":" affine_expr compare_op affine_expr
@@ -295,7 +295,7 @@ infix_op       := "+" | "+wrap" | "+defined" | "+checked" | "+sat"
                 | "%" | "%defined" | "%checked"
 compare_op     := "==" | "!=" | "<" | "<=" | ">" | ">="
 atom           := literal | "move" place | place | borrow_expr
-call           := ("musttail" | "mustpar")? callee ("::" targs)? "(" ( atom_list | fieldinit_list )? ")"
+call           := ("musttail" | "spawn")? callee ("::" targs)? "(" ( atom_list | fieldinit_list )? ")"
 callee         := OPNAME | IDENT ("::" callee_path)? | ("pkg" | "std") "::" callee_path
                 | pack_use ("::" (IDENT | TYPEID))?
 callee_path    := IDENT ("::" callee_path)? | pack_use ("::" (IDENT | TYPEID))?
@@ -1490,7 +1490,7 @@ An unmarked call carries no tail-transfer guarantee. The guarantee bounds only s
 The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
 A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
 A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
-A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1], which [WAIT-2] permits an implementation to execute in a context of its own.
+A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1] in its caller's context unless it is spawned [WAIT-3].
 The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
 ## 9. Effects
@@ -2085,8 +2085,8 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 ## 13. Execution overlap
 
-[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [PAR-4].
-The kernel defines no thread construct: a context [WAIT-2] other than the root is a waiting call that an implementation executes alongside the statements after it, whose footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
+[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [WAIT-3].
+The kernel defines no thread construct: its one concurrency construct is the spawn [WAIT-3], whose context's footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 A shared object [SHARE-1] adds no overlap permission.
 
 [PAR-1] An implementation may execute two adjacent statements of one block with overlapping execution exactly when the first's write paths are disjoint from the second's read and write paths and the second's write paths are disjoint from the first's, using the same path-overlap and index/range-disjointness judgment as [EFF-5] and [OWN-7].
@@ -2156,24 +2156,27 @@ Of two host operations that execute in one context, the earlier takes effect on 
 Operations with disjoint footprints have no host order: an overlapped statement or iteration [PAR-1, PAR-2] and a context [WAIT-2] may produce host effects interleaved in any way with an independent statement, including while an earlier independent statement has not completed or never completes.
 A program that needs two host operations ordered passes both through one owner whose state both reach [EFF-1, EFF-5].
 
-[PAR-4] The optional `mustpar` atom on a `for_stmt` [GRAM-4] or on a `call` [GRAM-5] states that the marked construct proceeds independently of what follows it, and the checker must prove that statement:
-
-1. On a `for_stmt`, [PAR-2]'s permission holds for that loop.
-2. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee does not wait [WAIT-1], a next statement of the same block follows the marked statement and [PAR-1]'s permission holds for the two.
-3. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee waits, [WAIT-2]'s permission holds for that statement.
-
-A `mustpar` in any other position, and a marked construct whose stated condition does not hold, is a hard error citing PAR-4 at the marked `for_stmt` or `call`, carrying the failed condition or the denied permission [DIAG-1].
-In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, so whether an implementation overlaps the marked construct is decided as for the same construct unmarked [PAR-1, PAR-2, WAIT-2, SHARE-3].
-
-[WAIT-2] The meaning of an execution is its sequential execution: one control flow that executes every construct in the order it defines, starting with the entry [PROG-3].
+[WAIT-2] An execution consists of contexts: the entry [PROG-3] executes in the root context, and each spawn [WAIT-3] starts one further context, which executes the spawned call.
+Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
-An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1] alongside the statements that follow it in its activation exactly when every parameter of the callee is a value parameter [GRAM-3] and the callee's result has the drop capability [OWN-1]; the call then completes and releases its result before the activation leaves by any edge [FN-1, ERR-3].
-An implementation may execute the `call` of the `ordinary_let_rhs` of a `let_stmt` whose callee waits alongside the statements that follow that `let_stmt` in its block exactly when every parameter of the callee is a value parameter; the call then completes, and the binding holds its result, before the binding is next read, written or released [OWN-1] and before the activation leaves by any edge.
-Such a call's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, its binding, so no statement it executes alongside overlaps it, and its host effects follow [HOST-1].
-A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on one shared object [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
-Where a context executes, and whether one context proceeds while another waits for the host, are not observable.
-Which of the calls this rule permits execute as contexts is the implementation's choice, which [SHARE-3] constrains while an atomic statement waits for its guard; an implementation that executes every call in order conforms on every execution in which no atomic statement waits for its guard.
+A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on one shared object [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
+Where a context executes, and whether two contexts execute at the same time, are not observable.
+While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its object's state at every point from some point on, eventually takes effect.
+An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
+
+[WAIT-3] Spawns.
+A `call` that carries the `spawn` atom [GRAM-5] is a spawn.
+A spawn is admitted as the call of an `expr_stmt` or of the `ordinary_let_rhs` of a `let_stmt` when its callee waits [WAIT-1], every parameter of its callee is a value parameter [GRAM-3], and, as the call of an `expr_stmt`, its callee's result has the drop capability [OWN-1].
+A spawn in any other position, and one whose callee fails a condition, is a hard error citing WAIT-3 at that `call`, carrying the failed condition [DIAG-1].
+A spawn is a waiting call for [WAIT-1], [PAR-1] and [PAR-2].
+Executing a spawn evaluates its arguments in the starting context, moving or copying each into the call [FN-1], starts a context that executes the call, and continues the starting context with the statement after the spawn's statement.
+The started context's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, the binding, so no statement of the starting context overlaps it, and its host effects follow [HOST-1].
+The starting context joins the started one, waiting there until it has completed [WAIT-2]:
+
+1. for an `expr_stmt`, when the activation that executed the spawn leaves by any edge [FN-1, ERR-3], the started context having released the call's result;
+2. for a `let_stmt`, at the beginning of the first later statement of the `let_stmt`'s block that names the binding or contains an edge leaving that block [ERR-3, GIVE-1], and otherwise at that block's end; the binding holds the call's result from the join on.
 
 [SHARE-1] Shared objects.
 A value of the prelude type `Shared<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
@@ -2185,7 +2188,7 @@ A shared object's state is storage of no binding and belongs to no context [WAIT
 An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `IDENT`; a block; and optionally a guard, the `expr` after `when`.
 The target has type `Shared<T>`, and the statement reads the target place when it begins. The object stays live until the statement completes, whatever its block does with the target place [SHARE-1].
 The binding is a reference variable of kind `&T` whose path is the state of the object the target names [REF-1]. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
-An atomic statement counts as a waiting call for [WAIT-1], [PAR-1], [PAR-2] and [PAR-4], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`. Its guard and its block contain no waiting call and no atomic statement.
+An atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`. Its guard and its block contain no waiting call and no atomic statement.
 The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt` or guard `expr`, with a repair [DIAG-1].
 The statement's footprint is its target place, read, together with the footprint of its guard and block from which every path rooted at the object's state is removed.
@@ -2194,9 +2197,7 @@ The statement's footprint is its target place, read, together with the footprint
 Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
 The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
-A statement that has begun and has not taken effect waits for its guard while its guard is false in the object's state.
-While a statement waits for its guard, each call whose execution contains the statement and that [WAIT-2] permits to execute alongside the statements after it executes as a context, and the call's starter waits for it only before or within a statement that names the call's binding or holds a point at which [WAIT-2] requires the call to have completed.
-When each context, from every point of its execution, reaches in finitely many steps its completion or a point at which it waits for its guard, for a context that has not completed or for a host operation whose outcome has not arrived, every context that waits for no guard, no context and no host operation proceeds, and each statement that has begun, and that has no guard or whose guard is true in the object's state at every point from some point on, takes effect.
+A statement that has begun and has not taken effect waits for its guard while its guard is false in the object's state, and [WAIT-2] states when it takes effect.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
 ## 14. Prelude and host modules (normative, counted)

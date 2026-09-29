@@ -523,7 +523,7 @@ fn contexts_on_four_drivers_serve_every_peer_and_finish_before_the_entry() {
     }
 }
 
-/// Two bound `mustpar` fetches proceed together [WAIT-2]: the first server
+/// Two bound spawned fetches proceed together [WAIT-3]: the first server
 /// answers only once the second has received its request, which a program
 /// that waited for the first fetch's byte before sending the second request
 /// never sends. Each result is joined where it is first used, the sum.

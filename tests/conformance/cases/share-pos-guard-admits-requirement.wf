@@ -9,7 +9,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let empty = ring_new::<u64, 4>();
   let queue = shared_new::<Ring<u64, 4>>(value: move empty);
   let other = shared_share::<Ring<u64, 4>>(shared: &queue);
-  mustpar fill(queue: move other);
+  spawn fill(queue: move other);
   let got = 0_u64;
   atomic items = &queue when items^.len > 0_u64 {
     set got = take_front(window: items);

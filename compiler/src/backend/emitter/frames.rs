@@ -393,7 +393,7 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
-    /// [PAR-4] the join before an exit: a suspension until every context
+    /// [WAIT-3] the join before an exit: a suspension until every context
     /// this activation started has finished, when any has not.
     pub(super) fn emit_frame_join(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
         self.emit_group_join(result, super::contexts::GROUP)

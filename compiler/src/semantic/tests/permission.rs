@@ -2532,7 +2532,7 @@ fn bound_await(body: &str) -> Option<u32> {
          fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
          let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;\n  \
          let factory = std::io::factory_share(factory: &handles);\n  \
-         let bound = mustpar weigh(factory: move factory, directory: move cwd, weight: 7_u64);\n\
+         let bound = spawn weigh(factory: move factory, directory: move cwd, weight: 7_u64);\n\
          {body}\n  return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     with_semantics(source.as_bytes(), |outcome| {
@@ -2620,15 +2620,15 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
     );
 }
 
-/// [WAIT-2, SHARE-3] where the one started waiting `let` of `main` is
-/// joined, for a `main` body written whole: `weigh` waits and returns its
-/// argument, and `guarded` waits on an atomic statement's guard, so a call of
-/// it starts a context unmarked.
+/// [WAIT-3] where the one bound spawn of `main` is joined, for a `main` body
+/// written whole: `weigh` waits and returns its argument, `guarded` waits on
+/// an atomic statement's guard, and `pair` returns two results.
 fn started_await(body: &str) -> Option<u32> {
     let source = format!(
         "fn weigh(weight: u64) -> result: u64 pure waits {{\n  return weight;\n}}\n\n\
          fn guarded(cell: Shared<u64>) -> result: u64 pure waits {{\n  let seen = 0_u64;\n  \
          atomic value = &cell when value^ != 0_u64 {{\n    set seen = value^;\n  }}\n  return seen;\n}}\n\n\
+         fn pair(value: u64) -> (low: u64, high: u64) pure {{\n  return value, value;\n}}\n\n\
          fn main() -> status: std::process::ExitStatus pure waits {{\n{body}\n  \
          return std::process::exit_status(code: 0_u8);\n}}\n"
     );
@@ -2654,7 +2654,7 @@ fn started_await(body: &str) -> Option<u32> {
 fn a_bound_context_is_joined_before_a_break_that_leaves_its_block() {
     let body = |target: &str| {
         format!(
-            "  loop @outer {{\n    let bound = mustpar weigh(weight: 7_u64);\n    loop @spin {{\n      \
+            "  loop @outer {{\n    let bound = spawn weigh(weight: 7_u64);\n    loop @spin {{\n      \
              break @{target};\n    }}\n    let total = bound +wrap 1_u64;\n    break @outer;\n  }}"
         )
     };
@@ -2669,7 +2669,7 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
     // A `give` inside a value construct delivers to that construct.
     assert_eq!(
         started_await(
-            "  let bound = mustpar weigh(weight: 7_u64);\n  let limit = 5_u64;\n  \
+            "  let bound = spawn weigh(weight: 7_u64);\n  let limit = 5_u64;\n  \
              let picked = if limit > 3_u64 {\n    give 1_u64;\n  } else {\n    give 2_u64;\n  }\n  \
              let total = bound +wrap picked;"
         ),
@@ -2679,7 +2679,7 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
     assert_eq!(
         started_await(
             "  let limit = 5_u64;\n  let picked = if limit > 3_u64 {\n    \
-             let bound = mustpar weigh(weight: 7_u64);\n    let other = 2_u64;\n    give other;\n  \
+             let bound = spawn weigh(weight: 7_u64);\n    let other = 2_u64;\n    give other;\n  \
              } else {\n    give 2_u64;\n  }\n  let total = picked +wrap 1_u64;"
         ),
         Some(2)
@@ -2689,7 +2689,7 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
 #[test]
 fn a_bound_context_is_joined_before_an_atomic_statement_or_match_that_names_it() {
     let prefix = "  let cell = shared_new::<u64>(value: 0_u64);\n  \
-                  let bound = mustpar weigh(weight: 7_u64);\n";
+                  let bound = spawn weigh(weight: 7_u64);\n";
     // The block names the binding.
     assert_eq!(
         started_await(&format!(
@@ -2730,7 +2730,7 @@ fn a_bound_context_is_joined_before_an_atomic_statement_or_match_that_names_it()
 
 #[test]
 fn a_bound_context_is_joined_before_a_loop_bound_or_scrutinee_that_names_it() {
-    let prefix = "  let bound = mustpar weigh(weight: 7_u64);\n  let limit = 5_u64;\n";
+    let prefix = "  let bound = spawn weigh(weight: 7_u64);\n  let limit = 5_u64;\n";
     // A `for` bound names the binding.
     assert_eq!(
         started_await(&format!(
@@ -2756,95 +2756,74 @@ fn a_bound_context_is_joined_before_a_loop_bound_or_scrutinee_that_names_it() {
 }
 
 #[test]
-fn an_unmarked_bound_call_that_reaches_a_guard_starts_and_is_joined_at_first_use() {
+fn a_bound_spawn_that_waits_for_a_guard_is_joined_at_first_use() {
     assert_eq!(
         started_await(
             "  let cell = shared_new::<u64>(value: 0_u64);\n  \
-             let other = shared_share::<u64>(shared: &cell);\n  let seen = guarded(cell: move other);\n  \
+             let other = shared_share::<u64>(shared: &cell);\n  let seen = spawn guarded(cell: move other);\n  \
              atomic value = &cell {\n    set value^ = 3_u64;\n  }\n  let total = seen +wrap 1_u64;"
         ),
         Some(2)
     );
 }
 
-/// [SHARE-3] the statements of `main` an unmarked call starts as contexts,
-/// given the atomic statement `worker` holds.
-fn unmarked_starts(atomic: &str) -> usize {
+#[test]
+fn a_bound_spawn_runs_on_through_a_destructuring_let_that_names_nothing() {
+    // The permission judgment does not classify a statement that binds a
+    // result list, and the plan once joined before one whatever it named.
+    assert_eq!(
+        started_await(
+            "  let bound = spawn weigh(weight: 7_u64);\n  let (low, high) = pair(value: 3_u64);\n  \
+             let total = bound +wrap low;"
+        ),
+        Some(2)
+    );
+    assert_eq!(
+        started_await(
+            "  let bound = spawn weigh(weight: 7_u64);\n  let (low, high) = pair(value: bound);\n  \
+             let total = low +wrap high;"
+        ),
+        Some(1)
+    );
+}
+
+/// [WAIT-2] how many statements of `main` and of `relay` start a context
+/// when neither spawns, given the atomic statement `worker` holds.
+fn unspawned_starts(atomic: &str) -> usize {
     let source = format!(
         "fn worker(cell: Shared<u8>) -> result: unit pure waits {{\n  let seen = 0_u8;\n  {atomic}\n  return unit;\n}}\n\n\
          fn relay(cell: Shared<u8>) -> result: unit pure waits {{\n  worker(cell: move cell);\n  return unit;\n}}\n\n\
          fn main() -> status: std::process::ExitStatus pure waits {{\n  \
-         let cell = shared_new::<u8>(value: 0_u8);\n  \
+         let cell = shared_new::<u8>(value: 1_u8);\n  \
          let other = shared_share::<u8>(shared: &cell);\n  \
          relay(cell: move other);\n  \
          return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
-            panic!("unmarked start fixture must check: {outcome:?}");
+            panic!("unspawned fixture must check: {outcome:?}");
         };
-        let main = program
+        program
             .data
             .functions
             .iter()
-            .find(|function| function.name == "main")
-            .expect("main");
-        let relay = program
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "relay")
-            .expect("relay");
-        assert_eq!(
-            main.waiting.context_starts.len(),
-            relay.waiting.context_starts.len(),
-            "the call in main reaches the worker's statement through relay's"
-        );
-        main.waiting.context_starts.len()
+            .filter(|function| function.name == "main" || function.name == "relay")
+            .map(|function| function.waiting.context_starts.len())
+            .sum()
     })
 }
 
 #[test]
-fn an_unmarked_call_whose_callee_takes_a_reference_starts_no_context() {
-    // The same guard, reached through a reference parameter: [WAIT-2] does
-    // not permit the call alongside later statements, so it runs in order.
-    let source = b"fn watch(cell: &Shared<u8>) -> result: unit reads(cell) waits {
-  let seen = 0_u8;
-  atomic value = &cell^ when value^ != 0_u8 {
-    set seen = value^;
-  }
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure waits {
-  let cell = shared_new::<u8>(value: 1_u8);
-  watch(cell: &cell);
-  return std::process::exit_status(code: 0_u8);
-}
-";
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(program) = outcome else {
-            panic!("reference fixture must check: {outcome:?}");
-        };
-        let main = program
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "main")
-            .expect("main");
-        assert!(main.waiting.context_candidates.is_empty());
-        assert!(main.waiting.context_starts.is_empty());
-    });
-}
-
-#[test]
-fn an_unmarked_call_starts_a_context_exactly_when_its_callee_may_wait_for_a_guard() {
+fn a_call_that_is_not_spawned_starts_no_context_whatever_its_callee_holds() {
+    // A call that is not spawned executes in its caller's context [WAIT-2],
+    // even when its callee reaches an atomic statement that waits for a
+    // guard; an earlier compiler started such a call as a context.
     assert_eq!(
-        unmarked_starts("atomic value = &cell when value^ != 0_u8 {\n    set seen = value^;\n  }"),
-        1
+        unspawned_starts("atomic value = &cell when value^ != 0_u8 {\n    set seen = value^;\n  }"),
+        0
     );
     assert_eq!(
-        unmarked_starts("atomic value = &cell {\n    set seen = value^;\n  }"),
+        unspawned_starts("atomic value = &cell {\n    set seen = value^;\n  }"),
         0
     );
 }
@@ -2861,10 +2840,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let factory = std::io::factory_share(factory: &handles);
   let flag = 1_u64;
   if flag == 1_u64 {
-    let bound = mustpar weigh(factory: move factory, directory: move cwd, weight: 7_u64);
+    let bound = spawn weigh(factory: move factory, directory: move cwd, weight: 7_u64);
     let other = 5_u64;
   } else {
-    let unmarked = weigh(factory: move factory, directory: move cwd, weight: 1_u64);
+    let unspawned = weigh(factory: move factory, directory: move cwd, weight: 1_u64);
   }
   return std::process::exit_status(code: 0_u8);
 }

@@ -1,5 +1,4 @@
-//! [PAR-4, WAIT-2, SHARE-3] a started statement whose callee waits, marked
-//! `mustpar` or reaching a guard, lowered to a started context over a
+//! [WAIT-3] a spawn statement, lowered to a started context over a
 //! synthesized wrapper, and the joins it owes.
 //!
 //! The wrapper takes the call's arguments as parameters and makes the one
@@ -8,7 +7,7 @@
 //! before each of its exits. For a `let` it returns the result, which the
 //! context constructs in a slot of the starting frame, and the binding is
 //! defined by an await the checker's plan places before the binding's first
-//! use or its block's end [WAIT-2]. The checker admitted the start only for
+//! use or its block's end [WAIT-3]. The checker admitted the start only for
 //! value parameters, so nothing the wrapper holds is borrowed from its
 //! starter. The starting block evaluates the arguments where the statement
 //! stands, which is where their moves and copies take effect, and hands the
@@ -26,7 +25,7 @@ impl IrBuilder<'_> {
     }
 
     /// Before an exit of an activation that starts contexts, wait for them
-    /// [PAR-4]. Every return, propagated error and self transfer calls this.
+    /// [WAIT-3]. Every return, propagated error and self transfer calls this.
     /// The plan awaits every bound context before any statement that may
     /// leave its block, so none is pending here; one that were would be
     /// awaited here rather than outlived by the frame its result lands in.

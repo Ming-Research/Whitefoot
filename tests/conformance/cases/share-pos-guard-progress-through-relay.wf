@@ -17,7 +17,7 @@ fn relay(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure waits {
 fn run(cell: &Shared<u8>, total: &Shared<u8>) -> result: unit reads(cell), reads(total) waits {
   let watched = shared_share::<u8>(shared: cell);
   let summed = shared_share::<u8>(shared: total);
-  relay(cell: move watched, total: move summed);
+  spawn relay(cell: move watched, total: move summed);
   atomic value = &cell^ {
     set value^ = 7_u8;
   }

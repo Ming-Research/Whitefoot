@@ -9,7 +9,7 @@ pub(in crate::semantic) mod floats;
 mod generics;
 mod inventory;
 mod linearity;
-mod mustpar;
+mod spawn;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -588,8 +588,8 @@ struct BodyChecker {
     /// syntax could not settle, handed to the entailment fragment with the
     /// finished body.
     call_separations: Vec<super::model::CheckedCallSeparation>,
-    /// [WAIT-1, PAR-4] the waiting calls and `mustpar` markers of the function
-    /// being checked, published with its finished body.
+    /// [WAIT-1, WAIT-3] the waiting calls and spawns of the function being
+    /// checked, published with its finished body.
     waiting: super::model::CheckedWaiting,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
@@ -1104,7 +1104,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<CheckedProgramData, CheckStop> {
         self.types.declarations.check_documentation_text()?;
         self.check_musttail_positions()?;
-        self.check_mustpar_positions()?;
+        self.check_spawn_positions()?;
         let items = self.types.declarations.item_declarations()?;
         self.types.collect_behavior_groups(check_context, &items)?;
         self.types
@@ -1292,13 +1292,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // program. The affine-map rule consumes a successful OP-4 disposition
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
-        // [SHARE-3] before the table plans the joins of bound starts, the
-        // unmarked calls whose callee may wait for a guard become starts too.
-        mustpar::start_guard_waiting_calls(&mut functions);
         let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
-        // [PAR-4] a `mustpar` requires the permission the table just judged;
-        // the table itself stays the same whichever markers are written.
-        self.validate_mustpar(&functions, &permission.functions)?;
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
         for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
@@ -1773,7 +1767,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        self.collect_mustpar_markers(signature)?;
+        self.check_spawned_callees_wait(signature)?;
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.

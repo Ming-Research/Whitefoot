@@ -304,15 +304,14 @@ Safe, fast and small are the core. These are the other things worth knowing.
   operation is an ordinary call. A function that makes one declares `waits`
   after its effect row, and only a waiting function may call it, so every
   place a program can pause is visible in its signatures. A waiting call
-  returns when its operation has completed, and a program means what it does
-  run in order. `mustpar` on a waiting call asserts that the call is
-  independent of the statements after it; the compiler then runs it in a
-  context of its own, and while one context waits the thread runs the
-  others, so a server serves every connection at once
-  (`tests/programs/tcp_contexts.wf`). The function that marked the call
-  returns only after it finishes. A marked call can also bind its result,
-  `let a = mustpar fetch(…);`, and the function waits for it only where it
-  first uses `a`, so several requests proceed together
+  returns when its operation has completed, and a call runs in order unless
+  it is spawned: `spawn serve(…);` runs the call in a context of its own,
+  concurrently with the function that spawned it, and while one context
+  waits the thread runs the others, so a server serves every connection at
+  once (`tests/programs/tcp_contexts.wf`). The function that spawned a
+  context returns only after it finishes. A spawn can also bind its result,
+  `let a = spawn fetch(…);`, and the function waits for it at the first
+  statement that uses `a`, so several requests proceed together
   (`tests/programs/tcp_gather.wf`). A waiting function keeps its state in a
   frame the size of what it holds across a wait, not in a stack of its own,
   so a context costs about what its own variables do and adds no kernel
