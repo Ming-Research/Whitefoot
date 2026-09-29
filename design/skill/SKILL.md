@@ -179,8 +179,9 @@ reasoning.
    Fix every finding, including those that change the tree or another
    approved artifact; a fix that changes a decision becomes a ledger entry,
    and one that changes the agreed scope goes into the handoff's status.
-   Review again only what a fix changed in behavior, a rule or a decision;
-   recheck other fixes yourself.
+   Review again only a fix that became a ledger entry or rewrote logic or
+   behavior beyond a local repair, and only what it touched; recheck other
+   fixes yourself and list them at handoff.
 4. Hand off (Owner decisions). The owner rules on every open card.
 5. Write the log entry, mark ready once the readiness check and the project's
    CI pass, and leave the merge to the project's merge rules.
