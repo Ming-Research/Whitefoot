@@ -94,7 +94,7 @@ Each entry has a `## <date> <title>` heading, a `Nodes:` line listing every
 node added, changed or retired, an `Owner-approved:` line identifying the
 owner's approval of the handoff in the owner's words, and a concise `Summary:`
 paragraph with the change and its reasons. That approval covers every node
-the entry names, those edited without a card included. Write the entry only
+the entry names: those in its cards and those in its other tree edits. Write the entry only
 after that approval; the field records it and never requests or infers it.
 The newest entry must be new on the branch and name every changed node. Cite
 data and evidence at their source in the research record instead of
@@ -139,11 +139,11 @@ A handoff presents, in this order:
    (how and why), or not started. Research that recommends work is not that
    work.
 2. **Decision cards.** One per open decision the branch adds, changes or
-   retires, oldest first, each after the cards it depends on, so there is no
-   separate list of tree changes. A decision the owner already ruled on
-   needs no card; the restated ledger shows it approved. End with one line
-   naming every open ID and stating that no other decision is open. A card
-   opens with its ID and the question in bold, then three parts:
+   retires, oldest first, each after the cards it depends on; a card is that
+   decision's tree change. A decision the owner already ruled on needs no
+   card; the restated ledger shows it approved. End with one line naming
+   every open ID and stating that no other decision is open. A card opens
+   with its ID and the question in bold, then three parts:
    - Problem: the problem itself, for a reader who has not seen the work:
      what the component or rule does, what goes wrong or stays open, and the
      concrete evidence. Explain each project term at first use.
@@ -154,9 +154,11 @@ A handoff presents, in this order:
 
    The tree records the ruling: the chosen option becomes the node's
    `Decision:` and each refused option worth remembering a `Rejected:` item,
-   with the reasons the card gave. A node edit that changes no decision
-   needs no card.
-3. The parts the project adds, such as its other approved artifacts, the
+   with the reasons the card gave.
+3. **Other tree edits.** A node edit that changes no decision, such as a
+   rewording, needs no card but is listed here: the node, what changed and
+   why, one bullet each. Write "none" when there is none.
+4. The parts the project adds, such as its other approved artifacts, the
    validation run, the review's scope and the findings it fixed, and what the
    work found along the way. They cite a card by its ID instead of repeating
    its reasons.

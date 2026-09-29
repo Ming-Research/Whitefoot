@@ -88,7 +88,7 @@ decisions.
    describes.
 3. **At completion,** validate (see [Checks](#checks)), run the one
    [review](#review), fix what it finds, and hand the work back as the
-   `design-tree` skill describes. After its decision cards, the handoff
+   `design-tree` skill describes. After the skill's parts, the handoff
    shows every specification change rule by rule, with its before and after
    behavior and the card that selected it or why it needed none; the
    validation actually run, its revision and what remains unverified; the
