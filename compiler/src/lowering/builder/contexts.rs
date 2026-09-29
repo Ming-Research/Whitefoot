@@ -1,5 +1,6 @@
-//! [PAR-4, WAIT-2] a `mustpar` statement whose callee waits, lowered to a
-//! started context over a synthesized wrapper, and the joins it owes.
+//! [PAR-4, WAIT-2, SHARE-3] a started statement whose callee waits, marked
+//! `mustpar` or reaching a guard, lowered to a started context over a
+//! synthesized wrapper, and the joins it owes.
 //!
 //! The wrapper takes the call's arguments as parameters and makes the one
 //! call. For an expression statement it releases the result exactly as the
@@ -85,7 +86,7 @@ impl IrBuilder<'_> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)
     }
 
-    /// Lowers one marked waiting `let` at `index` of its block: its call's
+    /// Lowers one started waiting `let` at `index` of its block: its call's
     /// arguments here, the call in a wrapper that returns its result, and a
     /// pending await the plan places [WAIT-2].
     pub(super) fn start_bound_context(

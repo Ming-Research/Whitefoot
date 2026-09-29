@@ -1216,32 +1216,12 @@ rarely insert at the same place.
   statement with and without them; reopen when atomic statements show in a
   profile, as they may in the Redis subset.
 
-- **An atomic statement has no bound on how often it is overtaken.** A
-  statement that finds its object held spins and then parks, and an unlock
-  wakes it to try again rather than handing it the object, which Experiment 7
-  of `research/investigations/io-model/SHARED.md` needed to keep two drivers
-  from parking almost every statement. A statement arriving while the woken
-  one is being resumed can take the object first; the woken one keeps its
-  place at the head of the queue, but nothing bounds how often it loses. The
-  usual remedy hands the object to a statement that has waited past a time
-  or a count of misses. Reopen when a workload shows a statement's wait in
-  the tail of its latency.
-
 - **A shared object takes at least one 512-byte pool block.** The bridge's
   pool serves blocks from 512 bytes up, so a `Shared<u64>` occupies 512
   bytes. A program with one keyspace object does not notice; one with an
   object per client or per key would. A smaller class for objects, or the
   ordinary allocator, would fix it. Reopen when a program creates many small
   objects.
-
-- **Permission treats an atomic statement as a form it does not compute.**
-  An atomic statement is refused as a waiting construct [PAR-1], and the
-  join plan for a bound context also treats it as a use, so a context bound
-  before an atomic statement is joined before it even when the statement
-  names nothing the context holds. Giving the statement its [SHARE-2]
-  footprint (the target read plus the guard's and block's, without the
-  state's paths) would let such a context run on. Reopen when a program
-  waits for a context it did not need at an atomic statement.
 
 - **With several drivers, a program whose every context waits on another
   one hangs instead of stopping.** On one driver, when no context is ready
@@ -1767,18 +1747,6 @@ each is resolved by a discussion and a tree change.
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
-- **A loop or a non-call match ends a bound context's run early.** A
-  marked waiting `let` is joined before the first later statement of its
-  block that uses its binding or that the [PAR-1] footprint judgment refuses,
-  and the judgment refuses a loop and a match whose scrutinee is not a call
-  (`research/investigations/io-model/WAITS.md`, "A bound context is joined
-  where its result is first used"). Minimal witness: `let a = mustpar
-  fetch(…); for (i in 0_u64..n) { … } use(a);` joins `a` before the loop
-  even when the loop never names it. A footprint for those forms, the union
-  of their bodies' footprints with their exits, would let the call proceed
-  across them. Reopen when a program's gather has a loop between the call
-  and its use and its rate depends on it.
-
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
   its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
@@ -1812,16 +1780,6 @@ each is resolved by a discussion and a tree change.
   handle, needs a `shared_into` that returns the state and a way to state
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
-
-- **The specification does not yet make an atomic statement's guard a
-  proof source.** The checker establishes the guard's facts at the block's
-  entry, which `tests/programs/shared_objects.wf` and the Redis subset rely
-  on to call `place_back` and `take_front`, but [ENT-3]'s S1 source names
-  only `if_stmt` and `value_if`. The amendment
-  `design/amendments/language-waiting-shared-objects.md` proposes the
-  behavior; the owner's ruling decides whether S1 gains the guard or the
-  checker drops it. Close with that ruling and a conformance pair showing a
-  guard admitting an operation's requirement and its absence refusing it.
 
 ## Ownership redesign (candidate x1) follow-ups
 

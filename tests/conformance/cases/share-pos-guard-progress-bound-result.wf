@@ -1,0 +1,24 @@
+fn consume(cell: Shared<u8>) -> result: u8 pure waits {
+  let seen = 0_u8;
+  atomic value = &cell when value^ >= 6_u8 {
+    set seen = value^;
+  }
+  return seen;
+}
+
+fn run(cell: &Shared<u8>) -> result: u8 reads(cell) waits {
+  let watched = shared_share::<u8>(shared: cell);
+  let seen = consume(cell: move watched);
+  for @write (round in 0_u64..2_u64) {
+    atomic value = &cell^ {
+      set value^ = value^ +wrap 3_u8;
+    }
+  }
+  return seen +wrap 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let seen = run(cell: &cell);
+  return std::process::exit_status(code: seen);
+}

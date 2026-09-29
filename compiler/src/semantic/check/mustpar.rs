@@ -1,6 +1,8 @@
 //! [PAR-4] the `mustpar` marker: its position, its waiting form's conditions,
 //! and the validation of its first two forms against the finished permission
-//! table. The marker adds no permission; it only requires one.
+//! table. The marker adds no permission; it only requires one. With it, the
+//! unmarked waiting calls [SHARE-3] makes contexts, since the progress it
+//! promises does not depend on a marker the proof erases.
 
 use crate::syntax::NodeId;
 use crate::{
@@ -8,8 +10,11 @@ use crate::{
     SemanticLocation, SemanticRule, TerminalPredicate,
 };
 
+use super::super::entailment::collect_statement_calls;
 use super::super::loop_permission::LoopVerdict;
-use super::super::model::{CheckedFunction, CheckedMustpar};
+use super::super::model::{
+    CheckedContextCandidate, CheckedFunction, CheckedMustpar, CheckedStatement,
+};
 use super::super::permission::{FunctionPermissions, PermissionVerdict};
 use super::super::permission_ledger::{denied_detail, loop_denied_detail};
 use super::{
@@ -149,6 +154,47 @@ impl Checker<'_, '_> {
         Ok(())
     }
 
+    /// [WAIT-2, SHARE-3] at an unmarked call whose selected callee waits: when
+    /// the call stands where [WAIT-2] permits it to execute alongside the
+    /// statements after it, with the same conditions a marked one must meet,
+    /// record it, so [`start_guard_waiting_calls`] can start it as a context
+    /// once every body is checked.
+    pub(super) fn record_context_candidate(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        signature: &FunctionSignature,
+    ) -> Result<(), CheckStop> {
+        let (statement, bound) = match self.types.declarations.call_position(node)? {
+            CallPosition::ExpressionStatement(statement) => (statement, false),
+            CallPosition::LetRightHandSide(statement) => (statement, true),
+            CallPosition::Other => return Ok(()),
+        };
+        if signature
+            .parameters
+            .iter()
+            .any(|parameter| parameter.mode.is_reference())
+        {
+            return Ok(());
+        }
+        if !bound
+            && self
+                .types
+                .linear_release_obligation(check_context, signature.result)?
+                .is_some()
+        {
+            return Ok(());
+        }
+        self.body
+            .waiting
+            .context_candidates
+            .push(CheckedContextCandidate {
+                statement: self.types.declarations.tree.path(statement)?.clone(),
+                callee: signature.id,
+            });
+        Ok(())
+    }
+
     /// Record every `mustpar` of one body that its first two forms prove
     /// against the permission table: a marked `for_stmt`, and a marked call
     /// whose callee does not wait. A waiting callee's marker was judged when
@@ -276,4 +322,90 @@ impl Checker<'_, '_> {
             request: None,
         }))
     }
+}
+
+/// [SHARE-3] while an atomic statement waits for its guard, each call whose
+/// execution contains it and that [WAIT-2] permits executes as a context. A
+/// function may wait for a guard when its body holds an atomic statement with
+/// a guard or calls a function that may, which a fixed point over the checked
+/// bodies decides; every candidate whose callee may is then started as a
+/// context, as a marked call is, and a candidate whose callee cannot runs in
+/// order, where no guard of its execution can wait.
+pub(super) fn start_guard_waiting_calls(functions: &mut [CheckedFunction]) {
+    let calls = functions
+        .iter()
+        .map(|function| {
+            let mut calls = Vec::new();
+            if let Some(body) = &function.body {
+                collect_statement_calls(function.id, body, &mut calls);
+            }
+            calls
+        })
+        .collect::<Vec<_>>();
+    let mut may_wait = functions
+        .iter()
+        .map(|function| {
+            function
+                .body
+                .as_deref()
+                .is_some_and(statements_hold_a_guard)
+        })
+        .collect::<Vec<_>>();
+    let reaches = |may_wait: &[bool], callee: usize| may_wait.get(callee).copied().unwrap_or(false);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (index, calls) in calls.iter().enumerate() {
+            if !may_wait[index]
+                && calls
+                    .iter()
+                    .any(|call| reaches(&may_wait, call.callee.0 as usize))
+            {
+                may_wait[index] = true;
+                changed = true;
+            }
+        }
+    }
+    for function in functions {
+        let started = function
+            .waiting
+            .context_candidates
+            .iter()
+            .filter(|candidate| reaches(&may_wait, candidate.callee.0 as usize))
+            .map(|candidate| candidate.statement.clone())
+            .collect::<Vec<_>>();
+        if started.is_empty() {
+            continue;
+        }
+        function.waiting.context_starts.extend(started);
+        function
+            .waiting
+            .context_starts
+            .sort_by(|left, right| left.components().cmp(right.components()));
+    }
+}
+
+/// Whether a block holds, at any depth, an atomic statement with a guard.
+fn statements_hold_a_guard(statements: &[CheckedStatement]) -> bool {
+    statements.iter().any(|statement| match statement {
+        CheckedStatement::Atomic { guard, body, .. } => {
+            guard.is_some() || statements_hold_a_guard(body)
+        }
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
+            arms.iter().any(|arm| statements_hold_a_guard(&arm.body))
+        }
+        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
+            statements_hold_a_guard(body)
+        }
+        CheckedStatement::Let { .. }
+        | CheckedStatement::DestructuringLet { .. }
+        | CheckedStatement::PropagateLet { .. }
+        | CheckedStatement::Set { .. }
+        | CheckedStatement::Proof(_)
+        | CheckedStatement::DropExpression { .. }
+        | CheckedStatement::Evaluate { .. }
+        | CheckedStatement::Return { .. }
+        | CheckedStatement::Give { .. }
+        | CheckedStatement::Break { .. } => false,
+    })
 }

@@ -2784,22 +2784,37 @@ pub(crate) struct CheckedWaiting {
     /// statement the permission judgment must permit.
     pub(crate) independent: Vec<CheckedMustpar>,
     /// Every `expr_stmt` or `let_stmt` PAR-4's third form marks, which this
-    /// compiler runs as a context of its own [WAIT-2].
+    /// compiler runs as a context of its own [WAIT-2], and every candidate
+    /// below whose callee may wait for an atomic statement's guard [SHARE-3].
     pub(crate) context_starts: Vec<NodePath>,
-    /// Where each marked `let_stmt` of `context_starts` waits for its context:
-    /// the number of statements after it in its block at which the binding is
-    /// first used or the block may be left, or `None` when no later statement
-    /// of the block is either, so the context is joined at the block's end.
-    /// The permission analysis fills it from the same footprints [PAR-1]
-    /// judges, after the checker, so the join precedes every read, write and
-    /// release of the binding [WAIT-2].
+    /// Every unmarked `expr_stmt` or `let_stmt` whose call [WAIT-2] permits
+    /// to execute alongside the statements after it, with its callee; the
+    /// checker adds a candidate to `context_starts` once every body is
+    /// checked and its callee is known to reach a guard or not.
+    pub(crate) context_candidates: Vec<CheckedContextCandidate>,
+    /// Where each `let_stmt` of `context_starts` waits for its context: the
+    /// number of statements after it in its block at which the binding is
+    /// first named or the block may be left, or `None` when no later
+    /// statement of the block is either, so the context is joined at the
+    /// block's end. The permission analysis fills it after the checker, so
+    /// the join precedes every read, write and release of the binding
+    /// [WAIT-2] and no statement before them [SHARE-3].
     pub(crate) context_awaits: Vec<CheckedContextAwait>,
+}
+
+/// [WAIT-2, SHARE-3] one unmarked call the permission covers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedContextCandidate {
+    /// The `expr_stmt` or `let_stmt` holding the call.
+    pub(crate) statement: NodePath,
+    /// The selected callee.
+    pub(crate) callee: FunctionId,
 }
 
 /// [WAIT-2] where one bound context start is joined.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedContextAwait {
-    /// The marked `let_stmt`.
+    /// The started `let_stmt`.
     pub(crate) statement: NodePath,
     /// How many statements after it the join stands before, within its
     /// block; `None` joins at the block's end.

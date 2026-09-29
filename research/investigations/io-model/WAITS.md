@@ -930,9 +930,13 @@ Alternatives refused:
 - Joining only at the block's end: a use before the end would read a result
   that has not arrived.
 
-What this does not do yet: a loop or a non-call match between the `let` and
-its use ends the run early, because the footprint judgment refuses those
-forms; a footprint for them would let the call proceed across them.
+A loop or a non-call match between the `let` and its use ended the run
+early here, because the footprint judgment refuses those forms. The progress
+ruling of 2026-09-29 made that a defect, since a starter may then wait for a
+context whose guard only the refused statement makes true, and the join now
+looks into compound statements and stands before the first statement that
+may leave the block or names the binding (`SHARED.md`, "Progress while a
+guard waits").
 
 ### Sharing between concurrent activities
 
@@ -996,7 +1000,11 @@ needs one: an explicit shared object whose operations are whole atomic
 transactions in an unspecified order, and one whose transactions take effect
 in the order of the host completions that produced them. Both revise
 [CAP-1].
-[`SHARED.md`](SHARED.md) designs the first, at the owner's direction.
+[`SHARED.md`](SHARED.md) designs the first, at the owner's direction. Its
+atomic statements admit the very order dependence this rule refuses for a
+channel's two ends, by making the order of statements an input of the
+execution, so the rule no longer separates a channel from a shared object;
+`SHARED.md` records why the language still has no channel construct.
 
 ### What the first version keeps open
 

@@ -92,7 +92,7 @@
 
 use super::loop_permission::LoopPermission;
 use super::model::{
-    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction,
+    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction, CheckedLoopId,
     CheckedMeasure, CheckedMode, CheckedPlaceStep, CheckedSetTarget, CheckedStatePath,
     CheckedStatement, FunctionId, expression_children,
 };
@@ -335,7 +335,7 @@ pub(crate) struct FunctionPermissions {
     /// statement after it, or `None` where no statement follows in its block.
     /// Acceptance reads it; the ledger does not print it.
     pub(crate) marked: Vec<(NodePath, Option<PermissionVerdict>)>,
-    /// [WAIT-2] where each marked waiting `let` is joined, in source order.
+    /// [WAIT-2] where each started waiting `let` is joined, in source order.
     /// The checker installs it on the function for lowering.
     pub(crate) context_awaits: Vec<super::model::CheckedContextAwait>,
 }
@@ -438,6 +438,15 @@ pub(super) fn call_projection(value: &CheckedExpression) -> Option<CallProjectio
 struct Classified {
     site: Option<PermissionSite>,
     footprint: Result<Footprint, Refusal>,
+}
+
+/// The loops and value constructs a join-plan walk has entered inside one
+/// later statement: a `break` to one of them, or a `give` inside one, does
+/// not leave the block a bound context was started in.
+#[derive(Default)]
+struct InnerTargets {
+    loops: Vec<CheckedLoopId>,
+    values: usize,
 }
 
 /// Why one statement cannot take part in an overlap as written.
@@ -663,15 +672,13 @@ impl<'check> Program<'check> {
         }
     }
 
-    /// [WAIT-2] where each marked waiting `let` of one block is joined: before
-    /// the first later statement of the block whose footprint reaches the
-    /// binding, or that this analysis refuses because it may leave the block
-    /// or has a form it does not compute, and otherwise at the block's end.
-    /// A statement that waits is judged by its footprint, not refused: the
-    /// permission lets the call proceed alongside later statements, waiting
-    /// ones included, and only a use of its binding or a way out of its block
-    /// needs its result. The footprints are [PAR-1]'s, fail-closed, so the
-    /// join precedes every read, write and release of the binding.
+    /// [WAIT-2] where each started waiting `let` of one block is joined:
+    /// before the first later statement of the block that
+    /// [`Self::requires_bound_result`] finds needs its result, and otherwise
+    /// at the block's end. A statement that waits, or that holds a block, is
+    /// looked into rather than refused: the permission lets the call proceed
+    /// alongside later statements, waiting ones included, and only a use of
+    /// its binding or a way out of its block needs its result.
     fn plan_context_awaits(
         &self,
         places: &PlaceMap,
@@ -689,27 +696,105 @@ impl<'check> Program<'check> {
             if !starts.contains(node_path) {
                 continue;
             }
-            let uses =
-                |later: &'check CheckedStatement| match self.classify(places, later).footprint {
-                    Err(_) => true,
-                    Ok(footprint) => {
-                        footprint.unresolved.is_some()
-                            || footprint
-                                .writes
-                                .iter()
-                                .chain(&footprint.reads)
-                                .chain(&footprint.operand_reads)
-                                .any(|access| access.place.root == PlaceRoot::Binding(*binding))
-                    }
-                };
+            let mut inner = InnerTargets::default();
             let before = block[index + 1..]
                 .iter()
-                .position(uses)
+                .position(|later| {
+                    self.requires_bound_result(places, *binding, node_path, later, &mut inner)
+                })
                 .and_then(|offset| u32::try_from(offset + 1).ok());
             awaits.push(super::model::CheckedContextAwait {
                 statement: node_path.clone(),
                 before,
             });
+        }
+    }
+
+    /// Whether a later statement of a bound start's block requires the
+    /// context to have completed before it [WAIT-2]: the statement may leave
+    /// the block, which releases the binding, or an expression, set target or
+    /// statement it holds names the binding, which every read, write, release
+    /// and reference formation of it does, since nothing reaches the binding
+    /// before a statement names it. A resolved footprint that reaches the
+    /// binding also requires it, as a second account of the same accesses. A
+    /// compound statement is looked into rather than refused, and an
+    /// unresolved footprint is no reason to wait, so the starter never waits
+    /// for the context before the point [WAIT-2] requires, which is what lets
+    /// a statement that makes the context's guard true run first [SHARE-3].
+    fn requires_bound_result(
+        &self,
+        places: &PlaceMap,
+        binding: BindingId,
+        site: &NodePath,
+        statement: &'check CheckedStatement,
+        inner: &mut InnerTargets,
+    ) -> bool {
+        let reaches = |footprint: &Footprint| {
+            footprint
+                .writes
+                .iter()
+                .chain(&footprint.reads)
+                .chain(&footprint.operand_reads)
+                .any(|access| access.place.root == PlaceRoot::Binding(binding))
+        };
+        let expression = |value: &CheckedExpression| {
+            expression_names(value, binding) || reaches(&self.value_footprint(places, value, site))
+        };
+        let block = |statements: &'check [CheckedStatement], inner: &mut InnerTargets| {
+            statements.iter().any(|statement| {
+                self.requires_bound_result(places, binding, site, statement, inner)
+            })
+        };
+        match statement {
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
+            // A `give` in an arm delivers to this statement, not out of the
+            // block the context was started in.
+            CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                inner.values += 1;
+                let requires =
+                    expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
+                inner.values -= 1;
+                requires
+            }
+            CheckedStatement::Loop { id, body, .. } => {
+                inner.loops.push(*id);
+                let requires = block(body, inner);
+                inner.loops.pop();
+                requires
+            }
+            CheckedStatement::CountedRange {
+                id,
+                lower,
+                upper,
+                body,
+                ..
+            } => {
+                if expression(lower) || expression(upper) {
+                    return true;
+                }
+                inner.loops.push(*id);
+                let requires = block(body, inner);
+                inner.loops.pop();
+                requires
+            }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                expression(target) || guard.as_deref().is_some_and(expression) || block(body, inner)
+            }
+            CheckedStatement::Break { target, .. } => !inner.loops.contains(target),
+            CheckedStatement::Give { value, .. } => inner.values == 0 || expression(value),
+            _ => match self.classify(places, statement).footprint {
+                Err(_) => true,
+                Ok(footprint) => leaf_names(statement, binding) || reaches(&footprint),
+            },
         }
     }
 
@@ -992,8 +1077,8 @@ impl<'check> Program<'check> {
                 (None, None, None, "a loop", Err(Refusal::Form("a loop")))
             }
             // [SHARE-2] an atomic statement counts as a waiting call, which
-            // `classify_waiting` refuses by its node; a started context is
-            // joined before it.
+            // `classify_waiting` refuses by its node; the join plan looks
+            // into it instead [SHARE-3].
             CheckedStatement::Atomic { node_path, .. } => (
                 Some(node_path),
                 None,
@@ -1732,6 +1817,48 @@ pub(super) fn visit_read_bindings(
     }
     for child in expression_children(expression) {
         visit_read_bindings(child, note);
+    }
+}
+
+/// Whether an expression tree names `binding` anywhere, through
+/// [`named_binding`] at each node, both matches being exhaustive.
+fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
+    named_binding(expression) == Some(binding)
+        || expression_children(expression)
+            .into_iter()
+            .any(|child| expression_names(child, binding))
+}
+
+/// Whether a statement that holds no block names `binding` in an expression
+/// or set target it holds; a statement that holds a block answers yes, since
+/// its caller walks it.
+fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
+    match statement {
+        CheckedStatement::Let { value, .. }
+        | CheckedStatement::DestructuringLet { value, .. }
+        | CheckedStatement::Evaluate { value, .. }
+        | CheckedStatement::DropExpression { value, .. }
+        | CheckedStatement::Return { value, .. }
+        | CheckedStatement::Give { value, .. } => expression_names(value, binding),
+        CheckedStatement::PropagateLet { scrutinee, .. } => expression_names(scrutinee, binding),
+        CheckedStatement::Set { target, value, .. } => {
+            let mut offsets: Vec<&CheckedExpression> = match target {
+                CheckedSetTarget::Place(_) => Vec::new(),
+                CheckedSetTarget::RangeIndex(target) => target.offsets().collect(),
+                CheckedSetTarget::Storage(target) => target.offsets().collect(),
+            };
+            offsets.push(value);
+            target.binding() == binding
+                || offsets
+                    .into_iter()
+                    .any(|offset| expression_names(offset, binding))
+        }
+        CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+        CheckedStatement::Match { .. }
+        | CheckedStatement::ValueMatchLet { .. }
+        | CheckedStatement::Loop { .. }
+        | CheckedStatement::CountedRange { .. }
+        | CheckedStatement::Atomic { .. } => true,
     }
 }
 

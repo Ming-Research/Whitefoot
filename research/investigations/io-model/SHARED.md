@@ -176,6 +176,9 @@ The rules this adds, as they would read in the specification:
      order.
    - A statement whose guard never becomes true does not complete, as a host
      operation that never completes does not.
+   - While a statement waits for its guard, the calls around it that could
+     run as contexts do, and their starters go on; a statement whose guard
+     stays true takes effect (the owner's ruling, below).
 
 Rule 3's single point is linearizability. When client X receives the reply to
 `SET` and then tells client Y, and Y sends `GET`, Y's statement begins after
@@ -214,10 +217,18 @@ Considered and refused:
   boundary would be invisible: whether two adjacent statements form one
   transaction could not be read from the source, and that is the root of
   read-modify-write races.
-- **Asynchronous messages to the object (actors, channels).** They were
-  refused because a sender that does not wait for the effect cannot know the
-  order its messages take effect in. This fails the sharing rule, as channels
-  do.
+- **Asynchronous messages to the object (actors, channels).** A sender that
+  does not wait for the effect cannot know the order its messages take effect
+  in. The first draft of this record also refused channels by the sharing
+  rule, but that reason no longer separates them: what an atomic statement
+  reads depends on which other statements took effect first exactly as what
+  a receive gets depends on the sends, and this design admits that order as
+  an input. A bounded channel whose send waits is a `Shared<Ring<T, n>>` with
+  one guarded statement to put and one to take, so it needs no construct of
+  its own, while an owner context that serves requests would pass every
+  change through one context and two messages. The refusal rests on that
+  expressiveness and cost; a channel library over this form is left until a
+  program needs one (the owner's ruling of 2026-09-29).
 - **Atomic fields and lock-free cells.** They were refused because they expose
   the interleaving of individual reads and writes, which the sequential
   meaning excludes.
@@ -269,8 +280,7 @@ an object's state. The implementation:
   block is refused with SHARE-2, and an atomic statement outside a waiting
   function with WAIT-1. The guard's footprint writes nothing when no call in
   it has a row that writes or moves an argument. Permission [PAR-1] refuses
-  the statement as a waiting construct, so a started context is joined
-  before it.
+  the statement as a waiting construct.
 - **Proofs.** The binding names a state no earlier fact describes. The guard
   enters the block as the true arm of a Bool condition does, and every fact
   that names the binding ends with the block.
@@ -289,7 +299,9 @@ an object's state. The implementation:
   again, and one that misses again keeps its place at the head. The first
   version handed the object to the parked context at the queue's head
   instead, which Experiment 7 found to make almost every statement park on
-  two drivers.
+  two drivers. After the progress ruling, the unlock after two vain wakes
+  hands the object over, which bounds how often a statement is overtaken
+  (below).
 - **A fix along the way.** A context parked where another driver can make it
   ready (a group join, and now an object) could be resumed, finished and
   released by another driver before the driver that ran it read its frame
@@ -482,6 +494,68 @@ understate either server. The subset is 830 lines, most of them RESP parsing
 and encoding that a library would hold.
 
 
+## Progress while a guard waits
+
+**The question.** Executing every call in order was a conforming execution
+[WAIT-2], and in it a consumer started before its producer waits for good on
+a guard only the producer's later statement makes true, while this compiler's
+drivers run the producer and the consumer completes. The completion review
+raised it, and the owner asked whether one thread with a reader before a
+writer would then deadlock. On 2026-09-29 the owner approved every decision
+card and the specification revisions, taking for this card the revised
+recommendation: the language promises that progress ("all decisions
+approved, the spec revisions approved too", written in Chinese).
+
+**The rule** (specification v0.79). While a statement waits for its guard,
+each call whose execution contains it and that [WAIT-2] permits to run
+alongside the statements after it executes as a context, those statements
+proceed until [WAIT-2] requires the call to have completed, and every
+context that waits for nothing proceeds; a statement with no guard, or whose
+guard is true from some point on, takes effect [SHARE-3]. [WAIT-2] keeps
+an in-order implementation conforming on every execution in which no guard
+waits. A statement whose guard only its own context's later statement makes
+true, or two contexts each waiting for the other's write, still wait for
+good: the promise covers progress other contexts can make, not a cycle.
+
+**What the compiler had to change.** Three places kept that promise only by
+accident, and each change was checked by making it fail once:
+
+- *Which calls start.* Only a call marked `mustpar` started a context, and
+  the marker is erased proof syntax that adds no permission [PAR-4]. The
+  checker now records every unmarked waiting call the permission covers, and
+  once all bodies are checked, a fixed point finds the functions that may
+  reach an atomic statement with a guard; each recorded call to one of them
+  starts a context as a marked call does. A call that reaches no guard still
+  runs in order, so a program without guards starts no context it did not
+  mark: `redis_subset.wf` and `shared_objects.wf` start exactly one context
+  per `mustpar` in their emitted modules. With the pass disabled,
+  `share-pos-guard-progress-without-marker` stops with "every context waits
+  for a context that is not waiting for the host".
+- *Where a bound start joins.* A `let`-bound context was joined before the
+  first later statement whose overlap footprint reached the binding or was
+  refused or not resolved, and loops, matches and atomic statements are
+  refused forms, so a starter waited for its context before the very
+  statement that would make the context's guard true. The join now precedes
+  the first statement that may leave the block or that names the binding,
+  looking into compound statements; every read, write, release and
+  reference formation of the binding names it. Under the old plan
+  `share-pos-guard-progress-bound-result` stopped the same way, and a unit
+  test pins that a read through a `Box`, whose footprint is not resolved, no
+  longer forces the join.
+- *How often a statement is overtaken.* A woken statement that missed the
+  object parked at the head again with no bound. The unlock after two vain
+  wakes now hands it the object. On `shared_objects.wf`, a build that counts
+  handoffs saw 0, 3, 18 and 26 on 1, 2, 4 and 8 drivers, every sum correct;
+  under ThreadSanitizer, with runtime and module instrumented, 53, 639 and
+  1,763 handoffs on 2, 4 and 8 drivers and no report. The program ran 40
+  times each on 2 and 8 drivers without a wrong sum. One round of
+  `redis-bench.sh` on the handoff runtime passed the correctness pass and
+  gave two drivers 1.46 and 1.33 times the reference for `SET` and `GET`
+  without pipelining, 1.42 and 1.44 times one driver, and 1.40 and 1.40 the
+  reference with 16 per pipeline, which meets every criterion; `GET` falls a little below the second run's range, which one
+  round does not attribute. That round was built before the two checker
+  changes, which add no start and no bound join to that program.
+
 ## Remaining questions
 
 1. Spelling: `atomic s = &h { }`. This reuses `&` in a position where `h` is
@@ -495,17 +569,10 @@ and encoding that a library would hold.
 4. `nodrop` state and taking the value back (`shared_into`, which returns the
    state when its caller holds the last handle).
 5. An invariant the object declares and every block preserves.
-6. The guard as a proof source. The checker gives the block the guard's
-   facts, as an `if` gives its true branch (amendment decision on the `when`
-   guard), but [ENT-3]'s S1 source names only `if_stmt` and `value_if`, so
-   the specification does not yet state what the compiler does; the
-   owner's ruling on that decision settles whether S1 gains the guard.
-7. Progress. Executing every call in order is a conforming execution
-   [WAIT-2], and in it a statement that waits on a guard only a later
-   context would make true never completes, while this compiler's drivers
-   run that context and the statement completes. Whether the language
-   promises that progress is the owner's to rule on
-   (`design/amendments/language-parallelism.md`).
+
+The owner's rulings of 2026-09-29 settled two earlier questions: [ENT-3]'s
+S1 source now names an atomic statement's guard, and progress while a guard
+waits is the section above.
 
 ## What would test it
 

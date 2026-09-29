@@ -331,7 +331,9 @@ Safe, fast and small are the core. These are the other things worth knowing.
   lock-order deadlock cannot be written. `when` makes the statement wait
   until a condition on the value holds, and the block may rely on it, as in a
   queue whose consumer takes an item only when one is there
-  (`tests/programs/shared_objects.wf`). A Redis subset written this way,
+  (`tests/programs/shared_objects.wf`). While a statement waits on `when`,
+  the other contexts and the function that started it go on, so a consumer
+  started before its producer still finishes. A Redis subset written this way,
   `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace
   (`tests/programs/redis_subset.wf`), served `SET` and `GET` at least as fast
   as `redis-server` on the same two cores of one four-CPU host under

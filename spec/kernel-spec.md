@@ -797,7 +797,7 @@ A component of the closure's call graph introduces the requirement when its func
 [STOR-3] Deallocation and resource release are compiler-derived and explicit in the checked program [DIAG-2]: every release is represented before lowering.
 Release actions run on every source control-flow edge that leaves their owner scope, in reverse declaration order; [FN-10] places a guaranteed self-tail transfer's releases before that transfer.
 Host termination caused solely by unavailable external resources under [SCOPE-3] is not a Whitefoot control-flow edge, and this specification makes no source-level cleanup promise for that case.
-No reference counting.
+A binding's value is released at points the checked program fixes; a shared object's state belongs to no binding, and [SHARE-1] fixes its release.
 
 Every edge that leaves one entered `for_stmt` body normally — its fallthrough, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge — carries exactly once every compiler-derived release for the body scopes that edge leaves, innermost scope first and in reverse declaration order within each scope.
 On body fallthrough those actions complete before the hidden counted update [FN-1].
@@ -2139,7 +2139,8 @@ An implementation may execute an `expr_stmt` whose `call`'s callee waits [WAIT-1
 An implementation may execute the `call` of the `ordinary_let_rhs` of a `let_stmt` whose callee waits alongside the statements that follow that `let_stmt` in its block exactly when every parameter of the callee is a value parameter; the call then completes, and the binding holds its result, before the binding is next read, written or released [OWN-1] and before the activation leaves by any edge.
 Such a call's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, its binding, so no statement it executes alongside overlaps it, and its host effects follow [HOST-1].
 A call executing alongside the later statements of its activation is a context, and the entry executes in the root context. Each context observes the outcomes of its own host operations in its own source order. Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on one shared object [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
-Which calls execute as contexts, where a context executes, and whether one context proceeds while another waits for the host are not observable, and no rule of this specification is stated in terms of them; an implementation that executes every call in order conforms.
+Where a context executes, and whether one context proceeds while another waits for the host, are not observable.
+Which of the calls this rule permits execute as contexts is the implementation's choice, which [SHARE-3] constrains while an atomic statement waits for its guard; an implementation that executes every call in order conforms on every execution in which no atomic statement waits for its guard.
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
 
 [SHARE-1] Shared objects.
@@ -2161,6 +2162,8 @@ The statement's footprint is its target place, read, together with the footprint
 Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
 The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
+While a statement waits for its guard, each call whose execution contains the statement and that [WAIT-2] permits to execute alongside the statements after it executes as a context, and the statements after that call proceed until [WAIT-2] requires the call to have completed; every context that waits for no guard, no context and no host operation proceeds.
+A statement that has no guard, or whose guard is true in the object's state at every point from some point on, takes effect.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
 ## 14. Prelude and host modules (normative, counted)
@@ -2911,6 +2914,7 @@ The sources are:
 - S1 (branch facts).
 At an `if_stmt` or `value_if`, each goal G in the condition's goal-origin set is established as `+G` at the then-block's entry and `-G` at the else-block's entry; for an else-free `if_stmt`, `-G` is established on the false edge, which joins the then exit at the continuation [ENT-5].
 Independently, when the condition has comparison origin R, R is established at the then entry and R's exact negation at the else entry or false edge.
+At an `atomic_stmt` with a guard [SHARE-2], the guard is the condition and the block's entry is the then entry: each goal G in the guard's goal-origin set is established there as `+G`, and its comparison origin R there as R.
 L0 negation is exact over mathematical integers: the negation of `a - b <= c` is `b - a <= -c - 1`; the negation of `a = b` is `a != b` and conversely.
 [ENT-3.S4]
 - S4 (requires facts).

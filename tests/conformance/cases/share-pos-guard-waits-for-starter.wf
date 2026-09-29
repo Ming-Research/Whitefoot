@@ -1,0 +1,31 @@
+fn consume(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure waits {
+  let seen = 0_u8;
+  atomic value = &cell when value^ != 0_u8 {
+    set seen = value^;
+  }
+  atomic sum = &total {
+    set sum^ = seen;
+  }
+  return unit;
+}
+
+fn run(cell: &Shared<u8>, total: &Shared<u8>) -> result: unit reads(cell), reads(total) waits {
+  let watched = shared_share::<u8>(shared: cell);
+  let summed = shared_share::<u8>(shared: total);
+  mustpar consume(cell: move watched, total: move summed);
+  atomic value = &cell^ {
+    set value^ = 7_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let total = shared_new::<u8>(value: 0_u8);
+  run(cell: &cell, total: &total);
+  let code = 0_u8;
+  atomic sum = &total {
+    set code = sum^;
+  }
+  return std::process::exit_status(code: code);
+}

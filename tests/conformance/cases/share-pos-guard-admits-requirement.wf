@@ -1,0 +1,19 @@
+fn fill(queue: Shared<Ring<u64, 4>>) -> result: unit pure waits {
+  atomic items = &queue when items^.len < items^.cap {
+    place_back(window: items, value: 7_u64);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let empty = ring_new::<u64, 4>();
+  let queue = shared_new::<Ring<u64, 4>>(value: move empty);
+  let other = shared_share::<Ring<u64, 4>>(shared: &queue);
+  mustpar fill(queue: move other);
+  let got = 0_u64;
+  atomic items = &queue when items^.len > 0_u64 {
+    set got = take_front(window: items);
+  }
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}

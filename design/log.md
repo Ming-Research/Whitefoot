@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Add shared objects and promise progress while a guard waits
+
+Nodes: language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts
+
+Owner-approved: The owner approved all four decision cards for PR #173 and the specification revisions ("all decisions approved, the spec revisions approved too", written in Chinese) on 2026-09-29, choosing for the fourth card the recommendation revised after the question about one thread waiting on itself: the language promises progress while a statement waits for its guard.
+
+Summary: Add language/waiting/shared-objects: state that several contexts reach is a `Shared<T>` object changed only in `atomic` statements, which count as waiting calls with no waiting call or atomic statement inside, hold a handle of their own, take an optional `when` guard the block may use as a proved fact (kernel-spec v0.79 ENT-3 S1), release the state with the last handle (STOR-3 now leaves that one release to the count), and provisionally all hold the object exclusively. Per the fourth card, add its progress decision (SHARE-3, WAIT-2): while a statement waits for its guard, each call around it that the permission covers executes as a context and its starter proceeds until the call's result or exit is needed, and a statement whose guard stays true takes effect; the reason in its first decision drops the in-order conformance it no longer has. Correct the channel refusal there: the sharing rule no longer separates channels from shared objects, and a channel whose send waits is a guarded ring over this form, so the refusal rests on expressiveness and cost. Restate language/ownership's global-state decision and language/parallelism's context decision with their reasons, and replace the parallelism refusal of a progress marker with the reason that SHARE-3 promises that progress for every covered call. Add the object layout, the spin-then-park lock that wakes the queue's head to retry, and guard watchers to compiler/waiting-contexts. The [shared-objects record](../research/investigations/io-model/SHARED.md) holds the grounds and Experiment 7. Remove the four accepted amendments; a new amendment to compiler/waiting-contexts, which bounds overtaking and changes which calls start and where a bound start joins to meet the promise, awaits its own ruling. This ruling authorizes no merge.
+
 ## 2026-09-28 Bind marked waiting results and run contexts on several drivers
 
 Nodes: language/parallelism, compiler/waiting-contexts

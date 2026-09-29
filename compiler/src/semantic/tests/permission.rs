@@ -2582,13 +2582,90 @@ fn a_bound_context_is_joined_before_a_write_of_its_binding() {
 fn a_bound_context_is_joined_before_a_statement_that_may_leave_its_block() {
     // The trailing `return` is the first statement after an unused binding.
     assert_eq!(bound_await("  let other = 5_u64;"), Some(2));
-    // A loop is a form the footprint judgment does not compute, so the join
-    // precedes it even though its body never names the binding.
+    // A loop whose body may return leaves the block on that path, so the join
+    // precedes the whole loop.
+    assert_eq!(
+        bound_await(
+            "  let other = 5_u64;\n  loop @spin {\n    if other > 3_u64 {\n      return std::process::exit_status(code: 1_u8);\n    }\n    break @spin;\n  }\n  let total = bound +wrap other;"
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_holds() {
+    // [SHARE-3] the starter waits only where [WAIT-2] requires the call to
+    // have completed: a loop that neither names the binding nor leaves the
+    // block, its `break` ending the loop itself, runs alongside the context.
     assert_eq!(
         bound_await(
             "  let other = 5_u64;\n  loop @spin {\n    break @spin;\n  }\n  let total = bound +wrap other;"
         ),
+        Some(3)
+    );
+    // A statement whose footprint is not resolved, a read through a Box
+    // here, is no reason to wait when it names nothing the context holds.
+    assert_eq!(
+        bound_await(
+            "  let other = 5_u64;\n  let held = box_new::<u64>(value: 3_u64);\n  let inner = held.inner;\n  let total = bound +wrap inner;"
+        ),
+        Some(4)
+    );
+    // A loop whose body names the binding is joined before it.
+    assert_eq!(
+        bound_await(
+            "  let other = 5_u64;\n  loop @spin {\n    let copied = bound;\n    break @spin;\n  }"
+        ),
         Some(2)
+    );
+}
+
+/// [SHARE-3] the statements of `main` an unmarked call starts as contexts,
+/// given the atomic statement `worker` holds.
+fn unmarked_starts(atomic: &str) -> usize {
+    let source = format!(
+        "fn worker(cell: Shared<u8>) -> result: unit pure waits {{\n  let seen = 0_u8;\n  {atomic}\n  return unit;\n}}\n\n\
+         fn relay(cell: Shared<u8>) -> result: unit pure waits {{\n  worker(cell: move cell);\n  return unit;\n}}\n\n\
+         fn main() -> status: std::process::ExitStatus pure waits {{\n  \
+         let cell = shared_new::<u8>(value: 0_u8);\n  \
+         let other = shared_share::<u8>(shared: &cell);\n  \
+         relay(cell: move other);\n  \
+         return std::process::exit_status(code: 0_u8);\n}}\n"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("unmarked start fixture must check: {outcome:?}");
+        };
+        let main = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        let relay = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "relay")
+            .expect("relay");
+        assert_eq!(
+            main.waiting.context_starts.len(),
+            relay.waiting.context_starts.len(),
+            "the call in main reaches the worker's statement through relay's"
+        );
+        main.waiting.context_starts.len()
+    })
+}
+
+#[test]
+fn an_unmarked_call_starts_a_context_exactly_when_its_callee_may_wait_for_a_guard() {
+    assert_eq!(
+        unmarked_starts("atomic value = &cell when value^ != 0_u8 {\n    set seen = value^;\n  }"),
+        1
+    );
+    assert_eq!(
+        unmarked_starts("atomic value = &cell {\n    set seen = value^;\n  }"),
+        0
     );
 }
 

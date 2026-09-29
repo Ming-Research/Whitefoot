@@ -698,7 +698,7 @@ struct IrBuilder<'program> {
     /// [PAR-4] the statements of this body that start a context. Empty in
     /// every synthesized function: a wrapper, chunk or splitter starts none.
     context_starts: Vec<NodePath>,
-    /// [WAIT-2] for each marked waiting `let`, how many statements after it
+    /// [WAIT-2] for each started waiting `let`, how many statements after it
     /// its context is awaited, or `None` for its block's end.
     context_awaits: Vec<(NodePath, Option<u32>)>,
     /// The bound contexts started and not yet awaited, innermost block last.
@@ -1037,7 +1037,7 @@ impl<'program> IrBuilder<'program> {
             }
             self.await_contexts_before(outer_pending, index)?;
             match statement {
-                // [WAIT-2] a marked waiting `let`: its call runs as a context
+                // [WAIT-2] a started waiting `let`: its call runs as a context
                 // and its binding is defined where the plan awaits it.
                 CheckedStatement::Let {
                     node_path,
