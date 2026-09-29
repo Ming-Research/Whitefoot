@@ -7,7 +7,7 @@ on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 
 ## 2026-09-28 Add the total rounding conversion into float formats
 
-Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals
+Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals, compiler/diagnostic-repairs
 
 Owner-approved: 2026-09-28, the owner approved the #171 decision cards (rounding-conversion, rounding-conversion-lowering) in the session handoff
 
@@ -36,6 +36,7 @@ Nodes: compiler/diagnostic-repairs
 Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (range-length repair) in the session handoff
 
 Summary: Apply the reviewed amendment for PR #167 unchanged. The second decision of compiler/diagnostic-repairs now gives the unproved goal over the `len` of a range an argument forms at the call its own routes: the length is written as the difference of the range's endpoints [REF-4], guarded when that difference is one binding, bounded by a width with the exact subtraction and then guarded when it is a subtraction, re-sliced from zero by that width when the goal equates such a subtraction, and preceded by a `let` for an endpoint that is not a binding. Its grounds are that such a range has the length its endpoints give it, so naming it as a value only its occurrence identifies hid the missing bound on the difference, and that a `-wrap` width carries no relation to the endpoints [ENT-3]; the refused occurrence-local classification is added to `Rejected:`. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
 ## 2026-09-28 Bind marked waiting results and run contexts on several drivers
 
 Nodes: language/parallelism, compiler/waiting-contexts
