@@ -367,7 +367,9 @@ rarely insert at the same place.
   [beyond-memory article](articles/beyond-memory.md) shows it for
   `ReadFile`. TYPE-11's TypeInvariantWritableField repair is unpinned too:
   a `public` field is written only in an interface record, which a
-  single-source pair cannot hold, so pinning it needs a module-form pair.
+  single-source pair cannot hold, so pinning it needs a module-form pair;
+  and FN-9's propagated-exit repair is pinned for a refuted relation only,
+  its unproved sentence still unpinned.
   Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the

@@ -3091,7 +3091,7 @@ A relation naming results uses exactly [ENT-3.S12]'s closed result-destination l
 
 Every published relation set is checked for consistency at the declaration.
 A `contract_block` whose instantiated relations are contradictory at their establishment point is a hard error citing CALL-6 at the `fn_decl`, `ContradictoryPublishedRelations`, naming the clauses and carrying a repair [DIAG-1].
-The set is partitioned by route first, because a routed clause is available only on its own arm and two clauses on two arms are never in one caller state together; an unrouted clause selects every explicit return [FN-9] and is therefore a member of every route's set.
+The set is partitioned by route first, because a routed clause is available only on its own arm and two clauses on two arms are never in one caller state together; an unrouted clause selects every explicit return and every propagated error exit [FN-9] and is therefore a member of every route's set.
 Contradiction is the ordinary [ENT-4] question over the declared templates: each distinct operand datum is one term, a literal folds through Z with its value, and the set is contradictory exactly when its transitive closure derives a negative self-bound or forces two terms one declared disequality separates to be equal.
 A template whose operand shape that closure cannot represent contributes no premise, so a reported contradiction is always a real one.
 The judgment is at the declaration because the set is fixed there: at a contradictory point every L0 relation and both signs of every goal are derivable [ENT-4], so an inconsistent contract is not one wrong fact at a caller but every fact at every caller, and no caller state repairs it.
