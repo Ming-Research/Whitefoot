@@ -1263,7 +1263,9 @@ struct wf_driver {
 static wf_context wf_context_root;
 /* Driver 0 runs the entry on the floor's thread, and every program has it. */
 static wf_driver wf_driver_root;
-static wf_driver *wf_drivers[WF_DRIVER_LIMIT];
+/* Atomic, since a driver looking for a program that can take no step reads
+ * every slot while the entry publishes the next driver. */
+static _Atomic(wf_driver *) wf_drivers[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_count;
 static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
@@ -1290,6 +1292,14 @@ static _Atomic uint64_t wf_context_foreign_publications;
  * look for work and has not looked yet: while one has, no other is woken. */
 static _Atomic unsigned wf_drivers_idle;
 static _Atomic unsigned wf_drivers_searching;
+
+/* What a driver looking for a program that can take no step reads before and
+ * after its pass over the drivers [WAIT-2]: every change that pass could miss
+ * is counted, a driver announcing idleness before it announces and one
+ * leaving idleness, or a steal ending, after, and a steal under way is counted
+ * while it moves contexts between two queues. */
+static _Atomic uint64_t wf_drivers_changes;
+static _Atomic unsigned wf_drivers_moving;
 
 /* Appends a ready context to a driver's run queue. */
 static void wf_run_push(wf_driver *driver, wf_context *context) {
@@ -1354,6 +1364,7 @@ static void wf_drivers_wake_one(void) {
             continue;
         }
         if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
+            atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
             atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
             atomic_store_explicit(&driver->searcher, 1u, memory_order_relaxed);
             wf_completion_notify_target(driver->runtime);
@@ -1439,6 +1450,7 @@ static int wf_driver_steal(wf_driver *driver) {
         if (available == 0u) {
             continue;
         }
+        atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
         wf_spin_lock(&victim->run_lock);
         available = atomic_load_explicit(&victim->run_count, memory_order_relaxed);
         wanted = (available + 1u) / 2u;
@@ -1470,6 +1482,7 @@ static int wf_driver_steal(wf_driver *driver) {
         atomic_store_explicit(&victim->run_count, available - moved, memory_order_relaxed);
         wf_spin_unlock(&victim->run_lock);
         if (moved == 0u) {
+            atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
             continue;
         }
         while (taken != NULL) {
@@ -1478,6 +1491,8 @@ static int wf_driver_steal(wf_driver *driver) {
             wf_run_push(driver, taken);
             taken = next;
         }
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+        atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
         return 1;
     }
     return 0;
@@ -2285,27 +2300,36 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
  * guard or for another context. Called by a driver that has just announced
  * its own idleness. A driver that makes a context ready is running, not idle,
  * and a helper's completion ends a counted host wait only when a running
- * driver harvests it, so a positive answer is final. Each driver's counts are
- * its own thread's, published by its seq_cst announcement of idleness. Every slot of the driver
- * table is read, not only the counted ones, because a driver that has just
- * started may take contexts before the count includes it. */
+ * driver harvests it.
+ *
+ * The pass over the drivers is not one instant, so it is a double collect:
+ * each driver's idleness is read before its counts, which its thread writes
+ * and its seq_cst announcement of idleness publishes, and the answer holds
+ * only if no driver entered or left idleness and no steal ended or was under
+ * way between the reads of `wf_drivers_changes` around the pass. Every slot of
+ * the driver table is read, not only the counted ones, because a driver that
+ * has just started may take contexts before the count includes it. */
 static int wf_contexts_stuck(const wf_driver *self) {
+    uint64_t before = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst);
     unsigned index;
     for (index = 0; index < WF_DRIVER_LIMIT; index++) {
-        wf_driver *other = wf_drivers[index];
+        wf_driver *other = atomic_load_explicit(&wf_drivers[index], memory_order_seq_cst);
         if (other == NULL) {
             continue;
-        }
-        if (atomic_load_explicit(&other->run_count, memory_order_seq_cst) != 0u
-            || atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u) {
-            return 0;
         }
         if (other != self
             && atomic_load_explicit(&other->idle, memory_order_seq_cst) == 0u) {
             return 0;
         }
+        if (atomic_load_explicit(&other->run_count, memory_order_seq_cst) != 0u
+            || atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u) {
+            return 0;
+        }
     }
-    return 1;
+    if (atomic_load_explicit(&wf_drivers_moving, memory_order_seq_cst) != 0u) {
+        return 0;
+    }
+    return atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;
 }
 
 /* How many contexts a driver resumes before it looks for host completions
@@ -2395,6 +2419,7 @@ static void wf_context_drive(wf_driver *driver) {
             /* Announced before the last look, so a driver that makes a
              * context ready after that look sees this one parked and wakes
              * it. */
+            atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
             atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
             atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
             if (wf_contexts_stuck(driver)) {
@@ -2407,6 +2432,7 @@ static void wf_context_drive(wf_driver *driver) {
                 wf_bridge_park(epoch);
             }
             if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
+                atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
                 atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
             }
         }
@@ -2492,10 +2518,12 @@ static void wf_drivers_begin(void) {
                 driver,
                 wf__floor_stack_bytes()
             ) != 0) {
-            wf_drivers[index] = NULL;
+            /* A running driver looking for a stop may already have read
+             * the published slot, so the driver is kept, idle with nothing
+             * counted, outside the count every other pass reads. */
+            atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
             (void)wf_linux_io_uring_destroy(&driver->own_adapter);
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
-            wf_pool_give(driver, granted);
             break;
         }
         atomic_store_explicit(&wf_driver_count, index + 1u, memory_order_release);

@@ -403,7 +403,7 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
     }
 }
 
-/// Each accepted connection is served by a context of its own [PAR-4], so a
+/// Each accepted connection is served by a context of its own [WAIT-3], so a
 /// peer is answered while every peer accepted before it is still silent.
 /// The peers speak in the reverse of their acceptance order: a server that
 /// served one connection at a time would wait on the first, silent peer and
@@ -532,7 +532,7 @@ fn two_bound_fetches_proceed_together_on_both_routes() {
     let llvm = compile_program("tcp_gather.wf");
     assert!(
         llvm.contains("@wf__context_launch("),
-        "each marked fetch starts a context"
+        "each spawned fetch starts a context"
     );
     let program = build_program(&llvm);
     for native_ring in [true, false] {

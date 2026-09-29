@@ -1,0 +1,8 @@
+fn tally(count: u64) -> result: u64 pure waits {
+  return count +wrap 1_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  spawn tally(count: 41_u64);
+  return std::process::exit_status(code: 0_u8);
+}

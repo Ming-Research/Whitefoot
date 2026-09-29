@@ -311,7 +311,8 @@ Safe, fast and small are the core. These are the other things worth knowing.
   once (`tests/programs/tcp_contexts.wf`). The function that spawned a
   context returns only after it finishes. A spawn can also bind its result,
   `let a = spawn fetch(…);`, and the function waits for it at the first
-  statement that uses `a`, so several requests proceed together
+  statement that uses `a` or may leave the block, so several requests
+  proceed together
   (`tests/programs/tcp_gather.wf`). A waiting function keeps its state in a
   frame the size of what it holds across a wait, not in a stack of its own,
   so a context costs about what its own variables do and adds no kernel
@@ -441,7 +442,7 @@ Other options:
 - `--par` builds the parallel version, and `--par-ledger` prints every
   parallelism decision with its reason. At run time, `WF_WORKERS` sets how
   many workers it uses, and `WF_DRIVERS` how many driver threads run the
-  contexts that marked waiting calls start, one per CPU by default;
+  contexts that `spawn` starts, one per CPU by default;
 - `--stack-ledger` reports each function's frame and how many levels each
   recursive cycle fits;
 - `--emit-llvm` prints the LLVM IR;

@@ -228,7 +228,7 @@ if [ "$MODE" = bench ]; then
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread netload.c -o "$OUT/netload"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread waiting_echo.c -o "$OUT/waiting_echo"
 
-    # The maintained context server: one context per connection [PAR-4].
+    # The maintained context server: one context per connection [WAIT-3].
     "$WFC" -o "$OUT/wf_echo" "$ROOT/tests/programs/tcp_contexts.wf"
 fi
 

@@ -794,17 +794,18 @@ pub enum IrOperation {
     /// finished. It stands before every exit of an activation that starts
     /// one. Defines `Unit`.
     ContextJoin,
-    /// [WAIT-2] starts `function`, a synthesized wrapper taking exactly
-    /// `arguments` by value and returning the marked call's result, in a
+    /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
+    /// `arguments` by value and returning the spawned call's result, in a
     /// context of its own whose result the starting activation keeps. Defines
     /// `Unit`; [`Self::ContextAwait`] names this value to read the result.
     ContextStartBound {
         function: u32,
         arguments: Vec<IrValueId>,
     },
-    /// [WAIT-2] waits until the context `start` started has finished and
-    /// defines its result. It stands before the first read, write or release
-    /// of the bound value, on every path from its start.
+    /// [WAIT-3] waits until the context `start` started has finished and
+    /// defines its result. It stands at the beginning of the first later
+    /// statement of the binding's block that names the binding or may leave
+    /// the block, and otherwise at the block's end.
     ContextAwait {
         start: IrValueId,
     },

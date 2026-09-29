@@ -2521,7 +2521,7 @@ fn a_scrutinee_call_written_first_with_independent_arms_forms_a_pair() {
     );
 }
 
-/// [WAIT-2] where the one marked waiting `let` of `main` is joined: how many
+/// [WAIT-3] where the one bound spawn of `main` is joined: how many
 /// statements after it, or `None` for its block's end. The fixture binds
 /// `bound`, then runs `body` before `main` returns.
 fn bound_await(body: &str) -> Option<u32> {
@@ -2546,7 +2546,7 @@ fn bound_await(body: &str) -> Option<u32> {
             .find(|function| function.name == "main")
             .expect("main");
         let [planned] = main.waiting.context_awaits.as_slice() else {
-            panic!("one marked let: {:?}", main.waiting.context_awaits);
+            panic!("one bound spawn: {:?}", main.waiting.context_awaits);
         };
         assert!(main.waiting.context_starts.contains(&planned.statement));
         planned.before
@@ -2859,7 +2859,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
             .find(|function| function.name == "main")
             .expect("main");
         let [planned] = main.waiting.context_awaits.as_slice() else {
-            panic!("one marked let: {:?}", main.waiting.context_awaits);
+            panic!("one bound spawn: {:?}", main.waiting.context_awaits);
         };
         assert_eq!(planned.before, None);
     });

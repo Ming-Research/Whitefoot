@@ -813,6 +813,8 @@ between them; pass two operations through one owner when their order matters
 [HOST-1].
 
 A bound spawn is joined at the beginning of the first later statement that
-names its binding. A statement that makes the spawned call's guard true
-therefore stands before that statement in the block, not inside it: inside,
-it would run only after the join, which waits for the guard.
+names its binding or may leave its block, such as an `if` holding a `return`
+or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
+the spawned call's guard true therefore stands before that statement in the
+block, not inside it: inside, it would run only after the join, which waits
+for the guard.

@@ -14,7 +14,7 @@
 //! lowering places before every exit, suspends the activation until they
 //! have finished. A bound start's context constructs its result in a slot of
 //! the starting frame and is counted in a group of its own, which the
-//! start's await joins before it reads the slot [WAIT-2].
+//! start's await joins before it reads the slot [WAIT-3].
 //!
 //! Nothing here can be refused. Every started call runs as a context of its
 //! own (design/compiler/waiting-contexts.md), so there is
@@ -36,7 +36,7 @@ use crate::{IrConstant, IrFunction, IrInstruction, IrOperation, IrType, IrValueI
 /// The group one starting activation keeps, named in its entry prelude.
 pub(super) const GROUP: &str = "%wf.ctx.group";
 
-/// The group a bound start keeps for its one context [WAIT-2], named after
+/// The group a bound start keeps for its one context [WAIT-3], named after
 /// the start's value so its await can find it.
 pub(super) fn bound_group(start: IrValueId) -> String {
     format!("%wf.ctx.group.{}", start.index())
@@ -266,22 +266,17 @@ impl FunctionEmitter<'_, '_> {
             }
             return self.copy_storage(ty, &slot, &destination);
         }
+        // The value is defined even when its result returns through a
+        // destination: a waiting call's result then lives only in the place
+        // its binding takes over, but an await's result keeps a slot of its
+        // own, which the definition's save stores the value into.
         let emitted = self.output.type_name(self.program, ty)?;
-        let moved = format!("%{}", self.next_temporary()?);
+        let value = self.value_name(result);
         writeln!(
             self.output,
-            "  {moved} = load {emitted}, ptr {slot}\n  store {emitted} {moved}, ptr {destination}"
+            "  {value} = load {emitted}, ptr {slot}\n  store {emitted} {value}, ptr {destination}"
         )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        if reads_back {
-            writeln!(
-                self.output,
-                "  {} = load {emitted}, ptr {destination}",
-                self.value_name(result)
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
-        }
-        Ok(())
+        .map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Waits for every context this activation started.

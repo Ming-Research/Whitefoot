@@ -801,7 +801,10 @@ or its cost is brought to the owner; it is not adopted silently.
 
 Each witness program was built with the compiler before the runtime work
 (dac9f07c1) and after it, and run on this four-core container. A run that
-did not finish was stopped after 10 s. The runs and costs marked "committed"
+did not finish was stopped after 10 s. The costs departed from 10.4's
+medians of five runs: each names its own count of interleaved runs, and R1's
+read cost used a scratch loop, since the named benchmark no longer compiles.
+The runs and costs marked "committed"
 used the runtime as committed, at 9bbdeed5c; the others used a first build
 whose lowering of R2 was replaced before any commit (see the end of this
 section). The programs are maintained in
@@ -835,7 +838,8 @@ section). The programs are maintained in
     connection ran at 1.009, 64 at 0.981, 1024 at 0.980, and 64 KiB
     messages at 0.992. Committed, two runs of 15 passes, pooled: 1
     connection at 0.979, 64 at 0.996, meeting the criterion, 64 KiB
-    messages at 1.047, and 1024 at 0.968, 0.966 and 0.964 in the two runs.
+    messages at 1.047, and 1024 at 0.968, from 0.966 and 0.964 in the two
+    runs.
     That loss repeated, lies outside the criterion's case, and is not
     attributed; `docs/todo.md` records it.
   - An attribution run with and without the periodic reap was cut short by
@@ -883,3 +887,18 @@ compiled program keeps its adapter in zeroed static storage
 (`wf_bridge_adapter`), so no program run was affected; the completion
 harness keeps adapters on the stack, read a nonzero hold, and grew a helper
 where its growth case allows none. The initializer now clears it.
+
+**Found by the review: a stop judged from a torn view.** R4's first check
+read each driver's counts before its idleness and read the driver table
+without ordering. A driver that parked a host wait between those two reads,
+contexts between two queues during a steal, or a driver the entry was still
+publishing could then let another driver report a stop while a context
+could still proceed. No run showed it; the windows are a few instructions
+wide. The check now reads each driver's idleness before its counts, holds
+only if a count of every entry into or exit from idleness and of every
+steal is unchanged around the pass with no steal under way, and reads the
+table's slots atomically; a driver whose thread failed to start stays in the
+table, idle, instead of being released under a reader. After the change,
+100 runs each of the three progress witnesses on 1 and on 4 drivers and 60
+on the adapter route finished with no report, and both no-step programs
+still stopped with it on 1 and 4 drivers.

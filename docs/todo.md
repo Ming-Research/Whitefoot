@@ -1242,18 +1242,10 @@ rarely insert at the same place.
   `WSAPoll` readiness wait would give it the Linux readiness route's
   behavior. Reopen when a Windows server has to run without the port.
 
-- **The read benchmark's programs no longer compile.**
-  `research/experiments/io-completion-bench/programs/read_heavy_*.wf` still
-  write `own Bool` and other retired spellings, so `read-bench.sh` stops at
-  its first build; the spawn work measured single-context reads with a
-  scratch loop instead (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
-  section 10.5). Port the four programs to the current surface and check
-  that they publish the expected sums. Reopen before the next read-path
-  measurement.
-
-- **The progress changes cost the context echo server about 3% at 1024
+- **The progress changes cost the context echo server 3 to 4% at 1024
   connections.** With R1 to R4 as committed, `tcp_contexts.wf` ran at 0.966
   and 0.964 of the runtime before them in two runs of 15 interleaved passes,
+  0.968 with both runs pooled,
   while 1 connection ran at 0.979 and 64 at 0.996 over both runs
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
   Candidates are the `wf__context_pass` call after every host operation its
@@ -1359,7 +1351,7 @@ rarely insert at the same place.
 
 - **A bound spawn is joined before the whole statement that uses it.**
   [WAIT-3] joins a bound spawn at the beginning of the first later statement
-  of its block that names the binding, so in
+  of its block that names the binding or may leave the block, so in
   `let seen = spawn consume(…); if go { atomic … { … } return seen; }` the
   call is joined before the `if`, and the atomic statement that would make
   its guard true never runs. Joining on the path inside the statement instead
@@ -1373,9 +1365,11 @@ rarely insert at the same place.
   most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
   in the queue until one returns, so nine contexts whose operations wait on
   one another through pipes can stop although [WAIT-2] promises that they
-  proceed. On Linux the ring carries reads, connects and every socket
-  operation, so only stream writes and a few immediate calls take a helper
-  there; on a host with no ring every file operation does. Letting the pool
+  proceed. On Linux the ring carries reads, opens, closes and a socket's
+  accept, connect, receive and send, so stream writes and the immediate
+  listen, bind and half-close take a helper there
+  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
+  with no ring every file operation does. Letting the pool
   grow past the ceiling while every helper is blocked, or carrying stream
   writes on the ring, would remove it; validate with nine contexts paired
   through pipes. Reopen when a program runs more than eight such waits at
@@ -1643,19 +1637,24 @@ rarely insert at the same place.
 - **The I/O research record and two runtime comments describe retired
   states.** `research/investigations/io-model/NETWORK.md` says the hand-out
   of a may-suspend call to a pool stack landed and serves `tcp_fanout.wf`'s
-  peers concurrently, which [PAR-4] contexts replace; `DESIGN.md` still says
+  peers concurrently, which spawned contexts [WAIT-3] replace; `DESIGN.md` still says
   canonical `make check` stops on a v0.37 `CANDIDATE` identity; the
   concurrency catalog's retired PAR-3 text and staged-loop sketch predate the
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` syntax and no longer compile; and `.github/workflows/io-bench.yml`
-  says the gate compiles those programs, which it does not. A reader following
-  any of them is misled about what runs. Mark the research passages
+  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  stops at its first build and the spawn work measured single-context reads
+  with a scratch loop instead
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
+  and `.github/workflows/io-bench.yml` says the gate compiles those programs,
+  which it does not. A reader following any of them is misled about what
+  runs. Mark the research passages
   superseded with a pointer to `WAITS.md`, rewrite the `bridge.h` comment
   against the context scheduler, and either migrate the benchmark programs
   and wire their compilation or delete them with the workflow sentence;
-  reopen with the next edit of any of these files.
+  reopen with the next edit of any of these files or before the next
+  read-path measurement.
 
 - **A reserved spelling used as a name does not say it is reserved.** The
   Snowghost renderer's writers found by trial that `copy`, `is` and `checked`
@@ -1867,6 +1866,16 @@ rarely insert at the same place.
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **A proof counter has no type without an overflow obligation.** Minimal
+  witness: a monitor invariant `produced - consumed == count` over a bounded
+  buffer, whose `produced` and `consumed` exist only for the proof and grow
+  without bound, so as `u64` fields each increment owes an overflow proof no
+  program can give. Ghost state, erased mathematical integers the checker
+  reasons about and the lowering never stores, would express it
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 5.3);
+  the owner deferred it while spawn was built. Reopen with the first program
+  whose invariant needs such a counter.
+
 - **Type invariants stop at the direct struct type.** [TYPE-11] makes a
   struct's invariant a requirement and postcondition of each callable whose
   parameter or result is written as the struct, a construction's obligation,
@@ -1989,10 +1998,10 @@ each is resolved by a discussion and a tree change.
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
   its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
-  `stdout`, so moving it into the first marked `serve` leaves nothing to
+  `stdout`, so moving it into the first spawned `serve` leaves nothing to
   move on the next iteration; a reference parameter is refused because a
-  call executing alongside later statements outlives its statement
-  [WAIT-2]; and the marked call's result is released in its context, so
+  spawned context outlives its statement [WAIT-3]; and a spawn statement's
+  result is released in its context, so
   the starter cannot log on its behalf. A second writer of one standard
   output and the two ends of a channel both fail the sharing rule agreed
   with the owner (`research/investigations/io-model/WAITS.md`, "Sharing

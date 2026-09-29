@@ -4,6 +4,7 @@
 //! program here stopped, or ran on without end, on the runtime before the
 //! change that makes it pass, on the route or driver count it names
 //! (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4).
+//! The last case is a bound spawn's result crossing its join [WAIT-3].
 
 use super::support::{build_program, compile_program, compile_sources};
 
@@ -144,5 +145,39 @@ fn a_program_that_can_take_no_step_stops_with_a_report_on_every_driver_count() {
                 "{name}, drivers {drivers}: {report}"
             );
         }
+    }
+}
+
+const HANDLE_RESULT: &[u8] = b"fn keep(directory: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure waits {
+  return move directory;
+}
+
+fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(handles) waits {
+  std::fs::close_directory(factory: handles, directory: move directory);
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let back = spawn keep(directory: move cwd);
+  close(handles: &handles, directory: move back);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+
+/// A bound spawn whose result is a host handle, which returns through a
+/// destination, is moved on after its join [WAIT-3]. The join once stored
+/// the handle into the binding's slot without defining the value the
+/// binding's own store then read, which the host compiler refused.
+#[test]
+fn a_bound_spawn_moves_its_host_handle_on_after_the_join() {
+    let program = build_program(&compile_sources(&[("handle_result.wf", HANDLE_RESULT)]));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
     }
 }

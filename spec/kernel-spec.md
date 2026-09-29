@@ -2170,7 +2170,6 @@ No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so 
 A `call` that carries the `spawn` atom [GRAM-5] is a spawn.
 A spawn is admitted as the call of an `expr_stmt` or of the `ordinary_let_rhs` of a `let_stmt` when its callee waits [WAIT-1], every parameter of its callee is a value parameter [GRAM-3], and, as the call of an `expr_stmt`, its callee's result has the drop capability [OWN-1].
 A spawn in any other position, and one whose callee fails a condition, is a hard error citing WAIT-3 at that `call`, carrying the failed condition [DIAG-1].
-A spawn is a waiting call for [WAIT-1], [PAR-1] and [PAR-2].
 Executing a spawn evaluates its arguments in the starting context, moving or copying each into the call [FN-1], starts a context that executes the call, and continues the starting context with the statement after the spawn's statement.
 The started context's footprint is the storage its arguments moved or copied into it [EFF-5] and, for a `let_stmt`, the binding, so no statement of the starting context overlaps it, and its host effects follow [HOST-1].
 The starting context joins the started one, waiting there until it has completed [WAIT-2]:
