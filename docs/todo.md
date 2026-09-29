@@ -1831,18 +1831,6 @@ rarely insert at the same place.
   `type11-*` cases. Found in the TYPE-11 review; reopen when a new subject or
   datum shape is added, such as a fact at an element read.
 
-- **The checker's top module passed 4,000 lines.**
-  `compiler/src/semantic/check.rs` has 4,044 lines after the `Segments`
-  arms of its expression walks. Two coherent blocks sit in it: the call
-  requirement and allocation-bound installers
-  (`install_call_requirements` through `install_expression_allocation_bounds`,
-  about 430 lines) and goal-template instantiation
-  (`instantiate_goal_expression` through `instantiate_goal_const`, about
-  730 lines). Move the instantiation block into its own `check` submodule
-  as an `impl Checker` whose entry points are `pub(super)`. Validate that
-  the move changes no behavior: identical `make check` results and a diff
-  of moved items and visibility only. Split when no open branch has large
-  edits in the file; close when it is under 4,000 lines.
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
   1,729-line inline test module, and the tests in
