@@ -2476,6 +2476,12 @@ impl Reasoning<'_, '_, '_> {
                 ));
                 continue;
             }
+            // [MSR-3] a fragment-integer operand is read by the construction
+            // itself, so its term is formed at this event and the field
+            // receives its value whether or not an earlier event formed it.
+            if fragment_type(field.ty()).is_some() {
+                let _ = self.read_operand(field);
+            }
             let Some(source) = self.input.placement_source_place(field) else {
                 continue;
             };
