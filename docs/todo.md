@@ -1243,6 +1243,19 @@ rarely insert at the same place.
   state's paths) would let such a context run on. Reopen when a program
   waits for a context it did not need at an atomic statement.
 
+- **With several drivers, a program whose every context waits on another
+  one hangs instead of stopping.** On one driver, when no context is ready
+  and none waits for the host, the bridge stops the program with "every
+  context waits for a context that is not waiting for the host": a context
+  that waits on a guard only its own later statement would satisfy, or two
+  contexts each waiting on a guard the other would satisfy, end there. On
+  several drivers only the entry's driver may declare it, and only while it
+  runs alone, so the same two-context cycle runs until it is killed. A count
+  of contexts that are neither ready nor waiting for the host, checked when
+  every driver is idle with nothing in flight, would let any driver declare
+  it. Reopen when a program is seen to hang this way, or before a guarded
+  program is expected to fail rather than hang.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
