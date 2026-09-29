@@ -1237,21 +1237,27 @@ impl<'check> Survey<'check, '_> {
         }
     }
 
-    /// One proved element write, refusing a second map on the same root.
+    /// One proved element write, refusing a second map on an overlapping
+    /// root.
     fn record_element_write(
         &mut self,
         root: ResolvedPlace,
         statement: NodePath,
         map: ProvedAffineIndexMap,
     ) {
-        // One affine map per resolved root: two different maps can cross
-        // between iterations even where each is injective by itself. This
-        // fixed rule performs no pairwise range search.
-        if self
-            .element_writes
-            .iter()
-            .any(|written| same_element_root(&written.root, &root) && written.map != map)
-        {
+        // [PAR-2] "Every write by B to one mapped root must be to a place in
+        // a proved single-binder affine element of it carrying exactly the
+        // same a and b". Two different maps on one root can cross between
+        // iterations even where each is injective by itself, and so can two
+        // roots one of which lies inside the other: `a` mapped by `a[i]` and
+        // `a[j].xs` mapped by `a[j].xs[i]` both reach `a[j].xs`. Roots are
+        // compared by the ordinary overlap relation [OWN-7]; this fixed rule
+        // performs no pairwise range search.
+        let oracle = UnprovedSeparations;
+        if self.element_writes.iter().any(|written| {
+            self.places.overlaps(&oracle, &written.root, &root)
+                && !(same_element_root(&written.root, &root) && written.map == map)
+        }) {
             self.shared.get_or_insert(statement.clone());
         }
         self.element_writes.push(ProvenElementWrite {

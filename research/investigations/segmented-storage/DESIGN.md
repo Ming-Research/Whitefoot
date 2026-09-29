@@ -115,8 +115,9 @@ and the segment boundaries, which the shape owns and no program can change.
   value, `box_segments_filled`, which computes the boundaries, allocates
   once, and returns `None` when the total passes the element type's limit.
 - The subscript `s[i]` selects segment i, a run of `T` like the referent of
-  a range reference: `&s[i]` forms a range reference over it, and it is
-  subscripted, re-ranged and measured as that referent is.
+  a range reference: `&s[i]` forms a range reference over it, and that
+  reference is subscripted, re-ranged and measured as any range reference
+  is. The segment subscript is the last suffix of its borrow.
 - `s.all` is the run of every element in segment order, over which
   `&s.all` forms a range reference, so the joined output reaches a consumer
   without a copy.

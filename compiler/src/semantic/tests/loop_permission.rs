@@ -2709,10 +2709,58 @@ fn whole_beside(a: &[P]) -> result: unit writes(a) {
   return unit;
 }
 
+struct Row {
+  n: u64;
+  xs: Array<u64, 4>;
+}
+
+fn inner_root_inside_outer(rows: &[Row], j: u64) -> result: unit writes(rows) contract {
+  requires j < rows^.len;
+} {
+  let count = rows^.len;
+  for (i in 0_u64..count) {
+    set rows^[i].xs[0_u64] = 1_u64;
+    if i < 4_u64 {
+      set rows^[j].xs[i] = 2_u64;
+    }
+  }
+  return unit;
+}
+
+fn whole_row_beside_inner(rows: &[Array<u64, 4>], j: u64) -> result: unit writes(rows) contract {
+  requires j < rows^.len;
+} {
+  let count = rows^.len;
+  let fresh = array_filled::<u64, 4>(value: 0_u64);
+  for (i in 0_u64..count) {
+    set rows^[i] = fresh;
+    if i < 4_u64 {
+      set rows^[j][i] = 2_u64;
+    }
+  }
+  return unit;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+
+/// [PAR-2] two element maps whose roots overlap, one root inside an element
+/// of the other, reach one place from two iterations: `rows[i].xs[0]` for
+/// i = j and `rows[j].xs[i]` for i = 0 both write `rows[j].xs[0]`. Each map
+/// is injective on its own root, so only comparing the roots by overlap
+/// refuses the loop.
+#[test]
+fn element_maps_on_overlapping_roots_deny() {
+    for function in ["inner_root_inside_outer", "whole_row_beside_inner"] {
+        let refused = denied(ELEMENT_SUBTREE_SOURCE.as_bytes(), function, 2);
+        assert!(
+            matches!(refused, LoopDenial::SharedWrite { .. }),
+            "{function}: {refused:?}"
+        );
+    }
+}
 
 #[test]
 fn accesses_below_one_mapped_element_are_in_the_element_family() {

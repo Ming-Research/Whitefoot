@@ -71,7 +71,7 @@ pub enum ContainerShape {
     Box,
 }
 
-/// The three storage nominals, in [TYPE-9] order. The cell is not one of them:
+/// The four storage nominals, in [TYPE-9] order. The cell is not one of them:
 /// it is declared by [PRE-1] and read through [`CELL_NOMINAL`].
 pub const CONTAINER_NOMINALS: [ContainerNominal; 4] = [
     ContainerNominal {
