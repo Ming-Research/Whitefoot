@@ -886,8 +886,8 @@ Consequences, the first two carried by kernel-spec v0.77:
   context of its own and its starter waits for it at the activation's exit.
 - [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
   execution of the same program is a conforming one. The progress ruling of
-  2026-09-29 restored one guarantee with shared objects (kernel-spec v0.81
-  [SHARE-3]): while an atomic statement waits for its guard, the calls around
+  2026-09-29 restored one guarantee with shared objects (a draft [SHARE-3]
+  that the spawn model replaced before kernel-spec v0.82): while an atomic statement waits for its guard, the calls around
   it run as contexts and their starters proceed, so an in-order execution
   conforms only where no guard waits.
 - Later, carried by kernel-spec v0.78: a marked waiting call may bind its

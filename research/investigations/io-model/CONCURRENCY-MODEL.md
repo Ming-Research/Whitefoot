@@ -298,7 +298,7 @@ What is already there:
   [PRF-1].
 
 What was missing, and what the type invariant of 5.6 now supplies
-([TYPE-11], specification v0.81):
+([TYPE-11], specification v0.82):
 
 - a declared invariant for an object, on its state's struct;
 - I as a fact at each block's entry;
@@ -918,5 +918,9 @@ session on the same container:
   report.
 
 The loss at 1024 connections that both runs of the earlier session showed
-did not appear in either run of this one, so it is not attributed to the
-runtime.
+did not appear in this session, whose own two runs differ by 5.1 points, and
+64 KiB messages moved the other way, from 1.047 to 0.971. This session also
+measured a different runtime, the one with the stop check fixed. Whether the
+progress changes cost anything at 1024 connections or with 64 KiB messages
+is therefore open, and `docs/todo.md` says how to settle it; 64 connections,
+where R3's criterion is set, stayed within 1% in both sessions.

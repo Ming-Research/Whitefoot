@@ -1242,21 +1242,24 @@ rarely insert at the same place.
   `WSAPoll` readiness wait would give it the Linux readiness route's
   behavior. Reopen when a Windows server has to run without the port.
 
-- **The context echo server's rate at 1024 connections moved 3 to 4%
-  between sessions.** With R1 to R4 as committed, `tcp_contexts.wf` ran at
-  0.966 and 0.964 of the runtime before them in two runs of 15 interleaved
-  passes, 0.968 with both runs pooled; with the stop check fixed, in a later
-  session, it ran at 1.044 and 0.993, 1.004 pooled, while 64 connections
-  stayed within 1% in both sessions
+- **The context echo server's rate at 1024 connections and with 64 KiB
+  messages moved between sessions.** With R1 to R4 as committed,
+  `tcp_contexts.wf` ran at 0.968 of the runtime before them at 1024
+  connections (0.966 and 0.964 in two runs of 15 interleaved passes) and at
+  1.047 with 64 KiB messages; with the stop check fixed, in a later session,
+  it ran at 1.004 at 1024 connections (1.044 and 0.993) and at 0.971 with
+  64 KiB messages, while 64 connections stayed within 1% in both sessions
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
-  Whether the progress changes cost anything at that width is open: the two
-  sessions disagree by more than either's spread. Settle it by running the
-  same two builds interleaved in three or more sessions; if a loss persists,
-  attribute it with one build per change reverted, the candidates being the
-  `wf__context_pass` call after every host operation its start answered, the
-  reap after every 64 resumptions, the per-driver count of host waits and
-  the stop check's change counters. Reopen when a server with more than a
-  few hundred connections is measured, or before the next change to the
+  Whether the progress changes cost anything at those workloads is open: the
+  later session's two runs at 1024 connections differ by 5.1 points, more
+  than the 3.6 points between the sessions, and the 64 KiB figure moved 7.6
+  points the other way. Settle it by running the same two builds interleaved
+  in three or more sessions; if a loss persists, attribute it with one build
+  per change reverted, the candidates being the `wf__context_pass` call after
+  every host operation its start answered, the reap after every 64
+  resumptions, the per-driver count of host waits and the stop check's change
+  counters. Reopen when a server with more than a few hundred connections or
+  with messages of tens of KiB is measured, or before the next change to the
   driver loop.
 
 - **The compiled context server trails the hand-written shape at 64

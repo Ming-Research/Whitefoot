@@ -21,14 +21,14 @@ fn complete_inventory_is_pinned() {
     // v0.77 adds the optional `waits` of `fn_decl` and `fn_sig` [WAIT-1],
     // the optional `mustpar` of `for_stmt`, and the alternation of the
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
-    // v0.81 retires `mustpar` with PAR-4: `for_stmt` loses its optional
+    // v0.82 retires `mustpar` with PAR-4: `for_stmt` loses its optional
     // marker, one decision, and `spawn` [WAIT-3] takes its place in the
     // call marker's alternation.
     // v0.79 adds a STRING arm to the existing `cvalue` alternation
     // [CONST-2]: no decision, and nine rows for its continuations.
-    // v0.81's `atomic_stmt` adds its optional guard and its statement
+    // v0.82's `atomic_stmt` adds its optional guard and its statement
     // repeat [GRAM-4, SHARE-2]: two decisions.
-    // v0.81's `type_invariant*` repeat closes `struct_decl` [GRAM-2, TYPE-11]:
+    // v0.82's `type_invariant*` repeat closes `struct_decl` [GRAM-2, TYPE-11]:
     // one decision, which moves every later decision by one.
     assert_eq!(DECISIONS.len(), 163);
     assert_eq!(SELECT_ROWS.len(), 7_282);
@@ -111,7 +111,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[2].production(), Production::Item);
     assert_eq!(DECISIONS[2].kind(), DecisionKind::Choice);
     // [GRAM-2, TYPE-11]: `struct_decl` closes with its `field*` repeat and then
-    // v0.81's `type_invariant*` repeat.
+    // v0.82's `type_invariant*` repeat.
     assert_eq!(DECISIONS[12].production(), Production::StructDecl);
     assert_eq!(DECISIONS[12].kind(), DecisionKind::Repeat0);
     assert_eq!(DECISIONS[13].production(), Production::StructDecl);
@@ -172,8 +172,8 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[104].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[109].production(), Production::BreakStmt);
     assert_eq!(DECISIONS[109].kind(), DecisionKind::Optional);
-    // The call-site marker optional, and v0.81's `atomic_stmt` guard and
-    // statement repeat, shift the later place/effect choices; v0.81's
+    // The call-site marker optional, and v0.82's `atomic_stmt` guard and
+    // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one.
     assert_eq!(DECISIONS[125].production(), Production::Call);
     assert_eq!(DECISIONS[125].kind(), DecisionKind::Optional);
