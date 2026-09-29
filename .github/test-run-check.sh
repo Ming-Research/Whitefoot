@@ -146,13 +146,17 @@ WHITEFOOT_CHECK_TIMEOUT=1 WHITEFOOT_TIME_BUDGET_RECORD=$work/timeout-record \
 test "$status" -eq 124
 test ! -s "$work/timeout-record"
 
-# A record that cannot be written stops the command before it runs.
+# A record that cannot be written stops the command before it runs; the
+# relative case runs in the scratch directory, where a regression would leave
+# its file.
 for bad in relative-record "$work/no-such-directory/record"; do
     status=0
-    WHITEFOOT_TIME_BUDGET_RECORD=$bad perl "$runner" within touch "$work/ran" > "$work/bad-record.log" 2>&1 || status=$?
+    (cd "$work" && WHITEFOOT_TIME_BUDGET_RECORD=$bad perl "$runner" within touch "$work/ran") \
+        > "$work/bad-record.log" 2>&1 || status=$?
     test "$status" -ne 0
     test ! -e "$work/ran"
 done
+test ! -e "$work/relative-record"
 
 status=0
 perl "$runner" --budget-verdict "$record" > "$work/verdict.log" 2>&1 || status=$?
