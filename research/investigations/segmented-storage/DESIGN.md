@@ -1,9 +1,9 @@
 # Element subtrees and segmented storage
 
 Status: design selected by the owner on 2026-09-29 (two parts below);
-specification amendment and implementation in progress on
-mbbill/Whitefoot#186. The design-tree revision is proposed in
-`design/amendments/`.
+implemented with specification v0.81 on mbbill/Whitefoot#186, whose
+design-tree and specification changes await the owner's approval. The
+validation below holds.
 
 ## Question
 
@@ -72,6 +72,9 @@ one after another. All four builds return the same result.
 - **B** (`b.wf`): a parallel loop counts each item's commands, a sequential
   pass turns the counts into offsets, and the recursion of `halving.wf`
   fills each item's window of one array in parallel.
+- **C** (`c.wf`, added with the implementation): B's count loop, then
+  `box_segments_filled` over the counts and a plain counted loop filling
+  `&out.inner[i]`.
 
 Best of three, seconds, on the development machine (four Intel Xeon cores
 at 2.1 GHz, Linux 6.18) under the check lock:
@@ -169,3 +172,41 @@ is [`language/data-model/kernel-minimality`].
 - Conformance cases for each new admission and each preserved denial
   (overlapping maps, whole-root access beside mapped access, a segment
   subscript with a non-affine offset).
+
+## Results
+
+Measured with the implementation at mbbill/Whitefoot `f3090178`, on the
+same machine under the check lock; each build returns the same result as
+before.
+
+- `field.wf`: all three loops are permitted and split, the field write and
+  the element borrow included.
+- `scatter/c.wf`: the fill loop over `&out.inner[i]` is permitted and split
+  (`PAR split once loop ... independent map`).
+- Timing, best of seven, three alternating rounds, seconds:
+
+  | Round | B, 1 worker | B, 4 workers | C, 1 worker | C, 4 workers |
+  |---|---:|---:|---:|---:|
+  | 1 | 0.184 | 0.107 | 0.156 | 0.106 |
+  | 2 | 0.179 | 0.108 | 0.158 | 0.105 |
+  | 3 | 0.178 | 0.106 | 0.158 | 0.104 |
+
+  C is about 12 percent faster than the halving recursion at one worker and
+  within one percent at four, meeting the criterion. A first build of C
+  summed the lengths twice, once to judge the size limit and once to
+  allocate, and was 6 percent slower than B at four workers in two of
+  three rounds (0.114 against 0.107); summing once removed the gap, so the
+  sequential passes over the lengths are on the critical path at four
+  workers and a construction should make one pass for the total and one
+  for the bounds.
+- Conformance cases: each new admission (`type9-pos-segments-fill-and-join`,
+  `fn9-pos-segments-routed-count`, `eff5-pos-segments-distinct-segments`,
+  `op13-pos-segments-size-predicate`, `par2-pos-element-subtree-writes`)
+  and each preserved refusal (`eff5-neg-segments-all-overlaps-segment`,
+  `op4-neg-segments-element-subscript`, `op4-neg-segments-index-past-count`,
+  `type9-neg-segments-parameter`, `type9-neg-segments-move-content`,
+  `stor8-neg-no-heap-segments-filled`). Overlapping maps, whole-root access
+  beside a mapped access and a non-affine segment offset are denials of
+  permission rather than of acceptance, so compiler tests pin them
+  (`compiler/src/semantic/tests/loop_permission.rs`).
+

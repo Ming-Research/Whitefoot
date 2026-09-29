@@ -1610,7 +1610,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
-    /// The five rows the rule names are exactly the allocating [OP-13] and
+    /// The six rows the rule names are exactly the allocating [OP-13] and
     /// [OP-10] records that take a cell from the heap; `slots_new`,
     /// `ring_new` and `array_filled` build frame-resident shapes and are not
     /// among them.

@@ -6,8 +6,8 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the three storage shapes first, then the cell. [TYPE-2]
-    // makes each of the four an opaque struct
+    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
+    // makes each of the five an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -120,7 +120,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/box_segments_filled.wf",
         PreludeSource::Function,
-        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths);
+        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
+  ensures when Some(value: made): made.inner.len == lengths^.len;
+};
 "#,
     ),
     (

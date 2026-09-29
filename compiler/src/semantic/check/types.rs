@@ -442,8 +442,8 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::type_mismatch(expected, found),
             )
         };
-        // [STOR-8] a unit carrying the no-heap declaration cannot name `Box`
-        // or a runtime-capacity shape, which is the type half of what that
+        // [STOR-8] a unit carrying the no-heap declaration cannot name `Box`,
+        // a runtime-capacity shape or `Segments`, which is the type half of what that
         // declaration withdraws; the call half is judged at the `call`.
         if self.types.declarations.no_heap
             && (shape == crate::ContainerShape::Box || arguments.len() == 1)

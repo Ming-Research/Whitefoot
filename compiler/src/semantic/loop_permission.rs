@@ -22,10 +22,10 @@
 //!    reaching the accumulator nowhere." The operation is one of ten fixed
 //!    for the accumulator across the whole of B.
 //! 2. **Every written place is admitted.** "Every place a footprint of B
-//!    writes is iteration-own storage, the accumulator's whole place, one
-//!    proved single-binder affine element write, or one proved range
-//!    reference." Nothing else is admitted, and no injectivity argument is
-//!    searched for.
+//!    writes is iteration-own storage, the accumulator's whole place, a place
+//!    in one proved single-binder affine element, or a place in one proved
+//!    range reference." Nothing else is admitted, and no injectivity argument
+//!    is searched for.
 //! 3. **Resolved footprints.** "A footprint element whose caller place the
 //!    implementation does not resolve overlaps every place, so an unresolved
 //!    element denies permission rather than granting it."
@@ -36,12 +36,18 @@
 //!
 //! # The two element families
 //!
-//! A **proved single-binder affine element write** is a `set_stmt` whose
-//! target is one direct `Array` or `Slots` subscript rooted in an own binding
+//! A **proved single-binder affine element** is one subscript of an `Array`,
+//! a `Slots`, the run a range names or a `Segments`, rooted in an own binding
 //! declared outside L, or reached through `^` of a reference parameter
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
 //! `a` nonzero. Distinct binder values therefore select distinct elements.
+//! A place is in that element when its path continues the element's by any
+//! field, payload, `Box` content, index or range steps: aggregates hold only
+//! owned values and a cell has one owner [TYPE-8, TYPE-9], so nothing below
+//! element i is reachable from element j. A `set` target, an operand read and
+//! a borrowed argument, whose callee row is projected onto the argument's
+//! actual path [EFF-5], each reach such a place.
 //! The `^` needs no rule of its own here: it selects the reference
 //! root's resolved path [REF-1, TYPE-7], so `b^[a*i + c]` is recognized
 //! exactly as an inline subscript is, which is what keeps every
@@ -53,10 +59,10 @@
 //! storage rather than a linear offset".
 //!
 //! One affine map is admitted per resolved root. Every write to that root
-//! must carry the same `a` and `b`, and every operand read through the same
-//! root must be a direct subscript whose own discharged bounds result retains
-//! the same `a` and `b`; a whole-root read, a different map, or an
-//! unavailable one denies. That admits a same-index read-modify-write and
+//! must be in an element carrying the same `a` and `b`, and every read
+//! through the same root must be in an element whose own discharged bounds
+//! result retains the same `a` and `b`; a whole-root read, a different map,
+//! or an unavailable one denies. That admits a same-index read-modify-write and
 //! refuses a stencil, without any pairwise range search.
 //!
 //! A **proved range reference** is `&r[s*i+b..s*i+b+s]` [REF-4] passed as an

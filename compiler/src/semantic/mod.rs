@@ -84,8 +84,8 @@ pub enum SemanticRule {
     Type5,
     /// Constructor/variant owner agreement.
     Type6,
-    /// The three storage shapes and the cell: constant-capacity placement,
-    /// the runtime-capacity forms' `Box`-content-only position, and the
+    /// The four storage shapes and the cell: constant-capacity placement,
+    /// the runtime forms' `Box`-content-only position, and the
     /// refusal of a compiler-owned nominal's constructor `call`.
     Type9,
     /// Measures and window parts are names, not declarations: a source write

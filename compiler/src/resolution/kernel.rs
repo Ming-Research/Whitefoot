@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn storage_nominals_match_the_active_specification() {
         let body = crate::ACTIVE_KERNEL_SPEC_TEXT
-            .split_once("[TYPE-9] Three storage shapes, two placements each, and one cell.")
+            .split_once("[TYPE-9] Four storage shapes and one cell.")
             .expect("exact TYPE-9 opening")
             .1
             .split_once("\n\n")
@@ -200,7 +200,7 @@ mod tests {
                 nominal.spelling
             );
         }
-        assert_eq!(CONTAINER_NOMINALS.len(), 3);
+        assert_eq!(CONTAINER_NOMINALS.len(), 4);
     }
 
     /// [TYPE-2, PRE-1]: the cell is declared by the prelude, so it takes no
@@ -219,8 +219,8 @@ mod tests {
         ));
     }
 
-    /// x1 [TYPE-2, PRE-1]: the three storage shapes are prelude declarations
-    /// too, so every one of the four spellings resolves to its compiler-owned
+    /// x1 [TYPE-2, PRE-1]: the four storage shapes are prelude declarations
+    /// too, so every one of the five spellings resolves to its compiler-owned
     /// identity through the one mapping resolution reads.
     #[test]
     fn every_storage_spelling_maps_to_its_container_identity() {

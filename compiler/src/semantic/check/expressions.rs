@@ -1526,11 +1526,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .declarations
                 .use_at(check_context, node, LexicalUseRole::Construct)?;
         let constructor_name = usage.spelling().to_owned();
-        // x1 [TYPE-2]: the three storage shapes and the cell are all the
+        // x1 [TYPE-2]: the four storage shapes and the cell are all the
         // prelude's opaque structs, and an opaque struct's constructor entry
         // exists to be refused. "A constructor `call` and a destructuring
-        // `let_stmt` naming any of the four is refused by [TYPE-2] like every
-        // opaque struct's", so the four cite one rule where the shapes used
+        // `let_stmt` naming any of the five is refused by [TYPE-2] like every
+        // opaque struct's", so the five cite one rule where the shapes used
         // to cite [TYPE-9] and the cell [TYPE-2].
         if let ResolvedTarget::Container(id) = usage.target() {
             let _ =

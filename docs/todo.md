@@ -1319,18 +1319,41 @@ rarely insert at the same place.
   L1 at one and four workers and the formal kernels' compute regression.
   Reopen with the next range-split or dispatch change.
 
-- **Loop permission denies a write to a field of element i.** [PAR-2]
-  admits, as a counted loop's element write, only a direct `Array` or
-  `Slots` subscript, so `set a^[i].f = v` denies although it writes inside
-  element i's range, while `set a^[i] = v` is permitted. Minimal witness: a
-  loop over `&[P]`, where `P` has a field `n: u64`, that sets
-  `a^[i].n = i` is denied with "writes storage that is neither introduced
-  by the iteration nor the accumulator". Snowghost's layout prototype kept
-  its paragraphs' line counts in a separate array to get its paragraph loop
-  split. Change: extend the element family to a field path below the
-  affine subscript, the refined footprint staying within the element's
-  range; a specification amendment. Reopen when a second program needs it
-  or the vocabulary work shapes element records.
+- **Small allocations in a parallel loop slow down with more workers.** In
+  the [scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
+  a loop allocating one small buffer per item (about 200,000 allocations
+  per repetition) took 0.71 s sequentially and 1.15 s and 0.98 s at two
+  and four workers. The heap is the platform `malloc` [STOR-8], shared by
+  every worker. Change to evaluate: per-worker allocation caches in the
+  runtime, or a bump region per split chunk for allocations that die with
+  the loop. Validate with that measurement's A2 build at one, two and four
+  workers. Reopen when a measured program's per-item allocations sit on a
+  parallel loop's critical path.
+
+- **An inline range argument does not carry its length into a routed
+  postcondition.** `box_segments_filled`'s record ensures
+  `made.inner.len == lengths^.len` on `Some`. When the argument is a
+  binding, `let run = &a.inner[0_u64..3_u64];`, the caller learns the
+  segment count 3; when the same range is formed at the argument,
+  `lengths: &a.inner[0_u64..3_u64]`, `&made.inner[2_u64]` stays unproved,
+  so writers must bind the range first
+  (`tests/conformance/cases/fn9-pos-segments-routed-count.wf` binds it).
+  The formation's endpoint images are recorded under its capture, but the
+  clause instantiation reads the argument's length only through a bound
+  holder. Change: instantiate a range argument's `len` from the
+  formation's captured length as a binding's is. Validate with the inline
+  form of that case discharging the bound. Reopen with the next change to
+  call-site clause instantiation.
+
+- **An effect-row path through a segment is typed as the whole run.** The
+  effect-row resolver (`container_element_type` in
+  `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
+  such as `writes(s.inner[k])` with a value parameter `k` selects the
+  `Segments` type itself instead of a run of T. No program needs such a
+  row yet: a helper takes the segment as its own `&[T]` parameter. Change:
+  give a segment index step the range selection a range step has, and add a
+  compiler test for a row naming one segment. Reopen when a writer needs a
+  row that names one segment of a run it receives whole.
 
 - **A fixed recursion budget cannot follow an unbalanced tree.** The budget
   of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
@@ -1710,6 +1733,19 @@ rarely insert at the same place.
   implementation files.
 
 ## Code structure
+
+- **The checker's top module passed 4,000 lines.**
+  `compiler/src/semantic/check.rs` has 4,044 lines after the `Segments`
+  arms of its expression walks. Two coherent blocks sit in it: the call
+  requirement and allocation-bound installers
+  (`install_call_requirements` through `install_expression_allocation_bounds`,
+  about 430 lines) and goal-template instantiation
+  (`instantiate_goal_expression` through `instantiate_goal_const`, about
+  730 lines). Move the instantiation block into its own `check` submodule
+  as an `impl Checker` whose entry points are `pub(super)`. Validate that
+  the move changes no behavior: identical `make check` results and a diff
+  of moved items and visibility only. Split when no open branch has large
+  edits in the file; close when it is under 4,000 lines.
 
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
