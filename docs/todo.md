@@ -1304,8 +1304,8 @@ rarely insert at the same place.
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for
   writing
-  (`design/amendments/language-waiting-shared-objects.md`, the provisional
-  read/write decision). Readers that contend then wait for one another.
+  (`design/language/waiting/shared-objects.md`, the provisional exclusive
+  acquisition decision). Readers that contend then wait for one another.
   The runtime's entries take a read request, but lowering makes none, so
   that path runs in no program; deciding it needs a measured workload where
   readers contend, compared with
@@ -2240,21 +2240,6 @@ condition under which it is taken up.
   kill to follow the term's support, as measure atoms do. Validate with paired published and local cases, a kill of
   each support member, and unchanged verdicts elsewhere; reopen when an
   index-based program needs one of these surfaces.
-- **Affine premises over a reference parameter's fields do not reach the
-  body.** `requires s^.a + s^.b <= 100_u64` over the fields of `&Accounts`
-  gives the body no premise that bounds `b + n` after `let b = s^.b`, while
-  the same `requires` over value parameters does, and stated over entry
-  values tied to the fields by L0 equalities it does too. A smaller case: an
-  L0 `requires s^.a >= n` does not discharge `s^.a - n` written on the
-  place, but does after `let a = s^.a`.
-
-  `research/experiments/monitor-invariants/` holds both as probes
-  (`bank-field-premise`, `field-premise-direct`). The first is the
-  readonly-field gap above for a plain field: affine images of place terms
-  need kills that follow their support. A monitor invariant over a sum of
-  fields needs it, or an entry snapshot. Reopen with the object invariant, or when a contract over a
-  structure's fields needs a sum.
-
 - **FN-9 relations read a formal subscript as an unknown offset.** A
   published relation over `rows^[i].len` with `i` a formal renders as
   `entry(rows)^[?].len`: the body side and the caller side
@@ -2272,6 +2257,20 @@ condition under which it is taken up.
   sides, judge the subscripts, then add a case whose caller publishes over
   two different offsets and must not equate them. Owner (PR #118 ruling,
   2026-09-25): later, by the same principle at each selected return.
+- **Affine premises over a reference parameter's fields do not reach the
+  body.** `requires s^.a + s^.b <= 100_u64` over the fields of `&Accounts`
+  gives the body no premise that bounds `b + n` after `let b = s^.b`, while
+  the same `requires` over value parameters does, and stated over entry
+  values tied to the fields by L0 equalities it does too. A smaller case: an
+  L0 `requires s^.a >= n` does not discharge `s^.a - n` written on the
+  place, but does after `let a = s^.a`.
+
+  `research/experiments/monitor-invariants/` holds both as probes
+  (`bank-field-premise`, `field-premise-direct`). The first is the gap of
+  "Readonly-field terms stop at L0" for a plain field: affine images of
+  place terms need kills that follow their support. A monitor invariant over
+  a sum of fields needs it, or an entry snapshot. Reopen with the object
+  invariant, or when a contract over a structure's fields needs a sum.
 - **Tracked-place offsets with projections are not captured.** ENT-2 admits
   any clause (a) term as an offset, but the compiler captures only literals,
   consts and bare bindings. A measure read such as `table[s.k].len` and a

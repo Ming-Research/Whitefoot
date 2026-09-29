@@ -137,8 +137,8 @@ completion criterion were refused.
   the invariant at the exit with an `invariant` statement. Results:
   - a difference-bound invariant over fields and measures proves end to end;
   - a missed update is refuted and a split transaction unproved;
-  - an affine invariant over fields needs an entry snapshot and one bridging
-    step.
+  - an affine invariant over fields gets no premise from today's field terms,
+    so it needs an entry snapshot, and then one bridging step.
 
   [`RESULTS.md`](monitor-invariants/RESULTS.md) has the table; `run.sh`
   rechecks the verdicts by hand. Not a gate.

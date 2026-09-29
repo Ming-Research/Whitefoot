@@ -499,10 +499,10 @@ and encoding that a library would hold.
 
 The owner then saw that a guard is one case of a wait whose outcome another
 context produces, as a pipe read or an accepted connection is, and asked what
-makes concurrent I/O safe at all. `CONCURRENCY-MODEL.md` proposes the
-answer: spawned contexts with a concurrent meaning, a monitor invariant per
-object, and progress as a runtime obligation. It would replace the rule this
-section describes.
+makes concurrent I/O safe at all (`CONCURRENCY-MODEL.md`, "The question",
+quotes both). `CONCURRENCY-MODEL.md` proposes the answer: spawned contexts
+with a concurrent meaning, a monitor invariant per object, and progress as a
+runtime obligation. It would replace the rule this section describes.
 
 **The question.** Executing every call in order was a conforming execution
 [WAIT-2], and in it a consumer started before its producer waits for good on

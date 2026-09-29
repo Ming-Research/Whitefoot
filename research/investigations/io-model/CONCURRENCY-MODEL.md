@@ -12,10 +12,15 @@
 
 While ruling on the progress of a statement that waits on a guard
 (`SHARED.md`, "Progress while a guard waits"), the owner saw that guards are
-one case of a general problem. Any waiting call may stop, and a stopped call
-may hold up what follows it. A context that reads a pipe another context
-writes, or accepts a connection another context makes, has the same shape as
-a consumer started before its producer.
+one case of a general problem (written in Chinese, translated here):
+
+> I feel this is really a broader problem. Any waits function "may" stop, and
+> once it stops it may block what comes after it. For example, one thread
+> reads a file pipe, or accepts, and another thread connects. It is the same.
+
+A context that reads a pipe another context writes, or accepts a connection
+another context makes, has the same shape as a consumer started before its
+producer.
 
 The owner then put the question directly (written in Chinese, translated
 here):
@@ -74,7 +79,7 @@ settle it:
   one side runs first and stops, full or empty, before the other begins. The
   same holds for a pipe written past its kernel buffer, and for any bounded
   channel. Under a sequential meaning such programs are wrong by definition,
-  including this branch's own `tests/programs/shared_objects.wf`, which only
+  including PR #173's own `tests/programs/shared_objects.wf`, which only
   concurrency lets finish.
 - **Concurrency can hang a sequentially correct program.** A starter spawns a
   producer, then polls an object for the producer's write with atomic
@@ -105,12 +110,14 @@ programs undefined. The premise holds for computation and should stay there.
 > machine proof. [...] Logic errors, including unintended nontermination, may
 > remain.
 
-Deadlock is a kind of nontermination. The constitution therefore requires
-hazards 1 and 2 to be excluded by machine proof. It asks for hazard 3 where a
-program's required conditions are at stake. It allows 4 and 5 to remain as
-logic errors, the way an infinite loop may. That is the split this model
-makes: safety by construction and proof, liveness as a runtime obligation
-plus detection.
+Deadlock is a kind of nontermination. The constitution requires hazard 1,
+data races, to be excluded by machine proof, and allows 4 and 5 to remain as
+logic errors, the way an infinite loop may. Without a race, hazards 2 and 3
+are logic errors too, unless a required safety condition depends on them, as
+when an index is proved in bounds from a count another context keeps. The
+model excludes 2 by construction anyway (4.2) and lets a program prove 3
+(section 5). That is the split this model makes: safety by construction and
+proof, liveness as a runtime obligation plus detection.
 
 ## 4. The model
 
@@ -214,8 +221,9 @@ overlaps none, marked or not (`design/compiler/parallel-lowering`). The
 marker only turns a denied permission into a rejection at its site.
 
 What the repository shows:
-- Outside the conformance cases that test the marker itself, forms 1 and 2
-  are written nowhere. The compute and parallel programs
+- No program, experiment or compiler test writes forms 1 and 2; only the
+  conformance cases of the marker do, and `docs/patterns.md` teaches form 1.
+  The compute and parallel programs
   (`tests/programs/compute`, `tests/programs/parallel`) and the parallel
   experiments (for example `research/experiments/par-quicksort`) rely on the
   permission without asserting it.
@@ -282,7 +290,7 @@ never mentions another context.
 
 What is already there:
 
-- The guard is a fact at the block's entry [ENT-3 S1].
+- The guard is a fact at the block's entry [ENT-3.S1].
 - The binding is an ordinary reference root. The block is ordinary checked
   code, and every fact about the state ends with the block [SHARE-2].
 - A written invariant at a program point is a proof obligation the checker
@@ -324,9 +332,12 @@ the block, or a helper's `requires`.
 ### 5.4 Where I is declared
 
 The design tree says no struct invariant exists as a fact, and privacy adds
-no implicit type invariant (`design/language/checks-and-proofs`; [ENT-3]). A
-monitor invariant is different: it is written and checked at every point
-that could break it. Still, where it lives decides how general it looks.
+no implicit type invariant (`design/language/checks-and-proofs`; [ENT-3]). It
+refused type-level struct invariants because every construction and field
+write would owe the invariant again. A monitor invariant is different: it is
+owed only at creation and at each exit of an atomic block, the only points
+where another context can observe the state, and it may be false inside a
+block. Still, where it lives decides how general it looks.
 
 - **(A) On the state type, applying only to objects of that type.** For
   example, a clause in the struct that holds for every `Shared<Queue>` and
@@ -369,7 +380,7 @@ The changes below are grouped by where they land.
   4.3.
 - PAR-4 is retired with `mustpar` (4.4); if the owner keeps forms 1 and 2,
   it loses form 3 only.
-- SHARE-3's progress sentences, added on this branch, give way to WAIT-2's
+- SHARE-3's progress sentences, added by PR #173, give way to WAIT-2's
   context meaning. The weak-fairness sentence is kept if the owner wants it.
 - A new rule states the object invariant, its creation and exit obligations,
   and its entry fact.
@@ -380,13 +391,23 @@ The changes below are grouped by where they land.
 - `language/parallelism`:
   - Decision 3's "a program means its sequential execution" applies to
     computation.
-  - Decision 2 (`mustpar`) is retired, and decision 4's `let` form moves to
-    `spawn`.
+  - If the owner retires `mustpar` (4.4), decision 2 is retired; either way
+    decision 4's `let` form moves to `spawn`.
   - The refusal of "a separate `spawn` statement" loses its ground: `mustpar`
     asserts a permission while `spawn` starts a concurrent activity, so they
     are two judgments, not one named twice.
-- `language/waiting/shared-objects`: decision 7 (progress) is replaced by the
-  context meaning. A decision on the object invariant is added.
+  - The refusal of "a marker whose meaning is that a context must start" loses
+    its ground too. Its reason was that SHARE-3 promises progress for every
+    covered call, so a marker would add no meaning; under the model, `spawn`
+    is that marker, and the meaning it adds is concurrency.
+- `language/waiting/shared-objects`:
+  - Decision 1's reason, that "every other rule keeps its sequential
+    reading", is restated for the context meaning.
+  - Decision 7 (progress) is replaced by the context meaning.
+  - The refusal of atomic fields and lock-free cells, "that the sequential
+    meaning excludes", is restated: they would expose interleavings of single
+    reads and writes inside what the model makes one atomic step.
+  - A decision on the object invariant is added.
 - `compiler/waiting-contexts`: the pending amendment's "which calls start"
   decision is withdrawn, because only spawned calls start. The handoff bound
   and the join placement stand.
@@ -397,17 +418,26 @@ The changes below are grouped by where they land.
 - Add the invariant's declaration, entry facts and obligations.
 - Close the runtime gaps of 4.3.
 
+**Tests and guidance**
+- The seven `mustpar` calls in `tests/programs`, and the waiting-call
+  examples of `docs/patterns.md`, become `spawn`.
+- Four `par4-*` conformance cases become `spawn` cases. If `mustpar` is
+  retired, the other eight retire with PAR-4, and `docs/patterns.md` drops its
+  `mustpar for` example.
+
 **PR #173**
 - **Still stands:**
   - shared objects, atomic statements and guards as facts;
   - STOR-3;
   - the Redis subset;
   - the join placement;
-  - the handoff bound.
+  - the handoff bound, as the runtime's choice or as the weak-fairness
+    promise if the owner makes it (4.3).
 - **Replaced:**
-  - the progress sentences of SHARE-3, WAIT-2 and PAR-4 added on this branch;
+  - the progress sentences of SHARE-3, WAIT-2 and PAR-4 that it adds;
   - the pass that starts unmarked calls;
-  - `mustpar` (4.4).
+  - `mustpar`'s waiting-call form, or all of `mustpar` if the owner retires
+    it (4.4).
 
 ## 7. Prior art
 

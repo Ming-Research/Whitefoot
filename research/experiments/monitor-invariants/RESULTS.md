@@ -11,7 +11,7 @@ exits. No language form states I yet, so these probes stand in for the two
 halves with forms that exist today:
 
 - **Entry.** Either an `if` on I inside the block, whose then-arm receives I
-  as a fact as the guard's arm does [ENT-3 S1], or a helper function that
+  as a fact as the guard's arm does [ENT-3.S1], or a helper function that
   receives I as `requires`. Neither is how the feature would work; both give
   the checker I as a fact where the block begins.
 - **Exit.** An `invariant` statement [INV-1] stating I over locals read back
@@ -99,8 +99,9 @@ not do today.**
 
 ## Limits
 
-- The probes check proofs; they run nothing, except that `queue-count` also
-  compiles to a program.
+- The probes check proofs. Every accepted probe also compiles and runs;
+  only `queue-count` observes anything, exiting with the value 7 it puts
+  through its queue and takes back.
 - Only a single object's invariant is tested. Invariants over the elements of
   a storage (for example "every value in the keyspace is at most 512 MiB") are
   outside the fact language by an existing decision
