@@ -1770,18 +1770,6 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
-- **Review scope misses the conformance adapter's check-integrity group.**
-  `docs/skills/completion-review/scripts/review-scope.sh` classifies every
-  `compiler/` path as code before considering test paths. An adapter-only
-  change under `compiler/tests/conformance/` therefore omits group T even
-  though AGENTS treats that adapter as conformance evidence. Include these
-  adapter/runner paths in the T trigger and cover an adapter-only diff with
-  a scope test. Until then, reviewers must add the applicable T checks by
-  judgment; the compiler-architecture review does so. Defer the tooling
-  change from that compiler migration and reopen when review-scope routing
-  is next changed, requiring both adapter-only inclusion and ordinary-code
-  exclusion to be observed.
-
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2367,16 +2355,28 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The design-tree skill's tests also test this project's CI script.**
+  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
+  of its cases, so a project that copies `design/skill/` gets failing tests,
+  although the skill is meant to move to another project unchanged. Move
+  those cases to a `--self-test` of `design-review-base.sh` wired into
+  `make static`, as the other `.github` scripts do, and keep only the lint's
+  own cases in the skill. Validate that each moved case still fails once for
+  its intended reason. Reopen when the skill is extracted or the CI base
+  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
-  when the PR changes no specification. Local `design-lint` instead defaults
-  to the current `origin/main` tip: if it advances past the branch's merge
-  base, new upstream nodes can appear as branch deletions and trigger missing
-  approval-log coverage. Both were observed on the ownership-surface research
-  branch; explicit checks against its actual review base retain the intended
-  obligations. Select and report one pinned review base consistently with
-  `make review-scope` and hosted CI. Validate old local main, advancing remote
+  when the PR changes no specification. Local `design-lint` and
+  `design-ready` instead default to the current `origin/main` tip: if it
+  advances past the branch's merge base, new upstream nodes can appear as
+  branch deletions and trigger missing approval-log coverage in
+  `make design-ready`, and an upstream specification amendment makes its
+  specification half demand a `spec/log.md` entry the branch does not owe
+  (reasoned from the code, not yet observed). The first two were observed on the
+  ownership-surface research branch; explicit checks against its actual review
+  base retain the intended obligations. Select and report one pinned review
+  base consistently with hosted CI. Validate old local main, advancing remote
   main, an integrated branch and a real branch amendment; retain archive
   immutability, version-transition and changed-node coverage checks. Reopen
   when updating verification-base selection. This research uses the existing

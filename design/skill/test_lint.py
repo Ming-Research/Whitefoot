@@ -1,4 +1,5 @@
-"""Regressions for the structural tree gate and its CI baseline adapter.
+"""Regressions for the tree form check, the readiness check and the CI
+baseline adapter.
 
 The make design-lint caller maintains these fixtures with the checked tools;
 replace them when those tools are replaced. No fixture edits the live tree.
@@ -27,7 +28,7 @@ Summary: Establish the test tree.
 
 class TreeGateTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="whitefoot-design-lint-")
+        temporary = tempfile.TemporaryDirectory(prefix="design-lint-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.git("init", "--quiet")
@@ -70,13 +71,13 @@ Nodes: {nodes}
 
 {BASE_ENTRY}""")
 
-    def lint(self, base, require_no_amendments=False):
+    def lint(self, base, require_approval=False):
         command = [
             sys.executable, "-B", str(LINT), "--root", "design",
             "--trees", "language", "--base", base,
         ]
-        if require_no_amendments:
-            command.append("--require-no-amendments")
+        if require_approval:
+            command.append("--require-approval")
         return subprocess.run(
             command,
             cwd=self.root, text=True, capture_output=True,
@@ -92,56 +93,36 @@ Nodes: {nodes}
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn(diagnostic, result.stderr)
 
-    def test_amendment_only_needs_no_tree_approval_log(self):
-        self.write("design/amendments/proposal.md", "Node: language/proposal\n\n" + DECISION)
+    def test_draft_tree_edit_passes_the_form_check(self):
+        self.change_tree()
+        self.write("design/language/new-node.md", DECISION)
         result = self.lint(self.base)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_readiness_passes_without_an_amendments_path(self):
-        result = self.lint(self.base, require_no_amendments=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_form_check_still_rejects_a_malformed_node(self):
+        self.write("design/language.md", "Decision: Keep the fixture as it is.\n")
+        self.assert_rejected(self.lint(self.base), "neither 'because' nor 'instead of'")
 
-    def test_readiness_rejects_a_nonempty_amendments_path(self):
-        self.write("design/amendments/proposal.md", "Node: language/proposal\n\n" + DECISION)
-        self.assert_rejected(
-            self.lint(self.base, require_no_amendments=True),
-            "amendments: path exists",
+    def test_readiness_needs_a_base(self):
+        result = subprocess.run(
+            [sys.executable, "-B", str(LINT), "--root", "design", "--trees", "language",
+             "--require-approval"],
+            cwd=self.root, text=True, capture_output=True,
         )
+        self.assert_rejected(result, "--require-approval needs --base")
 
-    def test_readiness_rejects_an_empty_amendments_path(self):
-        (self.root / "design/amendments").mkdir()
-        self.assertEqual(self.lint(self.base).returncode, 0)
-        self.assert_rejected(
-            self.lint(self.base, require_no_amendments=True),
-            "amendments: path exists",
-        )
-
-    def test_readiness_does_not_hide_form_log_or_approval_checks(self):
-        self.write("design/amendments/proposal.md", DECISION)
+    def test_readiness_rejects_a_tree_edit_without_a_new_log(self):
         self.change_tree()
-        result = self.lint(self.base, require_no_amendments=True)
-        self.assert_rejected(result, "amendments: path exists")
-        self.assertIn("an amendment starts with 'Node: <tree path>'", result.stderr)
-        self.assertIn("change log did not", result.stderr)
+        self.assert_rejected(self.lint(self.base, require_approval=True), "change log did not")
 
-        self.log_change(approval=None)
-        result = self.lint(self.base, require_no_amendments=True)
-        self.assert_rejected(result, "amendments: path exists")
-        self.assertIn("an amendment starts with 'Node: <tree path>'", result.stderr)
-        self.assertIn("nonempty Owner-approved:", result.stderr)
-
-    def test_direct_tree_edit_without_a_new_log_is_rejected(self):
-        self.change_tree()
-        self.assert_rejected(self.lint(self.base), "change log did not")
-
-    def test_untracked_node_without_a_new_log_is_rejected(self):
+    def test_readiness_rejects_an_untracked_node_without_a_new_log(self):
         self.write("design/language/new-node.md", DECISION)
-        self.assert_rejected(self.lint(self.base), "change log did not")
+        self.assert_rejected(self.lint(self.base, require_approval=True), "change log did not")
 
-    def test_recorded_tree_change_passes(self):
+    def test_readiness_passes_an_approved_tree_change(self):
         self.change_tree()
         self.log_change()
-        result = self.lint(self.base)
+        result = self.lint(self.base, require_approval=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_or_empty_approval_field_is_rejected(self):
@@ -149,12 +130,12 @@ Nodes: {nodes}
         for approval in (None, ""):
             with self.subTest(approval=approval):
                 self.log_change(approval=approval)
-                self.assert_rejected(self.lint(self.base), "nonempty Owner-approved:")
+                self.assert_rejected(self.lint(self.base, require_approval=True), "nonempty Owner-approved:")
 
     def test_reused_old_log_entry_is_rejected(self):
         self.change_tree()
         self.write("design/log.md", LOG_HEADER + BASE_ENTRY.replace("Establish", "Update"))
-        self.assert_rejected(self.lint(self.base), "newest log entry is not new")
+        self.assert_rejected(self.lint(self.base, require_approval=True), "newest log entry is not new")
 
     def test_repeated_log_entry_heading_is_rejected(self):
         self.write("design/log.md", LOG_HEADER + BASE_ENTRY + "\n" + BASE_ENTRY.replace("Establish", "Build"))
@@ -163,7 +144,7 @@ Nodes: {nodes}
     def test_log_must_name_the_changed_node(self):
         self.change_tree()
         self.log_change(nodes="language/other")
-        self.assert_rejected(self.lint(self.base), "language is not named")
+        self.assert_rejected(self.lint(self.base, require_approval=True), "language is not named")
 
     def test_missing_or_empty_explicit_base_fails_closed(self):
         self.change_tree()
@@ -180,11 +161,13 @@ Nodes: {nodes}
         head = self.commit("Unlogged tree edit")
         self.git("update-ref", "refs/remotes/origin/main", head)
         # This is the old CI wiring's vacuous comparison.
-        self.assertEqual(self.lint("origin/main").returncode, 0)
+        self.assertEqual(self.lint("origin/main", require_approval=True).returncode, 0)
         result = self.ci_base("push", "refs/heads/main", self.base)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), self.base)
-        self.assert_rejected(self.lint(result.stdout.strip()), "change log did not")
+        self.assert_rejected(
+            self.lint(result.stdout.strip(), require_approval=True), "change log did not",
+        )
 
     def test_main_push_rejects_missing_before_instead_of_using_head(self):
         for before in ("", "0" * 40, "missing-before"):

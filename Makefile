@@ -106,7 +106,8 @@ design-lint:
 	@$(PY) design/skill/lint.py --trees language compiler --base "$(DESIGN_REVIEW_BASE)"
 
 design-ready:
-	@$(PY) design/skill/lint.py --trees language compiler --base "$(DESIGN_REVIEW_BASE)" --require-no-amendments
+	@$(PY) design/skill/lint.py --trees language compiler --base "$(DESIGN_REVIEW_BASE)" --require-approval
+	@sh .github/check-spec-archives.sh --require-approval "$(DESIGN_REVIEW_BASE)"
 
 repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
@@ -161,8 +162,8 @@ readme-translation:
 	@sh .github/check-readme-translation.sh --self-test
 	@sh .github/check-readme-translation.sh main
 
-# Cited review items, entry-document paths and the two agents' skill links
-# resolve; this reads references only, never the guidance's meaning.
+# Cited review items and entry-document paths resolve; this reads references
+# only, never the guidance's meaning.
 guidance:
 	@$(PY) .github/check-guidance.py --self-test
 	@$(PY) .github/check-guidance.py
@@ -189,10 +190,6 @@ source-size:
 	done; \
 	test "$$checked" -gt 0 || { echo "source size: no compiler sources found" >&2; exit 1; }; \
 	exit $$status
-
-# What a completion review covers: base, depth, groups and excluded paths.
-review-scope:
-	@sh docs/skills/completion-review/scripts/review-scope.sh main
 
 spec-append-only-staged:
 	@changes="$$(git diff --cached --name-status --diff-filter=MDRCT -- 'spec/kernel-spec-v*.md')" || exit 1; \
@@ -260,4 +257,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance source-size review-scope spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
