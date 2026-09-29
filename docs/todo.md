@@ -1290,6 +1290,18 @@ rarely insert at the same place.
   ordinary allocator, would fix it. Reopen when a program creates many small
   objects.
 
+- **No test forces a shared object's handoff.** The unlock after two vain
+  wakes hands a parked statement the object (`completion/bridge.c`,
+  `WF_SHARED_HANDOFF`), and only contention on several drivers reaches that
+  branch: `shared_objects.wf` checks its sums, not that a handoff happened,
+  and the counts in `research/investigations/io-model/SHARED.md` came from a
+  hand-made counting build. A broken handoff would fail at random at best. A
+  runtime test that parks a statement, wakes it twice while another context
+  takes the object first, and checks that the third unlock grants it would
+  pin the branch; it needs a way to run the bridge's shared-object entries
+  on hand-made contexts. Reopen when the lock changes again or a handoff
+  defect is suspected.
+
 - **With several drivers, a program whose every context waits on another
   one hangs instead of stopping.** On one driver, when no context is ready
   and none waits for the host, the bridge stops the program with "every

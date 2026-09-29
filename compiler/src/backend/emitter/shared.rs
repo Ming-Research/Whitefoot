@@ -92,9 +92,10 @@ impl FunctionEmitter<'_, '_> {
     /// An acquire or a watch: the runtime answers 0 when this context holds
     /// the object at once and 1 when it has parked the frame, which then
     /// suspends until the runtime makes the context ready. A resumed acquire
-    /// asks again, since an unlock wakes a parked statement to try rather
-    /// than handing it the object; a resumed watch continues, and the
-    /// lowering acquires again after it.
+    /// asks again, since an unlock usually wakes a parked statement to try
+    /// rather than handing it the object, and the runtime answers 0 at once
+    /// when it did hand it over; a resumed watch continues, and the lowering
+    /// acquires again after it.
     pub(super) fn emit_shared_wait(
         &mut self,
         result: IrValueId,

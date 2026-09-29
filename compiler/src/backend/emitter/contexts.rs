@@ -109,7 +109,7 @@ pub(super) fn context_group_initialization(function: &IrFunction) -> String {
 
 impl FunctionEmitter<'_, '_> {
     /// Starts one context over the wrapper `function` with `arguments`. A
-    /// bound start's wrapper returns the marked call's result, which the
+    /// bound start's wrapper returns the started call's result, which the
     /// context constructs in the starting frame's slot for `result` and its
     /// await reads back; an unbound one's unit result lands in the argument
     /// block.

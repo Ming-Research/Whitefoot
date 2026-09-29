@@ -22,7 +22,7 @@ use super::{
     PermissionLedgerSource,
 };
 
-/// Where a marked call stands, read from its parents.
+/// Where a call stands, read from its parents.
 enum CallPosition {
     /// The call of an `expr_stmt`: the statement node.
     ExpressionStatement(NodeId),

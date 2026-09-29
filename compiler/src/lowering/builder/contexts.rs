@@ -122,7 +122,7 @@ impl IrBuilder<'_> {
         self.start_wrapped(expression, Some(drops)).map(|_| ())
     }
 
-    /// Evaluates a marked call's arguments where its statement stands and
+    /// Evaluates a started call's arguments where its statement stands and
     /// starts a context over a synthesized wrapper that makes the call. With
     /// `drops` the wrapper releases the result and returns unit; without, it
     /// returns the result, which the starting frame keeps. Returns the start

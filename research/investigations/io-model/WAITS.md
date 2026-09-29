@@ -812,8 +812,10 @@ Alternatives refused:
 Running a context for an unmarked independent waiting call was refused in the
 v0.76 text, because a context outlived its statement and so changed what the
 program did. Under the sequential meaning it changes only when the call's
-host effects happen, which [HOST-1] already leaves open, so v0.77 permits it;
-this compiler still runs only marked calls as contexts.
+host effects happen, which [HOST-1] already leaves open, so v0.77 permits it.
+This compiler runs every marked call as a context and, since the progress
+ruling of 2026-09-29, each unmarked one whose callee may reach an atomic
+statement's guard (`SHARED.md`, "Progress while a guard waits").
 
 ### Host effects are ordered through state, not through statement order
 
@@ -876,15 +878,20 @@ Consequences, the first two carried by kernel-spec v0.77:
   than promised by the language, is that every marked waiting call runs as a
   context of its own and its starter waits for it at the activation's exit.
 - [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
-  execution of the same program is a conforming one.
+  execution of the same program is a conforming one. The progress ruling of
+  2026-09-29 restored one guarantee with shared objects (kernel-spec v0.80
+  [SHARE-3]): while an atomic statement waits for its guard, the calls around
+  it run as contexts and their starters proceed, so an in-order execution
+  conforms only where no guard waits.
 - Later, carried by kernel-spec v0.78: a marked waiting call may bind its
   result, and the starter joins it where the result is first used ([A bound
   context is joined where its result is first used](#a-bound-context-is-joined-where-its-result-is-first-used)).
 
 Refused: a separate keyword whose meaning is that a context must start. The
-only difference it would make is a promise of progress, which the sequential
-reading does not need and which no single-implementation research compiler
-has to write into the language.
+only difference it would make is a promise of progress. The one progress
+programs turned out to need, a starter's while its call waits for a guard,
+[SHARE-3] now promises for every call the permission covers, so the keyword
+would still name nothing further.
 
 ### A bound context is joined where its result is first used
 
@@ -894,18 +901,17 @@ in a `let` right-hand side whose callee takes only value parameters may run
 alongside the statements after it, and it completes before its binding is
 next read, written or released and before the activation leaves. `mustpar`
 asserts that permission, as it does for an expression statement, and this
-compiler runs every marked one as a context of its own.
+compiler runs every marked one as a context of its own, and each unmarked one
+whose callee may reach an atomic statement's guard.
 
 Where the join stands is the compiler's choice under that rule. It is placed
-before the first later statement of the `let`'s block whose [PAR-1]
-footprint reaches the binding, or that the footprint judgment refuses
-because it may leave the block (`return`, `give`, `break`, error
-propagation) or has a form the judgment does not compute (a loop, a match
-that is not rooted in a call), and otherwise at the block's end. The
-footprints are the ones overlap permission already relies on, and they fail
-closed, so the join precedes every use, the release at the block's end
-included, and a context started in a loop body is joined before the next
-iteration reuses its result slot. A statement that waits does not end the
+before the first later statement of the `let`'s block that may leave the
+block (`return`, `give`, `break` or error propagation out of it) or that
+names the binding, looking into loops, matches and atomic statements, and
+otherwise at the block's end. Every read, write, release and reference
+formation of the binding names it, so the join precedes every use, the
+release at the block's end included, and a context started in a loop body is
+joined before the next iteration reuses its result slot. A statement that waits does not end the
 run: two marked fetches both proceed until the statement that combines
 their results. The context writes its result into a slot of the starting
 frame, which outlives the context because the join precedes every exit.
@@ -930,13 +936,12 @@ Alternatives refused:
 - Joining only at the block's end: a use before the end would read a result
   that has not arrived.
 
-A loop or a non-call match between the `let` and its use ended the run
-early here, because the footprint judgment refuses those forms. The progress
-ruling of 2026-09-29 made that a defect, since a starter may then wait for a
-context whose guard only the refused statement makes true, and the join now
-looks into compound statements and stands before the first statement that
-may leave the block or names the binding (`SHARED.md`, "Progress while a
-guard waits").
+The first plan joined before the first statement whose [PAR-1] footprint
+reached the binding, was refused (a loop, a match not rooted in a call, an
+atomic statement) or was not resolved. The progress ruling of 2026-09-29 made
+that a defect, since a starter could then wait for a context whose guard only
+the refused statement makes true (`SHARED.md`, "Progress while a guard
+waits").
 
 ### Sharing between concurrent activities
 

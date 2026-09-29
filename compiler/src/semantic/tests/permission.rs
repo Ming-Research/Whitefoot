@@ -2620,6 +2620,126 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
     );
 }
 
+/// [WAIT-2, SHARE-3] where the one started waiting `let` of `main` is
+/// joined, for a `main` body written whole: `weigh` waits and returns its
+/// argument, and `guarded` waits on an atomic statement's guard, so a call of
+/// it starts a context unmarked.
+fn started_await(body: &str) -> Option<u32> {
+    let source = format!(
+        "fn weigh(weight: u64) -> result: u64 pure waits {{\n  return weight;\n}}\n\n\
+         fn guarded(cell: Shared<u64>) -> result: u64 pure waits {{\n  let seen = 0_u64;\n  \
+         atomic value = &cell when value^ != 0_u64 {{\n    set seen = value^;\n  }}\n  return seen;\n}}\n\n\
+         fn main() -> status: std::process::ExitStatus pure waits {{\n{body}\n  \
+         return std::process::exit_status(code: 0_u8);\n}}\n"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("started await fixture must check: {outcome:?}");
+        };
+        let main = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        let [planned] = main.waiting.context_awaits.as_slice() else {
+            panic!("one started let: {:?}", main.waiting.context_awaits);
+        };
+        assert!(main.waiting.context_starts.contains(&planned.statement));
+        planned.before
+    })
+}
+
+#[test]
+fn a_bound_context_is_joined_before_a_break_that_leaves_its_block() {
+    let body = |target: &str| {
+        format!(
+            "  loop @outer {{\n    let bound = mustpar weigh(weight: 7_u64);\n    loop @spin {{\n      \
+             break @{target};\n    }}\n    let total = bound +wrap 1_u64;\n    break @outer;\n  }}"
+        )
+    };
+    // A break to the loop around the `let` leaves the block.
+    assert_eq!(started_await(&body("outer")), Some(1));
+    // A break to the loop it ends does not.
+    assert_eq!(started_await(&body("spin")), Some(2));
+}
+
+#[test]
+fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
+    // A `give` inside a value construct delivers to that construct.
+    assert_eq!(
+        started_await(
+            "  let bound = mustpar weigh(weight: 7_u64);\n  let limit = 5_u64;\n  \
+             let picked = if limit > 3_u64 {\n    give 1_u64;\n  } else {\n    give 2_u64;\n  }\n  \
+             let total = bound +wrap picked;"
+        ),
+        Some(3)
+    );
+    // A `give` of the arm the `let` stands in leaves its block.
+    assert_eq!(
+        started_await(
+            "  let limit = 5_u64;\n  let picked = if limit > 3_u64 {\n    \
+             let bound = mustpar weigh(weight: 7_u64);\n    let other = 2_u64;\n    give other;\n  \
+             } else {\n    give 2_u64;\n  }\n  let total = picked +wrap 1_u64;"
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_bound_context_is_joined_before_an_atomic_statement_or_match_that_names_it() {
+    let prefix = "  let cell = shared_new::<u64>(value: 0_u64);\n  \
+                  let bound = mustpar weigh(weight: 7_u64);\n";
+    // The block names the binding.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  atomic value = &cell {{\n    set value^ = bound;\n  }}"
+        )),
+        Some(1)
+    );
+    // The guard names it.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  atomic value = &cell when value^ < bound {{\n    set value^ = 3_u64;\n  }}"
+        )),
+        Some(1)
+    );
+    // Neither does: the statement proceeds alongside the context.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  atomic value = &cell {{\n    set value^ = 3_u64;\n  }}\n  let total = bound +wrap 1_u64;"
+        )),
+        Some(2)
+    );
+    // A match arm's body names it.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  let limit = 5_u64;\n  if limit > 3_u64 {{\n    let copied = bound;\n  }}"
+        )),
+        Some(2)
+    );
+    // A match arm's body that does not name it proceeds alongside.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  let limit = 5_u64;\n  if limit > 3_u64 {{\n    let copied = limit;\n  }}\n  \
+             let total = bound +wrap 1_u64;"
+        )),
+        Some(3)
+    );
+}
+
+#[test]
+fn an_unmarked_bound_call_that_reaches_a_guard_starts_and_is_joined_at_first_use() {
+    assert_eq!(
+        started_await(
+            "  let cell = shared_new::<u64>(value: 0_u64);\n  \
+             let other = shared_share::<u64>(shared: &cell);\n  let seen = guarded(cell: move other);\n  \
+             atomic value = &cell {\n    set value^ = 3_u64;\n  }\n  let total = seen +wrap 1_u64;"
+        ),
+        Some(2)
+    );
+}
+
 /// [SHARE-3] the statements of `main` an unmarked call starts as contexts,
 /// given the atomic statement `worker` holds.
 fn unmarked_starts(atomic: &str) -> usize {

@@ -2149,7 +2149,7 @@ A program that needs two host operations ordered passes both through one owner w
 3. On the `call` of an `expr_stmt`, or of the `ordinary_let_rhs` of a `let_stmt`, whose callee waits, [WAIT-2]'s permission holds for that statement.
 
 A `mustpar` in any other position, and a marked construct whose stated condition does not hold, is a hard error citing PAR-4 at the marked `for_stmt` or `call`, carrying the failed condition or the denied permission [DIAG-1].
-In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, and whether an implementation overlaps the marked construct remains its choice [PAR-1, PAR-2, WAIT-2].
+In every form the atom is proof syntax: it adds no permission, changes neither state nor host meaning, and is erased before lowering, so whether an implementation overlaps the marked construct is decided as for the same construct unmarked [PAR-1, PAR-2, WAIT-2, SHARE-3].
 
 [WAIT-2] The meaning of an execution is its sequential execution: one control flow that executes every construct in the order it defines, starting with the entry [PROG-3].
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
@@ -2180,8 +2180,9 @@ The statement's footprint is its target place, read, together with the footprint
 Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
 The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
+A statement that has begun and has not taken effect waits for its guard while its guard is false in the object's state.
 While a statement waits for its guard, each call whose execution contains the statement and that [WAIT-2] permits to execute alongside the statements after it executes as a context, and the statements after that call proceed until [WAIT-2] requires the call to have completed; every context that waits for no guard, no context and no host operation proceeds.
-A statement that has no guard, or whose guard is true in the object's state at every point from some point on, takes effect.
+When every atomic statement on an object whose block begins executing completes, each statement on that object that has begun, and that has no guard or whose guard is true in the object's state at every point from some point on, takes effect.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
 ## 14. Prelude and host modules (normative, counted)

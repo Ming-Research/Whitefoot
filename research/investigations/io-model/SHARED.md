@@ -544,17 +544,21 @@ accident, and each change was checked by making it fail once:
   longer forces the join.
 - *How often a statement is overtaken.* A woken statement that missed the
   object parked at the head again with no bound. The unlock after two vain
-  wakes now hands it the object. On `shared_objects.wf`, a build that counts
-  handoffs saw 0, 3, 18 and 26 on 1, 2, 4 and 8 drivers, every sum correct;
-  under ThreadSanitizer, with runtime and module instrumented, 53, 639 and
-  1,763 handoffs on 2, 4 and 8 drivers and no report. The program ran 40
-  times each on 2 and 8 drivers without a wrong sum. One round of
+  wakes now hands it the object. These runs were made by hand, and the
+  counting build is not kept: a copy of the runtime that wrote one byte per
+  handoff to standard error. On `shared_objects.wf` it saw 0, 3, 18 and 26
+  handoffs on 1, 2, 4 and 8 drivers, every sum correct; under
+  ThreadSanitizer, with runtime and module instrumented as above, 53, 639
+  and 1,763 handoffs on 2, 4 and 8 drivers and no report. The uncounted
+  program ran 40 times each on 2 and 8 drivers without a wrong sum. No test
+  forces a handoff deterministically (`docs/todo.md`). One round of
   `redis-bench.sh` on the handoff runtime passed the correctness pass and
   gave two drivers 1.46 and 1.33 times the reference for `SET` and `GET`
   without pipelining, 1.42 and 1.44 times one driver, and 1.40 and 1.40 the
-  reference with 16 per pipeline, which meets every criterion; `GET` falls a little below the second run's range, which one
-  round does not attribute. That round was built before the two checker
-  changes, which add no start and no bound join to that program.
+  reference with 16 per pipeline, which meets every criterion; `GET` falls a
+  little below the second run's range, which one round does not attribute.
+  That round was built before the two checker changes, which add no start
+  and no bound join to that program.
 
 ## Remaining questions
 
