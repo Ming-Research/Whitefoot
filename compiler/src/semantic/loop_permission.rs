@@ -927,7 +927,8 @@ impl<'check> Survey<'check, '_> {
             // accumulator outside its one combine operand still violates
             // PAR-2's occurrence restriction. Keep the occurrence without
             // inventing an element-read footprint for address formation.
-            CheckedExpression::BorrowAddressed { root, .. } => {
+            CheckedExpression::BorrowAddressed { root, .. }
+            | CheckedExpression::BorrowSegment { root, .. } => {
                 if let Some(binding) = root.binding() {
                     self.reads.push(ReadOccurrence {
                         binding,
@@ -1104,6 +1105,15 @@ impl<'check> Survey<'check, '_> {
                     range_element_subscripts(place)
                 }
                 CheckedExpression::BorrowAddressed { root, .. } => path_subscripts(&root.path),
+                // [TYPE-9] distinct segments are distinct storage, so a
+                // segment borrow is an element of its `Segments` place.
+                CheckedExpression::BorrowSegment { root, segment, .. } => {
+                    let mut subscripts = path_subscripts(&root.path);
+                    if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                        subscripts.push((&index.obligation, false));
+                    }
+                    subscripts
+                }
                 CheckedExpression::RangeOf { source, .. } => match source {
                     CheckedRangeSource::Storage(root) => path_subscripts(&root.path),
                     CheckedRangeSource::Element(place) => range_element_subscripts(place),

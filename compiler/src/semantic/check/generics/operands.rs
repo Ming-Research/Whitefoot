@@ -550,6 +550,10 @@ impl<'unit> TypeContext<'unit> {
                     SelectedPlaceType::Value(CheckedType::Buffer { element }) => {
                         ty = SelectedPlaceType::Value(self.element_type(element)?);
                     }
+                    // [TYPE-9] a segment is a run of T.
+                    SelectedPlaceType::Value(CheckedType::Segments { element }) => {
+                        ty = SelectedPlaceType::Range(self.element_type(element)?);
+                    }
                     // [REF-4] a `&[T]` binding already carries the element
                     // type the dereference selects, so its subscript selects
                     // that same type.

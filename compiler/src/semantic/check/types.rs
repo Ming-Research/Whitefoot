@@ -432,6 +432,7 @@ impl<'unit> Checker<'_, 'unit> {
             crate::ContainerShape::Array => "Array<T, N> or Array<T>",
             crate::ContainerShape::Slots => "Slots<T, N> or Slots<T>",
             crate::ContainerShape::Ring => "Ring<T, N> or Ring<T>",
+            crate::ContainerShape::Segments => "Segments<T>",
             crate::ContainerShape::Box => "Box<T> with one referent type",
         };
         let mismatch = |found: &str| -> Result<CheckedType, CheckStop> {
@@ -549,6 +550,19 @@ impl<'unit> Checker<'_, 'unit> {
                     element: self.types.intern_element(element_type)?,
                     capacity,
                 })
+            }
+            // [TYPE-9] segments exist only as `Box` content and have no
+            // constant-capacity form.
+            (crate::ContainerShape::Segments, None) => {
+                self.types
+                    .declarations
+                    .reject_unboxed_runtime_capacity(check_context, node)?;
+                Ok(CheckedType::Segments {
+                    element: self.types.intern_element(element_type)?,
+                })
+            }
+            (crate::ContainerShape::Segments, Some(_)) => {
+                mismatch("a capacity argument, which Segments<T> does not take")
             }
             (crate::ContainerShape::Box, _) => {
                 Err(SemanticCompilerFailure::InvalidResolution.into())
@@ -1467,7 +1481,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::GenericInt(_)
                 | CheckedType::GenericFloat(_)
                 | CheckedType::Window { .. }
-                | CheckedType::Buffer { .. } => return Ok(false),
+                | CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. } => return Ok(false),
             }
         }
         Ok(true)
@@ -1518,8 +1533,10 @@ impl<'unit> TypeContext<'unit> {
         // today; a runtime-capacity `Slots<T>` and a `Ring` in either
         // placement stop earlier as an unimplemented representation, which is
         // compiler/storage-representation's checker-shapes decision.
-        if !matches!(ty, CheckedType::Buffer { .. })
-            || self.declarations.tree.is_prelude_node(node)?
+        if !matches!(
+            ty,
+            CheckedType::Buffer { .. } | CheckedType::Segments { .. }
+        ) || self.declarations.tree.is_prelude_node(node)?
         {
             return Ok(());
         }

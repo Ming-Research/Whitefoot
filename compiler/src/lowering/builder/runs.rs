@@ -62,6 +62,18 @@ impl IrBuilder<'_> {
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                 self.lower_fixed_measure(length)
             }
+            // A `Segments` block is reached through its cell and its count
+            // is the word heading it [TYPE-9].
+            MeasureCell::ExactRuntime if matches!(root.ty, CheckedType::Segments { .. }) => {
+                let segments = self.lower_place_address(root)?;
+                self.define(
+                    IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    },
+                    IrOperation::SegmentsMeasure { segments },
+                )
+            }
             MeasureCell::ExactExtent | MeasureCell::ExactRuntime | MeasureCell::Bounded => {
                 let container = self.container_root_value(root)?;
                 self.define(

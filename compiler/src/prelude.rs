@@ -50,7 +50,17 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // [PRE-1] writes the cell after the three shapes. [TYPE-2] makes it an
+    // `Segments` has no constant-capacity form, so its declaration carries no
+    // capacity parameter; its one measure is the segment count [MSR-1].
+    (
+        "prelude/Segments.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Segments<T> {
+  readonly len: u64;
+}
+"#,
+    ),
+    // [PRE-1] writes the cell after the four shapes. [TYPE-2] makes it an
     // opaque struct with one field and a constructor
     // entry that exists to be refused.
     //
@@ -105,6 +115,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
 };
+"#,
+    ),
+    (
+        "prelude/box_segments_filled.wf",
+        PreludeSource::Function,
+        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths);
 "#,
     ),
     (

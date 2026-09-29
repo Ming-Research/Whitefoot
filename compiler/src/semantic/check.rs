@@ -2453,6 +2453,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_expression_call_requirements(check_context, offset, requirements)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets_mut() {
+                    self.install_expression_call_requirements(check_context, offset, requirements)?;
+                }
+                if let Some(offset) = segment.offset_mut() {
+                    self.install_expression_call_requirements(check_context, offset, requirements)?;
+                }
+            }
             // [REF-4] both endpoints are ordinary operands evaluated at the
             // formation, and a storage source carries its own offsets.
             CheckedExpression::RangeOf {
@@ -2637,6 +2645,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedExpression::RangeIndex { place, .. }
             | CheckedExpression::BorrowRangeIndex { place, .. } => {
                 for offset in place.offsets_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+            }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets_mut() {
+                    Checker::install_expression_allocation_bounds(offset, bounds)?;
+                }
+                if let Some(offset) = segment.offset_mut() {
                     Checker::install_expression_allocation_bounds(offset, bounds)?;
                 }
             }
@@ -3027,6 +3043,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     regions,
                 )?,
                 length: self.types.instantiate_goal_const(length, signature)?,
+            },
+            CheckedType::Segments { element } => CheckedType::Segments {
+                element: self.instantiate_goal_element(
+                    check_context,
+                    element,
+                    signature,
+                    regions,
+                )?,
             },
             CheckedType::Buffer { element } => CheckedType::Buffer {
                 element: self.instantiate_goal_element(

@@ -49,9 +49,10 @@ pub(crate) use model::{
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
     CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
     CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
-    CheckedReleaseClass, CheckedSetTarget, CheckedStatement, CheckedTargetDomainObligation,
-    CheckedType, CheckedValue, CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell,
-    MeasuredKind, NominalId, PropagationContext, WindowShape,
+    CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect, CheckedSetTarget,
+    CheckedStatement, CheckedTargetDomainObligation, CheckedType, CheckedValue,
+    CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
+    PropagationContext, WindowShape,
 };
 
 /// Numbered rule owning one post-resolution semantic rejection.

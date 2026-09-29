@@ -97,6 +97,9 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Buffer { element } => IrType::Buffer {
             element: lower_element(erasure, element)?,
         },
+        CheckedType::Segments { element } => IrType::Segments {
+            element: lower_element(erasure, element)?,
+        },
         CheckedType::Window {
             shape,
             element,
@@ -364,7 +367,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
     }
 }
 
-/// The [PRE-1] records whose bodies the compiler itself emits: the nine
+/// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
 /// `swap` [OP-11] and `free_empty` [OP-14].
 ///
@@ -374,13 +377,14 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 20] = [
-    // [OP-13] the nine construction functions.
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 21] = [
+    // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
     "slots_new",
     "ring_new",
     "box_array_filled",
+    "box_segments_filled",
     "box_slots_new",
     "box_ring_new",
     "slots_from_array",

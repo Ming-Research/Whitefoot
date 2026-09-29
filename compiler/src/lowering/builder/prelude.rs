@@ -1,6 +1,6 @@
 //! The bodies of the [PRE-1] records the compiler itself owns.
 //!
-//! Nine construction functions [OP-13], nine window operations [OP-10],
+//! Ten construction functions [OP-13], nine window operations [OP-10],
 //! `swap` [OP-11] and `free_empty` [OP-14] are declared body-less exactly as
 //! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
@@ -44,6 +44,7 @@ impl IrBuilder<'_> {
             "slots_new" | "ring_new" => self.row_window_new(),
             "slots_from_array" | "slots_into_array" => self.row_full_array_conversion(),
             "box_array_filled" => self.row_box_array_filled(),
+            "box_segments_filled" => self.row_box_segments_filled(),
             "box_slots_new" | "box_ring_new" => self.row_box_window_new(),
             "grow" => self.row_grow(),
             "place_back" => self.row_place(IrBoundary::PlaceBack),
@@ -197,6 +198,119 @@ impl IrBuilder<'_> {
             },
         )?;
         self.return_value(cell)
+    }
+
+    /// `box_segments_filled<T>(lengths, value) -> Option<Box<Segments<T>>>`:
+    /// `None` when the size predicate its record states fails, and otherwise
+    /// one heap block `[len | bounds | elements]`, filled, which is the cell
+    /// itself (compiler/storage-representation).
+    ///
+    /// The element total is a sum of runtime data that no term states, so
+    /// the predicate is judged here at runtime and its failure is the
+    /// `None` result the record declares [OP-13].
+    fn row_box_segments_filled(&mut self) -> Result<(), LoweringFailure> {
+        /// [PRE-1] declares `None` first and `Some` second.
+        const NONE: u32 = 0;
+        const SOME: u32 = 1;
+        let [lengths, value] = self.row_parameters()?;
+        let IrType::Nominal(option) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Enum { variants } = &self
+            .nominals
+            .get(option.index())
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .kind
+        else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let [none, some] = variants.as_slice() else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let ([], [payload]) = (none.fields(), some.fields()) else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let cell_type = payload.ty();
+        let IrType::Nominal(cell) = cell_type else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Box { referent, .. } = self
+            .nominals
+            .get(cell.index())
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .kind
+        else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrType::Segments { element } = referent else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrType::Range { element: counted } = self.value_type(lengths)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        if self.element_type(counted)? != U64
+            || self.value_type(value)? != self.element_type(element)?
+        {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let layout_ceiling = self
+            .runtime_obligations(self.element_type(element)?)?
+            .layout_ceiling;
+        let total = self.define(U64, IrOperation::SegmentsTotal { lengths })?;
+        let fits = self.define(
+            IrType::Bool,
+            IrOperation::SegmentsFits {
+                nominal: cell,
+                lengths,
+                total,
+                layout_ceiling,
+            },
+        )?;
+        let (filled, _) = self.new_block(&[])?;
+        let (refused, _) = self.new_block(&[])?;
+        self.terminate(IrTerminator::Match {
+            scrutinee: fits,
+            enum_type: IrEnumType::Bool,
+            targets: vec![
+                IrMatchTarget {
+                    tag: 1,
+                    block: filled,
+                },
+                IrMatchTarget {
+                    tag: 0,
+                    block: refused,
+                },
+            ],
+        })?;
+        self.current = Some(filled);
+        let block = self.define(
+            cell_type,
+            IrOperation::SegmentsFill {
+                nominal: cell,
+                lengths,
+                total,
+                value,
+            },
+        )?;
+        let made = self.define(
+            self.result,
+            IrOperation::ConstructEnum {
+                nominal: option,
+                variant: SOME,
+                fields: vec![block],
+            },
+        )?;
+        self.return_value(made)?;
+        self.current = Some(refused);
+        let nothing = self.define(
+            self.result,
+            IrOperation::ConstructEnum {
+                nominal: option,
+                variant: NONE,
+                fields: Vec::new(),
+            },
+        )?;
+        self.return_value(nothing)
     }
 
     /// `box_slots_new<T>(capacity)` and `box_ring_new<T>(capacity)`: one
@@ -551,7 +665,7 @@ fn ceiling_pair(
         IrType::Integer { .. } | IrType::Float { .. } => return None,
         // A range reference is not a stored type [TYPE-8]; a runtime-capacity
         // `Array<T>` is a pointer and a length.
-        IrType::Buffer { .. } | IrType::Range { .. } => (Finite(16), 8),
+        IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => (Finite(16), 8),
         IrType::Address(_) => (Finite(8), 8),
         // This compiler-only task capture has no source layout ceiling.
         IrType::RuntimeBoxPayload { .. } => return None,

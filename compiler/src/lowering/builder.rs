@@ -562,7 +562,8 @@ fn lower_source_argument(argument: &CheckedExpression) -> IrSourceArgument {
         },
         CheckedExpression::BorrowAddressed { .. }
         | CheckedExpression::BorrowRangeIndex { .. }
-        | CheckedExpression::RangeOf { .. } => IrSourceArgument::Borrow,
+        | CheckedExpression::RangeOf { .. }
+        | CheckedExpression::BorrowSegment { .. } => IrSourceArgument::Borrow,
         CheckedExpression::ReadStorage { .. }
         | CheckedExpression::DerefAddressed { .. }
         | CheckedExpression::ArrayIndex { .. }
@@ -1856,6 +1857,12 @@ impl<'program> IrBuilder<'program> {
                 end,
                 ..
             } => self.lower_range_of(source, start, end, *element),
+            CheckedExpression::BorrowSegment {
+                root,
+                segment,
+                element,
+                ..
+            } => self.lower_segment_borrow(root, segment, *element),
             CheckedExpression::RangeMeasure { measure, root } => {
                 match fixed_measure(*measure, MeasuredKind::Range) {
                     Some(constant) => self.lower_fixed_measure(constant),

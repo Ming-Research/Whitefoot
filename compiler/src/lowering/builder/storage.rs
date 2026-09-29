@@ -200,6 +200,16 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         CheckedExpression::BufferMeasure { root, .. } => {
             bindings.insert(root.binding);
         }
+        // [TYPE-9] a `Segments` block is only ever `Box` content, reached
+        // through the pointer its owner's slot holds, as a runtime-capacity
+        // `Array`'s is.
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            bindings.extend(root.binding());
+            collect_place(root, bindings);
+            if let Some(offset) = segment.offset() {
+                collect_expression(offset, bindings);
+            }
+        }
         CheckedExpression::Constant(_)
         | CheckedExpression::NamedConstant { .. }
         | CheckedExpression::Binding { .. }

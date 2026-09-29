@@ -1844,7 +1844,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Array { element, length } => {
                 length.is_concrete() && self.concrete_type_identity(self.element_type(element)?)?
             }
-            CheckedType::Buffer { element } => {
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                 self.concrete_type_identity(self.element_type(element)?)?
             }
             CheckedType::Window {
@@ -2106,6 +2106,15 @@ impl<'unit> TypeContext<'unit> {
                     "Buffer { element: StableElement("
                 } else {
                     "Array<"
+                });
+                self.write_type_identity(self.element_type(element)?, out, ordering, visiting)?;
+                out.push_str(if ordering { ") }" } else { ">" });
+            }
+            CheckedType::Segments { element } => {
+                out.push_str(if ordering {
+                    "Segments { element: StableElement("
+                } else {
+                    "Segments<"
                 });
                 self.write_type_identity(self.element_type(element)?, out, ordering, visiting)?;
                 out.push_str(if ordering { ") }" } else { ">" });

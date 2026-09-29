@@ -620,6 +620,7 @@ fn holds_union_enum(
         | IrType::Integer { .. }
         | IrType::Float { .. }
         | IrType::Buffer { .. }
+        | IrType::Segments { .. }
         | IrType::Window { capacity: None, .. }
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }
@@ -714,7 +715,7 @@ impl<'types> ReturnLeaves<'types> {
             // `{ ptr, i64 }`, and the runtime-capacity blocks' headers, whose
             // zero-length element tails have no leaf.
             IrType::Range { .. } => self.integer(copies, 2),
-            IrType::Buffer { .. } => self.integer(copies, 1),
+            IrType::Buffer { .. } | IrType::Segments { .. } => self.integer(copies, 1),
             IrType::Window {
                 shape,
                 element,
@@ -1190,6 +1191,16 @@ fn runtime_capacity_layout(
                 .ok_or(TargetLayoutFailure::InvalidIr)?,
             1_u64,
         ),
+        // The `len` word and the first bound; the other bounds follow at a
+        // runtime count, which the fit's own limit accounts for.
+        IrType::Segments { element } => (
+            layouts
+                .elements
+                .get(element.index())
+                .copied()
+                .ok_or(TargetLayoutFailure::InvalidIr)?,
+            2,
+        ),
         IrType::Window {
             shape,
             element,
@@ -1300,6 +1311,11 @@ fn target_integer_result_bounds(
     Ok(bounds)
 }
 
+/// The largest `Segments` block [OP-13]'s fit admits: `2^62` bytes of
+/// elements and bounds, the `len` word, the last bound and at most 15 bytes of
+/// alignment padding.
+const SEGMENTS_BLOCK_MAX: u64 = (1 << 62) + 31;
+
 const fn element_count_max(byte_maximum: u64, stride: u64) -> u64 {
     match byte_maximum.checked_div(stride) {
         Some(maximum) => maximum,
@@ -1337,6 +1353,36 @@ fn validate_target_obligation(
             if allocation.size > layouts.target.runtime_allocation_max()
                 || allocation.align > layouts.target.runtime_allocation_alignment()
             {
+                return Err(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ));
+            }
+        }
+        // [OP-13] `box_segments_filled`: its fit is judged with [OP-9]'s
+        // language ceilings, so the element's actual layout must lie within
+        // them, and the largest block the fit admits, `2^62` bytes of
+        // elements and bounds with the `len` word, the last bound and at
+        // most 15 bytes of alignment padding, must be allocatable.
+        IrOperation::SegmentsFits {
+            nominal,
+            layout_ceiling,
+            ..
+        } => {
+            if result_type != IrType::Bool {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let IrNominalKind::Box { referent, .. } = program
+                .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            if !matches!(referent, IrType::Segments { .. }) {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            runtime_capacity_allocation_layout(layouts, *referent, *layout_ceiling)?;
+            if layouts.target.runtime_allocation_max() < SEGMENTS_BLOCK_MAX {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
                 ));
@@ -1611,6 +1657,14 @@ impl<'types> LayoutComputer<'types> {
                     size: 8,
                     align: element.align.max(8),
                 })
+            }
+            // [TYPE-9] a `Segments` block is reached only through its `Box`;
+            // its own layout is the `len` word and the zero-length bounds
+            // tail that head it. Its elements follow the bounds at an offset
+            // the emitter rounds to the element's alignment.
+            IrType::Segments { element } => {
+                self.element(element)?;
+                Ok(Layout { size: 8, align: 8 })
             }
             IrType::Range { element } => {
                 self.element(element)?;

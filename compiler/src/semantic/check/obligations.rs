@@ -343,6 +343,20 @@ impl Records<'_> {
             CheckedExpression::ContainerMeasure { root, .. }
             | CheckedExpression::BorrowAddressed { root, .. }
             | CheckedExpression::ReadStorage { root, .. } => self.container_root(root),
+            // [OP-4] a segment owes `i < s.len` after the place's own
+            // subscripts.
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                self.container_root(root);
+                if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                    self.expression(&index.offset);
+                    self.source(
+                        SemanticRule::Op4,
+                        &index.obligation,
+                        ObligationFamily::Bounds,
+                        0,
+                    );
+                }
+            }
             CheckedExpression::BoxTake { path, .. } => self.path_subscripts(path),
             CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }

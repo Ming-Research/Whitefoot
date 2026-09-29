@@ -167,6 +167,7 @@ impl TypeContext<'_> {
             CheckedType::Nominal(id) => self.activate_nominal(id),
             CheckedType::Array { element, .. }
             | CheckedType::Buffer { element }
+            | CheckedType::Segments { element }
             | CheckedType::Window { element, .. } => {
                 self.activate_type(self.element_type(element)?)
             }

@@ -2133,6 +2133,12 @@ impl<'unit> TypeContext<'unit> {
                     self.checked_type_name(self.element_type(element)?)?
                 )
             }
+            CheckedType::Segments { element } => {
+                format!(
+                    "Segments<{}>",
+                    self.checked_type_name(self.element_type(element)?)?
+                )
+            }
             CheckedType::Window {
                 shape,
                 element,

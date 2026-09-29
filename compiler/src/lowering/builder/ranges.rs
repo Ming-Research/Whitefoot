@@ -71,6 +71,40 @@ impl IrBuilder<'_> {
         self.define(ty, IrOperation::SliceRange { slice, start, end })
     }
 
+    /// [REF-4, TYPE-9] `&s[i]` or `&s.all` over a `Segments<T>` place: the
+    /// block is reached through its cell, and segment i's bound was
+    /// discharged by [OP-4] before this operation exists.
+    pub(super) fn lower_segment_borrow(
+        &mut self,
+        root: &crate::semantic::CheckedContainerRoot,
+        segment: &crate::semantic::CheckedSegmentSelect,
+        element: crate::semantic::CheckedElement,
+    ) -> Result<IrValueId, LoweringFailure> {
+        let element = lower_element(self.erasure, element)?;
+        let segments = self.lower_place_address(root)?;
+        if self.value_type(segments)? != IrType::Address(IrAddressed::Segments { element }) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let ty = IrType::Range { element };
+        match segment {
+            crate::semantic::CheckedSegmentSelect::One(index) => {
+                let index = self.expression(&index.offset)?;
+                if self.value_type(index)?
+                    != (IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+                {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                }
+                self.define(ty, IrOperation::SegmentSlice { segments, index })
+            }
+            crate::semantic::CheckedSegmentSelect::All(_) => {
+                self.define(ty, IrOperation::SegmentsAll { segments })
+            }
+        }
+    }
+
     /// [MSR-1] the one measure a range reference has.
     pub(super) fn lower_range_measure(
         &mut self,

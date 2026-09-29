@@ -711,13 +711,15 @@ impl<'unit> TypeContext<'unit> {
         // place. A runtime-capacity content is never a binding's value,
         // whatever its elements [TYPE-9].
         let content = match content {
-            Some(CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }) => {
-                Some(if consumed.owned {
-                    CellContent::RuntimeCapacity
-                } else {
-                    CellContent::InPlace
-                })
-            }
+            Some(
+                CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. },
+            ) => Some(if consumed.owned {
+                CellContent::RuntimeCapacity
+            } else {
+                CellContent::InPlace
+            }),
             Some(ty) if self.is_copy_type(check_context, ty)? => Some(CellContent::Copy),
             Some(_) if consumed.owned => Some(CellContent::Owned),
             Some(_) => Some(CellContent::InPlace),
