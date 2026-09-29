@@ -90,9 +90,7 @@ task size and file count do not decide which a change is.
 4. **Finish:** load the `completion-review` skill before marking a PR ready or
    reporting completion (checks, one independent review, finding routing,
    publication), and the `owner-handoff` skill whenever you stop for the
-   owner. Every decision awaiting the owner is an entry in the decision ledger
-   kept in the conversation until the owner rules on it; every handoff shows
-   all of them, and no work starts that an open entry could change.
+   owner.
 
 Routine fixes under unchanged design need no decision record. Record reasons
 when choices settle, not by reconstructing them at task completion.
