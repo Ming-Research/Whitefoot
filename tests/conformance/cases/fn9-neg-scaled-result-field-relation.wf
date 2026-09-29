@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Row {
+  width: u64;
+  stride: u64;
+}
+
+fn row(width: u64) -> result: Row pure contract {
+  requires width <= 16384_u64;
+  ensures result.stride == 4_u64 * result.width;
+} {
+  doc "A result field is one datum like any other: a side carrying it with coefficient four is outside the difference-bound fragment [ENT-4], and the clause is refused under FN-9.";
+  let stride = width * 4_u64;
+  return Row(width: width, stride: stride);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

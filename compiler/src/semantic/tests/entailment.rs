@@ -470,12 +470,12 @@ fn assert_join_parents(
 fn term_integer_range(kind: &TermKind) -> Option<(i128, i128)> {
     match kind {
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => Some(type_range(*ty)),
-        TermKind::Measure(..)
-        | TermKind::CountedCapture { .. }
-        | TermKind::IndexCapture { .. }
-        | TermKind::EntryDatum { .. }
-        | TermKind::MeasureDatum { .. } => Some(type_range(IntegerType::U64)),
-        TermKind::ResultPayload(ty)
+        TermKind::Measure(..) | TermKind::CountedCapture { .. } | TermKind::IndexCapture { .. } => {
+            Some(type_range(IntegerType::U64))
+        }
+        TermKind::ResultPayload { ty, .. }
+        | TermKind::EntryDatum { ty, .. }
+        | TermKind::MeasureDatum { ty, .. }
         | TermKind::CommitValue { ty, .. }
         | TermKind::CallDatum { ty, .. } => Some(type_range(*ty)),
         TermKind::Zero | TermKind::Constant(_) => None,
@@ -831,7 +831,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         panic!("entry equality must name an immutable entry datum");
                     };
                     assert!(matches!(retained_term(summary, *right),
-                        TermKind::Measure(actual, _) if actual == measure));
+                        TermKind::Measure(actual, _) if Some(*actual) == *measure));
                 } else {
                     assert_source_event(summary, *event, &mut used_events);
                 }
@@ -1771,8 +1771,10 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     panic!("Result substitution needs a numeric premise");
                 };
                 assert!(
-                    matches!(retained_term(summary, *from), TermKind::ResultPayload(_))
-                        || matches!(retained_term(summary, *to), TermKind::ResultPayload(_))
+                    matches!(
+                        retained_term(summary, *from),
+                        TermKind::ResultPayload { .. }
+                    ) || matches!(retained_term(summary, *to), TermKind::ResultPayload { .. })
                 );
                 let replace = |term| if term == *from { *to } else { term };
                 let expected = match source {
@@ -3210,6 +3212,65 @@ fn main() -> status: std::process::ExitStatus pure {
         },
         "the reflexive implicit bound",
     );
+}
+
+#[test]
+fn an_equality_over_offset_range_lengths_discharges_as_its_bound_pair() {
+    // [ENT-4, REF-4] Two ranges over boxes of different element types share
+    // one non-zero, non-constant start and end, so REF-4 gives each length
+    // as high - low over the same captured endpoints. Neither length is a
+    // raw L0 fact of the other, so the equality's only route is ENT-4's own
+    // bound pair a-b<=0 and b-a<=0, each proved by the ordinary affine route
+    // a separately written <= or >= requirement over the same two lengths
+    // already uses.
+    let source =
+        br#"fn need_equal_length(first: &[u32], second: &[u64]) -> result: unit pure contract {
+  requires first^.len == second^.len;
+} {
+  return unit;
+}
+
+fn probe(low: u64, high: u64) -> result: unit pure {
+  let a = box_array_filled::<u32>(count: 16_u64, value: 0_u32);
+  let b = box_array_filled::<u64>(count: 16_u64, value: 0_u64);
+  if low <= high {
+    if high <= 16_u64 {
+      let first = &a.inner[low..high];
+      let second = &b.inner[low..high];
+      need_equal_length(first: first, second: second);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 1);
+    assert_eq!(
+        summary.call_goals[0].disposition,
+        CallGoalDisposition::Discharged,
+        "the two offset ranges' lengths are equal, proved as their own two directions"
+    );
+    let equality = projected_call_parent(&summary, 0);
+    let DerivationNode::Equality {
+        forward, reverse, ..
+    } = &summary.derivations.nodes[equality.0 as usize]
+    else {
+        panic!("an offset-range length equality must retain both directed affine parents");
+    };
+    for parent in [*forward, *reverse] {
+        assert!(
+            matches!(
+                summary.derivations.nodes[parent.0 as usize],
+                DerivationNode::AffineConsequence { .. }
+            ),
+            "each direction of the bound pair is proved by the affine route, not a raw L0 fact"
+        );
+    }
 }
 
 #[test]
@@ -7642,12 +7703,15 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         assert!(detail.relation.terms().iter().any(|term| matches!(
             retained_term(&summary, *term),
-            TermKind::ResultPayload(IntegerType::I32)
+            TermKind::ResultPayload {
+                ty: IntegerType::I32,
+                ..
+            }
         )));
         assert!(
             summary.derivations.nodes.iter().any(|node| matches!(
                 node, DerivationNode::ResultTransport { from, .. }
-                    if matches!(retained_term(&summary, *from), TermKind::ResultPayload(_))
+                    if matches!(retained_term(&summary, *from), TermKind::ResultPayload { .. })
             )),
             "{function} uses a selected payload in its ordinary proof"
         );

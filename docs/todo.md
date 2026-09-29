@@ -77,6 +77,20 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A widening conversion's operand is read as any affine side.**
+  [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
+  operand only for e a term or constant. [FN-9] relation terms match that:
+  `postcondition_relation_datum` in `compiler/src/semantic/check/ensures.rs`
+  recurses to a datum. `goal_affine_side` in
+  `compiler/src/semantic/entailment/flow/goals.rs` instead reads the operand
+  as any affine side. Source cannot reach the difference today, because a
+  call argument is an atom [GRAM-5] (`cvt::<u32, u64>(x + 1_u32)` does not
+  parse), so a written operand is already a term or constant; the recursion
+  is sound in any case, since a widening conversion keeps the mathematical
+  value. The owner chose on 2026-09-29 to leave it. Narrow the recursion to
+  `goal_operand` or widen ENT-2, with a conformance case either way, when a
+  change lets a non-term operand reach a conversion.
+
 - **A module check's cost for a library interface still grows with the
   module's functions.** Reading `std::process`'s closure (the `std::io`,
   `std::text`, `std::fs` and `std::process` interfaces) costs a one-function
@@ -422,21 +436,6 @@ rarely insert at the same place.
   the capture's source occurrence there too, through the same occurrence the
   repair reads, and pin it with the field-endpoint pair in
   `driver::pinned_repairs`. Reopen with the next change to goal rendering.
-- **Land the approved `Option` success route with PR #169.** The
-  [writer-lost-facts
-  investigation](../research/investigations/writer-lost-facts/DESIGN.md#shape-4-option-results)
-  proposed `when Some(value: r):` routing like `Ok`, with `Option` joining the
-  conditional transport [FN-9, ENT-5, CALL-4]; the owner approved it on
-  2026-09-28 to land together with PR #169, which rewrites the same FN-9
-  admission sentence for struct payloads; that implementation applies its two
-  approved revisions to the tree, and they are not pending amendments
-  meanwhile. The investigation's other two approved changes, header
-  conclusions leaving the loop and the `give` carrier equality, have landed.
-  Validate with the investigation's `Some` probe as conformance cases (a
-  routed `Some` with a caller match, a forwarded `Option`, a rejected `when
-  None(...)`, an unproved `Some` payload, a `None` arm selecting nothing) and
-  unchanged check time on the maintained programs. Reopen when PR #169 is
-  ready to land.
 - **An affine bound is lost at a statement join where the binding's images
   differ.** After a scan whose `pos <= length` is known only as an affine
   invariant conclusion, `let result = pos; if result < start { set result = start; }`
@@ -452,17 +451,33 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
+- **A product with a struct-field operand has no interval route.** [ENT-6]
+  gives affine value images to live own integer bindings and measures only,
+  and its interval product needs both operands' images, so after
+  `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
+  `header.height <= 16384_u32`, `let stride = header.width * 4_u32;` is
+  proved but `stride * header.height` is not, and neither is a product whose
+  operand was computed from a field; copying the fields into bindings first
+  proves both. The same holds for a parameter's fields bounded by `requires`,
+  so it predates v0.80, but v0.80's field relations make it the next thing a
+  writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
+  product. Impact: one `let` per field before a nonlinear product. Candidate:
+  give a tracked field place the current-value image its binding copy would
+  have, killed with the field; validate against field writes, whole-value
+  replacement and aliases, and measure closure cost. Reopen when a program
+  cannot copy the field.
 
 - **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for `ensures when Some(value: r):` names neither the admitted `Ok` route
-  nor the result types it applies to, and `InvisibleUse` for a header
+  for a route the version does not admit, such as `when Err(error: e):` or a
+  variant of a program's own enum, names neither the admitted `Ok` and `Some`
+  routes nor the result types they apply to, and `InvisibleUse` for a header
   invariant named after its loop does not say the name's scope ended with
   the loop body [INV-1]; the Snowghost writers reported changing result
   types and retrying certificates, which either repair would have
   shortened. Add a repair to each under `compiler/diagnostic-repairs`,
   pinned with a program per alternative.
   Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change or with the `Some` route.
+  diagnostics change.
 
 ## Containers and storage lowering
 
@@ -522,14 +537,17 @@ rarely insert at the same place.
   separates the one-slot cell's extra word from its helper boundary: retained
   wide removal and consumption has three 256-byte transfers in WF versus one
   in C even though both `Option<Record>` results occupy 264 bytes. The separate
-  insertion `Result<SlabHandle, Record>` occupies 280 bytes in WF's product
-  layout versus 264 in C's union ABI. Keep these distinctions when interpreting
+  insertion `Result<SlabHandle, Record>` occupied 280 bytes in WF's former
+  product layout versus 264 in C's union ABI; the union layout of
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  now makes it 264 bytes, as in C, and leaves `Option<Record>` and the
+  transfer counts unchanged. Keep these distinctions when interpreting
   timing; a cell-layout change alone cannot remove these costs. Validate
   forwarding or result placement with
   the same owning return paths, failed insertion returning the offered owner,
   partial cleanup and alias controls, checking optimized transfers and
-  same-source timings on supported toolchains. Defer general enum layout and
-  call ABI changes until that experiment establishes which transfer can be
+  same-source timings on supported toolchains. Defer call ABI
+  changes until the forwarding experiment establishes which transfer can be
   removed without changing ownership; reopen with the owning-map library or
   a workload dominated by wide Slab removal.
   The [map's exhaustive returned-owner protocol](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
@@ -760,6 +778,27 @@ rarely insert at the same place.
   requesting call. Validate with a generic allocating helper instantiated
   from two callers, one bounded and one not, whose stop names the unbounded
   caller. Deferred because no writer has met it; reopen when one does.
+
+- **Union-laid-out enums: deferred refinements.**
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  is implemented: enums with two or more payload variants whose product does
+  not return in registers are unions of per-variant views and memory-only in
+  the backend (`Component` 168 to 40 bytes, `IoError` 228 to 12, the I/O
+  results 236--352 to 16--112; the
+  [results](../research/investigations/enum-union-layout/DESIGN.md#implementation-results)).
+  The investigation's timing criterion was met for the Slab and
+  priority-queue comparisons; its I/O half was waived by the owner because
+  the named I/O programs no longer compile. Deferred refinements, each to be
+  measured on its own: a first-class
+  word carrier so register-sized two-payload enums (at most 8 bytes saved in
+  the maintained programs) could also shrink, reopened by a workload storing
+  many of them; niche encoding, reopened with refined integer domains or a
+  workload dominated by `Option<Box<T>>`; a narrower tag, reopened by a
+  workload of enums whose views are less than 4-aligned; and an enum with one
+  payload variant that holds a union enum (`ReadStop`, `Option<IoError>`)
+  keeps the product form and is memory-only only because of that payload,
+  which is correct but copies it by memmove where its other fields alone
+  would be first-class, reopened if a measured path moves many of them.
 
 ## Parallel lowering and runtime
 
@@ -1349,6 +1388,21 @@ rarely insert at the same place.
   it. Reopen when a program is seen to hang this way, or before a guarded
   program is expected to fail rather than hang.
 
+- **Offers beneath a waiting recursion carry no recursion budget.** A
+  cyclic component with a waiting member gets no budget-carrying family
+  (compiler/parallel-lowering/two-worlds), because a waiting function is a
+  resumable frame with no ordinary entry for a variant to stand behind.
+  Every activation of such a recursion therefore reaches its offers
+  unbudgeted, as a `--par-recursive-frontier off` build does: in
+  `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
+  reach `name_before`'s byte-pair offers at every depth. Whether that costs
+  anything is unmeasured; the offers are small, and a grain rule may refuse
+  them before depth matters. Validate by timing the `--par` build of
+  `wfgrep.wf` on a deep and on a wide tree against the default build and
+  against a build that withholds those offers; if the unbudgeted offers cost
+  measurable time that no grain rule removes, give waiting components a
+  budget-carrying frame variant. Reopen with that measurement.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -1802,14 +1856,7 @@ each is resolved by a discussion and a tree change.
   library example needs one of these boundaries. Validate matched direct/local/
   projected programs, alias and descriptor writes, joins, loop iterations and
   stronger-contract negatives before choosing an extension; do not infer a
-  general refinement system from the local-result implementation. A separate
-  FN-9 result-selector limit remains: a nominal Slab result cannot publish
-  `ensures result.cells.inner.len == 0_u64;`, whereas the direct boxed Ring
-  carrier can publish its measure. The
-  [exact rejected forms](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
-  distinguish this wrapper boundary from indexed postcondition targets and
-  from storing an already-related Result. Reopen it when a library wrapper
-  needs the relation, with direct-carrier, nested-field and stale-write controls.
+  general refinement system from the local-result implementation.
   Conditional fact representation cost is the separate compiler defect above.
   The conversion tests also retain an affine precision boundary: if `index`
   has only an affine image `first + second`, its checked integer conversion's
@@ -2049,7 +2096,12 @@ condition under which it is taken up.
   full sparse-map loop still rejects its extent invariant when its
   length-preserving wrapper is inlined with an explicit extent bridge. Its
   normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. Reopen with contract-proof work: reduce the remaining
+  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
+  reduce a related refusal to two scalars incremented together under a branch
+  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
+  following from ENT-6's per-binding join images and INV-1's affine-only
+  conclusions rather than a compiler defect; Snowghost's line breaker keeps
+  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
   refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation

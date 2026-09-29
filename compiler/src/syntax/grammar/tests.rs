@@ -23,7 +23,7 @@ fn complete_inventory_is_pinned() {
     // call marker `("musttail" | "mustpar")?` [PAR-4]: four decisions.
     // v0.79 adds a STRING arm to the existing `cvalue` alternation
     // [CONST-2]: no decision, and nine rows for its continuations.
-    // v0.80's `atomic_stmt` adds its optional guard and its statement
+    // v0.81's `atomic_stmt` adds its optional guard and its statement
     // repeat [GRAM-4, SHARE-2]: two decisions.
     assert_eq!(DECISIONS.len(), 163);
     assert_eq!(SELECT_ROWS.len(), 7_299);
@@ -159,7 +159,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[104].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[109].production(), Production::BreakStmt);
     assert_eq!(DECISIONS[109].kind(), DecisionKind::Optional);
-    // The call-site `musttail` optional, and v0.80's `atomic_stmt` guard and
+    // The call-site `musttail` optional, and v0.81's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices.
     assert_eq!(DECISIONS[125].production(), Production::Call);
     assert_eq!(DECISIONS[125].kind(), DecisionKind::Optional);

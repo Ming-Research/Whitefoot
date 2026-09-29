@@ -138,10 +138,13 @@ impl DifferenceSystem {
 /// constant name one term; a literal is folded onto the zero term instead.
 #[derive(Eq, PartialEq)]
 enum OperandKey {
-    /// One declared result ordinal [CALL-4]. Distinct ordinals are distinct
-    /// destination datums even when their value types agree.
-    Result(u32),
-    Parameter(u32, ProjectionKey),
+    /// One declared result datum [CALL-4]: an ordinal and the owned
+    /// descendant projection below it. Distinct ordinals or projections are
+    /// distinct destination datums even when their value types agree.
+    Result(u32, ProjectionKey),
+    /// One parameter datum; its entry and exit denotations are distinct
+    /// terms even over one place [MSR-3].
+    Parameter(u32, ProjectionKey, bool),
     NamedConst(crate::DeclarationId, ProjectionKey),
     /// One measure of one formal place [MSR-1]: two clauses name one term
     /// only when they name the same measure of the same place.
@@ -189,12 +192,18 @@ impl DeclaredSystem {
 
     fn operand(&mut self, datum: &RelationDatum) -> Option<Operand> {
         let key = match datum {
-            RelationDatum::Result { ordinal, .. } => OperandKey::Result(*ordinal),
+            RelationDatum::Result {
+                ordinal,
+                projections,
+                ..
+            } => OperandKey::Result(*ordinal, projection_key(projections)),
             RelationDatum::Parameter {
                 ordinal,
                 projections,
                 ..
-            } => OperandKey::Parameter(*ordinal, projection_key(projections)),
+            } => {
+                OperandKey::Parameter(*ordinal, projection_key(projections), datum.is_exit_state())
+            }
             RelationDatum::NamedConst {
                 declaration,
                 projections,

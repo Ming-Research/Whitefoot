@@ -184,17 +184,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let base = variant_field_base(variants, *variant)?;
-                self.construct_at(
-                    result,
-                    ty,
-                    Some(*variant),
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(index, value)| (base + index, *value))
-                        .collect(),
-                )?;
+                self.construct_enum_at(result, *nominal, *variant, fields)?;
             }
             IrOperation::ProjectStruct {
                 aggregate,
@@ -244,10 +234,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let index = variant_field_base(variants, *variant)? + *field as usize;
                 let source = self.value_place(*aggregate)?;
-                let address =
-                    self.aggregate_field_pointer(IrType::Nominal(*nominal), &source, index)?;
+                let address = self.variant_field_pointer(*nominal, *variant, *field, &source)?;
                 self.load_place_result(result, ty, &address)?;
             }
             IrOperation::InsertStruct {
@@ -266,6 +254,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
+                let field_type = self.value_type(*value).ok_or(BackendFailure::InvalidIr)?;
+                if self.is_memory_only(field_type)? {
+                    // A memory-only replacement is copied from its own slot,
+                    // which interference keeps apart from the result, so the
+                    // copy may follow the base's.
+                    let destination = self.value_place(result)?;
+                    let source = self.value_place(*aggregate)?;
+                    self.copy_storage(ty, &source, &destination)?;
+                    let field_address =
+                        self.aggregate_field_pointer(ty, &destination, *field as usize)?;
+                    let replacement = self.value_place(*value)?;
+                    self.copy_storage(field_type, &replacement, &field_address)?;
+                    return Ok(true);
+                }
                 // Read the replacement before a coalesced destination write.
                 let replacement = self.value_operand(*value)?;
                 let destination = self.value_place(result)?;
@@ -273,7 +275,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.copy_storage(ty, &source, &destination)?;
                 let field_address =
                     self.aggregate_field_pointer(ty, &destination, *field as usize)?;
-                let field_type = self.value_type(*value).ok_or(BackendFailure::InvalidIr)?;
                 {
                     let emitted_type_0 = self.output.type_name(self.program, field_type)?;
                     writeln!(
@@ -296,6 +297,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         tag: Option<u32>,
         fields: Vec<(usize, IrValueId)>,
     ) -> Result<(), BackendFailure> {
+        let destination = self.begin_construction(result, ty, tag)?;
+        for (field, value) in fields {
+            let address = self.aggregate_field_pointer(ty, &destination, field)?;
+            self.store_value_at(value, &address)?;
+        }
+        Ok(())
+    }
+
+    /// Zeroes a constructed value's slot and stores its tag, returning the
+    /// slot's address.
+    fn begin_construction(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        tag: Option<u32>,
+    ) -> Result<String, BackendFailure> {
         let destination = self.value_place(result)?;
         {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
@@ -311,9 +328,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             writeln!(self.output, "  store i32 {tag}, ptr {address}")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
-        for (field, value) in fields {
-            let address = self.aggregate_field_pointer(ty, &destination, field)?;
-            self.store_value_at(value, &address)?;
+        Ok(destination)
+    }
+
+    /// Constructs one enum value in its slot: zero bytes, the tag at field
+    /// 0, then the variant's fields at their addresses, which are a view's
+    /// for a union-laid-out enum (compiler/payload-enum-layout).
+    fn construct_enum_at(
+        &mut self,
+        result: IrValueId,
+        nominal: IrNominalId,
+        variant: u32,
+        fields: &[IrValueId],
+    ) -> Result<(), BackendFailure> {
+        let destination =
+            self.begin_construction(result, IrType::Nominal(nominal), Some(variant))?;
+        for (index, value) in fields.iter().enumerate() {
+            let field = u32::try_from(index).map_err(|_| BackendFailure::CounterOverflow)?;
+            let address = self.variant_field_pointer(nominal, variant, field, &destination)?;
+            self.store_value_at(*value, &address)?;
         }
         Ok(())
     }
@@ -326,17 +359,47 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         let parameters = self.block(target)?.parameters().to_vec();
         let mut transfers = Vec::new();
-        for ((parameter, ty), argument) in parameters.iter().zip(arguments) {
+        let mut moves = Vec::new();
+        for (position, ((parameter, ty), argument)) in parameters.iter().zip(arguments).enumerate()
+        {
             if self.storage.slot(*parameter).is_some()
                 && self.storage.slot(*parameter) != self.storage.slot(*argument)
             {
+                if self.is_memory_only(*ty)? {
+                    moves.push((position, *parameter, *ty, *argument));
+                    continue;
+                }
                 let operand = self.value_operand(*argument)?;
                 transfers.push((*parameter, *ty, operand));
             }
         }
+        // A memory-only value moves by memmove (compiler/payload-enum-layout).
+        // Every source is captured before any destination is written: a
+        // source another transfer of this edge overwrites is first copied to
+        // its own frame snapshot.
+        let snapshots = union_enums::edge_snapshot_positions(
+            self.program,
+            &self.storage,
+            &parameters,
+            arguments,
+        )?;
+        let mut sources = Vec::with_capacity(moves.len());
+        for (position, parameter, ty, argument) in &moves {
+            let mut source = self.value_place(*argument)?;
+            if snapshots.contains(position) {
+                let snapshot = self.entry_slot(FunctionSlot::EdgeSnapshot(*parameter))?;
+                self.copy_storage(*ty, &source, &snapshot)?;
+                source = snapshot;
+            }
+            sources.push(source);
+        }
         // Cleanup still reads predecessor snapshots. A phi destination may
         // reuse their storage only after those final reads have completed.
         self.emit_drops(drops)?;
+        for ((_, parameter, ty, _), source) in moves.iter().zip(sources) {
+            let destination = self.value_place(*parameter)?;
+            self.copy_storage(*ty, &source, &destination)?;
+        }
         for (parameter, ty, operand) in transfers {
             let destination = self.value_place(parameter)?;
             {
@@ -432,8 +495,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let index = variant_field_base(variants, *variant)? + *field as usize;
-                self.aggregate_field_pointer(base.ty(), &self.value_name(address), index)?
+                self.variant_field_pointer(*nominal, *variant, *field, &self.value_name(address))?
             }
             crate::IrPlaceStep::RunElement {
                 offset,
@@ -526,12 +588,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
     }
 
+    /// A value as one LLVM first-class operand, loaded from its slot when it
+    /// has one. A memory-only value (compiler/payload-enum-layout) has no
+    /// first-class form; its consumers read its slot through
+    /// [`Self::value_place`].
     pub(super) fn value_operand(&mut self, value: IrValueId) -> Result<String, BackendFailure> {
         if self.storage.slot(value).is_none() {
             return Ok(self.value_name(value));
         }
-        let temporary = self.next_temporary()?;
         let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+        if self.is_memory_only(ty)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let temporary = self.next_temporary()?;
         let address = self.value_place(value)?;
         {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
@@ -551,7 +620,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         self.materialized.clear();
         for value in values {
-            if self.storage.slot(value).is_some() && !self.materialized.contains_key(&value) {
+            // A memory-only operand stays in its slot; its consumer reads it
+            // there.
+            if self.storage.slot(value).is_some()
+                && !self.materialized.contains_key(&value)
+                && !self.value_is_memory_only(value)?
+            {
                 let operand = self.value_operand(value)?;
                 self.materialized.insert(value, operand);
             }
@@ -617,11 +691,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// Stores a first-class result into the slot its plan selected. The
+    /// operations that produce a memory-only result write that slot
+    /// themselves, and `emit_definition` admits no other producer of one.
     pub(super) fn save_value_result(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
         if self.storage.slot(result).is_none() {
             return Ok(());
         }
         let ty = self.value_type(result).ok_or(BackendFailure::InvalidIr)?;
+        if self.is_memory_only(ty)? {
+            return Ok(());
+        }
         let destination = self.value_place(result)?;
         {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;

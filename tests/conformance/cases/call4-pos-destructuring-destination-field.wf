@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+fn split(width: u32) -> (header: Header, frames: u32) pure contract {
+  requires width <= 16384_u32;
+  ensures header.width <= 16384_u32;
+} {
+  doc "CALL-4: a struct ordinal of a result list supplies its integer fields; the returned construction hands back the width operand.";
+  let header = Header(width: width, height: 1_u32);
+  return header, 2_u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Ordinal 0 lands at the first destructuring binder, and the relation reaches its field h.width [ENT-3.S12].";
+  let (h, frames) = split(width: 5_u32);
+  let stride = h.width * 4_u32;
+  let total = stride +wrap frames;
+  let code = cvt.wrap::<u32, u8>(total);
+  return exit_status(code: code);
+}

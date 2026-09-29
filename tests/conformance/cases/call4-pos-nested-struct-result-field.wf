@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+struct Image {
+  header: Header;
+  frames: u32;
+}
+
+fn make_image(width: u32) -> made: Image pure contract {
+  requires width >= 1_u32;
+  requires width <= 16384_u32;
+  ensures made.header.width <= 16384_u32;
+  ensures made.header.width >= 1_u32;
+} {
+  doc "CALL-4: a field reached through two struct-field steps, made.header.width, is a datum. The construction placements carry width into header.width and header into made.header [MSR-3].";
+  let header = Header(width: width, height: 1_u32);
+  let image = Image(header: header, frames: 1_u32);
+  return image;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller multiplies the published field by four with no range check; the product's domain follows from made.header.width <= 16384.";
+  let made = make_image(width: 3_u32);
+  let stride = made.header.width * 4_u32;
+  let code = cvt.wrap::<u32, u8>(stride);
+  return exit_status(code: code);
+}

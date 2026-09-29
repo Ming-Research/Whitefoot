@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+fn bounded(width: u32) -> header: Header pure contract {
+  requires width <= 16384_u32;
+  ensures header.width <= 16384_u32;
+} {
+  doc "CALL-4: the returned place hands back its field.";
+  let header = Header(width: width, height: 1_u32);
+  return header;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A direct set's target is a result destination [ENT-3.S12]: after the commit and its kills, the relation reaches the target's field image.width.";
+  let image = Header(width: 0_u32, height: 0_u32);
+  set image = bounded(width: 6_u32);
+  let stride = image.width * 4_u32;
+  let code = cvt.wrap::<u32, u8>(stride);
+  return exit_status(code: code);
+}

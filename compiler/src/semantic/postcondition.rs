@@ -102,12 +102,19 @@ pub(crate) enum RelationDatum {
         /// The declared result ordinal this datum names [CALL-4]. A
         /// declaration writing one result has ordinal zero.
         ordinal: u32,
+        /// The owned descendant projection [MSR-3] from the ordinal's value
+        /// to the fragment-integer place this datum names: empty for a
+        /// fragment-integer result, and struct-field and `Box` content steps
+        /// for an integer field of an aggregate result [CALL-4].
+        projections: Vec<GoalProjection>,
         ty: CheckedType,
     },
     Parameter {
         ordinal: u32,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
+        /// Which of [MSR-3]'s table rows gives this operand its meaning.
+        denotation: ParameterDenotation,
     },
     NamedConst {
         declaration: DeclarationId,
@@ -143,6 +150,36 @@ impl RelationDatum {
             Self::Parameter { .. } | Self::NamedConst { .. } | Self::Literal { .. } => false,
         }
     }
+
+    /// Whether this datum is the exit state of a reference parameter whose
+    /// row writes it [MSR-3], a measure or a fragment-integer place alike.
+    pub(crate) const fn is_exit_state(&self) -> bool {
+        match self {
+            Self::Measure(_, place) => {
+                matches!(place.root, PostconditionPlaceRoot::ExitParameter { .. })
+            }
+            Self::Parameter { denotation, .. } => {
+                matches!(denotation, ParameterDenotation::ExitState)
+            }
+            Self::Result { .. } | Self::NamedConst { .. } | Self::Literal { .. } => false,
+        }
+    }
+}
+
+/// What one non-measure parameter datum of an `ensures` clause denotes
+/// [MSR-3, FN-9].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum ParameterDenotation {
+    /// The function-entry image, read over the live place while [FN-9]'s
+    /// entry-image stability holds. Every datum outside the two rows below.
+    EntryImage,
+    /// A bare place of a reference parameter whose row writes it: the
+    /// selected return's exit state, instantiated at the caller's resolved
+    /// exit place.
+    ExitState,
+    /// The same place under `entry(parameter)`: the immutable entry datum,
+    /// instantiated at the caller as that call's call datum.
+    EntryDatum,
 }
 
 /// Source category of a constant-valued atom.  Concrete substitution never
@@ -220,6 +257,12 @@ pub(crate) enum PostconditionReturnDatum {
         origin: PostconditionConstantOrigin,
     },
     Measure(CheckedMeasure, PostconditionReturnPlace),
+    /// A returned struct construction [FN-9]: the value of each field
+    /// operand, in declaration order, each an atom [GRAM-9]. A projected
+    /// result datum selects one field and continues below its operand.
+    Construct {
+        fields: Vec<Option<PostconditionReturnDatum>>,
+    },
 }
 
 /// Complete checked place identity for a selected result term or `len_of(P)`.

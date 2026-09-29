@@ -735,7 +735,6 @@ impl<'unit> Checker<'_, 'unit> {
         let FunctionContext { check_context, .. } = context;
         if let Some(value) = self
             .types
-            .declarations
             .postcondition_result_placeholder(check_context, node)?
         {
             return Ok(TypedExpression::owned(

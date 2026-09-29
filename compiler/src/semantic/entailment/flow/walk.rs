@@ -40,7 +40,6 @@ impl Reasoning<'_, '_, '_> {
                 arguments,
                 goal_arguments,
                 &[],
-                &[],
             ) else {
                 continue;
             };
@@ -658,8 +657,8 @@ impl Analyzer<'_, '_> {
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 self.declare(*binding);
                 if let Some(result) = result {
-                    self.vocabulary
-                        .select_result(node_path, &result, *binding, *ok_type, state);
+                    self.reasoning()
+                        .select_result(node_path, &result, *binding, state);
                 }
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*ok_type)
@@ -1721,20 +1720,15 @@ impl Analyzer<'_, '_> {
                 );
             }
         }
-        if arm.tag == 0
-            && let Some(result) = result
+        if let Some(result) = result
+            && arm.tag == result.success_tag
             && let Some(binder) = arm
                 .binders
                 .iter()
                 .find(|binder| binder.field == 0 && binder.mode == CheckedMode::Own)
         {
-            self.vocabulary.select_result(
-                &binder.node_path,
-                result,
-                binder.binding,
-                binder.ty,
-                &mut state,
-            );
+            self.reasoning()
+                .select_result(&binder.node_path, result, binder.binding, &mut state);
         }
         self.frames
             .scopes

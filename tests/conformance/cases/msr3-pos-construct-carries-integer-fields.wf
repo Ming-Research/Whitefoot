@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "MSR-3: the CONSTRUCT placement carries a field operand's value into the field it fills. The place operand w is a term of the state the placement reads, so header.width equals it; the literal operand is its own datum, so header.height is 1. Both products discharge from those equalities.";
+  let w = 7_u32;
+  let header = Header(width: w, height: 1_u32);
+  let wide = header.width * 4_u32;
+  let tall = header.height * 8_u32;
+  let sum = wide +wrap tall;
+  let code = cvt.wrap::<u32, u8>(sum);
+  return exit_status(code: code);
+}

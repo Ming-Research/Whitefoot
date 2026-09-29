@@ -59,6 +59,7 @@ use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, Referen
 use std::collections::HashSet;
 use std::fmt::Write;
 
+use super::union_enums::FrameOperand;
 use super::{BackendFailure, FunctionEmitter, IntrinsicDeclaration, value_name};
 use crate::backend::abi::{FunctionAbi, ResultAbi};
 use crate::{
@@ -609,16 +610,22 @@ impl FunctionEmitter<'_, '_> {
                 parameter.ty(),
                 &mut frame_references.types,
             )?;
-            let operand = self.value_operand(*argument)?;
-            operands.push(format!("{parameter_type} {operand}"));
+            let operand = self.frame_operand(&parameter_type, *argument)?;
             // The frame keeps a range reference's pair whole; the refused
             // edge's own call receives it split, like every other call.
             call_arguments.push(if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
                 format!("ptr {address}")
             } else {
-                self.value_argument(*parameter, &operand)?
+                // A by-value parameter is never a stored aggregate, so it has
+                // no slot and its operand is its own name.
+                let FrameOperand::Value(_) = operand else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                let name = self.value_name(*argument);
+                self.value_argument(*parameter, &name)?
             });
+            operands.push(operand);
             field_types.push(parameter_type);
         }
         let result_type =
@@ -684,9 +691,10 @@ impl FunctionEmitter<'_, '_> {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
                 self.output,
-                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}\n  store {operand}, ptr {field}"
+                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.store_frame_operand(operand, &field)?;
         }
         if let (Some(field), Some(budget)) = (budget_field, budget.as_ref()) {
             let slot = format!("%{}", self.next_temporary()?);
@@ -981,6 +989,17 @@ impl FunctionEmitter<'_, '_> {
         if result_abi.uses_destination() {
             let destination = self.value_place(result)?;
             arguments.insert(0, format!("ptr {destination}"));
+            // A memory-only result stays in the destination it was
+            // constructed in (compiler/payload-enum-layout).
+            if self.is_memory_only(result_abi.ty())? {
+                self.output.symbol(callee.to_string());
+                return writeln!(
+                    self.output,
+                    "  call void @{callee}({})",
+                    arguments.join(", ")
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
             // LoopSplit uses the value-definition bridge, whose ordinary
             // result save reads this snapshot of the completed destination.
             return {
@@ -1040,6 +1059,42 @@ impl FunctionEmitter<'_, '_> {
                 ..
             } = &pending;
             self.output.symbol(callee.as_str());
+            // A memory-only result is constructed in its destination by the
+            // inline call and copied there from the lane frame by the wait
+            // (compiler/payload-enum-layout); no first-class value joins.
+            if self.is_memory_only(pending.result_abi.ty())? {
+                let destination = self.value_place(pending.result)?;
+                let arguments = if arguments.is_empty() {
+                    format!("ptr {destination}")
+                } else {
+                    format!("ptr {destination}, {arguments}")
+                };
+                write!(self.output, "  {condition} = icmp eq ptr {frame}, null\n  br i1 {condition}, label %{inline}, label %{wait}\n")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(inline.clone());
+                write!(
+                    self.output,
+                    "  call void @{callee}({arguments})\n  br label %{done}\n"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(wait.clone());
+                self.output.symbol("wf__par_join");
+                self.output.symbol("wf__par_release");
+                writeln!(
+                    self.output,
+                    "  call void @wf__par_join(ptr {frame})\n  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let frame = frame.clone();
+                self.copy_storage(pending.result_abi.ty(), &field, &destination)?;
+                write!(
+                    self.output,
+                    "  call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(done.clone());
+                continue;
+            }
             let (inline_call, save_waited) = if pending.result_abi.uses_destination() {
                 let destination = self.value_place(pending.result)?;
                 let arguments = if arguments.is_empty() {
