@@ -419,8 +419,10 @@ The changes below are grouped by where they land.
 - Close the runtime gaps of 4.3.
 
 **Tests and guidance**
-- The seven `mustpar` calls in `tests/programs`, and the waiting-call
-  examples of `docs/patterns.md`, become `spawn`.
+- Every waiting-call `mustpar` becomes `spawn`: the seven in
+  `tests/programs`, the waiting-call examples of `docs/patterns.md`, the four
+  `share-pos-*` conformance cases that start contexts, the compiler tests
+  that write one, and the io-completion bench's `context_starts.wf`.
 - Four `par4-*` conformance cases become `spawn` cases. If `mustpar` is
   retired, the other eight retire with PAR-4, and `docs/patterns.md` drops its
   `mustpar for` example.
