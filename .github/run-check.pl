@@ -8,7 +8,8 @@ use File::Basename qw(dirname);
 use POSIX qw(WNOHANG setpgid);
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC sleep);
 
-@ARGV >= 2 or die "usage: run-check.pl LABEL COMMAND [ARG ...]\n";
+@ARGV >= 2 or die "usage: run-check.pl LABEL COMMAND [ARG ...] | --budget-verdict RECORD\n";
+budget_verdict($ARGV[1]) if $ARGV[0] eq '--budget-verdict' && @ARGV == 2;
 my $label = shift;
 my $lock = $ENV{WHITEFOOT_CHECK_LOCK_DIR} // "/tmp/whitefoot-check-$<.lock";
 my $owner_pid = $$;
@@ -41,23 +42,18 @@ if (($ENV{WHITEFOOT_CHECK_OWNER} // '') eq $recorded
 }
 END {
     if ($owns_lock && $$ == $owner_pid) {
-        unlink "$lock/pid", "$lock/command", "$lock/over-budget";
+        unlink "$lock/pid", "$lock/command";
         rmdir $lock;
     }
 }
 $ENV{WHITEFOOT_CHECK_LOCK_DIR} = $lock;
-# One owner at a time holds the host, so its builds and test pool use every
-# online processor unless the caller names fewer.
-my $processors = `getconf _NPROCESSORS_ONLN 2>/dev/null` // '';
-chomp $processors;
-$processors = 2 if $processors !~ /^[1-9]\d*$/;
-for my $name (qw(CARGO_BUILD_JOBS RUST_TEST_THREADS JOBS)) {
-    $ENV{$name} //= $processors;
-}
-my $budget_mode = $ENV{WHITEFOOT_TIME_BUDGETS} // 'report';
-$budget_mode =~ /^(report|enforce)$/ or die "WHITEFOOT_TIME_BUDGETS must be report or enforce\n";
+# Builds and the test pool keep Cargo's and the test harness's own default,
+# every processor available to this process, unless the caller names fewer:
+# the lock above already keeps other heavy commands off the host.
+my $budget_record = $ENV{WHITEFOOT_TIME_BUDGET_RECORD} // '';
 my $budget_file = $ENV{WHITEFOOT_TIME_BUDGET_FILE} // dirname(__FILE__) . '/time-budgets.txt';
-my $host = $^O eq 'linux' ? 'linux' : $^O eq 'darwin' ? 'macos' : 'windows';
+my %hosts = (linux => 'linux', darwin => 'macos', MSWin32 => 'windows', msys => 'windows', cygwin => 'windows');
+my $host = $hosts{$^O} // $^O;
 my $limit = $ENV{WHITEFOOT_CHECK_TIMEOUT} // 1800;
 $limit =~ /^\d+$/ && $limit > 0 or die "WHITEFOOT_CHECK_TIMEOUT must be positive seconds\n";
 my $started = clock_gettime(CLOCK_MONOTONIC);
@@ -125,53 +121,47 @@ my $code = $cancelled // (($status & 127) ? 128 + ($status & 127) : $status >> 8
 my $elapsed = clock_gettime(CLOCK_MONOTONIC) - $started;
 printf "== END %s: %.2f s, exit %d ==\n", $label, $elapsed, $code;
 check_budget($label, $elapsed) if !defined $cancelled;
-if ($owns_lock && $budget_mode eq 'enforce') {
-    my $over = read_file("$lock/over-budget");
-    if ($over ne '') {
-        print "== TIME BUDGETS EXCEEDED ==\n$over",
-            "Find what grew (CI lists each job's ten largest gaps between cases) and\n",
-            "make it cheaper, or raise the budget in $budget_file with the owner's\n",
-            "approval.\n";
-        $code ||= 3;
-    }
-}
 exit $code;
 
 # Each labeled stage has a wall-time budget per hosted runner class in
-# time-budgets.txt, sized to what the stage does. CI sets
-# WHITEFOOT_TIME_BUDGETS=enforce: a stage over its budget, or one without a
-# budget for this host, fails the top-level command once every stage has run,
-# so the job still reports all its results. Elsewhere the budget is only
-# printed, since a local host is not the runner the budget was measured on.
+# time-budgets.txt. The budget never changes the command's own exit status,
+# which some callers read. CI names a record file in
+# WHITEFOOT_TIME_BUDGET_RECORD: a stage over its budget, or one without a
+# budget for this host, is appended there, and the job's last step fails on a
+# nonempty record, after every stage has run. Without a record the budget is
+# only printed, since a local host is not the runner it was measured on.
 sub check_budget {
     my ($label, $elapsed) = @_;
-    my $budget = budget_for($label);
+    my ($budget, $problem) = budget_for($label);
     my $verdict;
-    if (!defined $budget || $budget eq '-') {
-        return if $budget_mode ne 'enforce';
+    if (defined $problem) {
+        $verdict = $problem;
+    } elsif (!defined $budget || $budget eq '-') {
+        return if $budget_record eq '';
         $verdict = sprintf "%s has no %s budget in %s", $label, $host, $budget_file;
     } elsif ($elapsed > $budget) {
-        $verdict = sprintf "%s took %.0f s, over its %d s %s budget", $label, $elapsed, $budget, $host;
+        $verdict = sprintf "%s took %.1f s, over its %d s %s budget", $label, $elapsed, $budget, $host;
     } else {
-        printf "== BUDGET %s: %.0f s of %d s (%s) ==\n", $label, $elapsed, $budget, $host;
+        printf "== BUDGET %s: %.1f s of %d s (%s) ==\n", $label, $elapsed, $budget, $host;
         return;
     }
     warn "== OVER BUDGET: $verdict ==\n";
-    return if $budget_mode ne 'enforce';
-    open my $record, '>>', "$lock/over-budget" or die "record budget overrun: $!\n";
+    return if $budget_record eq '';
+    open my $record, '>>', $budget_record or die "record budget overrun in $budget_record: $!\n";
     print {$record} "  $verdict\n";
     close $record;
 }
 
+# Returns the budget, undef for no row, or a problem with the table itself.
 sub budget_for {
     my ($label) = @_;
-    open my $file, '<', $budget_file or die "read $budget_file: $!\n";
+    open my $file, '<', $budget_file or return (undef, "cannot read $budget_file: $!");
     my @hosts;
     while (my $line = <$file>) {
         next if $line =~ /^\s*(#|$)/;
         my ($name, @values) = split ' ', $line;
         if (!@hosts) {
-            $name eq 'label' or die "$budget_file: the first row must name the hosts\n";
+            return (undef, "$budget_file: the first row must name the hosts") if $name ne 'label';
             @hosts = @values;
             next;
         }
@@ -179,9 +169,23 @@ sub budget_for {
         for my $index (0 .. $#hosts) {
             next if $hosts[$index] ne $host;
             my $value = $values[$index] // '';
-            $value =~ /^(\d+|-)$/ or die "$budget_file: $label needs seconds or - for $host\n";
-            return $value;
+            return (undef, "$budget_file: $label needs seconds or - for $host") if $value !~ /^(\d+|-)$/;
+            return ($value, undef);
         }
     }
-    return undef;
+    return (undef, undef);
+}
+
+sub budget_verdict {
+    my ($record) = @_;
+    my $over = read_file($record);
+    if ($over eq '') {
+        print "time budgets: every recorded stage finished within its budget\n";
+        exit 0;
+    }
+    print "== TIME BUDGETS EXCEEDED ==\n$over",
+        "Find what grew (the gate lists each job's ten largest gaps between cases)\n",
+        "and make it cheaper, or raise the budget in .github/time-budgets.txt with\n",
+        "the owner's approval.\n";
+    exit 1;
 }

@@ -152,7 +152,7 @@ $(BUILD)/pipe_harness: pipe_harness.c | prepare
 
 # The gate compiles every WF program and executes the bounded native caller
 # correctness checks. Full workload protocols remain below; independent WF
-# compilations use JOBS (the guarded gate supplies two by default).
+# compilations use JOBS, every processor unless the caller names fewer.
 PROGRAMS := $(wildcard programs/*.wf)
 CHECKED := $(PROGRAMS:programs/%.wf=$(BUILD)/checked_%)
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)

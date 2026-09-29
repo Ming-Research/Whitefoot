@@ -2384,16 +2384,26 @@ condition under which it is taken up.
   failures; it does not change the checks or another worktree's main ref.
 - **The corpus stage waits on one serial conformance walk.** Each of the
   conformance adapter's two walks visits every conformance case on one
-  thread, 62 s and 78 s on a four-core host, so the corpus stage cannot drop
-  below about 78 s at any thread count while its other 91 cases need about
-  87 CPU-seconds
+  thread, 62 s and 78 s on the four-core container where it was profiled, so
+  there the corpus stage cannot drop below about 78 s at any thread count
+  while its other 91 cases need about 87 CPU-seconds
   ([serial profile](../research/investigations/test-economy/time-budgets.md#where-the-time-goes)).
   Splitting each walk's cases across the processors, keeping every case's
-  ordinary compiler path and verdict, would bring the stage near its 57-s
-  processor bound on four cores. It is not the gate's critical path while the
-  unit job is longer; reopen when the corpus job becomes the longest or its
-  budget trips. This changes conformance evidence wiring, so the PR states it
-  under AGENTS.md rule 4.
+  ordinary compiler path and verdict, would bring that stage near its 57-s
+  processor bound; the hosted runners, whose stage takes 51–97 s, are bounded
+  the same way. It is not the gate's critical path while the unit job is
+  longer; reopen when the corpus job becomes the longest or its budget trips.
+  This changes conformance evidence wiring, so the PR states it under
+  AGENTS.md rule 4.
+- **The Windows io-hosts steps have no time budget.** They run without
+  `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
+  (10 min) bound them, and the Windows job is now the longest CI job, 230–285
+  s, 171–195 s of it the Rust build and program cases step. Run those steps
+  under `run-check.pl` once its process-group handling is shown to work under
+  the runner's Git Bash, or wrap them in a small timer that writes the same
+  budget record, and give them rows in `.github/time-budgets.txt`. Reopen when
+  the Windows job grows past the gate's longest job by a minute or its step
+  timeout trips.
 - **Incremental rebuilds are not gated.** The time budgets measure hosted
   cold builds, but daily work pays incremental rebuilds, 6–25 s per edit
   today. A change that makes them slow, such as merging modules into one

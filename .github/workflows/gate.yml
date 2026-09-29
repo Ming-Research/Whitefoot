@@ -27,10 +27,6 @@ env:
   CARGO_TERM_COLOR: never
   # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
   CARGO_INCREMENTAL: 0
-  # Every labeled stage must finish within its budget in
-  # .github/time-budgets.txt; run-check.pl fails the job after all its stages
-  # have run when one did not.
-  WHITEFOOT_TIME_BUDGETS: enforce
 
 jobs:
   groups:
@@ -70,7 +66,9 @@ jobs:
       # storage on both images. It is set from a step because the
       # `runner` context is not available to a job-level `env:` block.
       - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
 
       # `spec-archives` and `readme-translation` read `main` as a local ref:
       # they compare released specification archives, and the README with its
@@ -210,3 +208,10 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"
+
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record; the stages
+      # themselves kept their own statuses.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"

@@ -1,47 +1,47 @@
 # Wall-time budgets, in seconds, for each labeled verification stage on the
 # hosted runners: ubuntu-24.04 (linux) and macos-14 (macos). `run-check.pl`
-# reads this table; CI sets WHITEFOOT_TIME_BUDGETS=enforce, so a stage over its
-# budget, or one without a row for its host, fails the job after every stage has
-# run. A local run only prints the comparison.
+# reads this table without changing any stage's status. In CI it records a
+# stage over its budget, or one without a row for its host, and the job's last
+# step fails on that record; a local run only prints the comparison.
 #
-# A budget is about 1.5 times the slowest of the recent runs measured in
-# research/investigations/test-economy/time-budgets.md, rounded up, and never
-# under 10 s. Raise one only with the owner's approval, as a decision in the
-# handoff; lower one in the change that makes its stage faster. "-" marks a
-# stage that does not run on that host.
+# A budget is 1.5 times the slowest of the runs recorded in
+# research/investigations/test-economy/time-budgets.md, rounded up to 5 s,
+# and never under 10 s. Raise one only with the owner's approval, as a
+# decision in the handoff; lower one in the change that makes its stage much
+# faster. "-" marks a stage that does not run on that host.
 
 label                           linux  macos  windows
 
 # gate.yml, static group
-check/static                    120    120    -
-repository-invariants           25     25     -
+check/static                    120    140    -
+repository-invariants           25     30     -
 spec-archives                   10     10     -
 readme-translation              10     10     -
 spec-prose-integrity            10     10     -
 guidance                        10     10     -
 source-size                     10     10     -
-design-lint                     10     15     -
+design-lint                     10     10     -
 conformance                     10     10     -
 performance-instrument          10     10     -
-compiler/lint                   90     90     -
+compiler/lint                   90     95     -
 
 # gate.yml, unit group: the library in test mode, then its cases
-check/unit                      280    350    -
-compiler/test-build-unit        155    240    -
+check/unit                      285    325    -
+compiler/test-build-unit        160    240    -
 compiler/test-unit              130    110    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    250    270    -
-compiler/test-build-corpus      125    150    -
-compiler/test-corpus            130    120    -
+check/corpus                    250    305    -
+compiler/test-build-corpus      120    160    -
+compiler/test-corpus            130    145    -
 
 # gate.yml, runtime group
-check/runtime                   25     20     -
+check/runtime                   20     15     -
 
 # io-hosts.yml, completion-linux
 linux-runtime                   50     -      -
-linux-asan-ubsan                15     -      -
+linux-asan-ubsan                10     -      -
 linux-default-tsan              10     -      -
 linux-deque-tsan                10     -      -
 linux-runtime-tsan              10     -      -
@@ -49,10 +49,10 @@ linux-runtime-tsan              10     -      -
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown control and the
 # paired comparison
-performance-candidate-compiler  150    -      -
-performance-baseline-compiler   150    -      -
-performance-candidate-images    30     -      -
-performance-baseline-images     30     -      -
-performance-null                60     -      -
-performance-slow-control        90     -      -
-performance-comparison          60     -      -
+performance-candidate-compiler  135    -      -
+performance-baseline-compiler   125    -      -
+performance-candidate-images    10     -      -
+performance-baseline-images     10     -      -
+performance-null                55     -      -
+performance-slow-control        65     -      -
+performance-comparison          55     -      -

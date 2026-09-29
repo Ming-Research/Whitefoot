@@ -9,7 +9,7 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
-unset WHITEFOOT_CHECK_OWNER WHITEFOOT_TIME_BUDGETS WHITEFOOT_TIME_BUDGET_FILE
+unset WHITEFOOT_CHECK_OWNER WHITEFOOT_TIME_BUDGET_RECORD WHITEFOOT_TIME_BUDGET_FILE
 WHITEFOOT_CHECK_LOCK_DIR=$work/lock
 export WHITEFOOT_CHECK_LOCK_DIR
 
@@ -37,10 +37,10 @@ wait "$holder"
 holder=
 test ! -e "$work/lock"
 
-processors=$(getconf _NPROCESSORS_ONLN)
+# Parallelism stays Cargo's and the test harness's own default unless named.
 (
-    unset CARGO_BUILD_JOBS RUST_TEST_THREADS JOBS
-    perl "$runner" defaults sh -c 'test "$CARGO_BUILD_JOBS:$RUST_TEST_THREADS:$JOBS" = "$1:$1:$1"' sh "$processors"
+    unset CARGO_BUILD_JOBS RUST_TEST_THREADS
+    perl "$runner" defaults sh -c 'test -z "${CARGO_BUILD_JOBS+set}${RUST_TEST_THREADS+set}"'
 ) > "$work/defaults.log" 2>&1
 (
     CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1
@@ -82,45 +82,69 @@ test "$status" -eq 1
 test ! -e "$work/lock"
 ! kill -0 "$(cat "$work/orphan")" 2>/dev/null
 
-# Budgets: a zero budget is exceeded by any stage, a large one by none.
-printf '# test budgets\nlabel linux macos windows\nwithin 600 600 600\nover 0 0 0\nparent 600 600 600\nnowhere - - -\n' \
-    > "$work/budgets"
+# Budgets. The host's own column holds the budget that decides each case, and
+# the other columns the opposite value, so a wrong column fails the case.
+case "$(uname -s)" in
+    Linux) host=linux ;;
+    Darwin) host=macos ;;
+    *) echo "check runner test: unsupported host $(uname -s)" >&2; exit 1 ;;
+esac
+row() { # row LABEL HOST-BUDGET OTHER-BUDGET
+    for column in linux macos windows; do
+        if [ "$column" = "$host" ]; then printf ' %s' "$2"; else printf ' %s' "$3"; fi
+    done
+}
+{
+    printf '# test budgets\nlabel linux macos windows\n'
+    printf 'within%s\n' "$(row within 600 0)"
+    printf 'over%s\n' "$(row over 0 600)"
+    printf 'parent%s\n' "$(row parent 600 0)"
+    printf 'nowhere%s\n' "$(row nowhere - 600)"
+} > "$work/budgets"
 WHITEFOOT_TIME_BUDGET_FILE=$work/budgets
 export WHITEFOOT_TIME_BUDGET_FILE
+record=$work/over-budget
 
 perl "$runner" over true > "$work/report.log" 2>&1
 grep -q 'OVER BUDGET: over took' "$work/report.log"
+perl "$runner" within true > "$work/within.log" 2>&1
+grep -q '== BUDGET within: [0-9.]* s of 600 s' "$work/within.log"
 perl "$runner" unlisted true > "$work/unlisted.log" 2>&1
 ! grep -q 'BUDGET' "$work/unlisted.log"
+test ! -e "$record"
 
-WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" within true > "$work/within.log" 2>&1
-grep -q '== BUDGET within: 0 s of 600 s' "$work/within.log"
-
-status=0
-WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" parent sh -c \
+# A record collects every overrun; the commands keep their own statuses.
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" parent sh -c \
     'perl "$1" over true; perl "$1" within true; touch "$2"' sh "$runner" "$work/continued" \
-    > "$work/enforce.log" 2>&1 || status=$?
-test "$status" -eq 3
+    > "$work/recorded.log" 2>&1
 test -f "$work/continued"
-grep -q '^  over took [0-9]* s, over its 0 s' "$work/enforce.log"
-! grep -q '^  within' "$work/enforce.log"
+grep -q '^  over took [0-9.]* s, over its 0 s' "$record"
+! grep -q 'within\|parent' "$record"
 test ! -e "$work/lock"
-
-for label in unlisted nowhere; do
-    status=0
-    WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" "$label" true > "$work/$label-enforced.log" 2>&1 || status=$?
-    test "$status" -eq 3
-    grep -q "^  $label has no [a-z]* budget" "$work/$label-enforced.log"
-done
-
 status=0
-WHITEFOOT_TIME_BUDGETS=enforce perl "$runner" over sh -c 'exit 17' > "$work/over-failed.log" 2>&1 || status=$?
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" over sh -c 'exit 17' > "$work/over-failed.log" 2>&1 || status=$?
 test "$status" -eq 17
-grep -q 'TIME BUDGETS EXCEEDED' "$work/over-failed.log"
+for label in unlisted nowhere; do
+    WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" "$label" true > "$work/$label-recorded.log" 2>&1
+    grep -q "^  $label has no $host budget" "$record"
+done
+test "$(grep -c '^  over took' "$record")" -eq 2
 
 status=0
-WHITEFOOT_TIME_BUDGETS=strict perl "$runner" within true > "$work/mode.log" 2>&1 || status=$?
-test "$status" -ne 0
-grep -q 'must be report or enforce' "$work/mode.log"
+perl "$runner" --budget-verdict "$record" > "$work/verdict.log" 2>&1 || status=$?
+test "$status" -eq 1
+grep -q 'TIME BUDGETS EXCEEDED' "$work/verdict.log"
+: > "$work/empty-record"
+perl "$runner" --budget-verdict "$work/empty-record" > "$work/verdict-empty.log" 2>&1
+perl "$runner" --budget-verdict "$work/absent-record" > "$work/verdict-absent.log" 2>&1
+
+# An unreadable table never changes a status; with a record it is recorded.
+status=0
+WHITEFOOT_TIME_BUDGET_FILE=$work/missing perl "$runner" within sh -c 'exit 17' > "$work/missing.log" 2>&1 || status=$?
+test "$status" -eq 17
+grep -q 'cannot read' "$work/missing.log"
+WHITEFOOT_TIME_BUDGET_FILE=$work/missing WHITEFOOT_TIME_BUDGET_RECORD=$work/missing-record \
+    perl "$runner" within true > "$work/missing-recorded.log" 2>&1
+grep -q 'cannot read' "$work/missing-record"
 test ! -e "$work/lock"
 echo 'check runner: status, nesting, exclusion, limits, timeout, cancellation, orphan cleanup and time budgets pass'

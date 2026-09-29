@@ -78,14 +78,18 @@ take 227 s, and two of them, the conformance adapter's cases
 `a_shared_proof_receipt_cache_reaches_every_declared_source_verdict` (62 s)
 and `the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`
 (78 s), each walk every conformance case on one thread. No thread count brings
-the corpus stage below that 78 s, which is why it stays at 51–86 s on the
-hosted runners.
+the corpus stage below its longest walk: 78 s on this container. The hosted
+runners are faster, and their corpus stage of 51–86 s is bounded the same way
+by the same walk.
 
 **Local runs used half the processors.** `run-check.pl` defaulted Cargo jobs
-and the test pool to two, to leave capacity for other agents' commands. The
-host-wide lock it also takes already lets only one verification command run at
-a time, so on the four-core container `make check` left two processors idle:
-it took 678 s from a target that had to rebuild the crate.
+and the test pool to two, to leave capacity for interactive work and other
+agents' commands. The host-wide lock it also takes already lets only one
+verification command run at a time, so on the four-core container `make check`
+left two processors idle: it took 678 s from a target that had to rebuild the
+crate. The removed CI comment recorded the other side of that choice: a cold
+`whitefootc` build took 72.6 s at two jobs and 43.1 s at four on a
+four-processor host, with peak memory 1.27 and 1.37 GB.
 
 ## What is reasonable
 
@@ -108,12 +112,19 @@ a decision instead of a drift.
 
 ## Changes
 
-Each change's criterion was recorded before its measurement.
+Each criterion below was set in the working session before its measurement
+ran, but committed with or after the result, so this record cannot show the
+order; read them as exploratory. The Windows trial had no criterion.
 
 ### Use every processor locally
 
-`run-check.pl` now sets Cargo jobs and the test pool to the host's online
-processors unless the caller sets them. Criterion: adopt if unit and corpus
+`run-check.pl` no longer sets Cargo jobs or the test pool, so both take their
+own default, every processor available to the process, which also honors a
+container's processor quota; a caller, such as a person sharing the host with
+interactive work, still names fewer. On this container Rust's available
+parallelism, `nproc` and the online count are all four, and it has no
+processor quota, so the measurements below, taken while the wrapper set four
+from the online count, are the same setting. Criterion: adopt if unit and corpus
 case execution on the four-core container drops by at least 30% against two
 threads with every case passing. Result, from the same warm target:
 `compiler/test-unit` 126 s → 63.5 s (−50%), `compiler/test-corpus`
@@ -128,7 +139,7 @@ The CLI's 21 tests link the ordinary library. In the unit group they forced
 `compiler/build` and a second build of the library, which the corpus group
 builds anyway for its harness. They now run in the corpus group, and the unit
 group builds only the library in test mode. Expected: the unit job loses its
-`compiler/build` stage, 43–74 s on ubuntu and 65–91 s on macOS, and the
+`compiler/build` stage, 43–74 s on ubuntu and 64–91 s on macOS, and the
 corpus job gains the CLI harness build and its 3–5 s of cases. Local `make
 check` builds the same artifacts as before. Criterion: the hosted unit job
 falls by at least 40 s on both runners while the corpus job grows by at most
@@ -141,13 +152,16 @@ median of the six earlier runs:
 | corpus | 169 s | 128 s, 183 s | 166 s | 191 s, 157 s |
 
 The unit job fell by 53–120 s, meeting the criterion on both runners. The
-corpus job's two samples average 13 s less on ubuntu and 8 s more on macOS,
-within the criterion and inside its earlier range. The longest gate job is
-now under four minutes.
+corpus half was missed on the first sample, 25 s more on macOS; a second
+sample was then added, and the two average 13 s less on ubuntu and 8 s more
+on macOS, a basis chosen after the first sample. Both corpus samples lie
+inside the job's earlier range, and the longest gate job is now under four
+minutes.
 
 ### Tried and withdrawn: the Windows build on every processor
 
-The Windows program step builds the compiler at two Cargo jobs. At Cargo's
+This trial had no criterion set before it. The Windows program step builds
+the compiler at two Cargo jobs. At Cargo's
 default of every processor, run 36559339981's build took 175 s against a
 step of 157–212 s before, of which the cases take about 18 s: no
 measurable gain on one sample, so the step keeps its two jobs. The next run,
@@ -180,23 +194,52 @@ level 2 saves 1.4%. Neither meets the criterion, so the profile keeps level
 
 **Mechanism.** `.github/time-budgets.txt` gives each labeled stage a
 wall-time budget per hosted runner class. `run-check.pl` compares every
-stage's wall time with its budget when the stage ends. With
-`WHITEFOOT_TIME_BUDGETS=enforce`, which `gate.yml`, `io-hosts.yml` and
-`compute-regression.yml` set, a stage over its budget, or a stage with no
-budget for its host, is recorded, the remaining stages still run, and the
-top-level command then fails and lists every overrun. Without it, as in local
-runs, the wrapper only prints the comparison, because a local host is not the
-runner the budgets were measured on. The Windows steps do not run under the
-wrapper; their `timeout-minutes` bound them, tightened to 2 and 6 min from 5
-and 8, and the Windows and Linux io-hosts jobs from 30 and 45 min to 10.
+stage's wall time with its budget when the stage ends and never changes the
+stage's own exit status, because some steps read it: the slowdown control of
+`compute-regression` expects its command to fail, and the identical-image
+control reads any failure as an inconclusive host. `gate.yml`,
+`io-hosts.yml` and `compute-regression.yml` name a record file in
+`WHITEFOOT_TIME_BUDGET_RECORD`; the wrapper appends to it every stage over its
+budget or without one for its host, or an unreadable table, and each job's
+last step, `run-check.pl --budget-verdict`, fails on a nonempty record after
+every stage has run. Without a record, as in local runs, the wrapper only
+prints the comparison, because a local host is not the runner the budgets
+were measured on. The Windows steps do not run under the wrapper and have no
+budget; their step timeouts stay at 5 and 8 min, and the Windows and Linux
+io-hosts jobs' timeouts go from 30 and 45 min to 10.
 
-**Budget size.** About 1.5 times the slowest of the six measured runs, rounded
-up, and never under 10 s. The spread between those runs was up to 3 times for
-clippy and 1.4–1.7 times for the builds and cases, so a budget sits above the
-slowest run seen rather than above a typical one; a stage that grows by half
-again over its slowest run, or a new stage without a budget, fails. Growth below that accumulates until a later change crosses the
-line, and that change's author then either removes the cost or asks the owner
-to raise the budget.
+**Budget size.** 1.5 times the slowest run recorded, rounded up to 5 s, and
+never under 10 s. For the gate the runs are the six earlier ones and three
+of this branch (0692767b3, 4fb0b1555, e8334d394); `check/unit` uses only the
+three, because it no longer builds the ordinary library. For `io-hosts` they
+are the main runs 36509424727, 36520371632 and 36545788231 and this branch's
+three; for `compute-regression`, run 36545746305 and this branch's three. The
+spread between runs was up to 3 times for clippy and 1.4–1.7 times for the
+builds and cases, so a budget sits above the slowest run seen rather than a
+typical one; a stage that grows by half again over its slowest run, or a new
+stage without a budget, fails. Slowest runs, in seconds:
+
+| Stage | ubuntu | macOS |
+|---|---|---|
+| `check/static` | 76.7 | 92.0 |
+| `repository-invariants` | 15.0 | 18.9 |
+| `compiler/lint` | 59.4 | 60.1 |
+| `check/unit` | 187.2 | 215.1 |
+| `compiler/test-build-unit` | 105.6 | 157.2 |
+| `compiler/test-unit` | 84.7 | 73.3 |
+| `check/corpus` | 164.7 | 201.3 |
+| `compiler/test-build-corpus` | 78.2 | 104.4 |
+| `compiler/test-corpus` | 86.3 | 96.5 |
+| `check/runtime` | 12.6 | 7.9 |
+| `linux-runtime` | 31.8 | |
+| `performance-candidate-compiler` | 88.9 | |
+| `performance-baseline-compiler` | 80.9 | |
+| `performance-null` | 34.7 | |
+| `performance-slow-control` | 41.8 | |
+| `performance-comparison` | 33.9 | |
+
+Every other stage's slowest run was under 6.7 s, so its budget is the 10-s
+floor.
 
 **Why this form.**
 
@@ -245,8 +288,12 @@ full local gate, warm, in about three.
 - Runner speed varies; a budget at 1.5 times the observed maximum can still
   fail on an unusually slow runner. Such a failure names the stage, and a
   second run on the same revision separates the runner from the change.
-- The corpus stage cannot drop below its longest case, the 78-s conformance
-  walk; splitting that walk across threads is recorded in `docs/todo.md`.
+- The corpus stage cannot drop below its longest case, one conformance walk
+  (78 s on the local container); splitting that walk across threads is
+  recorded in `docs/todo.md`.
+- The Windows io-hosts steps have no budget, only step timeouts, and the
+  Windows job is now the longest CI job at 251–285 s; recorded in
+  `docs/todo.md`.
 - The unit job's two builds of one 243,000-line crate remain the largest
   cost and grow with the compiler; the budget makes that growth visible and
   forces the decision when it arrives.

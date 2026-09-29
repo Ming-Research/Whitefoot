@@ -372,9 +372,9 @@ preserve the full gate before merge.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
-  push, and its green run on the exact revision is that revision's
-  `make check`; run it locally to reproduce a failure or when CI is
-  unavailable. It needs `python3`, LLD on Linux (`ld.lld`) and the `time`
+  push, and its green run on the exact revision to be merged, a head
+  current with `main`, is that revision's `make check`; run it locally to
+  reproduce a failure or when CI is unavailable. It needs `python3`, LLD on Linux (`ld.lld`) and the `time`
   utility.
 - `make design-ready`, before marking ready and in `design-readiness.yml` on
   ready PRs and main: approved tree and specification changes.
@@ -396,15 +396,17 @@ perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml
 
 Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets already do, including commands from other worktrees. It
-holds one host-wide lock, builds and tests on every online processor unless
-`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
+holds one host-wide lock, leaves Cargo and the test harness at their own
+default of every available processor unless `CARGO_BUILD_JOBS` or
+`RUST_TEST_THREADS` names fewer, prints wall, user and
 system time with a report every 30 seconds, and stops a command after 30
 minutes unless `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It
-also compares each labeled stage with its budget in `.github/time-budgets.txt`:
-CI fails a job whose stage exceeded its budget or has none, and a local run
-only prints the comparison. Raising a budget is a decision for the owner;
-lower one in the change that makes its stage faster, and give a new labeled
-CI stage its budget. Inspect an existing
+also compares each labeled stage with its budget in `.github/time-budgets.txt`
+without changing the stage's status: CI records a stage that exceeded its
+budget or has none and fails the job in its last step, and a local run only
+prints the comparison. Raising a budget is a decision for the owner; lower one
+in the change that makes its stage much faster, and give a new labeled CI
+stage its budget. Inspect an existing
 owner's PID instead of starting another heavy command, and after an
 uncatchable stop inspect the recorded PID and command before removing a stale
 lock. The `gate` Cargo profile builds the Rust compiler with optimization,

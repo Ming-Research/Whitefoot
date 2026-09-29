@@ -23,10 +23,6 @@ env:
   CARGO_TERM_COLOR: never
   # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
   CARGO_INCREMENTAL: 0
-  # Linux stages run under run-check.pl and its budgets in
-  # .github/time-budgets.txt; the Windows steps, which run without it, are
-  # bounded by their own timeout-minutes.
-  WHITEFOOT_TIME_BUDGETS: enforce
 
 jobs:
   completion-linux:
@@ -41,7 +37,9 @@ jobs:
       # is set from a step because the `runner` context is not available to a
       # job-level `env:` block.
       - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
 
       - name: Install the host toolchain
         run: |
@@ -74,6 +72,13 @@ jobs:
       - name: Thread sanitizer over the bridge and the ring
         run: WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl linux-runtime-tsan make -C compiler -j2 completion-tsan CC=/usr/bin/clang REQUIRE_NATIVE=1
 
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record; the stages
+      # themselves kept their own statuses.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
   completion-windows:
     name: completion-windows (windows-latest)
     runs-on: windows-latest
@@ -89,8 +94,10 @@ jobs:
           clang --version
           systeminfo | grep -E '^(OS Name|OS Version|System Type|Total Physical Memory)' || true
 
+      # The Windows steps run without run-check.pl, so no time budget holds
+      # them; their timeouts only stop a stuck run.
       - name: Construct Windows native test images once
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: |
           if ! command -v make > /dev/null; then
             choco install make --yes --no-progress
@@ -245,7 +252,7 @@ jobs:
       # IOCP submission was also reaped, so a silent direct fallback cannot
       # satisfy this step.
       - name: Construct and run shared Windows program cases
-        timeout-minutes: 6
+        timeout-minutes: 8
         env:
           CARGO_BUILD_JOBS: 2
           RUST_TEST_THREADS: 2

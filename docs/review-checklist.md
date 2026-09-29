@@ -241,7 +241,8 @@ Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
   marked ready has the owner's approval of every design-tree and
   specification change it carries, recorded in `design/log.md` and
   `spec/log.md`. If merging is requested, verify owner approval and root
-  `make check` for the exact merge tree under the existing four rules;
+  `make check`, local or the hosted gate, for the exact merge tree under the
+  existing four rules;
   neither a fast review nor a focused test run substitutes for them.
 - [ ] **V4 — Existing PR updated.** The reviewed task changes are committed
   and pushed to the existing PR branch without waiting for a reminder; its

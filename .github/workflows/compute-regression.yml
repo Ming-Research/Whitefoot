@@ -22,9 +22,6 @@ env:
   CARGO_BUILD_JOBS: 2
   RUST_TEST_THREADS: 2
   JOBS: 2
-  # Each run-check.pl stage must finish within its budget in
-  # .github/time-budgets.txt.
-  WHITEFOOT_TIME_BUDGETS: enforce
 jobs:
   regression:
     name: compute regression (ubuntu-24.04)
@@ -50,7 +47,8 @@ jobs:
           measure=true
           if [ "$EVENT_NAME" = pull_request ] && git diff --quiet "$base" HEAD -- \
             compiler spec/kernel-spec.md tests/programs/compute tests/performance \
-            .github/workflows/compute-regression.yml .github/run-check.pl; then
+            .github/workflows/compute-regression.yml .github/run-check.pl \
+            .github/time-budgets.txt; then
             measure=false
             echo 'Performance comparison skipped: no measured compiler, runtime, fixture or instrument input changed.' >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -63,6 +61,7 @@ jobs:
       - name: Check instrument decisions and host toolchain
         if: steps.scope.outputs.measure == 'true'
         run: |
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
           sh tests/performance/test-verdict.sh
           rustup default stable
           rustc -vV
@@ -206,6 +205,12 @@ jobs:
               while IFS= read -r line; do echo "::warning::$run: $line"; done < <(grep '^suspect: ' "$file" || true)
             fi
           done
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record; the stages
+      # themselves kept their own statuses, which the steps above read.
+      - name: Hold every stage to its time budget
+        if: always() && steps.scope.outputs.measure == 'true'
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
       - uses: actions/upload-artifact@v4
         if: always() && steps.scope.outputs.measure == 'true'
         with:
