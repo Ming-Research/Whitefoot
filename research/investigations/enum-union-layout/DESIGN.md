@@ -663,12 +663,16 @@ Against the validation criterion:
    `a_window_of_union_enums_requests_the_union_stride`).
 5. **Time** — met for the containers; the I/O half waived. With the Slab
    and priority-queue harnesses repaired to `std::collections` (PR #179),
-   two blocks under the one-minute load limit of 2.0 found no cell outside
-   the identical-binary control's noise range: normalized branch/base ratios
-   of 0.986 to 1.006 across the slab paths and 0.972 and 0.979 across the
-   priority paths, against controls of 0.979 to 0.997, with 3 of 421 slab
-   and 1 of 457 priority functions differing by a few instructions, none on
-   a measured hot path (PR #174). Slab insertion is 264 bytes. The named
+   two blocks ran under the one-minute load limit of 2.0. In block C,
+   normalized branch/base ratios were 0.986 to 1.006 across the slab paths
+   and 0.972 and 0.979 across the priority paths; the identical-binary
+   control pairs gave 0.997 and 0.996 (slab) and 0.979 and 0.991 (priority).
+   The largest slowdown is reuse churn at 1.006 and 1.004, up to 0.3 points
+   beyond the slab control's deviation from parity; setup and cleanup
+   (0.986, 0.989) and priority are faster. PR #174 judged this within
+   run-to-run noise, and block A's earlier flagged groups did not
+   reproduce. 3 of 421 slab and 1 of 457 priority functions differ by a few
+   instructions, none on a measured hot path. Slab insertion is 264 bytes. The named
    I/O programs under `research/experiments/io-completion-bench/programs/`
    no longer compile (retired `&uniq` syntax), and on 2026-09-29 the owner
    waived that half rather than port them, judging the union layout correct
