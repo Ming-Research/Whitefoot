@@ -1,0 +1,68 @@
+fn generate(item: u64, salt: u64) -> buffer: Box<Array<Cmd>> pure {
+  let count = count_of(item: item);
+  let zero = Cmd(kind: 0_u64, a: 0_u64, b: 0_u64, c: 0_u64);
+  let fits = count <= 8_u64;
+  let size = if fits {
+    give count;
+  } else {
+    give 0_u64;
+  }
+  let buffer = box_array_filled::<Cmd>(count: size, value: zero);
+  for (at in 0_u64..size) {
+    let made = command(item: item, at: at, salt: salt);
+    set buffer.inner[at] = made;
+  }
+  return move buffer;
+}
+
+fn once(salt: u64) -> sum: u64 pure {
+  let buffers = box_slots_new::<Box<Array<Cmd>>>(capacity: items);
+  let zero = Cmd(kind: 0_u64, a: 0_u64, b: 0_u64, c: 0_u64);
+  for (
+    index in 0_u64..items,
+    invariant filled: buffers.inner.len >= index,
+    invariant bounded: buffers.inner.len <= index,
+    invariant spare: buffers.inner.cap - buffers.inner.len + index >= items
+  ) {
+    let empty = box_array_filled::<Cmd>(count: 0_u64, value: zero);
+    place_back(window: &buffers.inner, value: move empty);
+  }
+  for (i in 0_u64..items) {
+    let made = generate(item: i, salt: salt);
+    set buffers.inner[i] = move made;
+  }
+  let total = 0_u64;
+  for (i in 0_u64..items) {
+    set total = total +wrap buffers.inner[i].inner.len;
+  }
+  let fits = total <= 1073741824_u64;
+  let size = if fits {
+    give total;
+  } else {
+    give 0_u64;
+  }
+  let out = box_array_filled::<Cmd>(count: size, value: zero);
+  let position = 0_u64;
+  for (i in 0_u64..items) {
+    let length = buffers.inner[i].inner.len;
+    for (j in 0_u64..length) {
+      let at = position +wrap j;
+      if at < size {
+        set out.inner[at] = buffers.inner[i].inner[j];
+      }
+    }
+    set position = position +wrap length;
+  }
+  let sum = checksum(out: &out.inner[0_u64..size]);
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let total = 0_u64;
+  for (rep in 0_u64..reps) {
+    let one = once(salt: total);
+    set total = one;
+  }
+  let low = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: low);
+}

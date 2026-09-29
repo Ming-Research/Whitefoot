@@ -1,0 +1,44 @@
+struct P {
+  n: u64;
+  m: u64;
+}
+
+fn set_n(p: &P, v: u64) -> result: unit writes(p.n) {
+  set p^.n = v;
+  return unit;
+}
+
+fn by_field(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set a^[i].n = i;
+  }
+  return unit;
+}
+
+fn by_element_ref(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set_n(p: &a^[i], v: i);
+  }
+  return unit;
+}
+
+fn by_whole(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    let old = a^[i];
+    let made = P(n: i, m: old.m);
+    set a^[i] = made;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let zero = P(n: 0_u64, m: 0_u64);
+  let cells = box_array_filled::<P>(count: 8_u64, value: zero);
+  by_field(a: &cells.inner[0_u64..8_u64]);
+  by_element_ref(a: &cells.inner[0_u64..8_u64]);
+  by_whole(a: &cells.inner[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
