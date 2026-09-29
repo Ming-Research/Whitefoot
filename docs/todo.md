@@ -1195,6 +1195,30 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
+- **Statement-group call offers have no grain policy.** Under `--par`,
+  Snowghost's style prototype sets up a 7.6 MB page 52 times slower at four
+  workers than at one, publishing 115 offers per element, 99 percent of
+  them calls of callees with static weight at most 100; main's `sha256_abc`
+  and `dir_walk` also slow down with workers. The
+  [call-offer grain investigation](../research/investigations/call-offer-grain/DESIGN.md)
+  recommends, provisionally, offering a call only when its callee reaches a
+  recursive component or its static work summary reaches the runtime work
+  unit: that rule met the recorded criterion on all three real pages and
+  left the formal kernels byte-identical, while sequential refusal, runtime
+  per-site adaptation and the existing flags did not. Before an amendment to
+  `design/compiler/parallel-lowering.md`, finish the unmeasured parts of its
+  criterion: the other maintained programs in a block whose identical-image
+  control passes, par-quicksort, and best-of-seven lowering cost. Validate
+  an implementation with the investigation's implementation criterion.
+
+- **`--par` fails to build `wfgrep`.** `whitefootc --par
+  tests/programs/wfgrep.wf` stops with a backend `InvalidIr` failure on main
+  while the build without `--par` succeeds, so the flagship program has no
+  parallel build. The offers registered before the failure are
+  `name_before`'s `byte_at` pairs. Find which emitter check fires, fix the
+  emission or refuse that offer before emission with a ledger reason, and
+  validate by running wfgrep's corpus tests against a `--par` build.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
