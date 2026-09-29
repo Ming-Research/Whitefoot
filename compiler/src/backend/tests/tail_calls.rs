@@ -1,5 +1,6 @@
 //! Implementation obligations beyond the source-level FN-10 corpus verdicts.
 
+use super::BoundedOutput;
 use super::system::with_mutated_ir_lowering;
 use super::{
     build_executable, compile, compile_and_run, compile_rejection, emitted_body, emitted_function,
@@ -124,7 +125,7 @@ fn assert_self_tail_lowering(source: &[u8]) {
             for workers in ["0", "2"] {
                 let output = std::process::Command::new(&executable)
                     .env("WF_WORKERS", workers)
-                    .output()
+                    .bounded_output()
                     .expect("run the self-tail transfer in the selected world");
                 assert!(output.status.success(), "WF_WORKERS={workers}: {output:?}");
                 assert!(output.stdout.is_empty(), "{output:?}");
