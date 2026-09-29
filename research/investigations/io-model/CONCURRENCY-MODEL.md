@@ -676,3 +676,123 @@ Sources:
 - A starter that polls an object for a spawned producer's write: it finishes
   on 1 driver once the yield exists.
 - A cycle of guard waits: reported on 1 driver and on several.
+
+## 10. Building the model
+
+The owner ruled on section 8's questions (written in Chinese): the model of
+4.1 (`spawn`); weak fairness for guards promised; `mustpar` retired
+entirely; ghost state later; the model built on PR #173 before it lands; the
+handoff bound and the join placement kept and "which calls start" withdrawn;
+and the runtime gaps of 4.3 closed in the same work. This section records
+how, and the criteria each runtime change must meet, written before it is
+measured.
+
+### 10.1 The surface
+
+- `spawn` takes `mustpar`'s place as the call prefix: `call := ("musttail" |
+  "spawn")? callee ...`, and `for_stmt` loses its prefix. A spawn is admitted
+  where `mustpar`'s waiting form was: as the call of an `expr_stmt` or of an
+  `ordinary_let_rhs`, when the callee waits, every parameter is a value
+  parameter, and a discarded result has the drop capability. Keeping the
+  positions keeps the checker's and the lowering's paths, and the grammar
+  gains no statement form.
+- A spawn counts as a waiting call: it is admitted only in a waiting
+  function, never inside an atomic statement, and it denies PAR-1 and PAR-2
+  overlap, since a joined context may still be running.
+- A spawn of a callee that does not wait is refused rather than run in
+  order. Such a spawn would start nothing observable, since the callee
+  cannot interleave with anything, so admitting it would give the word two
+  meanings.
+
+### 10.2 The meaning and its join points
+
+- WAIT-2 states the context meaning of 4.1: the entry runs in the root
+  context, a spawn starts a context, each context executes its constructs in
+  order, and contexts affect one another only at waits: host operations,
+  atomic statements and joins. The order in which contexts pass those points
+  is an input.
+- **A call that is not spawned executes in order, with no implementation
+  liberty to overlap it.** The earlier WAIT-2 let an implementation run any
+  permitted waiting call as a context. With shared objects that changes the
+  meaning: a call that takes effect on an object before its caller's next
+  statement in order may take effect after it when overlapped, so the
+  liberty would add executions the in-order meaning excludes. No
+  implementation uses it once the pass that starts unmarked calls is gone.
+- Where a starter joins is observable, since a join is a wait: a context
+  whose guard only a later statement of its starter makes true runs if that
+  statement comes before the join and stops the program if it comes after.
+  So WAIT-3 fixes the join points exactly, as the lowering already places
+  them (`design/compiler/waiting-contexts`, the join decision):
+  - a spawn statement's context is joined when the starting activation
+    leaves by any edge;
+  - a bound spawn is joined at the beginning of the first later statement of
+    the `let_stmt`'s block that reads, writes or releases the binding, or
+    that holds an edge leaving that block, and otherwise at the block's
+    end.
+
+  Joining inside the using statement, at the use, was refused when the join
+  was placed: later code would merge a joined and an unjoined path. The
+  lowering's plan joined also before a later destructuring `let` whatever
+  it named, because the permission judgment does not classify that form;
+  it now looks at what the statement names, as it does for every other
+  leaf.
+
+### 10.3 Progress and a program that stops
+
+- **The promise**, in WAIT-2: while every context, from every point of its
+  execution, reaches its completion or a wait in finitely many steps, a
+  context whose wait has ended eventually proceeds, and a begun atomic
+  statement with no guard, or whose guard is true from some point on,
+  eventually takes effect. The first half is fair scheduling, the second
+  weak fairness for guards (4.3). The premise leaves out only a context
+  that computes forever between two waits, which no runtime without
+  preemption can interleave.
+- **A program that can take no step**, because every unfinished context
+  waits for a false guard or for another context and no host operation is
+  outstanding, does not complete. An implementation may stop it with a
+  report, which is not a program outcome, as it may stop one that exhausts
+  memory [SCOPE-3]. The runtime makes that report on any number of drivers
+  (10.4, R4).
+- Not promised, as in 4.3: freedom from deadlock, strong fairness, any
+  timing, and a report for a cycle among some contexts while others run.
+
+### 10.4 The runtime
+
+Each change keeps today's path where it does not apply, and is measured
+before and after on the same host, same source, medians of five runs, in
+this container unless noted. A change that misses its criterion is revised
+or its cost is brought to the owner; it is not adopted silently.
+
+- **R1: an operation with no ring or readiness form goes to a helper while
+  other contexts are live.** Today it runs on the driver thread and blocks
+  every context there: a pipe's read or write, a connect, and every file
+  operation on a host with no ring. It is queued to the helper pool, and the
+  context parks on its record, whenever a context other than the root has
+  started; a program that never spawns keeps running it inline, with no
+  handoff. Criteria: two contexts joined by a pipe finish with the ring on 1
+  and on 4 drivers, and with `WF_IO_NO_NATIVE_RING=1`, where one driver
+  runs, while today they stop; the single-context read benchmark of
+  `research/experiments/io-completion-bench` is unchanged within 3%.
+- **R2: a yield after waits that did not suspend.** A waiting host call, an
+  atomic statement or a join answered at once does not suspend today, so a
+  context that loops on them keeps its driver. After 64 such waits in a row,
+  a context that finds another context ready on its driver goes to the back
+  of the run queue instead of continuing. Criteria: a starter that polls an
+  object for a spawned producer's write finishes on 1 driver, where today it
+  spins forever; the Redis subset's pipelined SET and GET rates (16 per
+  pipeline, 2 drivers, `redis-bench.sh`) stay within 3%.
+- **R3: reaping while contexts are ready.** A driver harvests its ring and
+  publishes completions only when it has nothing ready, so two contexts that
+  wake each other forever starve a third whose host outcome has arrived.
+  After 64 context resumptions without an idle pass, the driver harvests
+  before taking the next context. Criteria: that three-context program
+  finishes on 1 driver; the 64-connection context echo server
+  (`linux-net-bench.sh`) keeps its round-trip rate within 3%.
+- **R4: a stop found on every driver.** Today only the entry's driver,
+  running alone, reports that every context waits for another. A count of
+  contexts waiting for a guard or a join, against the live count, checked by
+  a driver that finds every driver idle and nothing in flight, lets any
+  driver report it. Criteria: a two-context guard cycle and a context
+  waiting on a guard only its own later statement sets both stop with the
+  report on 1 and on 4 drivers; an idle server waiting in `accept`, and the
+  echo servers, never report.
