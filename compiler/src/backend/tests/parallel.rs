@@ -44,6 +44,7 @@
 //!   `owned_pair_results_survive_ordinary_join_and_forced_refusal` stays in
 //!   [`run_owned_lane_cases`], which that case still drives.
 
+use super::BoundedOutput;
 use std::path::Path;
 use std::process::Command;
 
@@ -573,7 +574,7 @@ fn a_call_written_as_an_if_condition_joins_a_compute_overlap_group() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the if-condition overlap probe");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         // The handed-out value's low byte and the marker the selected arm
@@ -712,7 +713,7 @@ fn a_group_joins_its_compute_members_newest_first_and_continues_at_the_oldest() 
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the three-member group");
         assert_eq!(
             output.status.code(),
@@ -793,7 +794,7 @@ fn an_expression_statement_pair_is_handed_out_and_joined() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the expression-statement pair");
         assert_eq!(
             output.status.code(),
@@ -817,7 +818,7 @@ fn a_mixed_fixture_reports(module: &str, expected: i32) {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the mixed group");
         assert_eq!(
             output.status.code(),
@@ -1285,7 +1286,7 @@ fn linked_runtime_observes_startup_opt_out_and_a_real_worker() {
         let refused = Command::new(&counted.executable)
             .env("WF_WORKERS", setting)
             .env("WF_SCHED_REPORT", "1")
-            .output()
+            .bounded_output()
             .expect("run the invalid configuration");
         assert_eq!(
             refused.status.code(),
@@ -1455,7 +1456,7 @@ fn counted_run(executable: &Path, workers: Option<&str>) -> (u64, std::process::
     // The observer prints the core's counters after the grant line when asked,
     // so a case that fails on the count has the threads' own record beside it.
     command.env("WF_SCHED_REPORT", "1");
-    let output = command.output().expect("run the counted program");
+    let output = command.bounded_output().expect("run the counted program");
     let report = String::from_utf8_lossy(&output.stderr).into_owned();
     let granted = report
         .lines()
@@ -1774,7 +1775,7 @@ fn run_owned_lane_cases(
     let reference = Command::new(build_executable(&emit(source), &directory))
         .current_dir(&directory)
         .env("WF_WORKERS", "1")
-        .output()
+        .bounded_output()
         .expect("run the source without compute hand-outs");
     assert_eq!(
         reference.status.code(),
@@ -1803,7 +1804,7 @@ fn run_owned_lane_cases(
             .env("WF_WORKERS", workers)
             .env("WF_TEST_REFUSE_LANE", mode)
             .env_remove("WF_SCHED_REPORT")
-            .output()
+            .bounded_output()
             .expect("run the aggregate adapter with forced refusal or real lanes");
         outcomes.push((mode, output));
     }
@@ -1818,7 +1819,7 @@ fn run_owned_lane_cases(
     let missing = Command::new(broken)
         .env("WF_WORKERS", "4")
         .env("WF_TEST_REFUSE_LANE", "2")
-        .output()
+        .bounded_output()
         .expect("run one controlled missing-join path");
     assert_eq!(missing.status.code(), Some(86), "{missing:?}");
     assert!(missing.stdout.is_empty(), "{missing:?}");
@@ -2607,7 +2608,7 @@ fn main() -> status: std::process::ExitStatus pure {{
                         let output = Command::new(&executable)
                             .env("WF_TEST_ONE_GRANT", if granted { "1" } else { "0" })
                             .env("WF_TEST_BUDGET", derived.to_string())
-                            .output()
+                            .bounded_output()
                             .expect("run deterministic refusal schedule");
                         assert!(output.status.success(), "{output:?}");
                         // Full binary tree: 31 internal calls. With no grants
@@ -2796,7 +2797,7 @@ fn layout_folds_preserve_permissions_and_each_execute_a_worker() {
     let executable = build_linked_executable(&observed, Some(&host), &[], &directory);
     let output = Command::new(executable)
         .env("WF_WORKERS", "4")
-        .output()
+        .bounded_output()
         .expect("run observed layout");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(output.stdout, b"420a993efa7437a1 41fa962893d45299\n");

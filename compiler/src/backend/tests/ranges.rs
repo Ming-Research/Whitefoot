@@ -31,6 +31,7 @@
 //! the work-budget prices of the overlap lowering [PAR-1, PAR-2] are unchanged
 //! by the reference amendment.
 
+use super::BoundedOutput;
 use super::*;
 
 /// Use the formal program's binding path, including pool-off world selection.
@@ -163,7 +164,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     for (workers, world) in [("1", 0), ("4", 1)] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run host adapter world probe");
         assert!(output.status.success(), "WF_WORKERS={workers}: {output:?}");
         assert!(
@@ -182,7 +183,7 @@ fn run_compute_oracle(executable: &Path, name: &str, parallel: bool) {
         let output = Command::new(executable)
             .env("WF_WORKERS", workers.to_string())
             .env_remove("WF_SPLIT_WORK")
-            .output()
+            .bounded_output()
             .expect("run independent compute oracle");
         assert!(
             output.status.success(),
@@ -282,7 +283,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     let directory = test_directory();
     let executable = build_linked_executable(&llvm, Some(host), &[], &directory);
     let output = Command::new(executable)
-        .output()
+        .bounded_output()
         .expect("run total scheduling estimate probe");
     assert!(output.status.success(), "{output:?}");
     std::fs::remove_dir_all(directory).expect("remove total scheduling estimate probe");
@@ -471,7 +472,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     let executable = build_linked_executable(&llvm, Some(host), &[], &directory);
     let output = Command::new(executable)
         .env("WF_WORKERS", "1")
-        .output()
+        .bounded_output()
         .expect("run checked-reference scheduling price probe");
     assert!(output.status.success(), "{output:?}");
     std::fs::remove_dir_all(directory).expect("remove checked-reference scheduling price probe");
@@ -593,7 +594,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     let executable = build_linked_executable(&llvm, Some(host), &[], &directory);
     let output = Command::new(executable)
         .env("WF_WORKERS", "2")
-        .output()
+        .bounded_output()
         .expect("run continuation work price probe");
     assert!(output.status.success(), "{output:?}");
     std::fs::remove_dir_all(directory).expect("remove continuation work price probe");
@@ -670,7 +671,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers.to_string())
             .env_remove("WF_SPLIT_WORK")
-            .output()
+            .bounded_output()
             .expect("run runtime extent price probe");
         assert!(output.status.success(), "workers={workers}: {output:?}");
     }
@@ -1056,7 +1057,7 @@ fn recursive_child_ranges_restore_parent_access() {
         for workers in ["1", "4"] {
             let output = Command::new(&executable)
                 .env("WF_WORKERS", workers)
-                .output()
+                .bounded_output()
                 .expect("run the recursive range split");
             assert!(
                 output.status.success(),
@@ -1390,7 +1391,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     let directory = test_directory();
     let executable = build_linked_executable(&llvm, Some(oracle), &[], &directory);
     let output = Command::new(executable)
-        .output()
+        .bounded_output()
         .expect("run nested range element oracle");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
@@ -1538,7 +1539,7 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     let directory = test_directory();
     let executable = build_linked_executable(&llvm, Some(oracle), &[], &directory);
     let output = Command::new(executable)
-        .output()
+        .bounded_output()
         .expect("run loop-carried reference oracle");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");

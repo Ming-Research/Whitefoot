@@ -29,6 +29,7 @@
 //! initialized elements before their backing allocation, probe attachment to
 //! every emitted definition, and native containment on a guarded stack.
 
+use super::BoundedOutput;
 use std::process::Command;
 
 use super::{build_linked_executable, compile, test_directory};
@@ -368,7 +369,7 @@ fn each_generated_allocation_form_reaches_its_refusal_record() {
     for refused in 0..=4 {
         let output = Command::new(&executable)
             .env("WF_TEST_REFUSE_ALLOCATION", refused.to_string())
-            .output()
+            .bounded_output()
             .expect("run scoped allocation refusal");
         let trace = std::str::from_utf8(&output.stdout).expect("ASCII allocation trace");
         if refused == 0 {
@@ -428,7 +429,7 @@ fn heap_record_writers_retry_interruption_without_losing_partial_progress() {
                 .env("WF_TEST_REFUSE_ALLOCATION", "1")
                 .env("WF_TEST_WRITE_SCHEDULE", schedule.to_string())
                 .current_dir(&directory)
-                .output()
+                .bounded_output()
                 .expect("run interrupted heap record writer");
             assert_eq!(signal_of(&output), Some(libc_sigabrt()), "{output:?}");
             if schedule < 2 {
@@ -751,7 +752,7 @@ fn a_frame_larger_than_the_guard_region_is_still_reported() {
     let (_, probed_assembly) = super::stack_ledger::machine_report(&module, &directory);
     let executable = build_linked_executable(&module, Some(LARGE_FRAME_BODY), &[], &directory);
     let output = Command::new(&executable)
-        .output()
+        .bounded_output()
         .expect("run the probed large frame");
     assert_eq!(
         signal_of(&output),
@@ -772,7 +773,7 @@ fn a_frame_larger_than_the_guard_region_is_still_reported() {
     assert_native_spine_probe_was_ablated(&probed_assembly, &assembly);
     let unprobed = build_linked_executable(&ablated, Some(LARGE_FRAME_BODY), &[], &elsewhere);
     let output = Command::new(&unprobed)
-        .output()
+        .bounded_output()
         .expect("run the unprobed large frame");
     assert!(
         output.stderr.is_empty(),
@@ -1389,7 +1390,7 @@ fn branching_and_nested_release_walks_reclaim_each_instance_in_order() {
         let observer = super::owned_places::allocation_observer(limit, 0);
         let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
         let output = Command::new(executable)
-            .output()
+            .bounded_output()
             .expect("run observed release walk");
         assert_eq!(output.status.code(), Some(0), "{name}: {output:?}");
         assert_eq!(output.stdout, expected.as_bytes(), "{name}");
