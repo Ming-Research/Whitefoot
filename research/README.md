@@ -3,10 +3,19 @@
 This directory holds investigations and experiments that expose language or
 compiler needs and test possible solutions. Treat agent authorship as a
 changed design condition: identify what a candidate restriction or capability
-should buy, compare plausible alternatives, and retain the observed limits.
-The [investigation skill](../docs/skills/investigation/SKILL.md) states how a
-performance loss is attributed and which observations an agent writer trial
-keeps apart. The active [specification](../spec/kernel-spec.md)
+should buy, compare plausible alternatives, and retain the observed limits. An
+investigation exists to decide something. Attribute a performance loss with a
+same-source comparison before and after the change and a falsifier; profile
+proof cost by formation, automatic derivation, certificate checking and fact
+propagation before attributing it to `use`. An agent writer trial keeps four
+observations apart: whether the program and its proofs can be expressed;
+whether the tested agent writes them with the supplied interfaces, context,
+tools and repair help; whether separately written parts meet independent
+expectations when composed; and whether the result meets its runtime cost
+goal, and why. Model identity and assistance are experimental conditions, not
+ceilings on the language.
+
+The active [specification](../spec/kernel-spec.md)
 defines the language, the [design trees](../design/) record why the language
 and the compiler are the way they are, and [AGENTS.md](../AGENTS.md) defines
 the work-branch and merge boundary.

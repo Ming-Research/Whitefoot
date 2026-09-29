@@ -226,7 +226,7 @@ tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: Undisch
 - `--diagnostic-format json` 把每次拒绝输出为一行一个的 JSON 对象；
 - `whitefootc --help` 列出其余选项。
 
-如果要参与语言或编译器的开发，请从 [AGENTS.md](AGENTS.md) 和[工作流程导览](docs/workflow.md)开始。
+如果要参与语言或编译器的开发，请从 [AGENTS.md](AGENTS.md) 开始。
 
 ## 相关工作
 

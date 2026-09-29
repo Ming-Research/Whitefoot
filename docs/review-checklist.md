@@ -1,17 +1,17 @@
 # Task completion review
 
-The items an independent reviewer checks when a task completes. The
-[completion-review skill](skills/completion-review/SKILL.md) owns when the
-review runs, who runs it, how findings are routed and where the report goes.
-Merge conditions remain in [AGENTS.md](../AGENTS.md#branch-and-main-boundary).
+The items an independent reviewer checks when a task completes.
+[AGENTS.md](../AGENTS.md#review) says when the review runs, who runs it, how
+findings are handled and where the report goes; merge conditions remain in
+its [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
 
 ## How to review
 
 Read the task's requested outcome and constraints, the complete diff from the
 base to the reviewed revision (including uncommitted and new files, but not
-the archived specification copies `make review-scope` lists as excluded), and
-the actual validation results. Read changed sections in context, the relevant
-[document roles](workflow.md#document-roles), and directly affected
+the released archives `spec/kernel-spec-v*.md`), and the actual validation
+results. Read changed sections in context, the relevant
+[document roles](../AGENTS.md#document-roles), and directly affected
 definitions, callers, or cases.
 Do not load the whole repository or require a separate review packet.
 
@@ -22,8 +22,7 @@ unrecorded reason or certifies the soundness of a design argument: mark such a
 question `unverified` for the implementing agent rather than inventing missing
 evidence or redesigning the project.
 
-Check every group whose trigger applies; `make review-scope` names them from
-the changed paths, and a group it cannot decide from paths says so. Mark items
+Check every group whose trigger applies. Mark items
 `pass`, `finding`, `unverified`, or `not applicable`; missing evidence is not a
 pass. When the task changes a review rule or an expected result, compare its
 previous form with the requested change rather than judging only against the
@@ -60,14 +59,14 @@ Source: [repository hygiene](../AGENTS.md#repository-structure-and-hygiene).
 
 - [ ] **D1 — Purpose.** Each added or changed passage serves the containing
   document or code's reader. Check against the
-  [document roles](workflow.md#document-roles), including editorial history
+  [document roles](../AGENTS.md#document-roles), including editorial history
   and process instructions inserted into substantive documents. For
   constitutional changes, check that complete clauses state the relevant
   obligations and conditions; a chosen prohibition is not merely a report of
   current implementation behavior.
 - [ ] **D2 — References.** Changed references resolve to the intended file,
   heading or symbol, obey the
-  [citation boundaries](workflow.md#citation-boundaries), and support their
+  [citation boundaries](../AGENTS.md#citation-boundaries), and support their
   claim. A correct relative path does not make an inappropriate citation
   acceptable.
 - [ ] **D3 — Current meaning.** Changed claims agree with their owning source
@@ -116,12 +115,11 @@ Source: [compiler rules](../AGENTS.md#compiler-rules) and
 
 Source: [specification and test integrity](../AGENTS.md#specification-and-test-integrity).
 
-- [ ] **T1 — Language evidence.** For a specification amendment, the outgoing
-  active bytes are archived unchanged, released archives are untouched, and
-  the active title advances the version. The change declares its
-  specification delta (rules, tokens, spellings, exceptions) and
-  evidence/minimality selection ground. `make static` checks the archive
-  name, its bytes and the title mechanically. Affected cases/verdicts,
+- [ ] **T1 — Language evidence.** A specification amendment follows the
+  steps in [AGENTS.md](../AGENTS.md#specification-and-test-integrity), whose
+  archive and title `make static` checks mechanically. The change declares
+  its specification delta (rules, tokens, spellings, exceptions) and
+  evidence/minimality selection ground. Affected cases/verdicts,
   generated syntax, compiler and documentation follow the amendment. For
   changed rules or constitutional premises, apply R3–R4 below. For
   conformance changes, the PR explains the normative expectation and how the
@@ -213,12 +211,11 @@ establish that the group is inapplicable.
 - [ ] **M1 — Design procedure.** Apply the design-tree skill
   (`design/skill/SKILL.md`) to the reviewed scope: its design checks G1–G3,
   correspondence checks DC1–DC4 and structural validation. That skill owns the
-  procedure; include its actual results in this completion review.
+  procedure; include its actual results in this review.
 
 ## V. Validation and handoff — every change
 
-Source: [How work proceeds](../AGENTS.md#how-work-proceeds), the
-[investigation skill](skills/investigation/SKILL.md) and the
+Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
 [merge boundary](../AGENTS.md#branch-and-main-boundary).
 
 - [ ] **V1 — Actual checks.** Applicable checks ran on the delivered content;
@@ -236,9 +233,12 @@ Source: [How work proceeds](../AGENTS.md#how-work-proceeds), the
   that it omits. For specification revisions, check the conversation
   explanation required by `AGENTS.md`: affected rules, before/after behavior,
   and selection grounds. Conformance changes explain what changed and their
-  selection ground. If merging is requested, verify owner approval and root
-  `make check` for the exact merge tree under the existing four rules; neither
-  a fast review nor a focused test run substitutes for them.
+  selection ground. A PR marked ready has the owner's approval of every
+  design-tree and specification change it carries, recorded in
+  `design/log.md` and `spec/log.md`. If merging is requested, verify owner
+  approval and root `make check` for the exact merge tree under the existing
+  four rules; neither a fast review nor a focused test run substitutes for
+  them.
 - [ ] **V4 — Existing PR updated.** The reviewed task changes are committed
   and pushed to the existing PR branch without waiting for a reminder; its
   remote head contains the delivered revision, and its description and
@@ -249,8 +249,8 @@ Source: [How work proceeds](../AGENTS.md#how-work-proceeds), the
 Use existing checks when applicable: `git diff --check` for patch whitespace;
 `make static` for repository invariants, specification archives (immutability
 and amendment shape), live spec references, cited review items, entry-document
-paths, skill links and design-tree form; `make -C compiler format lint` and the
-[focused compiler commands](workflow.md#checks) for code. `make static`
+paths and design-tree form; `make -C compiler format lint` and the
+[focused compiler commands](../AGENTS.md#checks) for code. `make static`
 does not check document purpose, anchors or the truth of a claim, and compiler
 `docs` builds Rust API documentation, not this prose checklist. The root
 [Makefile](../Makefile) owns the full gate inventory; the design-tree checks
