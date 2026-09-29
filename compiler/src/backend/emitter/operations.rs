@@ -341,6 +341,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map_err(|_| BackendFailure::TextEmission)?;
             return Ok(());
         }
+        // A memory-only value always has a slot and is constructed there
+        // (compiler/payload-enum-layout); it has no first-class form.
+        if self.is_memory_only(ty)? {
+            return Err(BackendFailure::InvalidIr);
+        }
         let mut inserts = vec![(0_usize, None)];
         let base = variant_field_base(variants, variant)?;
         inserts.extend(
@@ -358,6 +363,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ty: IrType,
         fields: Vec<(usize, IrValueId)>,
     ) -> Result<(), BackendFailure> {
+        if self.is_memory_only(ty)? {
+            return Err(BackendFailure::InvalidIr);
+        }
         let aggregate_ty = self.output.type_name(self.program, ty)?;
         if fields.is_empty() {
             writeln!(
@@ -459,6 +467,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if fields.get(field as usize).map(|field| field.ty()) != Some(ty) {
             return Err(BackendFailure::InvalidIr);
         }
+        if self.is_memory_only(IrType::Nominal(nominal))? {
+            return Err(BackendFailure::InvalidIr);
+        }
         if consume_root {
             writeln!(self.output, "  ; ownership-consuming projection")
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -497,7 +508,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .get(field as usize)
             .map(|field| field.ty())
             .ok_or(BackendFailure::InvalidIr)?;
-        if self.value_type(value) != Some(field_ty) {
+        if self.value_type(value) != Some(field_ty) || self.is_memory_only(ty)? {
             return Err(BackendFailure::InvalidIr);
         }
         {
@@ -541,6 +552,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map(|field| field.ty())
             != Some(ty)
         {
+            return Err(BackendFailure::InvalidIr);
+        }
+        if self.is_memory_only(IrType::Nominal(nominal))? {
             return Err(BackendFailure::InvalidIr);
         }
         let index = variant_field_base(variants, variant)? + field as usize;

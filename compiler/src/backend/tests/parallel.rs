@@ -2045,6 +2045,116 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     );
 }
 
+/// A waiting recursion that reaches a compute offer keeps the offer and gets
+/// no budget-carrying family.
+///
+/// `descend` waits and calls itself, and each level calls `pair_total`, whose
+/// two `byte_at` reads form a permitted group. Reaching that hand-out puts
+/// `descend` in the sequential clone set, which is all a cyclic component
+/// needed to be selected for a family. A variant is an ordinary definition
+/// with one trailing budget, and a waiting function is a resumable frame
+/// entered by a transfer [WAIT-1], so emitting one stopped the build with an
+/// invalid-IR failure. This is the shape of `wfgrep.wf`, whose waiting `walk`
+/// recursion reaches the byte-pair offers of `name_before`.
+///
+/// Both `--par` policies are compiled: every eligible group, and the shipped
+/// scalar-leaf default, which keeps these offers because their callee reads a
+/// range. The excluded component is named in the ledger, the offer and its
+/// join stay in the overlapped world, and the offered read runs on a real
+/// worker while the recursion computes the same total in both worlds.
+#[test]
+fn a_waiting_recursion_that_reaches_an_offer_gets_no_budget_family() {
+    const SOURCE: &[u8] = br#"fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  let spare = store^.len;
+  let inside = index < spare;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn pair_total(store: &[u8], at: u64) -> result: u64 reads(store) {
+  let next = at +wrap 1_u64;
+  let first = byte_at(store: store, index: at);
+  let second = byte_at(store: store, index: next);
+  let wide_first = cvt::<u8, u64>(first);
+  let wide_second = cvt::<u8, u64>(second);
+  return wide_first +wrap wide_second;
+}
+
+fn descend(store: &[u8], remaining: u64) -> result: u64 reads(store) waits {
+  if remaining == 0_u64 {
+    return 0_u64;
+  }
+  let here = pair_total(store: store, at: remaining);
+  let fewer = remaining -wrap 1_u64;
+  let below = descend(store: store, remaining: fewer);
+  return here +wrap below;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cells = box_array_filled::<u8>(count: 64_u64, value: 3_u8);
+  let view = &cells.inner[0_u64..64_u64];
+  let total = descend(store: view, remaining: 20_u64);
+  if total == 120_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let every_group = emit_with_overlap(SOURCE);
+    let shipped = super::emit_lowered(
+        SOURCE,
+        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
+            maximum_operations: 16,
+        },
+    );
+    for module in [&every_group, &shipped] {
+        let pair = function_body(module, "@wf_pair_total");
+        assert!(
+            pair.contains("call void @wf__par_publish(")
+                && pair.contains("call void @wf__par_join("),
+            "the byte pair must still be handed out and joined:\n{pair}"
+        );
+        assert!(
+            budget_symbols(module).is_empty(),
+            "a waiting component must get no budget variant: {:?}",
+            budget_symbols(module)
+        );
+        assert!(
+            clone_symbols(module).contains(&"@wf__par_seq_descend".to_owned()),
+            "the waiting recursion keeps its sequential clone: {:?}",
+            clone_symbols(module)
+        );
+    }
+    let ledger = super::compile_permission_ledger(SOURCE);
+    assert!(
+        ledger.iter().any(|line| line
+            == "PAR frontier    component(descend)  excluded: descend is a waiting function"),
+        "the excluded component must be named with its reason: {ledger:?}"
+    );
+
+    let directory = test_directory();
+    let counted = CountedProgram::link(&every_group, &directory);
+    let (granted, parallel) = counted.run(Some("4"));
+    assert_eq!(parallel.status.code(), Some(0), "{parallel:?}");
+    assert!(granted > 0, "the offered read must enter a real worker");
+    for workers in ["1", "0"] {
+        let (granted, output) = counted.run(Some(workers));
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: {output:?}"
+        );
+        assert_eq!(
+            granted, 0,
+            "WF_WORKERS={workers} selects the sequential world"
+        );
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
 /// Omitting cheap offers must preserve the last join site and the ordinary
 /// evaluation of every removed member, including members inside a mixed run.
 #[test]

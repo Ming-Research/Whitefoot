@@ -659,27 +659,31 @@ fn main() -> status: std::process::ExitStatus pure {
   return left^.len;
 }
 
-fn caller(s: u64, e: u64) -> result: u64 pure {
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
   let a = array_filled::<u64, 4>(value: 0_u64);
   let b = array_filled::<u64, 4>(value: 0_u64);
   let ordered = s <= e;
   let within = e <= 4_u64;
-  if band(ordered, within) {
-    let r = pair(left: &a[s..e], right: &b[s..e]);
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
+    let r = pair(left: &a[s..e], right: &b[t..u]);
     return r;
   }
   return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let r = caller(s: 1_u64, e: 3_u64);
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "FN-8",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `a[s..e].len` is `e - s` and `b[s..e].len` is `e - s` [REF-4], so this call needs `e - s == e - s`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = e - s;` (a `-wrap` difference carries no relation to the range's length), bind its range with one preceding `let`, as `let part = &a[s..e];`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings\n",
+            "\n  mechanical_fix: `a[s..e].len` is `e - s` and `b[t..u].len` is `u - t` [REF-4], so this call needs `e - s == u - t`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = e - s;` (a `-wrap` difference carries no relation to the range's length), bind its range with one preceding `let`, as `let part = &a[s..e];`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings\n",
         ],
         repaired: &[br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
   requires left^.len == right^.len;
@@ -687,23 +691,30 @@ fn main() -> status: std::process::ExitStatus pure {
   return left^.len;
 }
 
-fn caller(s: u64, e: u64) -> result: u64 pure {
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
   let a = array_filled::<u64, 4>(value: 0_u64);
   let b = array_filled::<u64, 4>(value: 0_u64);
   let ordered = s <= e;
   let within = e <= 4_u64;
-  if band(ordered, within) {
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
     let width = e - s;
+    let other_width = u - t;
     let part = &a[s..e];
-    let other = &b[s..e];
-    let r = pair(left: &part^[0_u64..width], right: &other^[0_u64..width]);
-    return r;
+    let other = &b[t..u];
+    if width == other_width {
+      let r = pair(left: &part^[0_u64..width], right: &other^[0_u64..other_width]);
+      return r;
+    }
   }
   return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let r = caller(s: 1_u64, e: 3_u64);
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#],

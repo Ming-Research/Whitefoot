@@ -19,7 +19,7 @@ use super::super::model::{
     CheckedStatement, CheckedType, CheckedValue, expression_children,
 };
 use super::super::places::{CapturedTerm, CapturedValue};
-use super::super::postcondition::PostconditionConstantOrigin;
+use super::super::postcondition::{ParameterDenotation, PostconditionConstantOrigin};
 use super::{CheckStop, Checker, ControlCounters, ControlScope, LocalBinding};
 
 pub(super) struct CheckedRequires {
@@ -172,9 +172,11 @@ pub(super) enum ExpandedClauseDatum {
         ordinal: u32,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
-        /// Bare exclusive measures in ensures denote exit state. An entry
-        /// former clears this bit before ordinary projections are expanded.
-        exit_state: bool,
+        /// [MSR-3] which table row gives the datum its meaning: a bare
+        /// measure or place of a written reference parameter in ensures
+        /// denotes exit state, and an entry former selects the entry datum
+        /// before ordinary projections are expanded.
+        denotation: ParameterDenotation,
     },
     NamedConst {
         declaration: DeclarationId,
@@ -353,7 +355,7 @@ impl<'unit> Checker<'_, 'unit> {
                     ordinal,
                     projections: Vec::new(),
                     ty: parameter.ty,
-                    exit_state: false,
+                    denotation: ParameterDenotation::EntryImage,
                 }),
             );
         }
@@ -1538,15 +1540,18 @@ impl<'unit> TypeContext<'unit> {
     /// One clause operand written as a place over the clause's own result
     /// datum [FN-9, CALL-4], if the atom is one.
     ///
-    /// Two shapes are admitted and nothing else. A bare selector spelling is
-    /// the result datum itself. A place whose trailing member is one of
+    /// Three shapes are admitted and nothing else. A bare selector spelling
+    /// is the result datum itself. A place whose trailing member is one of
     /// [MSR-1]'s measures is that measure over the result place the written
     /// member path reaches, because [OP-15] reads a measure as a member of
     /// the measured place and gives it no storage below itself; that is how
     /// `ensures result.len == n` and `ensures result.inner.len == count` are
-    /// one relation term and not a second fact class. Every other member
-    /// path over a result datum stays outside the admitted operand set, and
-    /// the caller reports it as the ordinary invalid selector use.
+    /// one relation term and not a second fact class. A place whose member
+    /// path of struct-field and `Box` content steps ends at a fragment
+    /// integer is that place's value [CALL-4]: `ensures atom.index < n`.
+    /// Every other member path over a result datum stays outside the
+    /// admitted operand set, and the caller reports it as the ordinary
+    /// invalid selector use.
     fn build_clause_result_place(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -1581,7 +1586,31 @@ impl<'unit> TypeContext<'unit> {
             )));
         }
         let Some(measure) = self.declarations.trailing_measure_member(&suffixes)? else {
-            return Ok(None);
+            // [CALL-4] a fragment-integer place reached through struct-field
+            // and `Box` content steps is a datum as its own value.
+            let (projections, reached) = self.clause_member_projections(
+                check_context,
+                &suffixes,
+                datum_type,
+                false,
+                bindings,
+                expanded_bindings,
+            )?;
+            if !matches!(
+                reached,
+                CheckedType::Integer(_) | CheckedType::GenericInt(_)
+            ) || projections.iter().any(|projection| {
+                !matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
+            }) {
+                return Ok(None);
+            }
+            return Ok(Some(ExpandedClauseExpression::Datum(
+                ExpandedClauseDatum::Result {
+                    ordinal,
+                    projections,
+                    ty: reached,
+                },
+            )));
         };
         let (projections, measured_type) = self.clause_member_projections(
             check_context,
@@ -1909,12 +1938,12 @@ impl<'unit> TypeContext<'unit> {
             .has_fixed(pbase, FixedTerminal::Entry)?
         {
             let ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
-                exit_state, ..
+                denotation, ..
             }) = &mut expression
             else {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             };
-            *exit_state = false;
+            *denotation = ParameterDenotation::EntryDatum;
         }
         let suffixes = self
             .declarations

@@ -1,0 +1,47 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn find_space(data: &[u8]) -> result: Option<u64> reads(data) contract {
+  ensures when Some(value: found): found < data^.len;
+} {
+  doc "The routed Some clause the forwarding function relies on.";
+  let length = data^.len;
+  let pos = 0_u64;
+  loop (
+    invariant bounded: pos <= length
+  ) {
+    if pos >= length {
+      break;
+    }
+    let byte = data^[pos];
+    if byte == 32_u8 {
+      return Some<u64>(value: pos);
+    }
+    set pos = pos + 1_u64;
+  }
+  return None<u64>();
+}
+
+fn first_space(data: &[u8]) -> result: Option<u64> reads(data) contract {
+  ensures when Some(value: at): at < data^.len;
+} {
+  doc "A forwarded Option is judged in the conditional context its call established [FN-9, ENT-5].";
+  let found = find_space(data: data);
+  return found;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The forwarded bound reaches the caller's Some arm.";
+  let backing = box_array_filled::<u8>(count: 3_u64, value: 32_u8);
+  let text = &backing.inner[0_u64..3_u64];
+  let outcome = first_space(data: text);
+  match outcome {
+    Some(value: at) => {
+      let byte = text^[at];
+      return exit_status(code: byte);
+    }
+    None() => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

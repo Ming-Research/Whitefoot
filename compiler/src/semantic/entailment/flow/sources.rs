@@ -616,7 +616,8 @@ impl Reasoning<'_, '_, '_> {
                     ordinal,
                     path: path.clone(),
                     placement,
-                    measure,
+                    measure: Some(measure),
+                    ty: IntegerType::U64,
                 });
                 self.vocabulary
                     .adopt_measure_atom(datum, live, &state.affine);
@@ -638,7 +639,93 @@ impl Reasoning<'_, '_, '_> {
                 datums,
             });
         }
-        (!carried.is_empty()).then_some(MeasureCarry { carried })
+        // [MSR-3] the value of each fragment-integer place the operand
+        // reaches whose source place is already a term: any other has only
+        // its type's standing bounds, which hold at the destination without
+        // transport. A REBIND or ELEMENT of a fragment integer carries its
+        // own value by [ENT-3.S5] instead, so only its descendants ride here.
+        let mut values = Vec::new();
+        let whole_value_related = matches!(
+            placement,
+            MeasurePlacement::Rebind | MeasurePlacement::Element
+        );
+        for (path, fragment) in self.value_paths(&source, ty) {
+            if path.is_empty() && whole_value_related {
+                continue;
+            }
+            let mut place = source.clone();
+            place.path.extend(path.iter().copied());
+            let Some(live) = self
+                .vocabulary
+                .terms
+                .interned(&TermKind::Place(place, fragment))
+            else {
+                continue;
+            };
+            let event = self
+                .vocabulary
+                .proof_event(FlowEventKind::S5, Some(node_path));
+            let datum = self.vocabulary.terms.intern(TermKind::MeasureDatum {
+                statement: node_path.components().to_vec(),
+                ordinal,
+                path: path.clone(),
+                placement,
+                measure: None,
+                ty: fragment,
+            });
+            state.facts.establish(
+                &Relation::Equal {
+                    left: datum,
+                    right: live,
+                    difference: 0,
+                },
+                &mut self.vocabulary.derivations,
+                event,
+            );
+            values.push(CarriedValue {
+                path,
+                ty: fragment,
+                datum,
+            });
+        }
+        (!carried.is_empty() || !values.is_empty()).then_some(MeasureCarry { carried, values })
+    }
+
+    /// [MSR-3] fragment-integer places reached through owned fields,
+    /// payloads and Box content, found as [`Self::measured_paths`] finds
+    /// measured places: a structural walk for acyclic type paths, supplemented
+    /// by already registered exact source terms for recursive ones.
+    fn value_paths(
+        &self,
+        source: &ResolvedPlace,
+        ty: CheckedType,
+    ) -> Vec<(Vec<PlaceStep>, IntegerType)> {
+        let mut found = Vec::new();
+        if !self
+            .input
+            .collect_value_paths(ty, &mut Vec::new(), &mut Vec::new(), &mut found)
+        {
+            return found;
+        }
+        let source = source.clone().term_identity();
+        for term in self.vocabulary.terms.ids() {
+            let TermKind::Place(place, fragment) = self.vocabulary.terms.kind(term) else {
+                continue;
+            };
+            if place.root != source.root {
+                continue;
+            }
+            let Some(path) = place.path.strip_prefix(source.path.as_slice()) else {
+                continue;
+            };
+            if self.input.owned_path_type(ty, path) != Some(CheckedType::Integer(*fragment)) {
+                continue;
+            }
+            if !found.iter().any(|(existing, _)| existing == path) {
+                found.push((path.to_vec(), *fragment));
+            }
+        }
+        found
     }
 
     /// [MSR-1, MSR-3] measured descendants reached through owned fields,
@@ -783,6 +870,102 @@ impl Input<'_, '_> {
     }
 }
 
+impl Input<'_, '_> {
+    /// Collects the fragment-integer places an owned descendant projection
+    /// reaches below `ty`; returns whether a nominal cycle left paths for the
+    /// finite source-term inventory to supply [MSR-3].
+    fn collect_value_paths(
+        &self,
+        ty: CheckedType,
+        path: &mut Vec<PlaceStep>,
+        ancestors: &mut Vec<NominalId>,
+        found: &mut Vec<(Vec<PlaceStep>, IntegerType)>,
+    ) -> bool {
+        if let CheckedType::Integer(fragment) = ty {
+            found.push((path.clone(), fragment));
+            return false;
+        }
+        let CheckedType::Nominal(nominal) = ty else {
+            return false;
+        };
+        let Some(kind) = self
+            .context
+            .nominals
+            .get(nominal.0 as usize)
+            .map(|record| &record.kind)
+        else {
+            return false;
+        };
+        if ancestors.contains(&nominal) {
+            return true;
+        }
+        ancestors.push(nominal);
+        let mut recursive = false;
+        match kind {
+            CheckedNominalKind::Struct { fields } => {
+                for (ordinal, field) in fields.iter().enumerate() {
+                    let Ok(ordinal) = u32::try_from(ordinal) else {
+                        continue;
+                    };
+                    path.push(PlaceStep::Field(ordinal));
+                    recursive |= self.collect_value_paths(field.ty, path, ancestors, found);
+                    path.pop();
+                }
+            }
+            CheckedNominalKind::Enum { variants } => {
+                for variant in variants {
+                    for (ordinal, field) in variant.fields.iter().enumerate() {
+                        let Ok(field_ordinal) = u32::try_from(ordinal) else {
+                            continue;
+                        };
+                        path.push(PlaceStep::Payload {
+                            variant: variant.tag,
+                            field: field_ordinal,
+                        });
+                        recursive |= self.collect_value_paths(field.ty, path, ancestors, found);
+                        path.pop();
+                    }
+                }
+            }
+            CheckedNominalKind::Box { referent, .. } => {
+                path.push(PlaceStep::Deref);
+                recursive |= self.collect_value_paths(*referent, path, ancestors, found);
+                path.pop();
+            }
+            CheckedNominalKind::Opaque => {}
+        }
+        ancestors.pop();
+        recursive
+    }
+
+    /// Replays a finite owned projection against its actual operand type and
+    /// returns the type it reaches. Element and range storage are not
+    /// aggregate ownership projections.
+    fn owned_path_type(&self, mut ty: CheckedType, path: &[PlaceStep]) -> Option<CheckedType> {
+        for step in path {
+            let CheckedType::Nominal(nominal) = ty else {
+                return None;
+            };
+            ty = match (&self.context.nominals.get(nominal.0 as usize)?.kind, step) {
+                (CheckedNominalKind::Struct { fields }, PlaceStep::Field(field)) => {
+                    fields.get(*field as usize)?.ty
+                }
+                (CheckedNominalKind::Box { referent, .. }, PlaceStep::Deref) => *referent,
+                (CheckedNominalKind::Enum { variants }, PlaceStep::Payload { variant, field }) => {
+                    variants
+                        .iter()
+                        .find(|candidate| candidate.tag == *variant)?
+                        .fields
+                        .get(*field as usize)?
+                        .ty
+                }
+                _ => return None,
+            };
+        }
+        Some(ty)
+    }
+}
+
 impl Reasoning<'_, '_, '_> {
     /// [MSR-3] the rebind placement, second half: after the transfer, the
     /// destination binding's own measures equal the datums minted before it.
@@ -830,6 +1013,23 @@ impl Reasoning<'_, '_, '_> {
                     event,
                 );
             }
+        }
+        for value in &carry.values {
+            let mut place = destination.clone();
+            place.path.extend(value.path.iter().copied());
+            let left = self
+                .vocabulary
+                .terms
+                .intern(TermKind::Place(place, value.ty));
+            state.establish(
+                &Relation::Equal {
+                    left,
+                    right: value.datum,
+                    difference: 0,
+                },
+                &mut self.vocabulary.derivations,
+                event,
+            );
         }
     }
 
@@ -1433,9 +1633,20 @@ const MEASURES: [CheckedMeasure; 3] = [
 ///
 /// One placement carries one entry per measured place its operand reaches by
 /// field or payload selection, so an aggregate operand carries the measures
-/// of every run beneath it and not only its own.
+/// of every run beneath it and not only its own, and one entry per
+/// fragment-integer place it reaches whose source is a term of the state the
+/// placement reads.
 pub(super) struct MeasureCarry {
     carried: Vec<CarriedMeasures>,
+    values: Vec<CarriedValue>,
+}
+
+/// The datum of one fragment-integer place under one placement [MSR-3]: a
+/// minted value datum, or the constant a constant field operand is.
+struct CarriedValue {
+    path: Vec<PlaceStep>,
+    ty: IntegerType,
+    datum: TermId,
 }
 
 /// The datums of one measured place under one placement, with the aggregate
@@ -2237,10 +2448,47 @@ impl Reasoning<'_, '_, '_> {
         };
         let mut carried = Vec::new();
         for (ordinal, field) in fields.iter().enumerate() {
+            let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX);
+            let destination =
+                payload.map_or(PlaceStep::Field(ordinal), |variant| PlaceStep::Payload {
+                    variant,
+                    field: ordinal,
+                });
+            // [MSR-3] a typed integer literal or integer-typed named const
+            // filling a fragment-integer field is its own datum: the field
+            // of the constructed value holds that constant.
+            if matches!(
+                field,
+                CheckedExpression::Constant(CheckedValue::Integer { .. })
+                    | CheckedExpression::NamedConstant {
+                        value: CheckedValue::Integer { .. },
+                        ..
+                    }
+            ) && let Some(fragment) = fragment_type(field.ty())
+                && let Some(datum) = self.read_operand(field)
+            {
+                carried.push((
+                    destination,
+                    MeasureCarry {
+                        carried: Vec::new(),
+                        values: vec![CarriedValue {
+                            path: Vec::new(),
+                            ty: fragment,
+                            datum,
+                        }],
+                    },
+                ));
+                continue;
+            }
+            // [MSR-3] a fragment-integer operand is read by the construction
+            // itself, so its term is formed at this event and the field
+            // receives its value whether or not an earlier event formed it.
+            if fragment_type(field.ty()).is_some() {
+                let _ = self.read_operand(field);
+            }
             let Some(source) = self.input.placement_source_place(field) else {
                 continue;
             };
-            let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX);
             if let Some(carry) = self.mint_measure_datums(
                 node_path,
                 ordinal,
@@ -2249,11 +2497,6 @@ impl Reasoning<'_, '_, '_> {
                 field.ty(),
                 state,
             ) {
-                let destination =
-                    payload.map_or(PlaceStep::Field(ordinal), |variant| PlaceStep::Payload {
-                        variant,
-                        field: ordinal,
-                    });
                 carried.push((destination, carry));
             }
         }

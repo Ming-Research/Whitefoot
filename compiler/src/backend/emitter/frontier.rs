@@ -113,8 +113,17 @@ impl RecursiveFrontiers {
                 // these at once is named by the one a reader can act on: a
                 // splitter is synthesized *and* has no clone, and the first of
                 // those is why.
+                //
+                // A variant is an ordinary definition with one trailing
+                // budget. A waiting function is a resumable frame entered by a
+                // transfer [WAIT-1] (`frames`), so it has no ordinary entry
+                // for a variant to stand behind, and the emitter builds none.
+                // Its component keeps the ordinary lowering and reaches its
+                // offers without a budget, as a family switched off does.
                 if function.synthesis().is_some() {
                     Some(format!("{name} is a synthesized loop function"))
+                } else if function.waits() {
+                    Some(format!("{name} is a waiting function"))
                 } else if !u32::try_from(ordinal).is_ok_and(|i| clones.contains(&i)) {
                     Some(format!("{name} has no sequential clone"))
                 } else {

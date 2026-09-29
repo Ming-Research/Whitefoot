@@ -69,7 +69,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let release = *release;
-        {
+        if self.is_memory_only(ty)? {
+            // A memory-only referent moves out by memmove before the cell
+            // is released (compiler/payload-enum-layout).
+            self.copy_into_result(result, ty, &self.value_name(value))?;
+        } else {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
@@ -78,8 +82,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 emitted_type_1,
                 self.value_name(value)
             )
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
-        .map_err(|_| BackendFailure::TextEmission)?;
         if release == crate::IrReleaseClass::General {
             {
                 self.output.symbol("free");
@@ -106,6 +110,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         };
         if ty != *referent || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
+        }
+        if self.is_memory_only(ty)? {
+            return self.copy_into_result(result, ty, &self.value_name(value));
         }
         {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;

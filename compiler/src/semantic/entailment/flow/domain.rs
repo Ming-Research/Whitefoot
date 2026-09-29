@@ -273,16 +273,22 @@ impl Vocabulary {
             // const parameter throughout the generic body.
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
-            | TermKind::EntryDatum { .. }
-            | TermKind::MeasureDatum { .. }
+            | TermKind::EntryDatum {
+                measure: Some(_), ..
+            }
+            | TermKind::MeasureDatum {
+                measure: Some(_), ..
+            }
             | TermKind::CallDatum {
                 measure: Some(_), ..
             } => Some(self.measure_atom(term, state)),
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
+            | TermKind::EntryDatum { .. }
+            | TermKind::MeasureDatum { .. }
             | TermKind::CallDatum { .. } => None,
         }
     }

@@ -87,10 +87,12 @@ Growth policy can be ordinary source. The maintained
 supplies each concrete growth call's OP-9 bound; the policy doubles capacity
 while it fits and otherwise saturates at that ceiling. A zero ceiling admits
 an empty vector but no append. Reference-parameter contracts publish each
-operation's length and capacity relationships. FN-9 does not publish the
-constructor's measure through its aggregate result field. Its caller first
-establishes that nested measure through ordinary control flow, as the
-[program](../tests/programs/containers/grow-vector-program.wf) shows.
+operation's length and capacity relationships. The constructor states no
+postcondition, so its caller first establishes the nested length through
+ordinary control flow, as the
+[program](../tests/programs/containers/grow-vector-program.wf) shows; a
+constructor may instead publish it through its result's field path,
+`ensures made.storage.inner.len == 0_u64;` [FN-9, CALL-4].
 
 `grow_vector_remove` preserves the remaining order. Use
 `grow_vector_swap_remove` when filling the selected position with the last
@@ -405,6 +407,13 @@ fn pop<T, const n: u64>(window: &Slots<T, n>) -> value: T writes(window.last), w
 }
 ```
 
+A relation may also name an integer field: of a struct result, `atom.index <
+table^.spans.inner.len`, or of a written reference parameter, where
+`runs^.count` is the value at return and `entry(runs)^.count` the value at
+entry. Relating a `u32` identifier to a `u64` length widens it in place,
+`cvt::<u32, u64>(atom.index)`, since a widening conversion denotes its
+operand's value [FN-9, MSR-3, ENT-2].
+
 Contracts are proof-only. They do not insert a check or an alternate result.
 If insufficient capacity, malformed input, or another false condition is an
 expected outcome, branch before the partial operation and return an ordinary
@@ -591,12 +600,14 @@ pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.
 
-## P15. Keep a Result's evidence with its value
+## P15. Keep a Result's or Option's evidence with its value
 
-A local `Result` with an integer success payload retains its verified success
-relations when named, copied, moved, assigned or delivered by `give`. A match's
-own `Ok` binder and a successful `propagate` make those relations available.
-The error edge keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+A local `Result` or `Option` retains its verified success relations when named,
+copied, moved, assigned or delivered by `give`, whether its success payload is
+an integer or a struct whose integer fields and measures the relations name. A
+match's own `Ok` or `Some` binder and a successful `propagate` make those
+relations available, at the binder itself or at its fields. The failure edge
+keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
 
 ```whitefoot
 let outcome = bounded(count: limit);
@@ -612,10 +623,34 @@ still be proved. The
 [complete transport case](../tests/conformance/cases/fn9-pos-result-value-transport.wf)
 shows both forms and executes success and error paths.
 
+Return the value the caller needs in the shape it has. A search that may find
+nothing returns an `Option` and routes its bound through `Some`; it needs no
+`Result<T, unit>` whose only purpose is the `Ok` route. A validated header
+returns its struct, not a tuple of integers the caller reassembles:
+
+```whitefoot
+fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pure contract {
+  ensures when Ok(value: header): header.width >= 1_u32;
+  ensures when Ok(value: header): header.width <= 16384_u32;
+} {
+  ...
+}
+```
+
+After `let header = propagate parse_header(width: w, height: h);`,
+`header.width * 4_u32` needs no range check. The relation follows the field
+through a rebinding or a construction of another value while no write reaches
+the field [MSR-3]. Storing the value in an array element, or writing the field,
+ends it. The
+[header case](../tests/conformance/cases/fn9-pos-routed-ok-struct-payload-propagate.wf)
+and the [`Some` case](../tests/conformance/cases/fn9-pos-some-route-caller-match.wf)
+execute both routes.
+
 Evidence describes the value that was evaluated. Replacing the original
 binding does not change an earlier copy. Changing supporting storage does not
 retarget an old relation to the new contents, and merely holding an outcome
-does not assert that it is Ok. A branch join keeps only common consequences:
+does not assert that it is `Ok` or `Some`. A branch join keeps only common
+consequences:
 `payload < 8` on one path and `payload < 10` on another retain `payload < 10`.
 An unchanged outcome can cross a loop head; one changed by a continuing
 backedge cannot reuse the initial payload's evidence there.

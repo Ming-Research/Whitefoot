@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Runs {
+  count: u64;
+  classes: Box<Slots<u8>>;
+}
+
+fn push_run(runs: &Runs, class: u8) -> result: unit writes(runs) contract {
+  requires runs^.count == runs^.classes.inner.len;
+  requires runs^.classes.inner.len < runs^.classes.inner.cap;
+  ensures runs^.count == runs^.classes.inner.len;
+  ensures runs^.count == entry(runs)^.count + 1_u64;
+  ensures runs^.classes.inner.cap == entry(runs)^.classes.inner.cap;
+} {
+  doc "MSR-3: a bare integer field of a reference parameter the row writes denotes the selected return's exit state, and entry(runs)^.count its entry datum. The body re-establishes count == len after writing both.";
+  place_back(window: &runs^.classes.inner, value: class);
+  set runs^.count = runs^.count + 1_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The caller keeps count == len across the call's projected write through the exit-state relation [CALL-6], so the second call's requirements discharge; the construction gives count its literal value [MSR-3].";
+  let classes = box_slots_new::<u8>(capacity: 4_u64);
+  let runs = Runs(count: 0_u64, classes: move classes);
+  push_run(runs: &runs, class: 7_u8);
+  push_run(runs: &runs, class: 8_u8);
+  let code = cvt.wrap::<u64, u8>(runs.count);
+  return exit_status(code: code);
+}

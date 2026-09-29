@@ -143,8 +143,7 @@ impl FunctionEmitter<'_, '_> {
                 parameter.ty(),
                 &mut frame_references.types,
             )?;
-            let operand = self.value_operand(*argument)?;
-            operands.push(format!("{parameter_type} {operand}"));
+            operands.push(self.frame_operand(&parameter_type, *argument)?);
             field_types.push(parameter_type);
         }
         let result_field = field_types.len();
@@ -198,9 +197,10 @@ impl FunctionEmitter<'_, '_> {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
                 self.output,
-                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}\n  store {operand}, ptr {field}"
+                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.store_frame_operand(operand, &field)?;
         }
         let group = if bound {
             let slot = self.entry_slot(super::FunctionSlot::ContextResult(result))?;
@@ -256,8 +256,17 @@ impl FunctionEmitter<'_, '_> {
         }
         self.emit_group_join(result, &bound_group(start))?;
         let slot = self.entry_slot(super::FunctionSlot::ContextResult(start))?;
-        let emitted = self.output.type_name(self.program, ty)?;
         let (destination, reads_back) = self.waiting_destination(result, ordinary.result())?;
+        // A memory-only result (compiler/payload-enum-layout) moves by
+        // memmove; it returns through a destination, so it is never read
+        // back as a value.
+        if self.is_memory_only(ty)? {
+            if reads_back {
+                return Err(BackendFailure::InvalidIr);
+            }
+            return self.copy_storage(ty, &slot, &destination);
+        }
+        let emitted = self.output.type_name(self.program, ty)?;
         let moved = format!("%{}", self.next_temporary()?);
         writeln!(
             self.output,

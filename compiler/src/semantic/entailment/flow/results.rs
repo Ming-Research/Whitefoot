@@ -1,17 +1,42 @@
-//! Value-associated conditional Result evidence. Each context assumes only
-//! its own value is Ok; no operation combines guards of different outcomes.
+//! Value-associated conditional success evidence of a Result or an Option.
+//! Each context assumes only its own value holds its success variant; no
+//! operation combines guards of different outcomes.
 
 use super::*;
 
 #[derive(Clone, Debug)]
 pub(super) struct ResultEvidence {
-    pub(super) payload: TermId,
+    /// The success payload type the context's private root is typed by
+    /// [ENT-2] clause (i).
+    pub(super) payload: CheckedType,
+    /// The tag of the success variant, `Ok` or `Some`, whose arm selects
+    /// this context.
+    pub(super) success_tag: u32,
     pub(super) facts: FactState,
     pub(super) definitely_err: bool,
 }
 
+/// [ENT-5] the success route of one Result or Option type whose payload
+/// supplies data under [CALL-4].
+#[derive(Clone, Copy)]
+pub(super) struct SuccessRoute {
+    pub(super) payload: CheckedType,
+    /// The declaration-order index of the success variant.
+    pub(super) success_index: u32,
+    pub(super) success_tag: u32,
+    /// An integer-payload Result has a context for every value, as it always
+    /// has. Every other admitted type receives one where evidence is created:
+    /// an empty context and a missing association mean the same [ENT-5], so
+    /// a value no success construction or routed call reaches needs none.
+    pub(super) eager: bool,
+}
+
 impl Input<'_, '_> {
-    fn result_payload_type(&self, ty: CheckedType) -> Option<IntegerType> {
+    /// [ENT-5] the success route of a local own `Result<T, E>` or
+    /// `Option<T>` whose payload type T supplies data under [CALL-4]: a
+    /// fragment integer, a measured type, or an aggregate reaching one of the
+    /// two through struct fields and `Box` content.
+    pub(super) fn success_route(&self, ty: CheckedType) -> Option<SuccessRoute> {
         let CheckedType::Nominal(id) = ty else {
             return None;
         };
@@ -19,24 +44,174 @@ impl Input<'_, '_> {
         else {
             return None;
         };
-        let ok = variants.iter().find(|variant| {
-            variant.constructor == CheckedConstructor::Prelude(crate::BuiltinPreludeId::OK)
+        let (index, success) = variants.iter().enumerate().find(|(_, variant)| {
+            matches!(
+                variant.constructor,
+                CheckedConstructor::Prelude(
+                    crate::BuiltinPreludeId::OK | crate::BuiltinPreludeId::SOME
+                )
+            )
         })?;
-        let [field] = ok.fields.as_slice() else {
+        let [field] = success.fields.as_slice() else {
             return None;
         };
-        fragment_type(field.ty)
+        if !self.payload_supplies_data(field.ty) {
+            return None;
+        }
+        Some(SuccessRoute {
+            payload: field.ty,
+            success_index: u32::try_from(index).ok()?,
+            success_tag: success.tag,
+            eager: success.constructor == CheckedConstructor::Prelude(crate::BuiltinPreludeId::OK)
+                && fragment_type(field.ty).is_some(),
+        })
+    }
+
+    /// [CALL-4] whether a value of this type supplies a datum.
+    fn payload_supplies_data(&self, ty: CheckedType) -> bool {
+        if fragment_type(ty).is_some() || measured_kind(ty).is_some() {
+            return true;
+        }
+        let mut pending = vec![ty];
+        let mut seen = HashSet::new();
+        while let Some(ty) = pending.pop() {
+            let CheckedType::Nominal(nominal) = ty else {
+                continue;
+            };
+            if !seen.insert(nominal) {
+                continue;
+            }
+            let children = match self
+                .context
+                .nominals
+                .get(nominal.0 as usize)
+                .map(|record| &record.kind)
+            {
+                Some(CheckedNominalKind::Struct { fields }) => {
+                    fields.iter().map(|field| field.ty).collect::<Vec<_>>()
+                }
+                Some(CheckedNominalKind::Box { referent, .. }) => vec![*referent],
+                _ => Vec::new(),
+            };
+            for child in children {
+                if fragment_type(child).is_some() || measured_kind(child).is_some() {
+                    return true;
+                }
+                pending.push(child);
+            }
+        }
+        false
+    }
+
+    /// The type an owned descendant projection of struct-field and `Box`
+    /// content steps reaches below a payload type [CALL-4], if every step
+    /// selects one.
+    pub(super) fn payload_path_type(
+        &self,
+        mut ty: CheckedType,
+        path: &[PlaceStep],
+    ) -> Option<CheckedType> {
+        for step in path {
+            let CheckedType::Nominal(nominal) = ty else {
+                return None;
+            };
+            ty = match (&self.context.nominals.get(nominal.0 as usize)?.kind, step) {
+                (CheckedNominalKind::Struct { fields }, PlaceStep::Field(field)) => {
+                    fields.get(*field as usize)?.ty
+                }
+                (CheckedNominalKind::Box { referent, .. }, PlaceStep::Deref) => *referent,
+                _ => return None,
+            };
+        }
+        Some(ty)
     }
 }
 
 impl Reasoning<'_, '_, '_> {
-    fn result_context(&mut self, ty: CheckedType) -> Option<ResultEvidence> {
-        let ty = self.input.result_payload_type(ty)?;
-        Some(ResultEvidence {
-            payload: self.vocabulary.terms.intern(TermKind::ResultPayload(ty)),
+    fn result_context(&mut self, route: SuccessRoute) -> ResultEvidence {
+        ResultEvidence {
+            payload: route.payload,
+            success_tag: route.success_tag,
             facts: FactState::new(),
             definitely_err: false,
-        })
+        }
+    }
+
+    /// [ENT-2] clause (i) the term of a payload root that stands for the
+    /// value of the fragment-integer place `path` reaches, or for one
+    /// measure of the measured place it reaches.
+    pub(super) fn payload_root_term(
+        &mut self,
+        payload: CheckedType,
+        path: &[PlaceStep],
+        measure: Option<CheckedMeasure>,
+    ) -> Option<TermId> {
+        let reached = self.input.payload_path_type(payload, path)?;
+        let ty = match measure {
+            Some(_) => {
+                measured_kind(reached)?;
+                IntegerType::U64
+            }
+            None => fragment_type(reached)?,
+        };
+        Some(self.vocabulary.terms.intern(TermKind::ResultPayload {
+            payload,
+            path: path.to_vec(),
+            measure,
+            ty,
+        }))
+    }
+
+    /// The pairs a success construction substitutes [ENT-5]: each already
+    /// formed term of the payload place, its own value or a place or measure
+    /// its owned descendant projection reaches, with the root term standing
+    /// for it. A term outside the existing vocabulary contributes nothing.
+    fn payload_pairs(
+        &mut self,
+        payload: CheckedType,
+        value: &CheckedExpression,
+    ) -> Vec<(TermId, TermId)> {
+        if fragment_type(payload).is_some() {
+            let Some(term) = self.read_operand(value) else {
+                return Vec::new();
+            };
+            return self
+                .payload_root_term(payload, &[], None)
+                .map(|root| vec![(term, root)])
+                .unwrap_or_default();
+        }
+        let Some(source) = self.input.placement_source_place(value) else {
+            return Vec::new();
+        };
+        let source = source.term_identity();
+        let mut found = Vec::new();
+        for term in self.vocabulary.terms.ids() {
+            let (place, measure) = match self.vocabulary.terms.kind(term) {
+                TermKind::Place(place, _) => (place, None),
+                TermKind::Measure(measure, place) => (place, Some(*measure)),
+                _ => continue,
+            };
+            if place.root != source.root {
+                continue;
+            }
+            let Some(path) = place.path.strip_prefix(source.path.as_slice()) else {
+                continue;
+            };
+            if !path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_) | PlaceStep::Deref))
+            {
+                continue;
+            }
+            found.push((term, path.to_vec(), measure));
+        }
+        let mut pairs = Vec::with_capacity(found.len());
+        for (term, path, measure) in found {
+            if let Some(root) = self.payload_root_term(payload, &path, measure) {
+                pairs.push((term, root));
+            }
+        }
+        pairs
     }
 }
 
@@ -79,7 +254,7 @@ impl Vocabulary {
             result.facts = ordinary.numeric_snapshot();
             result
                 .facts
-                .kill(|term| matches!(self.terms.kind(term), TermKind::ResultPayload(_)));
+                .kill(|term| matches!(self.terms.kind(term), TermKind::ResultPayload { .. }));
             for (relation, parent) in conditional {
                 result
                     .facts
@@ -91,7 +266,7 @@ impl Vocabulary {
             if relation
                 .terms()
                 .iter()
-                .any(|term| matches!(self.terms.kind(*term), TermKind::ResultPayload(_)))
+                .any(|term| matches!(self.terms.kind(*term), TermKind::ResultPayload { .. }))
             {
                 continue;
             }
@@ -101,12 +276,13 @@ impl Vocabulary {
         }
     }
 
+    /// Substitutes every pair's second term for its first in the closed
+    /// facts of `source`, recording one transport step per substituted term.
     fn substitute_result_facts(
         &mut self,
         statement: &crate::NodePath,
         source: &FactState,
-        from: TermId,
-        to: TermId,
+        pairs: &[(TermId, TermId)],
     ) -> FactState {
         let mut closed = source.clone();
         materialize_closure_before_kill(
@@ -118,20 +294,28 @@ impl Vocabulary {
         if closed.all_derivable {
             return FactState::contradictory(closed.contradiction.expect("closed contradiction"));
         }
+        let substituted_term = |term: TermId| pairs.iter().any(|(from, _)| *from == term);
         let mut target = closed.numeric_snapshot();
-        target.kill(|term| term == from);
+        target.kill(substituted_term);
         for (relation, parent) in closed.l0_candidates() {
-            if !relation.terms().contains(&from) {
+            if !relation.terms().iter().copied().any(substituted_term) {
                 continue;
             }
-            let substituted = replace_relation_term(&relation, from, to);
-            let parent = self.derivations.intern(DerivationNode::ResultTransport {
-                statement: statement.clone(),
-                from,
-                to,
-                relation: Box::new(substituted.clone()),
-                parent,
-            });
+            let mut substituted = relation;
+            let mut parent = parent;
+            for (from, to) in pairs {
+                if !substituted.terms().contains(from) {
+                    continue;
+                }
+                substituted = replace_relation_term(&substituted, *from, *to);
+                parent = self.derivations.intern(DerivationNode::ResultTransport {
+                    statement: statement.clone(),
+                    from: *from,
+                    to: *to,
+                    relation: Box::new(substituted.clone()),
+                    parent,
+                });
+            }
             target.establish_from_proof(&substituted, parent, &self.derivations);
         }
         target
@@ -156,35 +340,39 @@ impl Analyzer<'_, '_> {
         {
             return None;
         }
-        let mut result = self.reasoning().result_context(expression.ty())?;
+        let route = self.input.success_route(expression.ty())?;
+        let mut result = self.reasoning().result_context(route);
         match expression {
             CheckedExpression::Binding { binding, .. } if !is_holder(*binding) => {
                 if let Some(held) = state.results.get(binding) {
                     result = held.clone();
+                } else if !route.eager {
+                    return None;
                 }
                 self.vocabulary.refresh_result(&mut result, &state.facts);
             }
             CheckedExpression::ConstructEnum {
                 variant, fields, ..
-            } if *variant == 0 => {
+            } if *variant == route.success_index => {
                 let [value] = fields.as_slice() else {
                     return Some(result);
                 };
-                if let Some(term) = self.reasoning().read_operand(value) {
-                    result.facts = self.vocabulary.substitute_result_facts(
-                        statement,
-                        &state.facts,
-                        term,
-                        result.payload,
-                    );
-                    // A literal or a previously unmentioned binding needs
-                    // its exact value equality as well as its consequences.
-                    let event = self
-                        .vocabulary
-                        .proof_event(FlowEventKind::S5, Some(statement));
+                let pairs = self.reasoning().payload_pairs(route.payload, value);
+                if pairs.is_empty() {
+                    return route.eager.then_some(result);
+                }
+                result.facts =
+                    self.vocabulary
+                        .substitute_result_facts(statement, &state.facts, &pairs);
+                // A literal or a previously unmentioned binding needs its
+                // exact value equality as well as its consequences.
+                let event = self
+                    .vocabulary
+                    .proof_event(FlowEventKind::S5, Some(statement));
+                for (term, root) in pairs {
                     result.facts.establish(
                         &Relation::Equal {
-                            left: result.payload,
+                            left: root,
                             right: term,
                             difference: 0,
                         },
@@ -193,7 +381,7 @@ impl Analyzer<'_, '_> {
                     );
                 }
             }
-            CheckedExpression::ConstructEnum { variant, .. } if *variant == 1 => {
+            CheckedExpression::ConstructEnum { .. } => {
                 let parent = self
                     .vocabulary
                     .derivations
@@ -214,6 +402,9 @@ impl Analyzer<'_, '_> {
                 // even when its input is outside the tracked-place vocabulary.
                 // Existing sources publish only the input's admitted image;
                 // no identity is invented for an indirect mutable read.
+                let payload = self
+                    .reasoning()
+                    .payload_root_term(route.payload, &[], None)?;
                 self.vocabulary.refresh_result(&mut result, &state.facts);
                 let (minimum, maximum) = type_range(*source);
                 let event = self
@@ -221,13 +412,13 @@ impl Analyzer<'_, '_> {
                     .proof_event(FlowEventKind::S5, Some(statement));
                 for relation in [
                     Relation::Bound {
-                        left: result.payload,
+                        left: payload,
                         right: ZERO,
                         bound: maximum,
                     },
                     Relation::Bound {
                         left: ZERO,
-                        right: result.payload,
+                        right: payload,
                         bound: -minimum,
                     },
                 ] {
@@ -237,7 +428,7 @@ impl Analyzer<'_, '_> {
                 }
                 self.establish_value_image(
                     statement,
-                    ValueImage::ResultPayload(result.payload),
+                    ValueImage::ResultPayload(payload),
                     value,
                     &mut result.facts,
                     &mut None,
@@ -246,14 +437,13 @@ impl Analyzer<'_, '_> {
             // [ENT-5] a checked integer row's success payload is the exact
             // row's mathematical result, with that row's [ENT-3.S7] facts.
             CheckedExpression::IntegerOperation { .. } => {
+                let payload = self
+                    .reasoning()
+                    .payload_root_term(route.payload, &[], None)?;
                 self.vocabulary.refresh_result(&mut result, &state.facts);
-                self.establish_checked_payload(
-                    statement,
-                    result.payload,
-                    expression,
-                    &mut result.facts,
-                );
+                self.establish_checked_payload(statement, payload, expression, &mut result.facts);
             }
+            _ if !route.eager => return None,
             _ => {}
         }
         Some(result)
@@ -272,11 +462,6 @@ impl Reasoning<'_, '_, '_> {
             *result = None;
             return;
         }
-        let Some(result) = result else { return };
-        let mut kills = Vec::new();
-        self.input.collect_expression_kills(expression, &mut kills);
-        self.apply_kills_one(&state.separations, &mut result.facts, &kills);
-        self.vocabulary.refresh_result(result, &state.facts);
         let (
             Some(prepared),
             CheckedExpression::UserCall {
@@ -288,22 +473,54 @@ impl Reasoning<'_, '_, '_> {
             },
         ) = (&judgment.prepared_call, expression)
         else {
+            if let Some(result) = result {
+                let mut kills = Vec::new();
+                self.input.collect_expression_kills(expression, &mut kills);
+                self.apply_kills_one(&state.separations, &mut result.facts, &kills);
+                self.vocabulary.refresh_result(result, &state.facts);
+            }
             return;
         };
-        for available in &prepared.postconditions {
-            if available.variant != Some(crate::BuiltinPreludeId::OK)
-                || available.field != Some(crate::BuiltinPreludeId::OK_VALUE)
-            {
-                continue;
-            }
+        let routed = prepared
+            .postconditions
+            .iter()
+            .filter(|available| {
+                matches!(
+                    (available.variant, available.field),
+                    (
+                        Some(crate::BuiltinPreludeId::OK),
+                        Some(crate::BuiltinPreludeId::OK_VALUE)
+                    ) | (
+                        Some(crate::BuiltinPreludeId::SOME),
+                        Some(crate::BuiltinPreludeId::SOME_VALUE)
+                    )
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        // [ENT-5] a routed call's value receives its context here, where the
+        // call establishes the relations it restricts to it; a type whose
+        // contexts are created only by evidence has none before.
+        if result.is_none()
+            && !routed.is_empty()
+            && let Some(route) = self.input.success_route(expression.ty())
+        {
+            *result = Some(self.result_context(route));
+        }
+        let Some(result) = result else { return };
+        let mut kills = Vec::new();
+        self.input.collect_expression_kills(expression, &mut kills);
+        self.apply_kills_one(&state.separations, &mut result.facts, &kills);
+        self.vocabulary.refresh_result(result, &state.facts);
+        let destination = [Some(ResultDestination::PayloadRoot(result.payload))];
+        for available in &routed {
             let Some(instantiated) = self.instantiate_call_postcondition_relation(
                 *function,
                 call,
                 &available.relation,
                 arguments,
                 goal_arguments,
-                &[Some(result.payload)],
-                &[],
+                &destination,
             ) else {
                 continue;
             };
@@ -337,39 +554,77 @@ impl Reasoning<'_, '_, '_> {
             }
         }
     }
-}
 
-impl Vocabulary {
+    /// [ENT-5] an own match's success arm and propagate's successful
+    /// continuation select the evaluated outcome's context: each root term
+    /// is replaced by the corresponding term of the receiving binding, the
+    /// binding itself for the payload's own value and the place or measure
+    /// its projection reaches otherwise.
     pub(super) fn select_result(
         &mut self,
         statement: &crate::NodePath,
         result: &ResultEvidence,
         binding: BindingId,
-        ty: CheckedType,
         state: &mut ProofFlowState,
     ) {
-        let Some(receiver) = self.postcondition_place_term(PlaceRoot::Binding(binding), &[], ty)
-        else {
-            return;
-        };
         let mut result = result.clone();
-        self.refresh_result(&mut result, &state.facts);
-        let selected =
-            self.substitute_result_facts(statement, &result.facts, result.payload, receiver);
+        self.vocabulary.refresh_result(&mut result, &state.facts);
+        let mut roots = Vec::new();
+        for term in self.vocabulary.terms.ids() {
+            if let TermKind::ResultPayload {
+                payload,
+                path,
+                measure,
+                ty,
+            } = self.vocabulary.terms.kind(term)
+                && *payload == result.payload
+            {
+                roots.push((term, path.clone(), *measure, *ty));
+            }
+        }
+        let mut pairs = Vec::with_capacity(roots.len());
+        for (root, path, measure, ty) in roots {
+            let place = ResolvedPlace {
+                root: PlaceRoot::Binding(binding),
+                path: path.clone(),
+            };
+            let receiver = match measure {
+                None => Some(self.vocabulary.terms.intern(TermKind::Place(place, ty))),
+                Some(measure) => self
+                    .input
+                    .payload_path_type(result.payload, &path)
+                    .and_then(|reached| {
+                        let measured = measured_kind(reached)?;
+                        Some(self.place_measure_term(
+                            measure,
+                            place,
+                            measured,
+                            type_constant(reached),
+                        ))
+                    }),
+            };
+            if let Some(receiver) = receiver {
+                pairs.push((root, receiver));
+            }
+        }
+        let selected = self
+            .vocabulary
+            .substitute_result_facts(statement, &result.facts, &pairs);
         if selected.all_derivable {
             state.facts.promote_to_contradiction(selected.contradiction);
         }
         for (relation, parent) in selected.l0_candidates() {
-            if relation
-                .terms()
-                .iter()
-                .any(|term| matches!(self.terms.kind(*term), TermKind::ResultPayload(_)))
-            {
+            if relation.terms().iter().any(|term| {
+                matches!(
+                    self.vocabulary.terms.kind(*term),
+                    TermKind::ResultPayload { .. }
+                )
+            }) {
                 continue;
             }
             state
                 .facts
-                .establish_from_proof(&relation, parent, &self.derivations);
+                .establish_from_proof(&relation, parent, &self.vocabulary.derivations);
         }
     }
 }
@@ -452,7 +707,9 @@ impl Vocabulary {
         let mut bindings = BTreeMap::new();
         for state in states {
             for (&binding, result) in &state.results {
-                bindings.entry(binding).or_insert(result.payload);
+                bindings
+                    .entry(binding)
+                    .or_insert((result.payload, result.success_tag));
             }
         }
         let mut results = BTreeMap::new();
@@ -463,7 +720,7 @@ impl Vocabulary {
             .iter()
             .map(|state| self.result_ordinary_snapshot(&state.facts))
             .collect::<Vec<_>>();
-        for (binding, payload) in bindings {
+        for (binding, (payload, success_tag)) in bindings {
             let mut images = Vec::new();
             for (state, ordinary) in states.iter().zip(&ordinary) {
                 let mut result = state
@@ -472,6 +729,7 @@ impl Vocabulary {
                     .cloned()
                     .unwrap_or(ResultEvidence {
                         payload,
+                        success_tag,
                         facts: FactState::new(),
                         definitely_err: false,
                     });
@@ -496,6 +754,7 @@ impl Vocabulary {
                 binding,
                 ResultEvidence {
                     payload,
+                    success_tag,
                     facts,
                     definitely_err,
                 },
@@ -560,10 +819,12 @@ mod tests {
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);
-        let from = analyzer
-            .vocabulary
-            .terms
-            .intern(TermKind::ResultPayload(IntegerType::I32));
+        let from = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
+            payload: CheckedType::Integer(IntegerType::I32),
+            path: Vec::new(),
+            measure: None,
+            ty: IntegerType::I32,
+        });
         let [middle, to] = [0, 1].map(|binding| {
             analyzer.vocabulary.terms.intern(TermKind::Place(
                 ResolvedPlace::binding(BindingId(binding)),
@@ -636,9 +897,10 @@ mod tests {
         let candidates =
             |state: &FactState| state.l0_candidates().into_iter().collect::<HashSet<_>>();
         assert_eq!(candidates(&source), candidates(&source.numeric_snapshot()));
-        let mut transported = analyzer
-            .vocabulary
-            .substitute_result_facts(&statement, &source, from, to);
+        let mut transported =
+            analyzer
+                .vocabulary
+                .substitute_result_facts(&statement, &source, &[(from, to)]);
         // Reference the previous full import, independent of closed-core reuse.
         let mut rebuilt = FactState::new();
         for (relation, parent) in source.l0_candidates() {
@@ -696,10 +958,12 @@ mod tests {
             assert!(actual.derives_bound(to, middle, if remove_calls { 5 } else { -1 }));
         }
 
-        let foreign = analyzer
-            .vocabulary
-            .terms
-            .intern(TermKind::ResultPayload(IntegerType::U8));
+        let foreign = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
+            payload: CheckedType::Integer(IntegerType::U8),
+            path: Vec::new(),
+            measure: None,
+            ty: IntegerType::U8,
+        });
         let mut ordinary = FactState::new();
         ordinary.establish(
             &Relation::Bound {
@@ -715,7 +979,8 @@ mod tests {
         // closed context whose core predates a newly registered term.
         for conditional in [unseeded, source] {
             let mut refreshed = ResultEvidence {
-                payload: from,
+                payload: CheckedType::Integer(IntegerType::I32),
+                success_tag: 0,
                 facts: conditional.clone(),
                 definitely_err: false,
             };
@@ -726,7 +991,7 @@ mod tests {
                 if !relation.terms().iter().any(|term| {
                     matches!(
                         analyzer.vocabulary.terms.kind(*term),
-                        TermKind::ResultPayload(_)
+                        TermKind::ResultPayload { .. }
                     )
                 }) {
                     imported.establish_from_proof(
