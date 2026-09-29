@@ -77,6 +77,19 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A widening conversion in a relation admits any affine operand.**
+  [ENT-2] admits `cvt::<S, D>(e)` in an [FN-9] relation term or a
+  comparison-origin operand only for e a term or constant, but
+  `goal_affine_side` in `compiler/src/semantic/entailment/flow/goals.rs`
+  recurses into any affine e once the conversion is widening, so
+  `cvt::<u32, u64>(x + 1_u32) < n` is read as `x + 1 < n`. This is sound,
+  since a widening conversion and exact `+` both keep the mathematical
+  value, but it accepts more than the text. The owner chose on 2026-09-29 to
+  leave it until a program needs it. Then either widen ENT-2 to affine
+  operands, with a conformance case over `cvt` of a sum, or narrow the code
+  to terms and constants, with a case that rejects one; reopen when a
+  program or a spec edit of ENT-2 depends on the difference.
+
 - **A module check's cost for a library interface still grows with the
   module's functions.** Reading `std::process`'s closure (the `std::io`,
   `std::text`, `std::fs` and `std::process` interfaces) costs a one-function

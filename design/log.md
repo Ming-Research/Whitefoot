@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Exclude waiting recursions from the budget family and carry Result and Option payload data lazily
+
+Nodes: compiler/parallel-lowering/two-worlds, compiler/checker-facts, language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, compiler/payload-enum-layout
+
+Owner-approved: 2026-09-29, the owner approved decision cards 1 to 4 for PR #184 (written in Chinese): the waiting-recursion-budget and checker-facts-payload-root amendments and #180's two scope choices.
+
+Summary: Apply the two reviewed amendments unchanged apart from their replacement notes. compiler/parallel-lowering/two-worlds adds components with a waiting member to the exclusions from the recursion-budget family, because a waiting function is a resumable frame entered by a transfer with no ordinary signature for a budget variant to stand behind; the offers such a recursion reaches keep their dispatch without a budget, and a budget-carrying frame variant and withdrawing those offers are refused (PR #182). compiler/checker-facts replaces its conditional-Result decision with a private payload root over every integer value or measure a Result or Option success payload supplies, adds that only an integer-payload Result receives its conditional state at every value while other admitted values receive one where evidence first arises, and extends measure placement to integer-field values carried only from already interned terms, because specification v0.80 extends conditional success transport to those payloads and absent states prove the same goals at no closure or join cost (PR #180). The owner also confirmed #180's scope choices recorded in specification v0.80: the `Some` route admits the same payload data as `Ok`, and MSR-3 carries a construction's operand. Nodes also names the nodes of the other entries this merge brings to main (the aggregate-postcondition and payload-enum-layout entries), because the newest entry names every node changed against main. This ruling authorizes no merge.
+
 ## 2026-09-29 Admit integer fields of results and payloads, written-parameter exit fields, widening conversions and the Option route
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, compiler/payload-enum-layout
