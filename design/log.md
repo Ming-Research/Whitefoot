@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Hold struct invariants at the declaring module's boundary
+
+Nodes: language/checks-and-proofs, language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts
+
+Owner-approved: 2026-09-29, the owner approved decision card 7 of the concurrency-model investigation ("card 7 approved, build it at the module boundary", written in Chinese), after remarking that an invariant bound to a struct would be most useful if kept for the value's whole life.
+
+Summary: language/checks-and-proofs adds a decision that a struct may declare difference-bound invariants over its own fields, owed at every construction and at every hand-off of the value (a function's exits when it writes the value, each call passing it, a shared object's creation and an atomic block's exits) and assumed at every function's entry, with every field private or public readonly so that only the declaring module writes fields. It reverses the refusal of type-level struct invariants approved with PR #169: that refusal's first reason, that every field write would owe the invariant, no longer holds, because ownership, non-escaping references and no global mutable state make a value unobservable between two writes of one body, so only hand-offs owe it; the refusal is restated as the per-write form, and its second reason becomes its own refusal of invariants relating a value to another value, which stay contracts. The [investigation](../research/investigations/io-model/CONCURRENCY-MODEL.md#56-an-invariant-for-the-whole-life-of-a-value) holds the rule, SPARK's Type_Invariant as precedent and the probes; a shared object's invariant, which the owner chose to declare on the state type, is this one. Nodes also names the nodes of the shared-objects entry below, which this branch brings to main, because the newest entry names every node changed against main. This ruling authorizes no merge.
+
 ## 2026-09-29 Add shared objects and promise progress while a guard waits
 
 Nodes: language/waiting/shared-objects, language/ownership, language/parallelism, compiler/waiting-contexts
