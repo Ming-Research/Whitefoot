@@ -5,6 +5,22 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Spend the recursion budget only at group calls
+
+Nodes: compiler/parallel-lowering/two-worlds, compiler/parallel-lowering
+
+Owner-approved: 2026-09-29, the owner approved decision card 1 of PR #177, the recursion-budget-at-splits amendment, in the session (written in Chinese).
+
+Summary: Apply the recursion-budget-at-splits amendment unchanged apart from its replacement note. compiler/parallel-lowering/two-worlds replaces the budget decision's "intra-component calls and callbacks decrement it" with a decrement only at calls in an actualized statement group (a published member's callback, the inline member and its refused edge), while any other call into the component passes the budget on, because the budget bounds how deeply offers nest and a call outside every group offers nothing: the per-call decrement spent the default budget on a deep document's one-child descents and held Snowghost's preorder style traversal to 1.04 times at four workers on ecma262 and 2.57 on html5, and the new rule reaches 3.10 and 3.67 (research/investigations/call-offer-grain/DESIGN.md, the recursion budget at splits). Two refused alternatives are recorded: the per-call decrement, and keeping it with a larger default budget. A fixed depth still cannot follow an unbalanced tree (apollo11), recorded in docs/todo.md. Nodes also names compiler/parallel-lowering, the node of this PR's earlier call-grain entry, because the newest entry names every node changed against main. This ruling authorizes no merge.
+
+## 2026-09-29 Offer a call only when its callee recurses or reaches the work unit
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: 2026-09-29, the owner approved the call-offer-grain amendment of PR #177 in the session ("the improvements above should all go in", written in Chinese).
+
+Summary: Apply the call-offer-grain amendment unchanged apart from its replacement notes. compiler/parallel-lowering replaces the scalar-leaf decision with the call grain: under --par a permitted statement-group call is offered only when its callee belongs to or reaches a cyclic call component or its static work summary reaches the 150,000-unit work unit, `--par-call-grain off` offers every permitted call and `--par-ledger` names each omitted offer, because 99 percent of the first large real program's call offers called callees of static weight at most 100 and made its page setup up to 37 times slower at four workers than at one, while the rule kept every measured page's setup within 5 percent or 10 ms of its one-worker time and left the formal kernels byte-identical (research/investigations/call-offer-grain/DESIGN.md, implementation results). It also replaces the sequential-refusal decision with one that keeps refusal off and records the grain's two known provisional limits and their reopening condition, and adds five refused alternatives: the scalar-leaf limit, pricing without a recursion exemption, offering only callees that reach a loop or recursion, sequential refusal by default, and stopping publication from unprofitable call sites at run time. This ruling authorizes no merge.
+
 ## 2026-09-29 Exclude waiting recursions from the budget family and carry Result and Option payload data lazily
 
 Nodes: compiler/parallel-lowering/two-worlds, compiler/checker-facts, language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, compiler/payload-enum-layout

@@ -32,9 +32,9 @@ use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Sign
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, is_stored_aggregate};
 use crate::target::{
-    TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout, TargetLayoutFailure,
-    TargetStorageType, parallel_lane_frame_layout, plan_target_frame, validate_program,
-    validate_static_storage,
+    LANE_FRAME_BYTES, TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout,
+    TargetLayoutFailure, TargetStorageType, fits_parallel_lane_slot, parallel_lane_frame_extent,
+    parallel_lane_frame_layout, plan_target_frame, validate_program, validate_static_storage,
 };
 use crate::{
     IrAddressed, IrAllocationObligations, IrArrayRoot, IrBlock, IrBlockId, IrBooleanOperation,
@@ -545,11 +545,67 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.append(floor_runtime_fallback()?);
     text.text("\n");
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    let mut ledger = frontiers.ledger().to_vec();
+    ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     Ok(LlvmModule {
         text: text.render(),
         model: text,
-        ledger: frontiers.ledger().to_vec(),
+        ledger,
     })
+}
+
+/// `--par-ledger` lines for the call groups the emitter hands out nothing
+/// from because a member's lane frame does not fit the runtime's slot.
+///
+/// [`ordinary_overlap_lane_frames`] declines such a group whole, and the calls
+/// run where they stand; without a line the permitted group would vanish from
+/// the build with no reason given. Each function is asked with the budget
+/// field its emitted body carries: a budget-family member's body is its
+/// variant, whose offers into its own component carry one more `u64`.
+fn lane_frame_ledger(
+    program: &IrProgram,
+    target: TargetLayout,
+    frontiers: &RecursiveFrontiers,
+) -> Result<Vec<String>, BackendFailure> {
+    let mut lines = Vec::new();
+    for (ordinal, function) in program.functions().iter().enumerate() {
+        let grain = frontiers.grain(ordinal);
+        for overlap in function.overlaps() {
+            for member in overlap.handed_out() {
+                let Some(IrOperation::Call {
+                    function: callee, ..
+                }) = definition_operation(function, *member)
+                else {
+                    continue;
+                };
+                let called = program
+                    .functions()
+                    .get(*callee as usize)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                let frame = parallel_lane_frame_extent(
+                    target,
+                    program.nominals(),
+                    program.elements(),
+                    called.parameters().iter().map(|(_, ty)| *ty),
+                    called.result(),
+                    grain.is_some_and(|grain| frontiers.stays(*callee, grain)),
+                )
+                .map_err(BackendFailure::TargetLayout)?;
+                if !fits_parallel_lane_slot(frame) {
+                    lines.push(format!(
+                        "PAR actualization  {}  lane frame: offer of {} needs {} bytes aligned to {}, over the {LANE_FRAME_BYTES}-byte lane slot; its group of {} offers runs as ordinary calls",
+                        function.name(),
+                        called.name(),
+                        frame.size(),
+                        frame.align(),
+                        overlap.handed_out().len(),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// The bytes an allocation refusal writes before aborting.
@@ -726,6 +782,10 @@ fn emit_recursion_budget_entry(
 /// leaves for the sequential clone from.
 const GRAIN_ENTRY_LABEL: &str = "par.grain";
 const GRAIN_SPENT_LABEL: &str = "par.grain.spent";
+
+/// A budget-carrying variant's trailing parameter: the levels its activation
+/// was handed, which a call outside every group passes on unchanged.
+const BUDGET_PARAMETER: &str = "%wf.budget";
 
 /// The spelling of the no-capture parameter attribute this build's assembler
 /// accepts, probed at build time (compiler/backend-facts). LLVM 21 renamed
@@ -1375,7 +1435,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // One ordinary ABI, with a budget field only for a synthesized variant.
                 let Some(frames) =
                     ordinary_overlap_lane_frames(program, target, function, overlap, &|callee| {
-                        grain.is_some_and(|grain| frontiers.spends(callee, grain))
+                        grain.is_some_and(|grain| frontiers.stays(callee, grain))
                     })?
                 else {
                     continue;
@@ -1533,25 +1593,49 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// In the clone world a call to a function that also has a clone names the
     /// clone, which is what keeps a clone's whole dynamic extent inside the
     /// sequential world. Inside a budgeted world a call that stays in the
-    /// component names the callee's variant and spends one level; a call that
-    /// leaves it enters that callee's ordinary symbol, which obtains a budget
-    /// of its own. Other calls use the shared original.
-    pub(super) fn callee_target(&self, ordinal: u32, name: &str) -> (String, Option<&str>) {
-        match (self.sequential_clones, self.grain) {
-            (Some(clones), _) if clones.contains(&ordinal) => (sequential_clone_symbol(name), None),
-            (None, Some(grain)) => {
-                let (symbol, spends) = self.frontiers.callee(ordinal, name, grain);
-                (
-                    symbol,
-                    spends.then_some(self.grain_next.as_deref()).flatten(),
-                )
-            }
-            _ => (source_symbol(name), None),
+    /// component names the callee's variant; a call that leaves it enters that
+    /// callee's ordinary symbol, which obtains a budget of its own. Other calls
+    /// use the shared original.
+    ///
+    /// A call that stays in the component spends one level only when `site`,
+    /// its result, is a member of a group this function hands out from: the
+    /// budget bounds how deep offers nest, and a call outside every group
+    /// offers nothing, so it passes the caller's levels on unchanged. A
+    /// recursion that descends through many levels before it reaches a split
+    /// then still has its levels at the split.
+    pub(super) fn callee_target(
+        &self,
+        ordinal: u32,
+        name: &str,
+        site: IrValueId,
+    ) -> (String, Option<&str>) {
+        let (symbol, stays) = self.callee_entry(ordinal, name);
+        if !stays {
+            return (symbol, None);
         }
+        let splits = self.overlap_handed_out.contains(&site) || self.is_overlap_join_site(site);
+        let budget = if splits {
+            self.grain_next.as_deref()
+        } else {
+            Some(BUDGET_PARAMETER)
+        };
+        (symbol, budget)
     }
 
     pub(super) fn callee_symbol(&self, ordinal: u32, name: &str) -> String {
-        self.callee_target(ordinal, name).0
+        self.callee_entry(ordinal, name).0
+    }
+
+    /// The symbol one call names, and whether it stays inside this function's
+    /// budgeted component and so carries a budget.
+    fn callee_entry(&self, ordinal: u32, name: &str) -> (String, bool) {
+        match (self.sequential_clones, self.grain) {
+            (Some(clones), _) if clones.contains(&ordinal) => {
+                (sequential_clone_symbol(name), false)
+            }
+            (None, Some(grain)) => self.frontiers.callee(ordinal, name, grain),
+            _ => (source_symbol(name), false),
+        }
     }
 
     /// The budget-carrying variant's entry: test the levels this activation

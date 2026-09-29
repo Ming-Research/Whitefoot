@@ -1184,7 +1184,7 @@ rarely insert at the same place.
   from that order: an oversized candidate's finished graph is transferred into
   its parent with every `IrFunction` field remapped by hand, ordinals are
   reserved late and the ledger rotates. Offer policy is spread over lowering,
-  a scalar-leaf post-pass, the emitter's lane-fit filter and the launcher, and
+  a call-grain post-pass, the emitter's lane-fit filter and the launcher, and
   the clone set is computed three times. Lowering the ordinary graph first and
   actualizing in one IR-to-IR pass whose plan the emitter only renders (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.1) removes
@@ -1301,20 +1301,49 @@ rarely insert at the same place.
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
 
+- **A fixed recursion budget cannot follow an unbalanced tree.** The budget
+  of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
+  an actualized group, but its depth is still fixed per pool width (about
+  eight levels at four workers). Snowghost's style shape B on apollo11 has
+  its work under a few children of wide sibling runs, so the halvings above
+  it spend the levels and the heavy subtree runs sequentially: a stage
+  speedup of 1.14 at four workers, while whole runs with the budget off or
+  pinned at 24 are about 3.7 to 3.8 times faster than at one worker
+  ([recursion budget at splits](../research/investigations/call-offer-grain/DESIGN.md#the-recursion-budget-at-splits)).
+  Candidate change: refresh the budget where offered work is taken by an
+  idle worker, so depth follows demand rather than a static count; it
+  revises that node and needs a measured comparison on the formal recursive
+  kernels (quadrature, merge sort, quicksort) and shape B. Reopen with the
+  next Snowghost style measurement or recursion-budget change.
+
+- **The call-offer grain is provisional.** `--par` now offers a
+  statement-group call only when its callee reaches a cyclic call component
+  or its static work reaches the 150,000 work unit
+  ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
+  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
+  non-recursive helper whose work is large only through its runtime extents
+  loses its offer, and a cheap call into a recursive component keeps one;
+  and a callee that reaches recursion only by starting a waiting context is
+  not seen as recursive, since neither this pass nor the recursion frontier
+  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  `--par-call-grain off` build; reopen when one appears.
+
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
   (compiler/parallel-lowering/two-worlds), because a waiting function is a
   resumable frame with no ordinary entry for a variant to stand behind.
   Every activation of such a recursion therefore reaches its offers
-  unbudgeted, as a `--par-recursive-frontier off` build does: in
+  unbudgeted, as a `--par-recursive-frontier off` build does. In
   `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
-  reach `name_before`'s byte-pair offers at every depth. Whether that costs
-  anything is unmeasured; the offers are small, and a grain rule may refuse
-  them before depth matters. Validate by timing the `--par` build of
-  `wfgrep.wf` on a deep and on a wide tree against the default build and
-  against a build that withholds those offers; if the unbudgeted offers cost
-  measurable time that no grain rule removes, give waiting components a
-  budget-carrying frame variant. Reopen with that measurement.
+  reached `name_before`'s byte-pair offers at every depth; the call grain now
+  omits those offers (static work 4), so wfgrep, the one maintained program
+  known to have such offers, no longer does, and whether one costs anything
+  is unmeasured.
+  Validate with a program whose waiting recursion reaches an offer the grain
+  keeps, timed on a deep and on a wide input against a build that withholds
+  the offer; if the unbudgeted offers cost measurable time, give waiting
+  components a budget-carrying frame variant. Reopen when such a program
+  appears.
 
 ## Platforms and host interfaces
 

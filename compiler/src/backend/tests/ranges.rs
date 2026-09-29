@@ -965,12 +965,7 @@ fn check_formal_compute_matrix(name: &str, source: &[u8], adapter: &str, oracle:
         "#include \"oracle.h\"",
         include_str!("../../../../tests/programs/compute/oracle.h"),
     );
-    for overlap in [
-        OverlapLowering::Off,
-        OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 16,
-        },
-    ] {
+    for overlap in [OverlapLowering::Off, OverlapLowering::OnWithCallGrain] {
         let emitted = emit_lowered(source, overlap);
         let llvm = bind_compute_host_adapter(&emitted, adapter)
             .replace("@main(", "@wf_compute_smoke_main(")

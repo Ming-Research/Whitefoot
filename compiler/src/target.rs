@@ -871,6 +871,33 @@ pub(crate) fn parallel_lane_frame_layout(
     result: IrType,
     carries_budget: bool,
 ) -> Result<Option<TargetAggregateLayout>, TargetLayoutFailure> {
+    let layout = parallel_lane_frame_extent(
+        target,
+        nominals,
+        elements,
+        parameters,
+        result,
+        carries_budget,
+    )?;
+    Ok(fits_parallel_lane_slot(layout).then_some(layout))
+}
+
+/// Whether a lane frame fits the runtime's worker slot in size and alignment.
+pub(crate) fn fits_parallel_lane_slot(layout: TargetAggregateLayout) -> bool {
+    layout.size <= LANE_FRAME_BYTES && layout.align <= PARALLEL_LANE_FRAME_ALIGNMENT
+}
+
+/// The size and alignment of the lane frame [`parallel_lane_frame_layout`]
+/// describes, whether or not it fits the slot, so a declined offer can be
+/// reported with the frame it would have needed.
+pub(crate) fn parallel_lane_frame_extent(
+    target: TargetLayout,
+    nominals: &[IrNominal],
+    elements: &[IrType],
+    parameters: impl IntoIterator<Item = IrType>,
+    result: IrType,
+    carries_budget: bool,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
     let mut layouts = LayoutComputer::new(target, nominals, elements);
     let mut fields = Vec::new();
     for ty in parameters {
@@ -896,13 +923,10 @@ pub(crate) fn parallel_lane_frame_layout(
         );
     }
     let layout = layouts.aggregate_layout(fields, TargetObject::ParallelLaneFrame)?;
-    if layout.size > LANE_FRAME_BYTES || layout.align > PARALLEL_LANE_FRAME_ALIGNMENT {
-        return Ok(None);
-    }
-    Ok(Some(TargetAggregateLayout {
+    Ok(TargetAggregateLayout {
         size: layout.size,
         align: layout.align,
-    }))
+    })
 }
 
 pub(super) fn validate_program(
