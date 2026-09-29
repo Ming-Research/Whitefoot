@@ -10,10 +10,14 @@ SAMPLES ?= $(BUILD)/measurements-$(MEASURE_SET)-$(SOURCE_SHAPE).csv
 STAGED_SOURCE_DIR := $(abspath $(BUILD)/staged-source)
 STAGED_BASE := $(STAGED_SOURCE_DIR)/sparse-map.wf
 STAGED_SOURCE := $(STAGED_SOURCE_DIR)/staged-map.wf
-LIBRARY_SOURCE := $(ROOT)/lib/containers/hash-map.wf
-SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) $(LIBRARY_SOURCE) map-library.wf
+# map-library.wf now aliases HashMap's names from std::collections::hash_map
+# itself (an alias binds in its own record alone [MOD-4]), so the main
+# SOURCES and COMPACT_SOURCES no longer need a separate library file; only
+# INLINE_SOURCE below still needs the library's real, patchable source text.
+LIBRARY_SOURCE := $(ROOT)/lib/std/collections/hash_map/hash-map.wf
+SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) map-library.wf
 COMPACT_SOURCE_DIR := $(abspath $(BUILD)/compact-source)
-COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(LIBRARY_SOURCE) $(COMPACT_SOURCE_DIR)/map-library.wf
+COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(COMPACT_SOURCE_DIR)/map-library.wf
 INLINE_SOURCE_DIR := $(abspath $(BUILD)/inline-source)
 INLINE_SOURCE := $(INLINE_SOURCE_DIR)/hash-map.wf
 OBSERVER := $(ROOT)/tests/programs/containers/container-allocation-observer.c
@@ -59,7 +63,10 @@ FIXTURE_sparse-owned := sparse-map.wf sparse-owned-check.wf
 FIXTURE_slot := slot-map.wf slot-check.wf
 FIXTURE_staged := $(STAGED_BASE) sparse-check.wf
 FIXTURE_staged-owned := $(STAGED_BASE) sparse-owned-check.wf
-FIXTURE_library := $(LIBRARY_SOURCE) $(ROOT)/tests/programs/containers/hash-map-program.wf
+# hash-map-program.wf already aliases HashMap's names from
+# std::collections::hash_map itself, so pairing it with LIBRARY_SOURCE here
+# would bind the same names twice.
+FIXTURE_library := $(ROOT)/tests/programs/containers/hash-map-program.wf
 EXPECTED_dense := 24
 EXPECTED_dense-owned := 14
 EXPECTED_sparse := 29

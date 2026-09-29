@@ -16,19 +16,19 @@ nodrop struct SparseTicket {
 }
 
 fn sparse_test_fail(seen: &SparseTestSeen) -> result: unit writes(seen) {
-  set deref(seen).failures = deref(seen).failures +wrap 1_u64;
+  set seen^.failures = seen^.failures +wrap 1_u64;
   return unit;
 }
 
 fn sparse_scalar_hash(env: &SparseHashEnv, key: &u64) -> result: u64 reads(key) {
-  return deref(key) % 1_u64;
+  return key^ % 1_u64;
 }
 
 fn sparse_scalar_equal(env: &SparseHashEnv, left: &u64, right: &u64) -> result: Bool reads(env), reads(left), reads(right) {
-  if deref(env).hostile {
+  if env^.hostile {
     return False();
   }
-  return deref(left) == deref(right);
+  return left^ == right^;
 }
 
 binding SparseScalarKey : SparseKey<u64, SparseHashEnv> {
@@ -37,14 +37,14 @@ binding SparseScalarKey : SparseKey<u64, SparseHashEnv> {
 }
 
 fn sparse_ticket_hash(env: &SparseHashEnv, key: &SparseTicket) -> result: u64 reads(key) {
-  return deref(key).id % 1_u64;
+  return key^.id % 1_u64;
 }
 
 fn sparse_ticket_equal(env: &SparseHashEnv, left: &SparseTicket, right: &SparseTicket) -> result: Bool reads(env), reads(left), reads(right) {
-  if deref(env).hostile {
+  if env^.hostile {
     return False();
   }
-  return deref(left).id == deref(right).id;
+  return left^.id == right^.id;
 }
 
 binding SparseTicketKey : SparseKey<SparseTicket, SparseHashEnv> {
@@ -53,9 +53,9 @@ binding SparseTicketKey : SparseKey<SparseTicket, SparseHashEnv> {
 }
 
 fn sparse_scalar_read(env: &SparseTestSeen, key: &u64, value: &u64) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).observed = deref(env).observed +wrap deref(value);
-  return deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.observed = env^.observed +wrap value^;
+  return value^;
 }
 
 fn sparse_scalar_visit(env: &SparseTestSeen, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
@@ -64,9 +64,9 @@ fn sparse_scalar_visit(env: &SparseTestSeen, key: &u64, value: &u64) -> result: 
 }
 
 fn sparse_ticket_read(env: &SparseTestSeen, key: &SparseTicket, value: &SparseTicket) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).observed = deref(env).observed +wrap deref(value).id;
-  return deref(value).id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.observed = env^.observed +wrap value^.id;
+  return value^.id;
 }
 
 fn sparse_ticket_visit(env: &SparseTestSeen, key: &SparseTicket, value: &SparseTicket) -> result: unit reads(value), writes(env) {
@@ -83,9 +83,9 @@ binding SparseTicketVisit : SparseVisit<SparseTicket, SparseTicket, SparseTestSe
 }
 
 fn sparse_scalar_consume(env: &SparseTestSeen, key: u64, value: u64) -> result: unit writes(env) {
-  set deref(env).consumed = deref(env).consumed +wrap 1_u64;
-  set deref(env).key_sum = deref(env).key_sum +wrap key;
-  set deref(env).value_sum = deref(env).value_sum +wrap value;
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  set env^.key_sum = env^.key_sum +wrap key;
+  set env^.value_sum = env^.value_sum +wrap value;
   return unit;
 }
 
@@ -193,10 +193,10 @@ fn sparse_check_reserve(outcome: Result<unit, unit>, expected: Bool, seen: &Spar
 
 fn sparse_ticket_deleted(map: &SparseMap<SparseTicket, SparseTicket, 4>) -> result: u64 reads(map) {
   let deleted = 0_u64;
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (index in 0_u64..count) {
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       SparseDeleted() => {
         set deleted = deleted +wrap 1_u64;
       }
@@ -442,7 +442,7 @@ fn main() -> status: ExitStatus pure {
 }
 
 fn sparse_identity_hash(env: &SparseHashEnv, key: &u64) -> result: u64 reads(key) {
-  return deref(key);
+  return key^;
 }
 
 binding SparseIdentityKey : SparseKey<u64, SparseHashEnv> {
@@ -575,9 +575,9 @@ fn sparse_test_cycle() -> result: u64 pure {
 }
 
 fn sparse_scalar_increment(env: &SparseTestSeen, key: &u64, value: &u64) -> result: u64 writes(env), writes(value) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(value) = deref(value) +wrap 1_u64;
-  return deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set value^ = value^ +wrap 1_u64;
+  return value^;
 }
 
 fn sparse_test_edit() -> result: u64 pure {

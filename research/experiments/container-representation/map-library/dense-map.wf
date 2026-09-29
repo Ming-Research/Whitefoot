@@ -64,23 +64,23 @@ fn dense_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contract
 }
 
 fn dense_map_find<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, key: &K, env: &E) -> result: Result<u64, unit> reads(map), reads(key), reads(env) contract {
-  ensures when Ok(value: index): index < deref(map).entries.inner.len;
+  ensures when Ok(value: index): index < map^.entries.inner.len;
 } {
   let hash = DenseKey::hash(env: env, key: key);
-  let count = deref(map).indexes.inner.len;
+  let count = map^.indexes.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let bucket = dense_map_probe(home: home, step: step, count: count);
-    match deref(map).indexes.inner[bucket] {
+    match map^.indexes.inner[bucket] {
       DenseVacant() => {
         return Err<u64, unit>(error: unit);
       }
       DenseDeleted() => {
       }
       DenseOccupied(index: saved_index) => {
-        let index = deref(saved_index);
-        if index < deref(map).entries.inner.len {
-          let equal = DenseKey::equal(env: env, left: &deref(map).entries.inner[index].key, right: key);
+        let index = saved_index^;
+        if index < map^.entries.inner.len {
+          let equal = DenseKey::equal(env: env, left: &map^.entries.inner[index].key, right: key);
           if equal {
             return Ok<u64, unit>(value: index);
           }
@@ -92,8 +92,8 @@ fn dense_map_find<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMa
 }
 
 fn dense_map_read_at<interface DenseVisit<K, V, E, R>, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, index: u64, env: &E) -> result: Result<R, unit> reads(map), writes(env) {
-  if index < deref(map).entries.inner.len {
-    let observed = DenseVisit::visit(env: env, key: &deref(map).entries.inner[index].key, value: &deref(map).entries.inner[index].value);
+  if index < map^.entries.inner.len {
+    let observed = DenseVisit::visit(env: env, key: &map^.entries.inner[index].key, value: &map^.entries.inner[index].value);
     return Ok<R, unit>(value: move observed);
   }
   return Err<R, unit>(error: unit);
@@ -103,7 +103,7 @@ fn dense_map_lookup<interface DenseKey<K, E>, V, F, R, fn observe(env: &F, key: 
   let found = dense_map_find::<DenseKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);
   match found {
     Ok(value: index) => {
-      let observed = observe(env: visit_env, key: &deref(map).entries.inner[index].key, value: &deref(map).entries.inner[index].value);
+      let observed = observe(env: visit_env, key: &map^.entries.inner[index].key, value: &map^.entries.inner[index].value);
       return Ok<R, unit>(value: move observed);
     }
     Err(error: missing) => {
@@ -113,14 +113,14 @@ fn dense_map_lookup<interface DenseKey<K, E>, V, F, R, fn observe(env: &F, key: 
 }
 
 fn dense_map_edit<interface DenseKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &DenseMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {
-  ensures deref(map).entries.inner.len == deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap == deref(entry(map)).entries.inner.cap;
-  ensures deref(map).indexes.inner.len == deref(entry(map)).indexes.inner.len;
+  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;
+  ensures map^.indexes.inner.len == entry(map)^.indexes.inner.len;
 } {
   let found = dense_map_find::<DenseKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);
   match found {
     Ok(value: index) => {
-      let updated = update(env: edit_env, key: &deref(map).entries.inner[index].key, value: &deref(map).entries.inner[index].value);
+      let updated = update(env: edit_env, key: &map^.entries.inner[index].key, value: &map^.entries.inner[index].value);
       return Ok<R, unit>(value: move updated);
     }
     Err(error: missing) => {
@@ -130,18 +130,18 @@ fn dense_map_edit<interface DenseKey<K, E>, V, F, R, fn update(env: &F, key: &K,
 }
 
 fn dense_map_try_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: DensePut<K, V> reads(env), writes(map) contract {
-  ensures deref(map).entries.inner.len >= deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.len <= deref(entry(map)).entries.inner.len + 1_u64;
-  ensures deref(map).entries.inner.cap == deref(entry(map)).entries.inner.cap;
-  ensures deref(map).indexes.inner.len == deref(entry(map)).indexes.inner.len;
+  ensures map^.entries.inner.len >= entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.len <= entry(map)^.entries.inner.len + 1_u64;
+  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;
+  ensures map^.indexes.inner.len == entry(map)^.indexes.inner.len;
 } {
   let hash = DenseKey::hash(env: env, key: &key);
-  let count = deref(map).indexes.inner.len;
+  let count = map^.indexes.inner.len;
   let available = count;
   for @probe (step in 0_u64..count) {
     let home = hash % count;
     let bucket = dense_map_probe(home: home, step: step, count: count);
-    match deref(map).indexes.inner[bucket] {
+    match map^.indexes.inner[bucket] {
       DenseVacant() => {
         if available == count {
           set available = bucket;
@@ -154,12 +154,12 @@ fn dense_map_try_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
         }
       }
       DenseOccupied(index: saved_index) => {
-        let index = deref(saved_index);
-        if index < deref(map).entries.inner.len {
-          let equal = DenseKey::equal(env: env, left: &deref(map).entries.inner[index].key, right: &key);
+        let index = saved_index^;
+        if index < map^.entries.inner.len {
+          let equal = DenseKey::equal(env: env, left: &map^.entries.inner[index].key, right: &key);
           if equal {
             let replacement = DenseEntry<K, V>(bucket: bucket, key: move key, value: move value);
-            swap(first: &deref(map).entries.inner[index], second: &replacement);
+            swap(first: &map^.entries.inner[index], second: &replacement);
             let DenseEntry(bucket: previous_bucket, key: previous_key, value: previous_value) = move replacement;
             let previous = DensePair<K, V>(key: move previous_key, value: move previous_value);
             return DenseReplaced<K, V>(previous: move previous);
@@ -169,11 +169,11 @@ fn dense_map_try_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
     }
   }
   if available < count {
-    if deref(map).entries.inner.len < deref(map).entries.inner.cap {
-      let index = deref(map).entries.inner.len;
+    if map^.entries.inner.len < map^.entries.inner.cap {
+      let index = map^.entries.inner.len;
       let installed = DenseEntry<K, V>(bucket: available, key: move key, value: move value);
-      place_back(window: &deref(map).entries.inner, value: move installed);
-      set deref(map).indexes.inner[available] = DenseOccupied(index: index);
+      place_back(window: &map^.entries.inner, value: move installed);
+      set map^.indexes.inner[available] = DenseOccupied(index: index);
       return DenseInserted<K, V>();
     }
   }
@@ -182,19 +182,19 @@ fn dense_map_try_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
 }
 
 fn dense_map_plan_index(indexes: &Box<Array<DenseIndex>>, hash: u64, index: u64) -> result: Bool writes(indexes) contract {
-  ensures deref(indexes).inner.len == deref(entry(indexes)).inner.len;
+  ensures indexes^.inner.len == entry(indexes)^.inner.len;
 } {
-  let count = deref(indexes).inner.len;
+  let count = indexes^.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let bucket = dense_map_probe(home: home, step: step, count: count);
-    match deref(indexes).inner[bucket] {
+    match indexes^.inner[bucket] {
       DenseVacant() => {
-        set deref(indexes).inner[bucket] = DenseOccupied(index: index);
+        set indexes^.inner[bucket] = DenseOccupied(index: index);
         return True();
       }
       DenseDeleted() => {
-        set deref(indexes).inner[bucket] = DenseOccupied(index: index);
+        set indexes^.inner[bucket] = DenseOccupied(index: index);
         return True();
       }
       DenseOccupied(index: present) => {
@@ -206,8 +206,8 @@ fn dense_map_plan_index(indexes: &Box<Array<DenseIndex>>, hash: u64, index: u64)
 
 fn dense_map_rebuild<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 1152921504606846975_u64;
-  ensures deref(map).entries.inner.len == deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap >= deref(entry(map)).entries.inner.cap;
+  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap >= entry(map)^.entries.inner.cap;
 } {
   doc "The tentative table contains only copyable indexes. Hash is called once for each live key, equality is never called, and failure drops only the plan. Publish and optional dense backing growth happen after all live indexes have been placed. Existing owners are untouched on planning failure.";
   if capacity > ceiling {
@@ -215,20 +215,20 @@ fn dense_map_rebuild<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
   }
   let vacant = DenseVacant();
   let planned = box_array_filled::<DenseIndex>(count: capacity, value: vacant);
-  let count = deref(map).entries.inner.len;
+  let count = map^.entries.inner.len;
   for (
     index in 0_u64..count,
     invariant planned_length: planned.inner.len == capacity
   ) {
-    let hash = DenseKey::hash(env: env, key: &deref(map).entries.inner[index].key);
+    let hash = DenseKey::hash(env: env, key: &map^.entries.inner[index].key);
     let placed = dense_map_plan_index(indexes: &planned, hash: hash, index: index);
     if placed {
     } else {
       return Err<unit, unit>(error: unit);
     }
   }
-  if capacity > deref(map).entries.inner.cap {
-    grow(cell: &deref(map).entries, capacity: capacity);
+  if capacity > map^.entries.inner.cap {
+    grow(cell: &map^.entries, capacity: capacity);
   }
   for (bucket in 0_u64..capacity) {
     match planned.inner[bucket] {
@@ -237,25 +237,25 @@ fn dense_map_rebuild<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
       DenseDeleted() => {
       }
       DenseOccupied(index: saved_index) => {
-        if saved_index < deref(map).entries.inner.len {
-          set deref(map).entries.inner[saved_index].bucket = bucket;
+        if saved_index < map^.entries.inner.len {
+          set map^.entries.inner[saved_index].bucket = bucket;
         }
       }
     }
   }
-  set deref(map).indexes = move planned;
+  set map^.indexes = move planned;
   return Ok<unit, unit>(value: unit);
 }
 
 fn dense_map_reserve<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 1152921504606846975_u64;
-  ensures deref(map).entries.inner.len == deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap >= deref(entry(map)).entries.inner.cap;
+  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap >= entry(map)^.entries.inner.cap;
 } {
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  if capacity <= deref(map).indexes.inner.len {
+  if capacity <= map^.indexes.inner.len {
     return Ok<unit, unit>(value: unit);
   }
   let rebuilt = dense_map_rebuild::<DenseKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
@@ -264,18 +264,18 @@ fn dense_map_reserve<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dens
 
 fn dense_map_rehash<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 1152921504606846975_u64;
-  ensures deref(map).entries.inner.len == deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap >= deref(entry(map)).entries.inner.cap;
+  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap >= entry(map)^.entries.inner.cap;
 } {
-  let capacity = deref(map).indexes.inner.len;
+  let capacity = map^.indexes.inner.len;
   let rebuilt = dense_map_rebuild::<DenseKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
   return rebuilt;
 }
 
 fn dense_map_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: DensePut<K, V> reads(env), writes(map) contract {
   requires ceiling <= 1152921504606846975_u64;
-  ensures deref(map).entries.inner.len >= deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap >= deref(entry(map)).entries.inner.cap;
+  ensures map^.entries.inner.len >= entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap >= entry(map)^.entries.inner.cap;
 } {
   let attempted = dense_map_try_put::<DenseKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
   match attempted {
@@ -286,7 +286,7 @@ fn dense_map_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap
       return DenseReplaced<K, V>(previous: move old_pair);
     }
     DenseFull(offered: new_pair) => {
-      let count = deref(map).indexes.inner.len;
+      let count = map^.indexes.inner.len;
       if count >= ceiling {
         return DenseFull<K, V>(offered: move new_pair);
       }
@@ -315,27 +315,27 @@ fn dense_map_put<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap
 }
 
 fn dense_map_remove<interface DenseKey<K, E>, V, const ceiling: u64>(map: &DenseMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<DensePair<K, V>> reads(key), reads(env), writes(map) contract {
-  ensures deref(map).entries.inner.len <= deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.len + 1_u64 >= deref(entry(map)).entries.inner.len;
-  ensures deref(map).entries.inner.cap == deref(entry(map)).entries.inner.cap;
-  ensures deref(map).indexes.inner.len == deref(entry(map)).indexes.inner.len;
+  ensures map^.entries.inner.len <= entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.len + 1_u64 >= entry(map)^.entries.inner.len;
+  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;
+  ensures map^.indexes.inner.len == entry(map)^.indexes.inner.len;
 } {
   let found = dense_map_find::<DenseKey<K, E>, V, ceiling>(map: map, key: key, env: env);
   match found {
     Ok(value: index) => {
-      let bucket = deref(map).entries.inner[index].bucket;
-      let count = deref(map).entries.inner.len;
+      let bucket = map^.entries.inner[index].bucket;
+      let count = map^.entries.inner.len;
       let last = count - 1_u64;
-      swap(first: &deref(map).entries.inner[index], second: &deref(map).entries.inner[last]);
-      let removed = take_back(window: &deref(map).entries.inner);
-      if index < deref(map).entries.inner.len {
-        let moved_bucket = deref(map).entries.inner[index].bucket;
-        if moved_bucket < deref(map).indexes.inner.len {
-          set deref(map).indexes.inner[moved_bucket] = DenseOccupied(index: index);
+      swap(first: &map^.entries.inner[index], second: &map^.entries.inner[last]);
+      let removed = take_back(window: &map^.entries.inner);
+      if index < map^.entries.inner.len {
+        let moved_bucket = map^.entries.inner[index].bucket;
+        if moved_bucket < map^.indexes.inner.len {
+          set map^.indexes.inner[moved_bucket] = DenseOccupied(index: index);
         }
       }
-      if bucket < deref(map).indexes.inner.len {
-        set deref(map).indexes.inner[bucket] = DenseDeleted();
+      if bucket < map^.indexes.inner.len {
+        set map^.indexes.inner[bucket] = DenseDeleted();
       }
       let DenseEntry(bucket: old_bucket, key: old_key, value: old_value) = move removed;
       let pair = DensePair<K, V>(key: move old_key, value: move old_value);
@@ -348,9 +348,9 @@ fn dense_map_remove<interface DenseKey<K, E>, V, const ceiling: u64>(map: &Dense
 }
 
 fn dense_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &DenseMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) {
-  let count = deref(map).entries.inner.len;
+  let count = map^.entries.inner.len;
   for (index in 0_u64..count) {
-    visit(env: env, key: &deref(map).entries.inner[index].key, value: &deref(map).entries.inner[index].value);
+    visit(env: env, key: &map^.entries.inner[index].key, value: &map^.entries.inner[index].value);
   }
   return unit;
 }

@@ -41,26 +41,26 @@ interface SparseConsume<K, V, E> {
 }
 
 fn sparse_map_extend<K, V, const ceiling: u64>(cells: &Box<Slots<SparseSlot<K, V>>>, target: u64) -> result: unit writes(cells) contract {
-  requires deref(cells).inner.len <= target;
+  requires cells^.inner.len <= target;
   requires target <= ceiling;
-  ensures deref(cells).inner.len == target;
-  ensures deref(cells).inner.cap >= target;
+  ensures cells^.inner.len == target;
+  ensures cells^.inner.cap >= target;
 } {
-  if deref(cells).inner.cap < target {
+  if cells^.inner.cap < target {
     grow(cell: cells, capacity: target);
   }
-  let start = deref(cells).inner.len;
+  let start = cells^.inner.len;
   for @fill (
     index in start..target,
-    invariant filled: deref(cells).inner.len >= index,
-    invariant bounded: deref(cells).inner.len <= index,
-    invariant spare: deref(cells).inner.cap - deref(cells).inner.len + index >= target
+    invariant filled: cells^.inner.len >= index,
+    invariant bounded: cells^.inner.len <= index,
+    invariant spare: cells^.inner.cap - cells^.inner.len + index >= target
   ) {
     let vacant = SparseVacant<K, V>();
-    place_back(window: &deref(cells).inner, value: move vacant);
+    place_back(window: &cells^.inner, value: move vacant);
   }
-  invariant complete_min: deref(cells).inner.len >= target;
-  invariant complete_max: deref(cells).inner.len <= target;
+  invariant complete_min: cells^.inner.len >= target;
+  invariant complete_max: cells^.inner.len <= target;
   return unit;
 }
 
@@ -87,7 +87,7 @@ fn sparse_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contrac
 }
 
 fn sparse_map_action<interface SparseKey<K, E>, V>(slot: &SparseSlot<K, V>, key: &K, env: &E) -> result: SparseAction reads(slot), reads(key), reads(env) {
-  match deref(slot) {
+  match slot^ {
     SparseVacant() => {
       return SparseStop();
     }
@@ -105,14 +105,14 @@ fn sparse_map_action<interface SparseKey<K, E>, V>(slot: &SparseSlot<K, V>, key:
 }
 
 fn sparse_map_find<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, key: &K, env: &E) -> result: Result<u64, unit> reads(map), reads(key), reads(env) contract {
-  ensures when Ok(value: index): index < deref(map).cells.inner.len;
+  ensures when Ok(value: index): index < map^.cells.inner.len;
 } {
   let hash = SparseKey::hash(env: env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = sparse_map_probe(home: home, step: step, count: count);
-    let action = sparse_map_action::<SparseKey<K, E>, V>(slot: &deref(map).cells.inner[index], key: key, env: env);
+    let action = sparse_map_action::<SparseKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
     match action {
       SparseMatch() => {
         return Ok<u64, unit>(value: index);
@@ -130,9 +130,9 @@ fn sparse_map_find<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Spars
 }
 
 fn sparse_map_read_at<interface SparseVisit<K, V, E, R>, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, index: u64, env: &E) -> result: Result<R, unit> reads(map), writes(env) {
-  if index < deref(map).cells.inner.len {
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+  if index < map^.cells.inner.len {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       SparseFilled(key: saved_key, value: saved_value) => {
         let observed = SparseVisit::visit(env: env, key: saved_key, value: saved_value);
         return Ok<R, unit>(value: move observed);
@@ -148,12 +148,12 @@ fn sparse_map_read_at<interface SparseVisit<K, V, E, R>, const ceiling: u64>(map
 
 fn sparse_map_lookup<interface SparseKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &SparseMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) {
   let hash = SparseKey::hash(env: key_env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = sparse_map_probe(home: home, step: step, count: count);
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       SparseFilled(key: saved_key, value: saved_value) => {
         let equal = SparseKey::equal(env: key_env, left: saved_key, right: key);
         if equal {
@@ -172,16 +172,16 @@ fn sparse_map_lookup<interface SparseKey<K, E>, V, F, R, fn observe(env: &F, key
 }
 
 fn sparse_map_edit<interface SparseKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &SparseMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } {
   let hash = SparseKey::hash(env: key_env, key: key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = sparse_map_probe(home: home, step: step, count: count);
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       SparseFilled(key: saved_key, value: saved_value) => {
         let equal = SparseKey::equal(env: key_env, left: saved_key, right: key);
         if equal {
@@ -200,13 +200,13 @@ fn sparse_map_edit<interface SparseKey<K, E>, V, F, R, fn update(env: &F, key: &
 }
 
 fn sparse_map_exchange<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, index: u64, key: K, value: V) -> result: SparsePut<K, V> writes(cells) contract {
-  requires index < deref(cells).inner.len;
-  ensures deref(cells).inner.len == deref(entry(cells)).inner.len;
-  ensures deref(cells).inner.cap == deref(entry(cells)).inner.cap;
+  requires index < cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
+  ensures cells^.inner.cap == entry(cells)^.inner.cap;
 } {
   doc "Every old variant has ordinary useful behavior: vacant and deleted mean insertion, while filled returns the old complete pair. No vacancy proof is needed to consume the exchanged enum.";
   let offered = SparseFilled<K, V>(key: move key, value: move value);
-  swap(first: &deref(cells).inner[index], second: &offered);
+  swap(first: &cells^.inner[index], second: &offered);
   match offered {
     SparseVacant() => {
       return SparseInserted<K, V>();
@@ -222,19 +222,19 @@ fn sparse_map_exchange<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, index: u64, k
 }
 
 fn sparse_map_try_put<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: SparsePut<K, V> reads(env), writes(map) contract {
-  ensures deref(map).cells.inner.len == deref(entry(map)).cells.inner.len;
-  ensures deref(map).cells.inner.cap == deref(entry(map)).cells.inner.cap;
+  ensures map^.cells.inner.len == entry(map)^.cells.inner.len;
+  ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } {
   let hash = SparseKey::hash(env: env, key: &key);
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   let available = count;
   for @probe (step in 0_u64..count) {
     let home = hash % count;
     let index = sparse_map_probe(home: home, step: step, count: count);
-    let action = sparse_map_action::<SparseKey<K, E>, V>(slot: &deref(map).cells.inner[index], key: &key, env: env);
+    let action = sparse_map_action::<SparseKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
     match action {
       SparseMatch() => {
-        let replaced = sparse_map_exchange::<K, V>(cells: &deref(map).cells, index: index, key: move key, value: move value);
+        let replaced = sparse_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
         return move replaced;
       }
       SparseStop() => {
@@ -253,10 +253,10 @@ fn sparse_map_try_put<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sp
     }
   }
   if available < count {
-    let before = deref(map).length;
+    let before = map^.length;
     if before < ceiling {
-      set deref(map).length = before + 1_u64;
-      let inserted = sparse_map_exchange::<K, V>(cells: &deref(map).cells, index: available, key: move key, value: move value);
+      set map^.length = before + 1_u64;
+      let inserted = sparse_map_exchange::<K, V>(cells: &map^.cells, index: available, key: move key, value: move value);
       return move inserted;
     }
   }
@@ -265,15 +265,15 @@ fn sparse_map_try_put<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sp
 }
 
 fn sparse_map_claim(used: &Box<Array<Bool>>, hash: u64) -> result: Result<u64, unit> writes(used) contract {
-  ensures when Ok(value: index): index < deref(used).inner.len;
+  ensures when Ok(value: index): index < used^.inner.len;
 } {
-  let count = deref(used).inner.len;
+  let count = used^.inner.len;
   for (step in 0_u64..count) {
     let home = hash % count;
     let index = sparse_map_probe(home: home, step: step, count: count);
-    if deref(used).inner[index] {
+    if used^.inner[index] {
     } else {
-      set deref(used).inner[index] = True();
+      set used^.inner[index] = True();
       return Ok<u64, unit>(value: index);
     }
   }
@@ -287,15 +287,15 @@ fn sparse_map_plan<interface SparseKey<K, E>, V, const ceiling: u64>(cells: &Box
 } {
   doc "Only copy metadata is changed while the original table remains intact. Every retained key is hashed once, equality is never called, and occupied sources get distinct targets. A target below the current backing extent is refused; this candidate does not shrink.";
   let plan = box_array_filled::<u64>(count: capacity, value: capacity);
-  let count = deref(cells).inner.len;
+  let count = cells^.inner.len;
   if count > capacity {
     return move plan, False();
   }
   let unused = False();
   let used = box_array_filled::<Bool>(count: capacity, value: unused);
   for (source in 0_u64..count) {
-    let slot = &deref(cells).inner[source];
-    match deref(slot) {
+    let slot = &cells^.inner[source];
+    match slot^ {
       SparseFilled(key: saved_key, value: saved_value) => {
         let hash = SparseKey::hash(env: env, key: saved_key);
         let claimed = sparse_map_claim(used: &used, hash: hash);
@@ -318,23 +318,23 @@ fn sparse_map_plan<interface SparseKey<K, E>, V, const ceiling: u64>(cells: &Box
 }
 
 fn sparse_map_apply<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, destinations: &Box<Array<u64>>) -> result: unit writes(cells), writes(destinations) contract {
-  requires deref(destinations).inner.len <= deref(cells).inner.len;
-  requires deref(destinations).inner.len >= deref(cells).inner.len;
-  ensures deref(cells).inner.len == deref(entry(cells)).inner.len;
+  requires destinations^.inner.len <= cells^.inner.len;
+  requires destinations^.inner.len >= cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
 } {
   doc "The copied partial injective plan uses count for unassigned vacancies. A swap finishes its target and carries the displaced owner's destination back to the cursor. At most count swaps and count cursor advances suffice, including targets before an already advanced cursor. Two counted passes avoid an overflowing two-times-count expression. No payload leaves a valid slot and no references survive the rebuild.";
-  let count = deref(cells).inner.len;
+  let count = cells^.inner.len;
   let cursor = 0_u64;
   for @passes (pass in 0_u64..2_u64) {
     for @ticks (tick in 0_u64..count) {
       if cursor < count {
-        let target = deref(destinations).inner[cursor];
+        let target = destinations^.inner[cursor];
         if target < count {
           if target != cursor {
-            swap(first: &deref(cells).inner[cursor], second: &deref(cells).inner[target]);
-            let displaced = deref(destinations).inner[target];
-            set deref(destinations).inner[cursor] = displaced;
-            set deref(destinations).inner[target] = target;
+            swap(first: &cells^.inner[cursor], second: &cells^.inner[target]);
+            let displaced = destinations^.inner[target];
+            set destinations^.inner[cursor] = displaced;
+            set destinations^.inner[target] = target;
           } else {
             set cursor = cursor + 1_u64;
           }
@@ -348,7 +348,7 @@ fn sparse_map_apply<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, destinations: &B
 }
 
 fn sparse_map_is_deleted<K, V>(slot: &SparseSlot<K, V>) -> result: Bool reads(slot) {
-  match deref(slot) {
+  match slot^ {
     SparseDeleted() => {
       return True();
     }
@@ -362,36 +362,36 @@ fn sparse_map_is_deleted<K, V>(slot: &SparseSlot<K, V>) -> result: Bool reads(sl
 }
 
 fn sparse_map_canonicalize<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, index: u64) -> result: unit writes(cells) contract {
-  requires index < deref(cells).inner.len;
-  ensures deref(cells).inner.len == deref(entry(cells)).inner.len;
+  requires index < cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
 } {
   doc "All variants retain their ordinary meaning: Vacant stays vacant, Deleted becomes vacant, and Filled retains its complete owned pair. The temporary last-slot exchange is restored after reconstruction; no unreachable variant is discarded.";
-  let last = deref(cells).inner.len - 1_u64;
-  swap(first: &deref(cells).inner[index], second: &deref(cells).inner[last]);
-  let selected = take_back(window: &deref(cells).inner);
+  let last = cells^.inner.len - 1_u64;
+  swap(first: &cells^.inner[index], second: &cells^.inner[last]);
+  let selected = take_back(window: &cells^.inner);
   match selected {
     SparseVacant() => {
       let restored = SparseVacant<K, V>();
-      place_back(window: &deref(cells).inner, value: move restored);
+      place_back(window: &cells^.inner, value: move restored);
     }
     SparseDeleted() => {
       let restored = SparseVacant<K, V>();
-      place_back(window: &deref(cells).inner, value: move restored);
+      place_back(window: &cells^.inner, value: move restored);
     }
     SparseFilled(key: saved_key, value: saved_value) => {
       let restored = SparseFilled<K, V>(key: move saved_key, value: move saved_value);
-      place_back(window: &deref(cells).inner, value: move restored);
+      place_back(window: &cells^.inner, value: move restored);
     }
   }
-  swap(first: &deref(cells).inner[index], second: &deref(cells).inner[last]);
+  swap(first: &cells^.inner[index], second: &cells^.inner[last]);
   return unit;
 }
 
 fn sparse_map_clear_deleted<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, index: u64) -> result: unit writes(cells) contract {
-  requires index < deref(cells).inner.len;
-  ensures deref(cells).inner.len == deref(entry(cells)).inner.len;
+  requires index < cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
 } {
-  let deleted = sparse_map_is_deleted::<K, V>(slot: &deref(cells).inner[index]);
+  let deleted = sparse_map_is_deleted::<K, V>(slot: &cells^.inner[index]);
   if deleted {
     sparse_map_canonicalize::<K, V>(cells: cells, index: index);
   }
@@ -400,28 +400,28 @@ fn sparse_map_clear_deleted<K, V>(cells: &Box<Slots<SparseSlot<K, V>>>, index: u
 
 fn sparse_map_rebuild<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 2305843009213693951_u64;
-  ensures deref(map).cells.inner.len >= deref(entry(map)).cells.inner.len;
+  ensures map^.cells.inner.len >= entry(map)^.cells.inner.len;
 } {
   doc "The conditional per-cell helper publishes a length-preserving postcondition on every loop iteration. It does not transfer a filled or already vacant payload; only actual tombstones take the canonicalization path.";
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   if capacity < count {
     return Err<unit, unit>(error: unit);
   }
-  let (plan, complete) = sparse_map_plan::<SparseKey<K, E>, V, ceiling>(cells: &deref(map).cells, capacity: capacity, env: env);
+  let (plan, complete) = sparse_map_plan::<SparseKey<K, E>, V, ceiling>(cells: &map^.cells, capacity: capacity, env: env);
   if complete {
-    sparse_map_extend::<K, V, ceiling>(cells: &deref(map).cells, target: capacity);
+    sparse_map_extend::<K, V, ceiling>(cells: &map^.cells, target: capacity);
     for (
       index in 0_u64..count,
-      invariant rebuilt_extent: deref(map).cells.inner.len == capacity,
+      invariant rebuilt_extent: map^.cells.inner.len == capacity,
       invariant planned_extent: plan.inner.len == capacity
     ) {
-      sparse_map_clear_deleted::<K, V>(cells: &deref(map).cells, index: index);
+      sparse_map_clear_deleted::<K, V>(cells: &map^.cells, index: index);
     }
-    invariant ready_extent: plan.inner.len == deref(map).cells.inner.len;
-    sparse_map_apply::<K, V>(cells: &deref(map).cells, destinations: &plan);
+    invariant ready_extent: plan.inner.len == map^.cells.inner.len;
+    sparse_map_apply::<K, V>(cells: &map^.cells, destinations: &plan);
     return Ok<unit, unit>(value: unit);
   }
   return Err<unit, unit>(error: unit);
@@ -429,12 +429,12 @@ fn sparse_map_rebuild<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sp
 
 fn sparse_map_reserve<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 2305843009213693951_u64;
-  ensures deref(map).cells.inner.len >= deref(entry(map)).cells.inner.len;
+  ensures map^.cells.inner.len >= entry(map)^.cells.inner.len;
 } {
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  if capacity <= deref(map).cells.inner.len {
+  if capacity <= map^.cells.inner.len {
     return Ok<unit, unit>(value: unit);
   }
   let rebuilt = sparse_map_rebuild::<SparseKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
@@ -443,9 +443,9 @@ fn sparse_map_reserve<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sp
 
 fn sparse_map_rehash<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {
   requires ceiling <= 2305843009213693951_u64;
-  ensures deref(map).cells.inner.len >= deref(entry(map)).cells.inner.len;
+  ensures map^.cells.inner.len >= entry(map)^.cells.inner.len;
 } {
-  let capacity = deref(map).cells.inner.len;
+  let capacity = map^.cells.inner.len;
   let rebuilt = sparse_map_rebuild::<SparseKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
   return rebuilt;
 }
@@ -462,7 +462,7 @@ fn sparse_map_put<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sparse
       return SparseReplaced<K, V>(previous: move old_pair);
     }
     SparseFull(offered: new_pair) => {
-      let count = deref(map).cells.inner.len;
+      let count = map^.cells.inner.len;
       if count >= ceiling {
         return SparseFull<K, V>(offered: move new_pair);
       }
@@ -491,7 +491,7 @@ fn sparse_map_put<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Sparse
 }
 
 fn sparse_map_remove<interface SparseKey<K, E>, V, const ceiling: u64>(map: &SparseMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<SparsePair<K, V>> reads(key), reads(env), writes(map) {
-  let before = deref(map).length;
+  let before = map^.length;
   if before == 0_u64 {
     return None<SparsePair<K, V>>();
   }
@@ -499,10 +499,10 @@ fn sparse_map_remove<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Spa
   match found {
     Ok(value: index) => {
       let removed = SparseDeleted<K, V>();
-      swap(first: &deref(map).cells.inner[index], second: &removed);
+      swap(first: &map^.cells.inner[index], second: &removed);
       match removed {
         SparseFilled(key: saved_key, value: saved_value) => {
-          set deref(map).length = before - 1_u64;
+          set map^.length = before - 1_u64;
           let pair = SparsePair<K, V>(key: move saved_key, value: move saved_value);
           return Some<SparsePair<K, V>>(value: move pair);
         }
@@ -521,10 +521,10 @@ fn sparse_map_remove<interface SparseKey<K, E>, V, const ceiling: u64>(map: &Spa
 }
 
 fn sparse_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &SparseMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) {
-  let count = deref(map).cells.inner.len;
+  let count = map^.cells.inner.len;
   for (index in 0_u64..count) {
-    let slot = &deref(map).cells.inner[index];
-    match deref(slot) {
+    let slot = &map^.cells.inner[index];
+    match slot^ {
       SparseFilled(key: saved_key, value: saved_value) => {
         visit(env: env, key: saved_key, value: saved_value);
       }

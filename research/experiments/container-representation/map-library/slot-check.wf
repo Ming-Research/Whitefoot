@@ -23,15 +23,15 @@ fn slot_owned_make(id: u64, serial: u64) -> result: SlotOwnedNode pure {
 }
 
 fn slot_owned_fail(ledger: &SlotOwnerLedger) -> result: unit writes(ledger) {
-  set deref(ledger).failures = deref(ledger).failures +wrap 1_u64;
+  set ledger^.failures = ledger^.failures +wrap 1_u64;
   return unit;
 }
 
 fn slot_owned_release(value: SlotOwnedNode, ledger: &SlotOwnerLedger) -> result: unit writes(ledger) {
   let SlotOwnedNode(child: owned_child) = move value;
   let serial = owned_child.inner.serial;
-  if serial < deref(ledger).releases.len {
-    set deref(ledger).releases[serial] = deref(ledger).releases[serial] +wrap 1_u64;
+  if serial < ledger^.releases.len {
+    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
   } else {
     slot_owned_fail(ledger: ledger);
   }
@@ -45,34 +45,34 @@ fn slot_owned_consume(env: &SlotOwnerLedger, key: SlotOwnedNode, value: SlotOwne
 }
 
 fn slot_owned_hash(env: &SlotOwnerEnv, key: &SlotOwnedNode) -> result: u64 reads(key) {
-  return deref(key).child.inner.id % 1_u64;
+  return key^.child.inner.id % 1_u64;
 }
 
 fn slot_owned_equal(env: &SlotOwnerEnv, left: &SlotOwnedNode, right: &SlotOwnedNode) -> result: Bool reads(left), reads(right) {
-  return deref(left).child.inner.id == deref(right).child.inner.id;
+  return left^.child.inner.id == right^.child.inner.id;
 }
 
 fn slot_owned_read(env: &SlotOwnerLedger, key: &SlotOwnedNode, value: &SlotOwnedNode) -> result: u64 reads(key), reads(value), writes(env) {
-  if deref(key).child.inner.serial != 4_u64 {
+  if key^.child.inner.serial != 4_u64 {
     slot_owned_fail(ledger: env);
   }
-  if deref(value).child.inner.serial != 14_u64 {
+  if value^.child.inner.serial != 14_u64 {
     slot_owned_fail(ledger: env);
   }
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  return deref(value).child.inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  return value^.child.inner.id;
 }
 
 fn slot_owned_increment(env: &SlotOwnerLedger, key: &SlotOwnedNode, value: &SlotOwnedNode) -> result: u64 reads(key), writes(env), writes(value) {
-  if deref(key).child.inner.serial != 4_u64 {
+  if key^.child.inner.serial != 4_u64 {
     slot_owned_fail(ledger: env);
   }
-  if deref(value).child.inner.serial != 14_u64 {
+  if value^.child.inner.serial != 14_u64 {
     slot_owned_fail(ledger: env);
   }
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(value).child.inner.id = deref(value).child.inner.id +wrap 1_u64;
-  return deref(value).child.inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set value^.child.inner.id = value^.child.inner.id +wrap 1_u64;
+  return value^.child.inner.id;
 }
 
 binding SlotOwnedKey : SlotKey<SlotOwnedNode, SlotOwnerEnv> {
@@ -85,10 +85,10 @@ binding SlotOwnedConsume : SlotConsume<SlotOwnedNode, SlotOwnedNode, SlotOwnerLe
 }
 
 fn slot_owned_check_pair(pair: &SlotPair<SlotOwnedNode, SlotOwnedNode>, key: u64, value: u64, ledger: &SlotOwnerLedger) -> result: unit reads(pair), writes(ledger) {
-  if deref(pair).key.child.inner.id != key {
+  if pair^.key.child.inner.id != key {
     slot_owned_fail(ledger: ledger);
   }
-  if deref(pair).value.child.inner.id != value {
+  if pair^.value.child.inner.id != value {
     slot_owned_fail(ledger: ledger);
   }
   return unit;
@@ -234,16 +234,16 @@ struct SlotScalarSeen {
 }
 
 fn slot_scalar_fail(seen: &SlotScalarSeen) -> result: unit writes(seen) {
-  set deref(seen).failures = deref(seen).failures +wrap 1_u64;
+  set seen^.failures = seen^.failures +wrap 1_u64;
   return unit;
 }
 
 fn slot_scalar_hash(env: &SlotScalarEnv, key: &u64) -> result: u64 reads(key) {
-  return deref(key);
+  return key^;
 }
 
 fn slot_scalar_equal(env: &SlotScalarEnv, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
-  return deref(left) == deref(right);
+  return left^ == right^;
 }
 
 binding SlotScalarKey : SlotKey<u64, SlotScalarEnv> {
@@ -252,9 +252,9 @@ binding SlotScalarKey : SlotKey<u64, SlotScalarEnv> {
 }
 
 fn slot_scalar_consume(env: &SlotScalarSeen, key: u64, value: u64) -> result: unit writes(env) {
-  set deref(env).consumed = deref(env).consumed +wrap 1_u64;
-  set deref(env).key_sum = deref(env).key_sum +wrap key;
-  set deref(env).value_sum = deref(env).value_sum +wrap value;
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  set env^.key_sum = env^.key_sum +wrap key;
+  set env^.value_sum = env^.value_sum +wrap value;
   return unit;
 }
 
@@ -263,17 +263,17 @@ binding SlotScalarConsume : SlotConsume<u64, u64, SlotScalarSeen> {
 }
 
 fn slot_scalar_observe(env: &SlotScalarSeen, key: &u64, value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn slot_scalar_edit(env: &SlotScalarSeen, key: &u64, value: &u64) -> result: u64 writes(value) {
-  set deref(value) = deref(value) +wrap 1_u64;
-  return deref(value);
+  set value^ = value^ +wrap 1_u64;
+  return value^;
 }
 
 fn slot_scalar_visit(env: &SlotScalarSeen, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).observed = deref(env).observed +wrap deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.observed = env^.observed +wrap value^;
   return unit;
 }
 

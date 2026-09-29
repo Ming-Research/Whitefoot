@@ -4,7 +4,7 @@ EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 CLANG ?= clang
 BUILD ?= .build
-SOURCES := $(ROOT)/lib/containers/grow-vector.wf vector-library.wf
+SOURCES := vector-library.wf
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -23,7 +23,7 @@ $(BUILD)/vector-library-normal.ll: $(BUILD)/vector-library.raw.ll
 	    -e 's/@main(/@wf_fixture_main(/g' $< > $@
 
 $(BUILD)/vector-library-retained.ll: $(BUILD)/vector-library-normal.ll
-	awk '/^define .* @wf_(grow_vector_|vector_library_(work|round|tail_work)|vector_(word|record)_(make|accept))/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Vector helpers: " retained > "/dev/stderr" }' $< > $@
+	awk '/^define .* @(wf_grow_vector_|wf_std\.collections\.vector\.grow_vector_|wf_vector_library_(work|round|tail_work)|wf_vector_(word|record)_(make|accept))/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Vector helpers: " retained > "/dev/stderr" }' $< > $@
 
 $(BUILD)/vector-library-%.opt.ll: $(BUILD)/vector-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
@@ -41,8 +41,8 @@ check: $(addprefix $(BUILD)/vector-costs-,normal$(EXE) retained$(EXE)) \
        $(addprefix $(BUILD)/control-,normal.opt.ll retained.opt.ll)
 	$(BUILD)/vector-costs-normal$(EXE) check
 	$(BUILD)/vector-costs-retained$(EXE) check
-	@set -eu; normal_calls=`grep -Ec 'call .*@"?wf_grow_vector_' $(BUILD)/vector-library-normal.opt.ll || true`; \
-	 retained_calls=`grep -Ec 'call .*@"?wf_grow_vector_' $(BUILD)/vector-library-retained.opt.ll || true`; \
+	@set -eu; normal_calls=`grep -Ec 'call .*@"?(wf_grow_vector_|wf_std\.collections\.vector\.grow_vector_)' $(BUILD)/vector-library-normal.opt.ll || true`; \
+	 retained_calls=`grep -Ec 'call .*@"?(wf_grow_vector_|wf_std\.collections\.vector\.grow_vector_)' $(BUILD)/vector-library-retained.opt.ll || true`; \
 	 test "$$retained_calls" -gt 0; \
 	 control_calls=`grep -Ec 'call .*@(word|record)_(reverse|direct)_(append|truncate)' $(BUILD)/control-retained.opt.ll || true`; \
 	 test "$$control_calls" -gt 0; \

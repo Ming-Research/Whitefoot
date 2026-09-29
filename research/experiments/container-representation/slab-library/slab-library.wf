@@ -1,3 +1,12 @@
+alias SlabHandle = std::collections::slab::SlabHandle;
+alias slab_new = std::collections::slab::slab_new;
+alias slab_insert = std::collections::slab::slab_insert;
+alias slab_visit = std::collections::slab::slab_visit;
+alias slab_remove = std::collections::slab::slab_remove;
+alias slab_free = std::collections::slab::slab_free;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct SlabDigest {
   value: u64;
 }
@@ -17,13 +26,13 @@ fn slab_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn slab_word_consume(env: &SlabDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).value *wrap 131_u64;
-  set deref(env).value = prefix +wrap value;
+  let prefix = env^.value *wrap 131_u64;
+  set env^.value = prefix +wrap value;
   return unit;
 }
 
 fn slab_word_visit(env: &SlabDigest, value: &u64) -> result: unit reads(value), writes(env) {
-  slab_word_consume(env: env, value: deref(value));
+  slab_word_consume(env: env, value: value^);
   return unit;
 }
 
@@ -37,16 +46,16 @@ fn slab_record_make(seed: u64) -> value: SlabRecord pure {
 
 fn slab_record_visit(env: &SlabDigest, value: &SlabRecord) -> result: unit reads(value), writes(env) {
   for (index in 0_u64..32_u64) {
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap deref(value).words[index];
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap value^.words[index];
   }
   return unit;
 }
 
 fn slab_record_consume(env: &SlabDigest, value: SlabRecord) -> result: unit writes(env) {
   for (index in 0_u64..32_u64) {
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap value.words[index];
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap value.words[index];
   }
   return unit;
 }

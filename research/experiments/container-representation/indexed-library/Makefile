@@ -12,13 +12,20 @@ ifeq ($(HEAP_STYLE),standalone)
 QUEUE_SOURCE := $(PLAIN_SOURCE)
 CONTROL_SOURCE := standalone-indexed.wf
 else ifeq ($(HEAP_STYLE),shared)
-QUEUE_SOURCE := $(ROOT)/lib/containers/priority-queue.wf
+# tests/programs/containers/indexed-store.wf already aliases the shared
+# queue's names from std::collections::priority_queue, so the shared style
+# needs no separate queue source of its own.
+QUEUE_SOURCE :=
 CONTROL_SOURCE :=
 else
 $(error HEAP_STYLE must be shared or standalone)
 endif
-SOURCES := $(ROOT)/lib/containers/slab.wf $(ROOT)/lib/containers/hash-map.wf \
-           $(QUEUE_SOURCE) $(BUILD)/indexed-store.wf $(CONTROL_SOURCE) indexed-library.wf
+# indexed-store.wf aliases Slab, HashMap and (for the shared style)
+# PriorityQueue from the standard library itself; indexed-library.wf aliases
+# ExitStatus/exit_status the same way (an alias binds in its own record
+# alone [MOD-4], so each file that writes a bare standard-library name
+# aliases it itself).
+SOURCES := $(QUEUE_SOURCE) $(BUILD)/indexed-store.wf $(CONTROL_SOURCE) indexed-library.wf
 .DELETE_ON_ERROR:
 .DEFAULT_GOAL := check
 include $(ROOT)/compiler/runtime.mk

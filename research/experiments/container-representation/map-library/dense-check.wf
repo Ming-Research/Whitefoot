@@ -16,19 +16,19 @@ nodrop struct DenseTicket {
 }
 
 fn dense_test_fail(seen: &DenseTestSeen) -> result: unit writes(seen) {
-  set deref(seen).failures = deref(seen).failures +wrap 1_u64;
+  set seen^.failures = seen^.failures +wrap 1_u64;
   return unit;
 }
 
 fn dense_scalar_hash(env: &DenseHashEnv, key: &u64) -> result: u64 reads(key) {
-  return deref(key) % 1_u64;
+  return key^ % 1_u64;
 }
 
 fn dense_scalar_equal(env: &DenseHashEnv, left: &u64, right: &u64) -> result: Bool reads(env), reads(left), reads(right) {
-  if deref(env).hostile {
+  if env^.hostile {
     return False();
   }
-  return deref(left) == deref(right);
+  return left^ == right^;
 }
 
 binding DenseScalarKey : DenseKey<u64, DenseHashEnv> {
@@ -37,14 +37,14 @@ binding DenseScalarKey : DenseKey<u64, DenseHashEnv> {
 }
 
 fn dense_ticket_hash(env: &DenseHashEnv, key: &DenseTicket) -> result: u64 reads(key) {
-  return deref(key).id % 1_u64;
+  return key^.id % 1_u64;
 }
 
 fn dense_ticket_equal(env: &DenseHashEnv, left: &DenseTicket, right: &DenseTicket) -> result: Bool reads(env), reads(left), reads(right) {
-  if deref(env).hostile {
+  if env^.hostile {
     return False();
   }
-  return deref(left).id == deref(right).id;
+  return left^.id == right^.id;
 }
 
 binding DenseTicketKey : DenseKey<DenseTicket, DenseHashEnv> {
@@ -53,9 +53,9 @@ binding DenseTicketKey : DenseKey<DenseTicket, DenseHashEnv> {
 }
 
 fn dense_scalar_read(env: &DenseTestSeen, key: &u64, value: &u64) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).observed = deref(env).observed +wrap deref(value);
-  return deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.observed = env^.observed +wrap value^;
+  return value^;
 }
 
 fn dense_scalar_visit(env: &DenseTestSeen, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
@@ -64,15 +64,15 @@ fn dense_scalar_visit(env: &DenseTestSeen, key: &u64, value: &u64) -> result: un
 }
 
 fn dense_scalar_increment(env: &DenseTestSeen, key: &u64, value: &u64) -> result: u64 writes(env), writes(value) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(value) = deref(value) +wrap 1_u64;
-  return deref(value);
+  set env^.visits = env^.visits +wrap 1_u64;
+  set value^ = value^ +wrap 1_u64;
+  return value^;
 }
 
 fn dense_ticket_read(env: &DenseTestSeen, key: &DenseTicket, value: &DenseTicket) -> result: u64 reads(value), writes(env) {
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(env).observed = deref(env).observed +wrap deref(value).id;
-  return deref(value).id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set env^.observed = env^.observed +wrap value^.id;
+  return value^.id;
 }
 
 fn dense_ticket_visit(env: &DenseTestSeen, key: &DenseTicket, value: &DenseTicket) -> result: unit reads(value), writes(env) {
@@ -89,9 +89,9 @@ binding DenseTicketVisit : DenseVisit<DenseTicket, DenseTicket, DenseTestSeen, u
 }
 
 fn dense_scalar_consume(env: &DenseTestSeen, key: u64, value: u64) -> result: unit writes(env) {
-  set deref(env).consumed = deref(env).consumed +wrap 1_u64;
-  set deref(env).key_sum = deref(env).key_sum +wrap key;
-  set deref(env).value_sum = deref(env).value_sum +wrap value;
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  set env^.key_sum = env^.key_sum +wrap key;
+  set env^.value_sum = env^.value_sum +wrap value;
   return unit;
 }
 
@@ -398,7 +398,7 @@ fn dense_test_scalars() -> result: u64 pure {
 }
 
 fn dense_identity_hash(env: &DenseHashEnv, key: &u64) -> result: u64 reads(key) {
-  return deref(key);
+  return key^;
 }
 
 binding DenseIdentityKey : DenseKey<u64, DenseHashEnv> {

@@ -23,15 +23,15 @@ fn sparse_owned_make(id: u64, serial: u64) -> result: SparseOwnedNode pure {
 }
 
 fn sparse_owned_fail(ledger: &SparseOwnerLedger) -> result: unit writes(ledger) {
-  set deref(ledger).failures = deref(ledger).failures +wrap 1_u64;
+  set ledger^.failures = ledger^.failures +wrap 1_u64;
   return unit;
 }
 
 fn sparse_owned_release(value: SparseOwnedNode, ledger: &SparseOwnerLedger) -> result: unit writes(ledger) {
   let SparseOwnedNode(child: owned_child) = move value;
   let serial = owned_child.inner.serial;
-  if serial < deref(ledger).releases.len {
-    set deref(ledger).releases[serial] = deref(ledger).releases[serial] +wrap 1_u64;
+  if serial < ledger^.releases.len {
+    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
   } else {
     sparse_owned_fail(ledger: ledger);
   }
@@ -45,34 +45,34 @@ fn sparse_owned_consume(env: &SparseOwnerLedger, key: SparseOwnedNode, value: Sp
 }
 
 fn sparse_owned_hash(env: &SparseOwnerEnv, key: &SparseOwnedNode) -> result: u64 reads(key) {
-  return deref(key).child.inner.id % 1_u64;
+  return key^.child.inner.id % 1_u64;
 }
 
 fn sparse_owned_equal(env: &SparseOwnerEnv, left: &SparseOwnedNode, right: &SparseOwnedNode) -> result: Bool reads(left), reads(right) {
-  return deref(left).child.inner.id == deref(right).child.inner.id;
+  return left^.child.inner.id == right^.child.inner.id;
 }
 
 fn sparse_owned_read(env: &SparseOwnerLedger, key: &SparseOwnedNode, value: &SparseOwnedNode) -> result: u64 reads(key), reads(value), writes(env) {
-  if deref(key).child.inner.serial != 4_u64 {
+  if key^.child.inner.serial != 4_u64 {
     sparse_owned_fail(ledger: env);
   }
-  if deref(value).child.inner.serial != 14_u64 {
+  if value^.child.inner.serial != 14_u64 {
     sparse_owned_fail(ledger: env);
   }
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  return deref(value).child.inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  return value^.child.inner.id;
 }
 
 fn sparse_owned_increment(env: &SparseOwnerLedger, key: &SparseOwnedNode, value: &SparseOwnedNode) -> result: u64 reads(key), writes(env), writes(value) {
-  if deref(key).child.inner.serial != 4_u64 {
+  if key^.child.inner.serial != 4_u64 {
     sparse_owned_fail(ledger: env);
   }
-  if deref(value).child.inner.serial != 14_u64 {
+  if value^.child.inner.serial != 14_u64 {
     sparse_owned_fail(ledger: env);
   }
-  set deref(env).visits = deref(env).visits +wrap 1_u64;
-  set deref(value).child.inner.id = deref(value).child.inner.id +wrap 1_u64;
-  return deref(value).child.inner.id;
+  set env^.visits = env^.visits +wrap 1_u64;
+  set value^.child.inner.id = value^.child.inner.id +wrap 1_u64;
+  return value^.child.inner.id;
 }
 
 binding SparseOwnedKey : SparseKey<SparseOwnedNode, SparseOwnerEnv> {
@@ -85,10 +85,10 @@ binding SparseOwnedConsume : SparseConsume<SparseOwnedNode, SparseOwnedNode, Spa
 }
 
 fn sparse_owned_check_pair(pair: &SparsePair<SparseOwnedNode, SparseOwnedNode>, key: u64, value: u64, ledger: &SparseOwnerLedger) -> result: unit reads(pair), writes(ledger) {
-  if deref(pair).key.child.inner.id != key {
+  if pair^.key.child.inner.id != key {
     sparse_owned_fail(ledger: ledger);
   }
-  if deref(pair).value.child.inner.id != value {
+  if pair^.value.child.inner.id != value {
     sparse_owned_fail(ledger: ledger);
   }
   return unit;
