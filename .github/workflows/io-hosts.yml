@@ -246,9 +246,8 @@ jobs:
       # satisfy this step.
       - name: Construct and run shared Windows program cases
         timeout-minutes: 6
-        # Cargo builds on every processor of this dedicated runner; the case
-        # pool stays at two.
         env:
+          CARGO_BUILD_JOBS: 2
           RUST_TEST_THREADS: 2
           RUST_MIN_STACK: 8388608
         run: |

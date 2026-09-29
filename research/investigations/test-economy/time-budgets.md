@@ -128,17 +128,27 @@ group builds only the library in test mode. Expected: the unit job loses its
 corpus job gains the CLI harness build and its 5 s of cases. Local `make
 check` builds the same artifacts as before. Criterion: the hosted unit job
 falls by at least 40 s on both runners while the corpus job grows by at most
-20 s; CI-RESULT-PENDING.
+20 s. Result, run 36559339945 against the six earlier runs:
 
-### Build the Windows cases on every processor
+| Job | ubuntu before (median) | ubuntu after | macOS before (median) | macOS after |
+|---|---|---|---|---|
+| unit, whole group | 249 s | 187 s | job 288 s | job 235 s |
+| corpus, whole group | 145 s | 103 s | job 166 s | job 191 s |
 
-The Windows program step built the compiler at two Cargo jobs on a
-four-processor runner. It now builds at Cargo's default of every processor;
-the case pool stays at two. CI-RESULT-PENDING.
+The unit job met the criterion on both runners. The corpus job fell on
+ubuntu and rose 25 s on macOS, inside its earlier range of 125–196 s; one
+sample cannot separate the CLI harness from runner variance; the next run adds a second sample.
+
+### Tried and withdrawn: the Windows build on every processor
+
+The Windows program step builds the compiler at two Cargo jobs. At Cargo's
+default of every processor, run 36559339981's build took 175 s against a
+step of 157–212 s before, of which the cases take about 18 s: no
+measurable gain on one sample, so the step keeps its two jobs.
 
 ### Optimization level of the `gate` profile
 
-OPT-RESULT-PENDING
+Measurement in progress.
 
 ## The gate
 
