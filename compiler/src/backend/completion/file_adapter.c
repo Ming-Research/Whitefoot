@@ -514,6 +514,7 @@ int wf_file_adapter_init(
     adapter->blocked_helpers = 0;
     adapter->live_helpers = 0;
     adapter->stopping = 0;
+    adapter->hold_for_contexts = 0;
     adapter->helper_capacity = helper_capacity;
     adapter->helper_cap = helper_count;
     atomic_init(&adapter->stat_submissions, 0);
