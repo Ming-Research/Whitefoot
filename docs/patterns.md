@@ -369,7 +369,10 @@ for (
 
 The counted loop supplies `at < limit` in the body. Derived expressions still
 owe their own exact integer and subscript obligations. Header invariants have
-no `use` block.
+no `use` block. A header conclusion also leaves the loop on every `break`
+[ENT-5], so a scan whose position is unchanged since the head needs no
+restated bound or clamp after the loop; the invariant's name still ends with
+the loop body.
 
 Use a local invariant for a relation proved at one program point. When the
 fixed automatic families cannot combine the needed premises, direct the finite
@@ -575,7 +578,10 @@ let increment = match starts_word {
 This states Boolean dataflow directly and leaves control flow for genuine
 program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
-result [OP-2].
+result [OP-2]. A `give` of a literal, a named const or a bare integer binding
+delivers the binding's equality to it, so `increment <= 1` holds after the
+`match`, and a value-producing `if` keeps every bound that each branch's given
+value is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 

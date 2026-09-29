@@ -5,9 +5,17 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Deliver value-initializer facts only where the closure cannot derive them
+
+Nodes: compiler/checker-facts, language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts, language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals, compiler/diagnostic-repairs
+
+Owner-approved: 2026-09-29, the owner approved the checker-facts-delivery-roots amendment in the session ("approved", written in Chinese).
+
+Summary: Apply the checker-facts-delivery-roots amendment of PR #175 unchanged. compiler/checker-facts adds that value-initializer delivery materializes only relations the continuation's closure cannot derive, and that a literal carrier's given-value equality enters the edge's ordinary closure incrementally, because a literal relates its value to every term of the function: materializing each consequence tripled the retained proof of the wfgrep program, and a full closure per literal edge slowed its check by 29 percent (research/investigations/writer-lost-facts/DESIGN.md, implementation measurements). Three refused alternatives are recorded: materializing every joined consequence under a raised proof-size ceiling, delivering a literal carrier as its equality alone, and a full closure per literal edge. Nodes also names the nodes of the other entries this merge brings to main (PRs #166, #167, #168, #171 and the loop-exit entry of PR #175), because the newest entry names every node changed against main.
+
 ## 2026-09-28 Add the total rounding conversion into float formats
 
-Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals, compiler/diagnostic-repairs
+Nodes: language/numeric-conversion, compiler/numeric-conversion-lowering, language/surface-form, language/surface-form/text-literals
 
 Owner-approved: 2026-09-28, the owner approved the #171 decision cards (rounding-conversion, rounding-conversion-lowering) in the session handoff
 
@@ -36,6 +44,14 @@ Nodes: compiler/diagnostic-repairs
 Owner-approved: 2026-09-28, the owner approved the diagnostic-repairs amendment (range-length repair) in the session handoff
 
 Summary: Apply the reviewed amendment for PR #167 unchanged. The second decision of compiler/diagnostic-repairs now gives the unproved goal over the `len` of a range an argument forms at the call its own routes: the length is written as the difference of the range's endpoints [REF-4], guarded when that difference is one binding, bounded by a width with the exact subtraction and then guarded when it is a subtraction, re-sliced from zero by that width when the goal equates such a subtraction, and preceded by a `let` for an endpoint that is not a binding. Its grounds are that such a range has the length its endpoints give it, so naming it as a value only its occurrence identifies hid the missing bound on the difference, and that a `-wrap` width carries no relation to the endpoints [ENT-3]; the refused occurrence-local classification is added to `Rejected:`. Remove the accepted amendment and its directory. This ruling authorizes no merge.
+
+## 2026-09-28 Keep header conclusions past loop exits and deliver the give carrier equality
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts
+
+Owner-approved: 2026-09-28, the owner approved the writer-lost-facts amendments for loop exits and give carriers in the session handoff ("all the Whitefoot decisions are approved", written in Chinese).
+
+Summary: Apply two of the writer-lost-facts amendments unchanged apart from link depth. loop-fact-retention adds that a proved header invariant conclusion leaves its loop on every exit edge and survives the continuation join as a local invariant conclusion does, while the name still ends with the loop body, because the conclusion is a theorem over the exiting iteration's immutable value images; the removal accounted for 11 of the URL parser's 23 clamp blocks. automatic-facts adds that a `give d;` edge delivers the receiver's equality to d, or to the value of a literal or named-const carrier, beside the existing substitution, because `give length;` otherwise lost the bound `let bound = length; give bound;` delivers. The [investigation](../research/investigations/writer-lost-facts/DESIGN.md) holds the probes, soundness arguments and census. Specification v0.79 implements both [ENT-2, ENT-5, ENT-6, GIVE-1, INV-1, DIAG-2]. The approved `Option` success route lands with PR #169's implementation, which applies it to the tree with its specification text. Remove the accepted loop-exit amendment and the carrier part of the automatic-facts amendment. This ruling authorizes no merge.
 
 ## 2026-09-28 Bind marked waiting results and run contexts on several drivers
 

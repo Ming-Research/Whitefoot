@@ -234,10 +234,32 @@ struct GiveFrame {
 /// Stable source and substitution identity for one [GIVE-1] edge.
 struct DeliveryEdgeContext<'a> {
     statement: &'a crate::NodePath,
-    carrier_binding: BindingId,
     receiver_binding: BindingId,
+    /// The carrier term c whose relations the edge substitutes [ENT-5]: a
+    /// bare atom itself, or the given value of a literal or named const.
     carrier: TermId,
     receiver: TermId,
+    event: FlowEventId,
+}
+
+/// The carrier of one eligible `give` [GIVE-1, ENT-5].
+#[derive(Clone, Copy)]
+enum DeliveryCarrier {
+    /// A direct non-consuming bare atom's place term, its own carrier term.
+    Atom(TermId),
+    /// A typed integer literal or integer-typed named const, delivered
+    /// through the give's evaluated value.
+    Constant,
+}
+
+/// One bare-atom give edge's carrier equality `x = d` [ENT-5], sourced from
+/// the give's evaluated value `v = d`.
+struct CarrierEquality<'a> {
+    statement: &'a crate::NodePath,
+    receiver_binding: BindingId,
+    receiver: TermId,
+    evaluated: TermId,
+    atom: TermId,
     event: FlowEventId,
 }
 
@@ -597,9 +619,6 @@ struct ProofResult {
 struct ActiveAffineFact {
     inequality: AffineInequality,
     evidence: AffineFactEvidence,
-    /// Enclosing loop assumptions on which this fact still depends. Removing
-    /// any listed loop removes the fact; an empty list is path-stable.
-    active_loops: Vec<CheckedLoopId>,
 }
 
 /// Captured values of one admitted unsigned division. These identities are

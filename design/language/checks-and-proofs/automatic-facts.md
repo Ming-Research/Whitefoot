@@ -12,6 +12,8 @@ Decision: At body entry, an established requirement ordering leaf with an admitt
 
 Decision: A local own Result with an integer payload carries conditional evidence for its current success payload through ordinary binding, copying, moving, replacement and value delivery, and success selection or a forwarded-return judgment reads that evidence under its guard, because the matched examples in research/investigations/result-proof-transport/DESIGN.md lose the same verified relation merely by naming or propagating its value, instead of a closed set of direct-call source shapes that forces writers to reconstruct equivalent values.
 
+Decision: A value initializer's `give d;` edge delivers the receiver's equality to d when d is a bare integer term whose support survives the edge, and to d's value when d is an integer literal or integer-typed named constant, in addition to substituting the receiver for d in the relations that mention d, because `give length;` otherwise loses exactly the bound that `let bound = length; give bound;` delivers, so writers rewrote value initializers as duplicated returning branches, as the [writer-lost-facts probes](../../../research/investigations/writer-lost-facts/DESIGN.md#shape-3-an-expression-form-if) show, instead of delivering only relations that already mention d and forming no image for a literal.
+
 Decision: Each outcome's conditional numeric facts use the existing weakest-bound control-flow join and ordinary support invalidation, with loop heads removing associations and supports changed on continuing backedges, because these finite rules retain common weaker consequences without correlating independent outcome guards or equating different iterations, instead of exact-template intersection, branch-history enumeration, or a work budget that selects acceptance.
 
 Rejected:
@@ -22,3 +24,4 @@ Rejected:
 - Exact affine images for wrap forms that cannot wrap and for shifts that lose no bits: rejected because the exact row already states that identity and becomes provable wherever these images would apply; reopen when a proof needs the identity and the writer cannot use the exact row.
 - Extending only a direct call inside propagate: rejected because naming, copying, value delivery and return forwarding would still lose the verified relation and require separate source forms.
 - Requiring identical written bounds at a conditional-value join: rejected because the existing difference-bound join already retains the weakest common bound without introducing a new inference family.
+- Delivering the receiver equality by closure without the substitution: rejected because the closure has no rule carrying a disequality through an equality, so relations delivered today would be lost.
