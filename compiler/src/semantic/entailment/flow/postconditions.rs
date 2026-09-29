@@ -4,6 +4,16 @@
 
 use super::*;
 
+/// A call datum's operand: the parameter ordinal, the projections below it,
+/// the measure read there, the operand type, and whether it is the entry datum.
+type CallDatumOperand = (
+    u32,
+    Vec<GoalProjection>,
+    Option<CheckedMeasure>,
+    CheckedType,
+    bool,
+);
+
 impl Input<'_, '_> {
     pub(super) fn postcondition_affine_target(
         &self,
@@ -1683,13 +1693,7 @@ impl Reasoning<'_, '_, '_> {
             return;
         };
         let parameter_modes = callee.parameter_modes.clone();
-        let mut operands: Vec<(
-            u32,
-            Vec<GoalProjection>,
-            Option<CheckedMeasure>,
-            CheckedType,
-            bool,
-        )> = Vec::new();
+        let mut operands: Vec<CallDatumOperand> = Vec::new();
         for available in postconditions {
             for operand in &available.relation.operands {
                 let datum = &operand.datum;
