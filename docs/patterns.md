@@ -774,3 +774,44 @@ atomic items = &queue when items^.len > 0_u64 {
 
 The maintained [shared_objects.wf](../tests/programs/shared_objects.wf) counts
 from sixteen contexts and passes values through a guarded queue this way.
+
+## P18. Keep a relation between a struct's fields as its type invariant
+
+When a value is only valid while two of its fields agree, such as a cursor
+that stays below its window's length, declare the relation on the struct
+instead of repeating it as a `requires` and `ensures` pair on every function
+that takes the value [TYPE-11]:
+
+```whitefoot
+struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn advance(t: &Table) -> result: u64 reads(t.slots), writes(t.next) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  let after = at + 1_u64;
+  if after == t^.slots.len {
+    set t^.next = 0_u64;
+  } else {
+    set t^.next = after;
+  }
+  return got;
+}
+```
+
+Every function taking a `Table` or a `&Table` receives the relation at entry,
+which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
+value on: at its returns when it writes the value, at each call passing it, and
+at `shared_new`. Every construction owes it too. Between two field writes of
+one body the relation may be false, since no other code can see the value
+there. A shared object's state keeps it the same way: each atomic block
+receives it at entry and owes it at every edge that leaves the block.
+
+An invariant relates one field or measure on each side, displaced by a
+constant, over the struct's own fields; a relation to another value, such as an
+index into another table, stays a contract. Publish a field only as `public
+readonly`, so that only the declaring module writes it.
+

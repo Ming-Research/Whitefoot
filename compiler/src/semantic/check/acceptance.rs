@@ -425,9 +425,10 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Ref4,
                 RecordAnswer::Obligation(index),
             ) => self.undischarged_obligation(function, record.rule, index),
-            (SemanticRule::Fn8 | SemanticRule::Op14, RecordAnswer::CallGoal(index)) => {
-                self.undischarged_call_requirement(function, record.rule, index)
-            }
+            (
+                SemanticRule::Fn8 | SemanticRule::Op14 | SemanticRule::Type11,
+                RecordAnswer::CallGoal(index),
+            ) => self.undischarged_call_requirement(function, record.rule, index),
             (SemanticRule::Fn9, RecordAnswer::Postcondition(index)) => {
                 self.undischarged_postcondition(function, index)
             }
@@ -616,10 +617,6 @@ impl<'unit> TypeContext<'unit> {
             .get(index)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let location = self.declarations.source_location(&outcome.node_path)?;
-        let signature = self
-            .signatures
-            .get(outcome.callee.0 as usize)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let disposition = match outcome.disposition {
             CallGoalDisposition::Discharged => {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -661,6 +658,39 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         let requires_clause = self.declarations.node_location(&outcome.requires_clause)?;
+        // [TYPE-11] a construction's type invariant is judged as a
+        // requirement the constructing body owes itself, and reported as
+        // that invariant.
+        if rule == SemanticRule::Type11 {
+            return Ok(SemanticIssue {
+                rule,
+                location,
+                kind: SemanticIssueKind::UndischargedTypeInvariant {
+                    type_invariant: requires_clause,
+                    instantiated_goal: outcome.rendered_goal.clone(),
+                    disposition,
+                    // A construction is a `call`; every other site is an
+                    // edge leaving an atomic block.
+                    mechanical_fix: if self
+                        .declarations
+                        .tree
+                        .node_with_path(&outcome.node_path)
+                        .map(|node| self.declarations.tree.production(node))
+                        .transpose()?
+                        == Some(Production::Call)
+                    {
+                        repairs::construction_invariant(&case)
+                    } else {
+                        repairs::atomic_exit_invariant(&case)
+                    },
+                },
+                request: None,
+            });
+        }
+        let signature = self
+            .signatures
+            .get(outcome.callee.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let ranges = outcome
             .range_lengths
             .iter()

@@ -297,11 +297,13 @@ What is already there:
   already discharges [INV-1], with AUTO and, when needed, written `use` steps
   [PRF-1].
 
-What is missing:
+What was missing, and what the type invariant of 5.6 now supplies
+([TYPE-11], specification v0.81):
 
-- a declared invariant for an object;
+- a declared invariant for an object, on its state's struct;
 - I as a fact at each block's entry;
-- the creation and exit obligations.
+- the creation and exit obligations, at `shared_new` and at every edge that
+  leaves a block.
 
 `research/experiments/monitor-invariants/` tests how far today's machinery
 carries the proofs. It uses stand-ins for the entry fact: an `if` on I inside
@@ -380,6 +382,11 @@ open.
   return".
 
 ### 5.6 An invariant for the whole life of a value
+
+The owner approved this rule as decision card 7 (2026-09-29), and PR #173
+implements it as [TYPE-11] (`design/language/checks-and-proofs`). The
+conformance cases `type11-*` pin it; `docs/todo.md`, "Type invariants stop
+at the direct struct type", records what it leaves out.
 
 Seeing the cursor example, the owner remarked (written in Chinese,
 translated here): "this invariant bound to the struct looks quite useful; if
@@ -503,7 +510,8 @@ The changes below are grouped by where they land.
 **Compiler and runtime**
 - Parse and check `spawn`; lower it as today's context start.
 - Remove the pass that starts unmarked calls reaching a guard.
-- Add the invariant's declaration, entry facts and obligations.
+- Add the invariant's declaration, entry facts and obligations (done:
+  [TYPE-11], 5.6).
 - Close the runtime gaps of 4.3.
 
 **Tests and guidance**
@@ -649,8 +657,8 @@ Sources:
    invariant or later. The owner chose to declare the invariant on the state
    type (5.4, option A).
 5. Whether the invariant holds for the whole life of a value, at the module
-   boundary (5.6), which reverses the recorded refusal of type-level struct
-   invariants and makes the shared-object invariant a special case.
+   boundary (5.6). The owner approved it (card 7), and it is implemented as
+   [TYPE-11].
 6. Whether PR #173 lands first with its progress rule withdrawn, carrying
    what still stands (section 6), and the model follows as its own change; or
    the model is built on #173 before it lands.

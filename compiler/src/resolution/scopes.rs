@@ -210,6 +210,18 @@ impl ScopeBuild {
                         body,
                     )?;
                 }
+                // [TYPE-11] one scope per type invariant holds its name and
+                // its binder, so two structs may name their invariants alike
+                // and no binder is visible outside its relation.
+                Production::TypeInvariant => {
+                    let scope = build.push_scope(
+                        Some(current_scope),
+                        ScopeKind::TypeInvariant,
+                        path.clone(),
+                    )?;
+                    build.declaration_scopes[node_id.index()] = Some(scope);
+                    child_scopes.fill(scope);
+                }
                 Production::AtomicStmt => {
                     let binding = build.push_scope(
                         Some(current_scope),

@@ -21,6 +21,7 @@ mod requires;
 mod support;
 mod tail_calls;
 mod text_literals;
+mod type_invariants;
 mod type_regions;
 mod types;
 
@@ -570,6 +571,8 @@ struct TypeContext<'unit> {
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
     behavior: behavior::BehaviorInventory,
+    /// [TYPE-11] each struct's formed type invariants, in declaration order.
+    type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -1111,6 +1114,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.complete_nominals(check_context)?;
         self.collect_deferred_nominal_constants(check_context, &items)?;
         self.collect_function_signatures(check_context, &items)?;
+        self.collect_type_invariants(check_context)?;
         self.admit_postcondition_selectors(check_context)?;
         self.validate_generic_templates(check_context)?;
         if self.types.signatures.iter().any(|signature| {
@@ -1694,7 +1698,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // judgment below reaches once an operand fixes W. Every other generic
         // row, prelude or source, keeps its symbolic judgment.
         let unsupplied_window_row = self.types.has_unsupplied_window_type_parameter(signature)?;
-        let (requirements, requirement_places) = if let Some(node) = self
+        let (mut requirements, mut requirement_places) = if let Some(node) = self
             .types
             .declarations
             .tree
@@ -1715,6 +1719,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
+        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+            requirements.push(requirement);
+            requirement_places.push(Vec::new());
+        }
 
         let postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -1826,7 +1834,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             );
         }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            postcondition_selectors
+            let mut postconditions = postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
                 .map(|(selector, relation)| {
@@ -1841,7 +1849,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &checked.statements,
                     )
                 })
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+            postconditions.extend(self.type_invariant_postconditions(
+                FunctionContext {
+                    check_context,
+                    function: signature,
+                },
+                &parameters,
+                &checked.statements,
+            )?);
+            postconditions
         } else {
             postcondition_selectors
                 .into_iter()
@@ -2425,6 +2442,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     .map(|boundary| {
                         Ok(CheckedCallRequirement {
                             requires_clause: boundary.clause.clone(),
+                            subject: boundary.subject,
                             goal: ConcreteGoal::new(self.instantiate_goal_expression(
                                 check_context,
                                 &boundary.template.root,
@@ -3847,6 +3865,7 @@ impl<'unit> TypeContext<'unit> {
             checked_constants: Default::default(),
             derived_consts: Default::default(),
             behavior: Default::default(),
+            type_invariants: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

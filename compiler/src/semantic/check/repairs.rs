@@ -847,6 +847,35 @@ pub(super) fn call_requirement(
     }
 }
 
+/// [TYPE-11] a construction's type invariant over its field operands.
+pub(super) fn construction_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false for the operands this construction receives: construct the value from operands that satisfy it, or change the statements that fix those operands",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved before this construction: establish it over the operands first, with a `requires`, an `if` or an `invariant` over the locals they are read from, and then construct the value",
+            case.text
+        ),
+    }
+}
+
+/// [TYPE-11] a type invariant of an object's state at an edge that leaves
+/// an atomic block.
+pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false where the block leaves the object's state: restore it before this edge, or leave the block where it holds",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved where the block leaves the object's state: restore it before this edge, writing the fields it relates so the block shows it holds, or prove it with an `invariant` whose `use` steps name the facts it follows from",
+            case.text
+        ),
+    }
+}
+
 /// [FN-9] a normal-result relation at one selected return; `called` says
 /// whether the returned value reads a value a user call returned.
 pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static str {

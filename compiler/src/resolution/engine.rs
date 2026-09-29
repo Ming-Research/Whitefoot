@@ -1443,11 +1443,14 @@ fn declaration_classes(role: DeclarationRole) -> Vec<DeclarationClass> {
         | DeclarationRole::Let
         | DeclarationRole::MatchBinder
         | DeclarationRole::CountedBinder
-        | DeclarationRole::AtomicBinder => {
+        | DeclarationRole::AtomicBinder
+        | DeclarationRole::InvariantBinder => {
             vec![DeclarationClass::Value]
         }
         DeclarationRole::LoopLabel => vec![DeclarationClass::Label],
-        DeclarationRole::Invariant => vec![DeclarationClass::Invariant],
+        DeclarationRole::Invariant | DeclarationRole::TypeInvariantName => {
+            vec![DeclarationClass::Invariant]
+        }
     }
 }
 
@@ -1463,9 +1466,10 @@ fn declaration_scope(
                 .first()
                 .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?,
         ),
-        DeclarationRole::LoopLabel | DeclarationRole::AtomicBinder => {
-            scopes.declaration_scope(role.owner)
-        }
+        DeclarationRole::LoopLabel
+        | DeclarationRole::AtomicBinder
+        | DeclarationRole::TypeInvariantName
+        | DeclarationRole::InvariantBinder => scopes.declaration_scope(role.owner),
         _ => Ok(role.scope),
     }
 }

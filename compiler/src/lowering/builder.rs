@@ -1269,7 +1269,7 @@ impl<'program> IrBuilder<'program> {
                     backedge_drops,
                     give_target.clone(),
                 )?,
-                CheckedStatement::Break { target, drops } => {
+                CheckedStatement::Break { target, drops, .. } => {
                     let target = self
                         .loops
                         .iter()

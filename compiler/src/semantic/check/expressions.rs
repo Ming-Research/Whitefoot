@@ -1501,10 +1501,14 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let carrier = self.types.declarations.tree.path(node)?.clone();
         let expression = match site.variant {
+            // A struct with region parameters declares generics, so it
+            // declares no type invariant [TYPE-11].
             None => CheckedExpression::ConstructStruct {
                 carrier,
                 nominal,
                 fields,
+                invariants: Vec::new(),
+                invariant_arguments: Vec::new(),
             },
             Some(variant) => CheckedExpression::ConstructEnum {
                 carrier,
@@ -1797,6 +1801,7 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let mut fields = Vec::with_capacity(written_fields.len());
+        let mut operands = Vec::with_capacity(written_fields.len());
         let mut effects = EffectSet::NONE;
         for (written, declared) in written_fields.into_iter().zip(&declared_fields) {
             if self
@@ -1841,15 +1846,23 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-            effects = effects.union(value.effects);
-            fields.push(value.expression);
+            effects = effects.union(value.effects.clone());
+            fields.push(value.expression.clone());
+            operands.push((atom, declared.ty, value));
         }
         let expression = match constructor {
-            Constructor::Struct(nominal) => CheckedExpression::ConstructStruct {
-                carrier: self.types.declarations.tree.path(node)?.clone(),
-                nominal,
-                fields,
-            },
+            Constructor::Struct(nominal) => {
+                let carrier = self.types.declarations.tree.path(node)?.clone();
+                let (invariants, invariant_arguments) =
+                    self.construction_invariants(context, &carrier, nominal, &operands, bindings)?;
+                CheckedExpression::ConstructStruct {
+                    carrier,
+                    nominal,
+                    fields,
+                    invariants,
+                    invariant_arguments,
+                }
+            }
             Constructor::Enum { nominal, variant } => CheckedExpression::ConstructEnum {
                 carrier: self.types.declarations.tree.path(node)?.clone(),
                 nominal,

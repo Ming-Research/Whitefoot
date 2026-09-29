@@ -365,7 +365,10 @@ rarely insert at the same place.
   [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
   value of an unbounded type parameter can only be moved whole; the
   [beyond-memory article](articles/beyond-memory.md) shows it for
-  `ReadFile`. Pin each with a program per
+  `ReadFile`. TYPE-11's TypeInvariantWritableField repair is unpinned too:
+  a `public` field is written only in an interface record, which a
+  single-source pair cannot hold, so pinning it needs a module-form pair.
+  Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -1845,6 +1848,23 @@ rarely insert at the same place.
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **Type invariants stop at the direct struct type.** [TYPE-11] makes a
+  struct's invariant a requirement and postcondition of each callable whose
+  parameter or result is written as the struct, a construction's obligation,
+  and an atomic block's entry fact and exit obligation. A value of the struct
+  read from anywhere else, an element of a `Slots<Table, n>`, a field of
+  another struct or a `Box` content, gets no fact, and storing one there owes
+  nothing, so a function that returns an element must re-establish the
+  relation to satisfy its result's postcondition. Instantiating the invariant
+  at each such read is sound only once every store owes it, which the
+  module boundary of `design/language/checks-and-proofs` permits. Three
+  related choices stay open: whether a module-internal helper may take a
+  value whose invariant is broken, as SPARK's internal subprograms may;
+  whether generic structs and enums may carry invariants; and whether an
+  affine invariant (a sum of fields) is admitted through an entry snapshot
+  (`research/experiments/monitor-invariants/`). Reopen with the first program
+  that keeps invariant-bearing structs in a container, needs a repair helper,
+  or needs a sum.
 - **Remaining value-evidence boundaries.** The
   [investigation](../research/investigations/result-proof-transport/DESIGN.md)
   leaves three related extensions to assess together: borrowed Result

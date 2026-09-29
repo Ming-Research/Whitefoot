@@ -62,13 +62,48 @@ struct PostconditionBindingInfo {
 /// the boundary — the entry state `entry(p)` names and the exit state a bare
 /// `p` names in `ensures` — while a by-value parameter and a reference the
 /// row only reads have one.
-fn parameter_has_exit_state(function: &FunctionSignature, parameter: &ParameterSignature) -> bool {
+pub(super) fn parameter_has_exit_state(
+    function: &FunctionSignature,
+    parameter: &ParameterSignature,
+) -> bool {
     parameter.mode.is_reference()
         && function
             .declared_effects
             .writes
             .iter()
             .any(|path| path.root == parameter.declaration)
+}
+
+/// [FN-9] a comparison's direction-normalized relation; no other
+/// operation is a relation.
+pub(super) fn normalized_relation(
+    operation: CheckedIntegerOperation,
+) -> Option<NormalizedRelation> {
+    Some(match operation {
+        CheckedIntegerOperation::Equal => NormalizedRelation::Equal,
+        CheckedIntegerOperation::NotEqual => NormalizedRelation::NotEqual,
+        CheckedIntegerOperation::Less => NormalizedRelation::UpperBound {
+            left: 0,
+            right: 1,
+            strict: true,
+        },
+        CheckedIntegerOperation::LessEqual => NormalizedRelation::UpperBound {
+            left: 0,
+            right: 1,
+            strict: false,
+        },
+        CheckedIntegerOperation::Greater => NormalizedRelation::UpperBound {
+            left: 1,
+            right: 0,
+            strict: true,
+        },
+        CheckedIntegerOperation::GreaterEqual => NormalizedRelation::UpperBound {
+            left: 1,
+            right: 0,
+            strict: false,
+        },
+        _ => return None,
+    })
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -771,7 +806,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// A side carrying two datums, or a datum with any coefficient other than
     /// one, is outside the difference-bound fragment [ENT-4] and yields
     /// `None`, which is the ordinary FN-9 rejection at the clause.
-    fn postcondition_relation_term(
+    pub(super) fn postcondition_relation_term(
         expanded: &ExpandedClauseExpression,
         operand_type: CheckedType,
     ) -> Option<RelationTerm> {
@@ -1478,36 +1513,8 @@ impl<'unit> DeclarationInventory<'unit> {
         if !is_output(&left) && !is_output(&right) {
             return self.invalid_postcondition_relation(final_expression);
         }
-        let normalized = match operation {
-            super::super::model::CheckedIntegerOperation::Equal => NormalizedRelation::Equal,
-            super::super::model::CheckedIntegerOperation::NotEqual => NormalizedRelation::NotEqual,
-            super::super::model::CheckedIntegerOperation::Less => NormalizedRelation::UpperBound {
-                left: 0,
-                right: 1,
-                strict: true,
-            },
-            super::super::model::CheckedIntegerOperation::LessEqual => {
-                NormalizedRelation::UpperBound {
-                    left: 0,
-                    right: 1,
-                    strict: false,
-                }
-            }
-            super::super::model::CheckedIntegerOperation::Greater => {
-                NormalizedRelation::UpperBound {
-                    left: 1,
-                    right: 0,
-                    strict: true,
-                }
-            }
-            super::super::model::CheckedIntegerOperation::GreaterEqual => {
-                NormalizedRelation::UpperBound {
-                    left: 1,
-                    right: 0,
-                    strict: false,
-                }
-            }
-            _ => return self.invalid_postcondition_relation(final_expression),
+        let Some(normalized) = normalized_relation(operation) else {
+            return self.invalid_postcondition_relation(final_expression);
         };
         Ok(RelationTemplate {
             operation,

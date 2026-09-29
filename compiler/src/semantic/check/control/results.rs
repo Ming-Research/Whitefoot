@@ -429,10 +429,14 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(StatementResult {
             statement: CheckedStatement::Return {
                 node_path: node_path.clone(),
+                // A result list is a compiler-owned nominal, which declares
+                // no type invariant [TYPE-11].
                 value: super::super::super::model::CheckedExpression::ConstructStruct {
                     carrier: node_path,
                     nominal,
                     fields,
+                    invariants: Vec::new(),
+                    invariant_arguments: Vec::new(),
                 },
                 drops: self.types.live_affine_drops(
                     check_context,

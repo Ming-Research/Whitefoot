@@ -113,6 +113,8 @@ const ENUM_ORDER: &[&str] = &[
     "callee_path",
     // v0.81 [GRAM-4, SHARE-2]: the atomic statement.
     "atomic_stmt",
+    // v0.81 [GRAM-2, GRAM-4, TYPE-11]: a struct's type invariants.
+    "type_invariant",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.

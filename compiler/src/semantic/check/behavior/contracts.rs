@@ -230,6 +230,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .map(|requirement| CheckedRequirement {
                     template: requirement.template,
                     clause: requirement.clause,
+                    subject: None,
                 })
                 .collect(),
             requirement_queries: query_ids,
@@ -521,7 +522,11 @@ impl<'unit> DeclarationInventory<'unit> {
         let mut requirements = Vec::with_capacity(premises.len());
         let mut requirement_places = Vec::with_capacity(premises.len());
         for (clause, template, places) in premises {
-            requirements.push(CheckedRequirement { template, clause });
+            requirements.push(CheckedRequirement {
+                template,
+                clause,
+                subject: None,
+            });
             requirement_places.push(places);
         }
         Ok(CheckedFunction {

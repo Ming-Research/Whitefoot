@@ -18,6 +18,10 @@ pub(crate) struct CheckedRequirement {
     /// Exact `requires_clause` occurrence. It is diagnostic/provenance
     /// identity only and never an executable trap record.
     pub(crate) clause: NodePath,
+    /// [TYPE-11] the parameter ordinal a type invariant is taken over, which
+    /// tells apart the requirements one `type_invariant` gives two
+    /// parameters; `None` for a written `requires_clause`.
+    pub(crate) subject: Option<u32>,
 }
 
 /// The finite typed predicate carried by one [FN-8] callable boundary.
@@ -56,6 +60,8 @@ impl ConcreteGoal {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallRequirement {
     pub(crate) requires_clause: NodePath,
+    /// [TYPE-11] the requirement's subject ordinal [`CheckedRequirement::subject`].
+    pub(crate) subject: Option<u32>,
     pub(crate) goal: ConcreteGoal,
 }
 

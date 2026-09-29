@@ -281,7 +281,7 @@ impl ExpandedClauseExpression {
         datum.with_projection(projection, ty).map(Self::Datum)
     }
 
-    fn into_goal_expression(self) -> Option<GoalExpression> {
+    pub(super) fn into_goal_expression(self) -> Option<GoalExpression> {
         match self {
             Self::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
@@ -491,6 +491,7 @@ impl<'unit> Checker<'_, 'unit> {
             requirements.push(CheckedRequirement {
                 template: GoalTemplate::new(root),
                 clause: self.types.declarations.tree.path(clause)?.clone(),
+                subject: None,
             });
             let mut reached = HashSet::new();
             let mut pending = Vec::new();
@@ -530,7 +531,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// inside a contract block, so that instruction would send the writer
     /// from one hard error to another. A definition or clause instead carries
     /// the contract-specific repair.
-    fn clause_conditional_repair(stop: CheckStop) -> CheckStop {
+    pub(super) fn clause_conditional_repair(stop: CheckStop) -> CheckStop {
         let CheckStop::Issue(mut issue) = stop else {
             return stop;
         };

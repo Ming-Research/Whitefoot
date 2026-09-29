@@ -190,6 +190,8 @@ impl Checker<'_, '_> {
                 guard: guard.map(|guard| Box::new(guard.0)),
                 body: checked.statements,
                 fallthrough_drops,
+                continues: checked.can_continue,
+                invariants: self.atomic_invariants(state, binding),
             },
             can_continue: checked.can_continue,
             effects,

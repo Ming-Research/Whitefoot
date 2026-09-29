@@ -24,6 +24,8 @@ fn is_line_bearing(topology: &FinalizedTopology, node: NodeId) -> Result<bool, S
     let fixed = matches!(
         record.production,
         Production::Field
+            // [GRAM-2, FORM-2] a struct's type invariant renders on one line.
+            | Production::TypeInvariant
             | Production::Variant
             | Production::FnBind
             | Production::ConstDecl

@@ -75,6 +75,9 @@ pub enum ScopeKind {
     /// One atomic statement's binder, visible to its guard and block
     /// [SHARE-2]; its target place stays in the enclosing scope.
     AtomicBinding,
+    /// One type invariant's name and binder, visible only to its relation
+    /// [TYPE-11].
+    TypeInvariant,
 }
 
 /// One resolver scope and its lexical parent.
@@ -303,6 +306,11 @@ pub enum DeclarationRole {
     AtomicBinder,
     /// A named invariant fact visible after its checked declaration point.
     Invariant,
+    /// A struct type invariant's name, distinct within its struct [TYPE-11].
+    TypeInvariantName,
+    /// A struct type invariant's binder, a value of its struct that only its
+    /// relation names [TYPE-11].
+    InvariantBinder,
     /// A file-local alias from one source's alias header [MOD-4]. Every use
     /// of it resolves to its target's own identity.
     Alias,

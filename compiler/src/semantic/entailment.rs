@@ -1042,6 +1042,8 @@ pub(crate) struct CallGoalOutcome {
     /// callee for a direct call and the instantiated formal for a bound call
     /// [FN-5].
     pub(crate) requires_clause: NodePath,
+    /// [TYPE-11] the requirement's subject ordinal.
+    pub(crate) subject: Option<u32>,
     pub(crate) goal: ConcreteGoal,
     /// The same goal in the terms the source wrote it in, rendered here
     /// because this is where the caller's binding names are in scope. [FN-8]
@@ -1187,7 +1189,11 @@ pub(crate) fn answer_records(
     }));
     let mut call_goals = Judgments::of(entailment.call_goals.iter().map(|outcome| {
         (
-            (&outcome.node_path, &outcome.requires_clause),
+            (
+                &outcome.node_path,
+                &outcome.requires_clause,
+                outcome.subject,
+            ),
             &outcome.node_path,
         )
     }));
@@ -1226,9 +1232,11 @@ pub(crate) fn answer_records(
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
                 ObligationSubject::CallRequirement {
-                    requires_clause, ..
+                    requires_clause,
+                    subject,
+                    ..
                 } => call_goals
-                    .take(&(site, requires_clause))
+                    .take(&(site, requires_clause, *subject))
                     .map(RecordAnswer::CallGoal),
                 ObligationSubject::LoopInvariant => {
                     loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)

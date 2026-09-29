@@ -275,6 +275,29 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
+        // [TYPE-11] a type invariant's two direct IDENTs are its name and
+        // its binder, in that order; its relation's names are children.
+        Production::TypeInvariant => {
+            let [name, binder] = names.as_slice() else {
+                return Err(ResolutionCompilerFailure::InvalidRoleShape);
+            };
+            for (index, role) in [
+                (*name, DeclarationRole::TypeInvariantName),
+                (*binder, DeclarationRole::InvariantBinder),
+            ] {
+                if name_predicate(classified, index) != Some(TerminalPredicate::Identifier) {
+                    return Err(ResolutionCompilerFailure::InvalidRoleShape);
+                }
+                add_complete(
+                    classified,
+                    owner,
+                    index,
+                    RawRoleKind::Declaration(role),
+                    roles,
+                    complete_counts,
+                )?;
+            }
+        }
         Production::InvariantStmt | Production::HeaderInvariant => {
             // The relation is a `compare_op` terminal between two affine
             // expressions, not a name; the only direct IDENT is the

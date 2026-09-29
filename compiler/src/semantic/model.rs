@@ -2274,6 +2274,12 @@ pub(crate) enum CheckedExpression {
         carrier: NodePath,
         nominal: NominalId,
         fields: Vec<CheckedExpression>,
+        /// [TYPE-11] each type invariant of the struct over its field
+        /// operands, judged at the construction as a call's requirement is.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the field operands' pre-construction images those goals
+        /// are instantiated over, in declared field order.
+        invariant_arguments: Vec<super::goal::GoalExpression>,
     },
     ConstructEnum {
         carrier: NodePath,
@@ -2613,6 +2619,9 @@ pub(crate) enum CheckedStatement {
         backedge_drops: Vec<CheckedDrop>,
     },
     Break {
+        /// The complete `break_stmt`, the site of the type invariants an
+        /// atomic block it leaves owes there [TYPE-11].
+        node_path: NodePath,
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
@@ -2635,6 +2644,12 @@ pub(crate) enum CheckedStatement {
         body: Vec<CheckedStatement>,
         /// The releases the block's normal end carries for its own bindings.
         fallthrough_drops: Vec<CheckedDrop>,
+        /// Whether the block can reach its end [FN-1].
+        continues: bool,
+        /// [TYPE-11] each type invariant of the state's struct over the
+        /// binder's referent: a fact at the block's entry and an obligation
+        /// at each edge that leaves the block.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
     },
 }
 

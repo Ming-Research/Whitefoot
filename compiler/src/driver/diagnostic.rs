@@ -881,6 +881,9 @@ impl Report for SemanticIssueKind {
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
             InvalidInvariant { reason, mechanical_fix };
+            InvalidTypeInvariant { reason, mechanical_fix };
+            TypeInvariantWritableField { field, mechanical_fix };
+            UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
             UndischargedLoopInvariant { name, obligation, required_relation, disposition, mechanical_fix };
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };

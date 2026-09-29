@@ -72,8 +72,9 @@ test the cursor at run time and choose what to do when it fails.
 `ensures` over a reference parameter's field and measure states the exit
 state, so `type-invariant-by-contract` keeps `next < slots.len` through two
 calls, and the second call's requirement is refused without it
-(`type-invariant-without-ensures`). A type invariant would write that pair
-once for every function of the declaring module (CONCURRENCY-MODEL.md 5.6).
+(`type-invariant-without-ensures`). The type invariant [TYPE-11] now writes
+that pair for every function taking the struct (CONCURRENCY-MODEL.md 5.6);
+the `type11-*` conformance cases hold the same programs written with it.
 
 **The two classic mistakes are refused, each for its own reason.**
 - A block that forgets the update is refuted: the invariant is false where it

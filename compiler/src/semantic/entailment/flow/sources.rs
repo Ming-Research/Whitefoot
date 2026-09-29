@@ -11,7 +11,7 @@
 //! Implemented here: S1 (through the parent's arm entry), S4, S5, S6, S7,
 //! and S9. Retired labels are not reused [ENT-3].
 
-use super::super::super::goal::CheckedRequirement;
+use super::super::super::goal::{CheckedRequirement, GoalExpression};
 use super::super::super::model::{
     BindingId, CheckedArrayRoot, CheckedConst, CheckedConversionMode, CheckedEnumType,
     CheckedExpression, CheckedIntegerOperation, CheckedMeasure, CheckedNominalKind,
@@ -282,6 +282,19 @@ impl Judging<'_, '_, '_> {
         let Some(goal) = self.input.body_requirement_goal(requirement) else {
             return;
         };
+        self.establish_body_goal(goal, state, event);
+    }
+
+    /// [ENT-3] one body goal entering as a positive opaque fact, with its
+    /// exact comparison-root projection and its signed decomposition: a
+    /// requirement at body entry [ENT-3.S4], and a type invariant at an
+    /// atomic block's entry [TYPE-11].
+    pub(super) fn establish_body_goal(
+        &mut self,
+        goal: GoalExpression,
+        state: &mut FactState,
+        event: FlowEventId,
+    ) {
         let goal = self.reasoning().intern_goal_expression(goal);
         state.establish_goal(
             goal,
