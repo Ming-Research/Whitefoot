@@ -85,7 +85,7 @@ mod windows;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
@@ -105,6 +105,23 @@ use crate::{
     classify_terminals, compile as compile_program, emit_llvm, finalize, lower_checked,
     module_requires_parallel_runtime, parse, resolve,
 };
+
+/// Runs a program these tests compiled as `Command::output` does, but as an
+/// owned test process (`compiler/tests/support/process.rs`) that is stopped
+/// after `PROGRAM_DEADLINE` and then answers `TimedOut`, so a program that
+/// never finishes fails its own test instead of holding the suite.
+pub(super) trait BoundedOutput {
+    fn bounded_output(&mut self) -> std::io::Result<Output>;
+}
+
+impl BoundedOutput for Command {
+    fn bounded_output(&mut self) -> std::io::Result<Output> {
+        crate::native_test_support::output_within(
+            self,
+            crate::native_test_support::PROGRAM_DEADLINE,
+        )
+    }
+}
 
 const SOURCE_LIMITS: SourceLimits = SourceLimits {
     max_sources: 1_024,
@@ -586,7 +603,7 @@ fn compile_link_and_run(
                     .iter()
                     .map(|bytes| std::ffi::OsStr::from_bytes(bytes)),
             )
-            .output()
+            .bounded_output()
             .expect("run backend test executable")
     });
     std::fs::remove_file(&executable).expect("remove backend test executable");
@@ -618,7 +635,7 @@ fn compile_link_and_run_with(
                     .iter()
                     .map(|bytes| std::ffi::OsStr::from_bytes(bytes)),
             )
-            .output()
+            .bounded_output()
             .expect("run backend test executable")
     });
     std::fs::remove_dir_all(&directory).expect("remove backend test directory");

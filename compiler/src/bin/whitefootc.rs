@@ -1746,6 +1746,13 @@ impl Options {
     }
 }
 
+// The test suites' owned process: a program these tests build is stopped at
+// the test deadline and fails its test instead of holding the suite.
+#[cfg(test)]
+#[path = "../../tests/support/process.rs"]
+#[allow(dead_code)]
+mod process;
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -2482,9 +2489,8 @@ mod tests {
                 (report.objects_compiled, report.objects_reused)
             };
             let status = || {
-                std::process::Command::new(&executable)
-                    .status()
-                    .expect("run the program")
+                super::process::run_command(&mut std::process::Command::new(&executable))
+                    .status
                     .code()
             };
             let (compiled, reused) = build(&emitted(5));
@@ -2529,9 +2535,8 @@ mod tests {
             &mut super::BuildReport::default(),
         )
         .expect("the full-LTO link");
-        let status = std::process::Command::new(&executable)
-            .status()
-            .expect("run the program");
+        let status =
+            super::process::run_command(&mut std::process::Command::new(&executable)).status;
         assert_eq!(status.code(), Some(9));
         let _ = std::fs::remove_dir_all(&root);
     }
