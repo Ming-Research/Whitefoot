@@ -2729,6 +2729,33 @@ fn a_bound_context_is_joined_before_an_atomic_statement_or_match_that_names_it()
 }
 
 #[test]
+fn a_bound_context_is_joined_before_a_loop_bound_or_scrutinee_that_names_it() {
+    let prefix = "  let bound = mustpar weigh(weight: 7_u64);\n  let limit = 5_u64;\n";
+    // A `for` bound names the binding.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  for @count (index in 0_u64..bound) {{\n    let copied = index;\n  }}"
+        )),
+        Some(2)
+    );
+    // A `for` whose bounds and body do not name it proceeds alongside.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  for @count (index in 0_u64..limit) {{\n    let copied = index;\n  }}\n  \
+             let total = bound +wrap 1_u64;"
+        )),
+        Some(3)
+    );
+    // A value `if` whose condition names it.
+    assert_eq!(
+        started_await(&format!(
+            "{prefix}  let picked = if bound > 3_u64 {{\n    give 1_u64;\n  }} else {{\n    give 2_u64;\n  }}"
+        )),
+        Some(2)
+    );
+}
+
+#[test]
 fn an_unmarked_bound_call_that_reaches_a_guard_starts_and_is_joined_at_first_use() {
     assert_eq!(
         started_await(
@@ -2775,6 +2802,39 @@ fn unmarked_starts(atomic: &str) -> usize {
         );
         main.waiting.context_starts.len()
     })
+}
+
+#[test]
+fn an_unmarked_call_whose_callee_takes_a_reference_starts_no_context() {
+    // The same guard, reached through a reference parameter: [WAIT-2] does
+    // not permit the call alongside later statements, so it runs in order.
+    let source = b"fn watch(cell: &Shared<u8>) -> result: unit reads(cell) waits {
+  let seen = 0_u8;
+  atomic value = &cell^ when value^ != 0_u8 {
+    set seen = value^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 1_u8);
+  watch(cell: &cell);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("reference fixture must check: {outcome:?}");
+        };
+        let main = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        assert!(main.waiting.context_candidates.is_empty());
+        assert!(main.waiting.context_starts.is_empty());
+    });
 }
 
 #[test]

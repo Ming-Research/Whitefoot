@@ -177,8 +177,9 @@ The rules this adds, as they would read in the specification:
    - A statement whose guard never becomes true does not complete, as a host
      operation that never completes does not.
    - While a statement waits for its guard, the calls around it that could
-     run as contexts do, and their starters go on; a statement whose guard
-     stays true takes effect (the owner's ruling, below).
+     run as contexts do, and their starters go on; while every context
+     reaches a wait or its end in finitely many steps, a statement whose
+     guard stays true takes effect (the owner's ruling, below).
 
 Rule 3's single point is linearizability. When client X receives the reply to
 `SET` and then tells client Y, and Y sends `GET`, Y's statement begins after
@@ -300,8 +301,8 @@ an object's state. The implementation:
   version handed the object to the parked context at the queue's head
   instead, which Experiment 7 found to make almost every statement park on
   two drivers. After the progress ruling, the unlock after two vain wakes
-  hands the object over, which bounds how often a statement is overtaken
-  (below).
+  hands the object over, so a parked statement gets the object after at most
+  two vain wakes (below).
 - **A fix along the way.** A context parked where another driver can make it
   ready (a group join, and now an object) could be resumed, finished and
   released by another driver before the driver that ran it read its frame
@@ -509,9 +510,12 @@ approved, the spec revisions approved too", written in Chinese).
 **The rule** (specification v0.80). While a statement waits for its guard,
 each call whose execution contains it and that [WAIT-2] permits to run
 alongside the statements after it executes as a context, those statements
-proceed until [WAIT-2] requires the call to have completed, and every
-context that waits for nothing proceeds; a statement with no guard, or whose
-guard is true from some point on, takes effect [SHARE-3]. [WAIT-2] keeps
+proceed until [WAIT-2] requires the call to have completed. While every
+context reaches a wait or its end in finitely many steps, every context that
+waits for nothing proceeds, and a statement with no guard, or whose guard is
+true from some point on, takes effect [SHARE-3]. The drivers do not preempt a
+context, so a context that computes forever without waiting may hold back
+the others on its driver, which is why the promise carries that premise. [WAIT-2] keeps
 an in-order implementation conforming on every execution in which no guard
 waits. A statement whose guard only its own context's later statement makes
 true, or two contexts each waiting for the other's write, still wait for
@@ -542,8 +546,8 @@ accident, and each change was checked by making it fail once:
   `share-pos-guard-progress-bound-result` stopped the same way, and a unit
   test pins that a read through a `Box`, whose footprint is not resolved, no
   longer forces the join.
-- *How often a statement is overtaken.* A woken statement that missed the
-  object parked at the head again with no bound. The unlock after two vain
+- *How often a statement is woken in vain.* A woken statement that missed
+  the object parked at the head again with no bound. The unlock after two vain
   wakes now hands it the object. These runs were made by hand, and the
   counting build is not kept: a copy of the runtime that wrote one byte per
   handoff to standard error. On `shared_objects.wf` it saw 0, 3, 18 and 26

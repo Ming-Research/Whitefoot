@@ -2181,8 +2181,8 @@ Its block executes with exclusive access to the object's state, and every read a
 The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 A statement that has begun and has not taken effect waits for its guard while its guard is false in the object's state.
-While a statement waits for its guard, each call whose execution contains the statement and that [WAIT-2] permits to execute alongside the statements after it executes as a context, and the statements after that call proceed until [WAIT-2] requires the call to have completed; every context that waits for no guard, no context and no host operation proceeds.
-When every atomic statement on an object whose block begins executing completes, each statement on that object that has begun, and that has no guard or whose guard is true in the object's state at every point from some point on, takes effect.
+While a statement waits for its guard, each call whose execution contains the statement and that [WAIT-2] permits to execute alongside the statements after it executes as a context, and the statements after that call proceed until [WAIT-2] requires the call to have completed.
+When from every point each context reaches, in finitely many steps, a wait for its guard, for a context or for the host, or its completion, every context that waits for no guard, no context and no host operation proceeds, and each statement that has begun, and that has no guard or whose guard is true in the object's state at every point from some point on, takes effect.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 
 ## 14. Prelude and host modules (normative, counted)
