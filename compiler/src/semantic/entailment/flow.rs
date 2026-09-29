@@ -55,7 +55,6 @@ use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
 
-use super::super::postcondition::PostconditionPlace;
 use results::ResultEvidence;
 use sources::{MeasureCarry, ValueImage};
 use std::cell::RefCell;
@@ -83,8 +82,9 @@ use super::super::places::{
     PlaceStep, ResolvedPlace, SeparationOracle, WindowPart, named_place,
 };
 use super::super::postcondition::{
-    CheckedPostcondition, NormalizedRelation, PostconditionPlaceRoot, PostconditionReturnDatum,
-    PostconditionReturnPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    CheckedPostcondition, NormalizedRelation, ParameterDenotation, PostconditionPlaceRoot,
+    PostconditionReturnDatum, PostconditionReturnPlace, PostconditionReturnPlaceRoot,
+    RelationDatum, RelationTemplate,
 };
 use super::affine::{
     AffineCheckError, AffineCheckLimit, AffineCheckState, AffineCoefficient, AffineForm,
@@ -924,11 +924,22 @@ struct InstantiatedPostcondition {
     substitutions: Vec<PostconditionCallSubstitution>,
 }
 
+/// Where one result ordinal's data land at a caller [ENT-3.S12, CALL-4].
+#[derive(Clone, Debug)]
+enum ResultDestination {
+    /// A destination place: a fresh binding, a `set` target, or a
+    /// destructuring binder, with the path it names. A datum below the
+    /// result is this place projected by the datum's projection.
+    Place(PlaceRoot, Vec<GoalProjection>),
+    /// The private payload root of the returned value's conditional success
+    /// context [ENT-5], typed by the success payload.
+    PayloadRoot(CheckedType),
+}
+
 #[derive(Clone, Copy)]
 struct DirectReceiverRoute {
     binding: BindingId,
     formal: u32,
-    ty: CheckedType,
 }
 
 struct DirectReceiverCandidate {

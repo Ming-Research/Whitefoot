@@ -53,13 +53,15 @@ impl Input<'_, '_> {
     ) -> Option<AffineForm> {
         match datum {
             RelationDatum::Result {
+                projections,
                 ty: CheckedType::Integer(_),
                 ..
-            } => Some(result.clone()),
+            } if projections.is_empty() => Some(result.clone()),
             RelationDatum::Parameter {
                 ordinal,
                 projections,
                 ty: CheckedType::Integer(_),
+                ..
             } if projections.is_empty() => {
                 let binding = self.function.parameters.get(*ordinal as usize)?.binding;
                 state.values.get(&binding).cloned()
@@ -444,7 +446,6 @@ impl Input<'_, '_> {
         Some(DirectReceiverRoute {
             binding: target.binding,
             formal: selected?,
-            ty: target.ty,
         })
     }
 
@@ -455,15 +456,23 @@ impl Input<'_, '_> {
             let mut indices = Vec::new();
             for operand in &postcondition.relation.operands {
                 let datum = match &operand.datum {
+                    // [MSR-3] an exit-state place is read over the live
+                    // referent at each return and has no entry image.
+                    RelationDatum::Parameter {
+                        denotation: ParameterDenotation::ExitState,
+                        ..
+                    } => None,
                     RelationDatum::Parameter {
                         ordinal,
                         projections,
                         ty,
+                        denotation,
                     } => Some((
                         PostconditionEntryImage {
                             parameter: *ordinal,
                             projections: projections.clone(),
                             measure: None,
+                            immutable: *denotation == ParameterDenotation::EntryDatum,
                         },
                         *ty,
                     )),
@@ -473,6 +482,7 @@ impl Input<'_, '_> {
                                 parameter: ordinal,
                                 projections: place.projections.clone(),
                                 measure: Some(*measure),
+                                immutable: true,
                             },
                             place.ty,
                         )),
@@ -589,7 +599,7 @@ impl Vocabulary {
                 | TermKind::ConstParameter(..)
                 | TermKind::CountedCapture { .. }
                 | TermKind::IndexCapture { .. }
-                | TermKind::ResultPayload(_)
+                | TermKind::ResultPayload { .. }
                 | TermKind::CommitValue { .. }
                 | TermKind::CallDatum { .. }
         )
@@ -1128,13 +1138,35 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<TermId> {
         match datum {
             // [CALL-4] the datum names one declared result ordinal, and the
-            // destination supplies that ordinal's term.
-            RelationDatum::Result { ordinal, .. } => *results.get(*ordinal as usize)?,
-            RelationDatum::Parameter {
+            // selected return supplies that ordinal's term; a datum below the
+            // result reads the returned value through its projection [FN-9].
+            RelationDatum::Result {
                 ordinal,
                 projections,
                 ty,
             } => {
+                if projections.is_empty() {
+                    return *results.get(*ordinal as usize)?;
+                }
+                let returned = returns.get(*ordinal as usize)?.as_ref()?;
+                self.returned_projection_term(returned, projections, None, *ty)
+            }
+            RelationDatum::Parameter {
+                ordinal,
+                projections,
+                ty,
+                denotation,
+            } => {
+                // [MSR-3] `entry(parameter)^` names the immutable entry
+                // datum the entry placement minted, which nothing kills.
+                if *denotation == ParameterDenotation::EntryDatum {
+                    return self.vocabulary.terms.interned(&entry_datum_kind(
+                        *ordinal,
+                        projections,
+                        None,
+                        fragment_type(*ty)?,
+                    ));
+                }
                 let binding = self
                     .input
                     .function
@@ -1163,7 +1195,12 @@ impl Reasoning<'_, '_, '_> {
                 // term is not read here: a body that writes the parameter
                 // back still means the entry value.
                 PostconditionPlaceRoot::Parameter { ordinal } => {
-                    let kind = entry_datum_kind(ordinal, &place.projections, *measure);
+                    let kind = entry_datum_kind(
+                        ordinal,
+                        &place.projections,
+                        Some(*measure),
+                        IntegerType::U64,
+                    );
                     if let Some(datum) = self.vocabulary.terms.interned(&kind) {
                         return Some(datum);
                     }
@@ -1203,19 +1240,69 @@ impl Reasoning<'_, '_, '_> {
                     )
                 }
                 // [CALL-4] a measure over a result place is instantiated at
-                // that ordinal's own destination: at an exit, the place the
-                // selected return hands back.
+                // that ordinal's own destination: at an exit, the value the
+                // selected return hands back, read through the projection.
                 PostconditionPlaceRoot::Result { ordinal } => {
-                    let datum = returns.get(ordinal as usize)?.as_ref()?;
-                    let PostconditionReturnDatum::Place(returned) = datum else {
-                        return None;
-                    };
-                    let root = self.input.postcondition_return_place_root(returned.root)?;
-                    let mut projections = returned.projections.clone();
-                    projections.extend_from_slice(&place.projections);
-                    self.postcondition_measure_term(*measure, root, &projections, place.ty, false)
+                    let returned = returns.get(ordinal as usize)?.as_ref()?;
+                    self.returned_projection_term(
+                        returned,
+                        &place.projections,
+                        Some(*measure),
+                        place.ty,
+                    )
                 }
             },
+        }
+    }
+
+    /// [FN-9] the term one returned value supplies for a result datum below
+    /// it: a returned place projected by the datum's projection, the operand
+    /// of the field a returned construction selects, which is an atom
+    /// [GRAM-9], read through the rest of the projection, and the payload
+    /// root's term for a forwarded Result or Option. With a measure the
+    /// projection reaches the measured place `ty` names; otherwise it
+    /// reaches a fragment integer of type `ty`.
+    pub(super) fn returned_projection_term(
+        &mut self,
+        returned: &PostconditionReturnDatum,
+        projections: &[GoalProjection],
+        measure: Option<CheckedMeasure>,
+        ty: CheckedType,
+    ) -> Option<TermId> {
+        match returned {
+            PostconditionReturnDatum::Place(place) => {
+                let root = self.input.postcondition_return_place_root(place.root)?;
+                let mut path = place.projections.clone();
+                path.extend_from_slice(projections);
+                match measure {
+                    Some(measure) => {
+                        self.postcondition_measure_term(measure, root, &path, ty, false)
+                    }
+                    None => self.vocabulary.postcondition_place_term(root, &path, ty),
+                }
+            }
+            PostconditionReturnDatum::Construct { fields } => {
+                let (GoalProjection::Field(field), rest) = projections.split_first()? else {
+                    return None;
+                };
+                let operand = fields.get(*field as usize)?.as_ref()?;
+                if rest.is_empty() && measure.is_none() {
+                    return self.postcondition_return_term(operand);
+                }
+                self.returned_projection_term(operand, rest, measure, ty)
+            }
+            PostconditionReturnDatum::ResultPayload { ty: payload } => {
+                let path = projections
+                    .iter()
+                    .map(|projection| projection.place_step())
+                    .collect::<Vec<_>>();
+                self.payload_root_term(*payload, &path, measure)
+            }
+            PostconditionReturnDatum::Literal { value, .. } => (projections.is_empty()
+                && measure.is_none())
+            .then(|| self.postcondition_constant_term(value))
+            .flatten(),
+            PostconditionReturnDatum::Measure(..) => None,
         }
     }
 
@@ -1224,8 +1311,12 @@ impl Reasoning<'_, '_, '_> {
         datum: &PostconditionReturnDatum,
     ) -> Option<TermId> {
         match datum {
-            PostconditionReturnDatum::ResultPayload { ty } => fragment_type(*ty)
-                .map(|ty| self.vocabulary.terms.intern(TermKind::ResultPayload(ty))),
+            PostconditionReturnDatum::ResultPayload { ty } => {
+                self.payload_root_term(*ty, &[], None)
+            }
+            // A construction is an aggregate, whose bare value is no datum
+            // [CALL-4]; a projected datum reads it above.
+            PostconditionReturnDatum::Construct { .. } => None,
             PostconditionReturnDatum::Place(place) => self.postcondition_return_place_term(place),
             PostconditionReturnDatum::Literal { value, .. } => {
                 self.postcondition_constant_term(value)
@@ -1363,7 +1454,7 @@ impl Reasoning<'_, '_, '_> {
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => {}
             TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
@@ -1597,16 +1688,30 @@ impl Reasoning<'_, '_, '_> {
             Vec<GoalProjection>,
             Option<CheckedMeasure>,
             CheckedType,
+            bool,
         )> = Vec::new();
         for available in postconditions {
             for operand in &available.relation.operands {
                 let datum = &operand.datum;
                 match datum {
+                    // [MSR-3] an exit-state place is the actual's resolved
+                    // exit place and never a call datum.
+                    RelationDatum::Parameter {
+                        denotation: ParameterDenotation::ExitState,
+                        ..
+                    } => {}
                     RelationDatum::Parameter {
                         ordinal,
                         projections,
                         ty,
-                    } => operands.push((*ordinal, projections.clone(), None, *ty)),
+                        denotation,
+                    } => operands.push((
+                        *ordinal,
+                        projections.clone(),
+                        None,
+                        *ty,
+                        *denotation == ParameterDenotation::EntryDatum,
+                    )),
                     // A result-rooted measure names no operand and mints no
                     // call datum [CALL-4].
                     RelationDatum::Measure(measure, place) => {
@@ -1616,6 +1721,7 @@ impl Reasoning<'_, '_, '_> {
                                 place.projections.clone(),
                                 Some(*measure),
                                 place.ty,
+                                true,
                             ));
                         }
                     }
@@ -1626,12 +1732,14 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         let event = self.vocabulary.proof_event(FlowEventKind::S13, Some(call));
-        for (ordinal, projections, measure, ty) in operands {
+        for (ordinal, projections, measure, ty, entry_datum) in operands {
             let Some(mode) = parameter_modes.get(ordinal as usize).copied() else {
                 continue;
             };
-            if mode != CheckedMode::Own
-                && !(measure.is_some() && matches!(mode, CheckedMode::Reference))
+            // [ENT-3.S13] an `own` operand, and an entry-qualified measure
+            // or place of a written reference parameter; a place of a
+            // reference the row only reads keeps its live term.
+            if mode != CheckedMode::Own && !(entry_datum && matches!(mode, CheckedMode::Reference))
             {
                 continue;
             }
@@ -1677,7 +1785,6 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn instantiate_call_postcondition_relation(
         &mut self,
         function: super::super::super::model::FunctionId,
@@ -1685,8 +1792,7 @@ impl Reasoning<'_, '_, '_> {
         template: &RelationTemplate,
         checked_arguments: &[CheckedExpression],
         arguments: &[GoalExpression],
-        results: &[Option<TermId>],
-        result_places: &[Option<(PlaceRoot, Vec<GoalProjection>, CheckedType)>],
+        destinations: &[Option<ResultDestination>],
     ) -> Option<InstantiatedPostcondition> {
         let parameter_modes = self.input.context.callee(function)?.parameter_modes.clone();
         let mut substitutions = Vec::new();
@@ -1694,37 +1800,79 @@ impl Reasoning<'_, '_, '_> {
         for (operand, term_operand) in template.operands.iter().enumerate() {
             let datum = &term_operand.datum;
             let (term, formal) = match datum {
-                // [CALL-4] the destination supplies one term per declared
-                // result ordinal; an ordinal with none makes only this
-                // relation unavailable.
-                RelationDatum::Result { ordinal, .. } => {
-                    ((*results.get(*ordinal as usize)?)?, None)
-                }
+                // [CALL-4] the destination supplies one place per declared
+                // result ordinal, and a datum below the result is that place
+                // projected by its projection; an ordinal with none makes
+                // only this relation unavailable.
+                RelationDatum::Result {
+                    ordinal,
+                    projections,
+                    ty,
+                } => (
+                    self.destination_term(
+                        destinations.get(*ordinal as usize)?.as_ref()?,
+                        projections,
+                        None,
+                        *ty,
+                    )?,
+                    None,
+                ),
                 RelationDatum::Parameter {
                     ordinal,
                     projections,
                     ty,
-                } => match self.vocabulary.interned_call_datum(
-                    call_path,
-                    *ordinal,
-                    projections,
-                    None,
-                    *ty,
-                ) {
-                    // [MSR-3] an `own` operand denotes this call's call
-                    // datum, which has empty support.
-                    Some(datum) => (datum, Some((*ordinal, true))),
-                    None => (
-                        self.call_parameter_term(
-                            arguments.get(*ordinal as usize)?,
-                            projections,
-                            *ty,
-                            None,
-                            *parameter_modes.get(*ordinal as usize)?,
-                        )?,
-                        Some((*ordinal, false)),
-                    ),
-                },
+                    denotation,
+                } => {
+                    let mode = *parameter_modes.get(*ordinal as usize)?;
+                    let actual = arguments.get(*ordinal as usize)?;
+                    match denotation {
+                        // [MSR-3] a bare place of a written reference
+                        // parameter is the actual's resolved exit place.
+                        ParameterDenotation::ExitState => (
+                            self.call_parameter_term(actual, projections, *ty, None, mode)?,
+                            Some((*ordinal, false)),
+                        ),
+                        // [MSR-3] an entry-qualified place is that call's
+                        // call datum; an immortal pre-transfer term is its
+                        // own datum and nothing else stands for it.
+                        ParameterDenotation::EntryDatum => {
+                            match self.vocabulary.interned_call_datum(
+                                call_path,
+                                *ordinal,
+                                projections,
+                                None,
+                                *ty,
+                            ) {
+                                Some(datum) => (datum, Some((*ordinal, true))),
+                                None => {
+                                    let term = self.call_parameter_term(
+                                        actual,
+                                        projections,
+                                        *ty,
+                                        None,
+                                        mode,
+                                    )?;
+                                    if !self.vocabulary.immortal_term(term) {
+                                        return None;
+                                    }
+                                    (term, Some((*ordinal, true)))
+                                }
+                            }
+                        }
+                        ParameterDenotation::EntryImage => match self
+                            .vocabulary
+                            .interned_call_datum(call_path, *ordinal, projections, None, *ty)
+                        {
+                            // [MSR-3] an `own` operand denotes this call's
+                            // call datum, which has empty support.
+                            Some(datum) => (datum, Some((*ordinal, true))),
+                            None => (
+                                self.call_parameter_term(actual, projections, *ty, None, mode)?,
+                                Some((*ordinal, false)),
+                            ),
+                        },
+                    }
+                }
                 RelationDatum::NamedConst {
                     declaration,
                     projections,
@@ -1771,27 +1919,15 @@ impl Reasoning<'_, '_, '_> {
                     // [CALL-4] the destination supplies one place per
                     // declared result ordinal, and this operand is that
                     // place's measure rather than its value.
-                    PostconditionPlaceRoot::Result { ordinal } => {
-                        let (root, destination, _) =
-                            result_places.get(ordinal as usize)?.as_ref()?;
-                        // [CALL-4, MSR-1] the clause's own projections below
-                        // the result ordinal continue the destination's path:
-                        // `result.inner.len` names the measure of the cell
-                        // content the binder holds [TYPE-9] and not a measure
-                        // of the cell, which has no row at all.
-                        let mut projections = destination.clone();
-                        projections.extend(place.projections.iter().cloned());
-                        (
-                            self.postcondition_measure_term(
-                                *measure,
-                                *root,
-                                &projections,
-                                place.ty,
-                                false,
-                            )?,
-                            None,
-                        )
-                    }
+                    PostconditionPlaceRoot::Result { ordinal } => (
+                        self.destination_term(
+                            destinations.get(ordinal as usize)?.as_ref()?,
+                            &place.projections,
+                            Some(*measure),
+                            place.ty,
+                        )?,
+                        None,
+                    ),
                 },
             };
             if let Some((formal, datum)) = formal {
@@ -1805,16 +1941,7 @@ impl Reasoning<'_, '_, '_> {
                         arguments.get(formal as usize)?,
                     ),
                     datum,
-                    exit_state: matches!(
-                        &term_operand.datum,
-                        RelationDatum::Measure(
-                            _,
-                            PostconditionPlace {
-                                root: PostconditionPlaceRoot::ExitParameter { .. },
-                                ..
-                            }
-                        )
-                    ),
+                    exit_state: term_operand.datum.is_exit_state(),
                 });
             }
             operands.push((term, term_operand.displacement));
@@ -1869,6 +1996,43 @@ impl Reasoning<'_, '_, '_> {
         })
     }
 
+    /// [CALL-4, ENT-3.S12] the term one result datum names at its
+    /// destination: the destination place projected by the datum's
+    /// projection — the value of a fragment-integer place, or one measure of
+    /// a measured one — or the payload root's corresponding term [ENT-5].
+    pub(super) fn destination_term(
+        &mut self,
+        destination: &ResultDestination,
+        projections: &[GoalProjection],
+        measure: Option<CheckedMeasure>,
+        ty: CheckedType,
+    ) -> Option<TermId> {
+        match destination {
+            ResultDestination::Place(root, path) => {
+                // [CALL-4, MSR-1] the clause's own projections below the
+                // result ordinal continue the destination's path:
+                // `result.inner.len` names the measure of the cell content
+                // the binder holds [TYPE-9] and not a measure of the cell,
+                // which has no row at all.
+                let mut path = path.clone();
+                path.extend(projections.iter().cloned());
+                match measure {
+                    Some(measure) => {
+                        self.postcondition_measure_term(measure, *root, &path, ty, false)
+                    }
+                    None => self.vocabulary.postcondition_place_term(*root, &path, ty),
+                }
+            }
+            ResultDestination::PayloadRoot(payload) => {
+                let path = projections
+                    .iter()
+                    .map(|projection| projection.place_step())
+                    .collect::<Vec<_>>();
+                self.payload_root_term(*payload, &path, measure)
+            }
+        }
+    }
+
     pub(super) fn establish_direct_result(
         &mut self,
         statement: &crate::NodePath,
@@ -1882,7 +2046,6 @@ impl Reasoning<'_, '_, '_> {
             call,
             arguments,
             goal_arguments,
-            result,
             ..
         } = value
         else {
@@ -1891,14 +2054,13 @@ impl Reasoning<'_, '_, '_> {
         if *function != prepared.callee || *call != prepared.call {
             return;
         }
-        // [CALL-4] the destination is one term when the ordinal's value is an
-        // [ENT-2] term, and is always the place a measure over that ordinal is
-        // taken over. A measured result has the second and not the first.
-        let result_term = fragment_type(*result).and_then(|_| {
-            self.vocabulary
-                .postcondition_place_term(PlaceRoot::Binding(binding), &[], *result)
-        });
-        let result_place = Some((PlaceRoot::Binding(binding), Vec::new(), *result));
+        // [CALL-4] the destination is the fresh binding's place: the value
+        // of a fragment result, and the place every datum below an aggregate
+        // or measured result is projected from.
+        let destination = Some(ResultDestination::Place(
+            PlaceRoot::Binding(binding),
+            Vec::new(),
+        ));
         for available in prepared.postconditions.iter().cloned() {
             if available.variant.is_some()
                 || !available
@@ -1915,8 +2077,7 @@ impl Reasoning<'_, '_, '_> {
                 &available.relation,
                 arguments,
                 goal_arguments,
-                &[result_term],
-                std::slice::from_ref(&result_place),
+                std::slice::from_ref(&destination),
             ) else {
                 continue;
             };
@@ -1969,36 +2130,19 @@ impl Reasoning<'_, '_, '_> {
         if *function != prepared.callee || *call != prepared.call {
             return;
         }
-        // One term per result ordinal, in written order. A subscript place is
-        // no [ENT-2] term and a non-fragment ordinal carries no relation
-        // datum, so either leaves its ordinal without a term and makes only
-        // the relations naming it unavailable.
-        let mut result_terms = Vec::with_capacity(destinations.len());
-        // [CALL-4] the same destination is also the place a measure over that
-        // result ordinal is taken over, which a measured ordinal has and a
-        // fragment-integer value term does not.
+        // One place per result ordinal, in written order [CALL-4]: the value
+        // of a fragment ordinal and the place every datum below an aggregate
+        // or measured ordinal is projected from. A projected destination that
+        // is no [ENT-2] term makes only the relations naming it unavailable.
         let mut result_places = Vec::with_capacity(destinations.len());
         let mut anchor = None;
         for destination in destinations {
-            let term = destination.as_ref().and_then(|(binding, fields, ty)| {
-                fragment_type(*ty)?;
-                let term = self.vocabulary.postcondition_place_term(
-                    PlaceRoot::Binding(*binding),
-                    fields,
-                    *ty,
-                );
-                if term.is_some() && anchor.is_none() {
-                    anchor = Some(*binding);
-                }
-                term
-            });
-            result_places.push(destination.as_ref().map(|(binding, fields, ty)| {
+            result_places.push(destination.as_ref().map(|(binding, fields, _)| {
                 if anchor.is_none() {
                     anchor = Some(*binding);
                 }
-                (PlaceRoot::Binding(*binding), fields.clone(), *ty)
+                ResultDestination::Place(PlaceRoot::Binding(*binding), fields.clone())
             }));
-            result_terms.push(term);
         }
         let Some(anchor) = anchor else {
             return;
@@ -2021,7 +2165,6 @@ impl Reasoning<'_, '_, '_> {
                 &available.relation,
                 arguments,
                 goal_arguments,
-                &result_terms,
                 &result_places,
             ) else {
                 continue;
@@ -2067,13 +2210,10 @@ impl Reasoning<'_, '_, '_> {
         else {
             return Vec::new();
         };
-        let Some(result_term) = self.vocabulary.postcondition_place_term(
+        let destination = Some(ResultDestination::Place(
             PlaceRoot::Binding(route.binding),
-            &[],
-            route.ty,
-        ) else {
-            return Vec::new();
-        };
+            Vec::new(),
+        ));
         prepared
             .postconditions
             .iter()
@@ -2094,8 +2234,7 @@ impl Reasoning<'_, '_, '_> {
                     &available.relation,
                     arguments,
                     goal_arguments,
-                    &[Some(result_term)],
-                    &[],
+                    std::slice::from_ref(&destination),
                 )?;
                 if instantiated
                     .substitutions
@@ -2142,9 +2281,9 @@ impl Reasoning<'_, '_, '_> {
         for index in 0..self.input.entry_images.len() {
             let image = self.input.entry_images[index].datum.clone();
             let ty = self.input.entry_images[index].ty;
-            let Some(measure) = image.measure else {
+            if !image.immutable {
                 continue;
-            };
+            }
             let Some(parameter) = self.input.function.parameters.get(image.parameter as usize)
             else {
                 continue;
@@ -2152,23 +2291,47 @@ impl Reasoning<'_, '_, '_> {
             let binding = parameter.binding;
             let projections = self
                 .input
-                .body_projections(PlaceRoot::Binding(binding), &image.projections);
-            let Some(live) = self.postcondition_measure_term(
-                measure,
-                PlaceRoot::Binding(binding),
-                projections,
-                ty,
-                self.input.formal_is_range(image.parameter),
-            ) else {
-                continue;
+                .body_projections(PlaceRoot::Binding(binding), &image.projections)
+                .to_vec();
+            let (live, datum_type) = match image.measure {
+                Some(measure) => {
+                    let Some(live) = self.postcondition_measure_term(
+                        measure,
+                        PlaceRoot::Binding(binding),
+                        &projections,
+                        ty,
+                        self.input.formal_is_range(image.parameter),
+                    ) else {
+                        continue;
+                    };
+                    (live, IntegerType::U64)
+                }
+                // [MSR-3] an entry-qualified fragment-integer place of a
+                // written reference parameter: its value at body entry.
+                None => {
+                    let Some(fragment) = fragment_type(ty) else {
+                        continue;
+                    };
+                    let Some(live) = self.vocabulary.postcondition_place_term(
+                        PlaceRoot::Binding(binding),
+                        &projections,
+                        ty,
+                    ) else {
+                        continue;
+                    };
+                    (live, fragment)
+                }
             };
             let datum = self.vocabulary.terms.intern(entry_datum_kind(
                 image.parameter,
                 &image.projections,
-                measure,
+                image.measure,
+                datum_type,
             ));
-            self.vocabulary
-                .adopt_measure_atom(datum, live, &state.affine);
+            if image.measure.is_some() {
+                self.vocabulary
+                    .adopt_measure_atom(datum, live, &state.affine);
+            }
             state.facts.establish(
                 &Relation::Equal {
                     left: datum,
@@ -2448,12 +2611,13 @@ pub(super) fn replace_relation_term(relation: &Relation, from: TermId, to: TermI
 }
 
 /// [MSR-3] the identity of one entry datum: the formal ordinal, the
-/// operand's ordered projections, and which [MSR-1] measure of it the
-/// datum denotes.
+/// operand's ordered projections, and whether the datum denotes the
+/// operand's value or one [MSR-1] measure of it.
 pub(super) fn entry_datum_kind(
     formal: u32,
     projections: &[GoalProjection],
-    measure: CheckedMeasure,
+    measure: Option<CheckedMeasure>,
+    ty: IntegerType,
 ) -> TermKind {
     TermKind::EntryDatum {
         formal,
@@ -2462,5 +2626,6 @@ pub(super) fn entry_datum_kind(
             .map(|projection| projection.place_step())
             .collect(),
         measure,
+        ty,
     }
 }

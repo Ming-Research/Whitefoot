@@ -861,6 +861,10 @@ pub(crate) struct PostconditionEntryImage {
     pub(crate) projections: Vec<super::goal::GoalProjection>,
     /// Which [MSR-1] measure the datum denotes, when it denotes one.
     pub(crate) measure: Option<super::model::CheckedMeasure>,
+    /// Whether the operand denotes an immutable entry datum [MSR-3] — every
+    /// measure, and an entry-qualified place of a written reference
+    /// parameter — rather than an entry image whose stability [FN-9] tracks.
+    pub(crate) immutable: bool,
 }
 
 /// Source-value stability retained at one selected return. `None` is the
