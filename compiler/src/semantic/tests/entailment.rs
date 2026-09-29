@@ -458,12 +458,12 @@ fn assert_join_parents(
 fn term_integer_range(kind: &TermKind) -> Option<(i128, i128)> {
     match kind {
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => Some(type_range(*ty)),
-        TermKind::Measure(..)
-        | TermKind::CountedCapture { .. }
-        | TermKind::IndexCapture { .. }
-        | TermKind::EntryDatum { .. }
-        | TermKind::MeasureDatum { .. } => Some(type_range(IntegerType::U64)),
-        TermKind::ResultPayload(ty)
+        TermKind::Measure(..) | TermKind::CountedCapture { .. } | TermKind::IndexCapture { .. } => {
+            Some(type_range(IntegerType::U64))
+        }
+        TermKind::ResultPayload { ty, .. }
+        | TermKind::EntryDatum { ty, .. }
+        | TermKind::MeasureDatum { ty, .. }
         | TermKind::CommitValue { ty, .. }
         | TermKind::CallDatum { ty, .. } => Some(type_range(*ty)),
         TermKind::Zero | TermKind::Constant(_) => None,
@@ -819,7 +819,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         panic!("entry equality must name an immutable entry datum");
                     };
                     assert!(matches!(retained_term(summary, *right),
-                        TermKind::Measure(actual, _) if actual == measure));
+                        TermKind::Measure(actual, _) if Some(*actual) == *measure));
                 } else {
                     assert_source_event(summary, *event, &mut used_events);
                 }
@@ -1759,8 +1759,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     panic!("Result substitution needs a numeric premise");
                 };
                 assert!(
-                    matches!(retained_term(summary, *from), TermKind::ResultPayload(_))
-                        || matches!(retained_term(summary, *to), TermKind::ResultPayload(_))
+                    matches!(retained_term(summary, *from), TermKind::ResultPayload { .. })
+                        || matches!(retained_term(summary, *to), TermKind::ResultPayload { .. })
                 );
                 let replace = |term| if term == *from { *to } else { term };
                 let expected = match source {
@@ -7630,12 +7630,15 @@ fn main() -> status: std::process::ExitStatus pure {
         };
         assert!(detail.relation.terms().iter().any(|term| matches!(
             retained_term(&summary, *term),
-            TermKind::ResultPayload(IntegerType::I32)
+            TermKind::ResultPayload {
+                ty: IntegerType::I32,
+                ..
+            }
         )));
         assert!(
             summary.derivations.nodes.iter().any(|node| matches!(
                 node, DerivationNode::ResultTransport { from, .. }
-                    if matches!(retained_term(&summary, *from), TermKind::ResultPayload(_))
+                    if matches!(retained_term(&summary, *from), TermKind::ResultPayload { .. })
             )),
             "{function} uses a selected payload in its ordinary proof"
         );

@@ -734,7 +734,21 @@ impl Reasoning<'_, '_, '_> {
                 CountedCaptureSide::Upper => "<counted upper capture>".to_owned(),
             },
             TermKind::IndexCapture { .. } => "<captured index>".to_owned(),
-            TermKind::ResultPayload(_) => "<success payload>".to_owned(),
+            TermKind::ResultPayload {
+                payload,
+                path,
+                measure,
+                ..
+            } => {
+                let place = self.input.render_place_projections(
+                    "<success payload>".to_owned(),
+                    Some(*payload),
+                    path,
+                );
+                measure.map_or(place.clone(), |measure| {
+                    format!("{place}.{}", measure.spelling())
+                })
+            }
             TermKind::CommitValue { .. } => "<assigned value>".to_owned(),
             TermKind::CallDatum { measure, .. } => measure.map_or_else(
                 || "<argument value at the call>".to_owned(),
@@ -746,6 +760,7 @@ impl Reasoning<'_, '_, '_> {
                 formal,
                 projections,
                 measure,
+                ..
             } => {
                 let parameter = self.input.function.parameters.get(*formal as usize);
                 let (base, ty, projections) = parameter.map_or_else(
@@ -773,7 +788,9 @@ impl Reasoning<'_, '_, '_> {
                     },
                 );
                 let place = self.input.render_place_projections(base, ty, projections);
-                format!("{place}.{}", measure.spelling())
+                measure.map_or(place.clone(), |measure| {
+                    format!("{place}.{}", measure.spelling())
+                })
             }
             // A measure datum has no source spelling of its own: it is the
             // measure the carried value had at the event that renamed it.
@@ -787,7 +804,10 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Element => "the element position",
                     MeasurePlacement::Payload => "the payload",
                 };
-                format!("<{} at {event}>", measure.spelling())
+                measure.map_or_else(
+                    || format!("<value at {event}>"),
+                    |measure| format!("<{} at {event}>", measure.spelling()),
+                )
             }
         }
     }

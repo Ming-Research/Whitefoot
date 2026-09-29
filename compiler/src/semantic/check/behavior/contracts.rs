@@ -20,7 +20,7 @@ use super::super::super::model::{
     BindingId, CheckedBoundPostcondition, CheckedCallContract, CheckedContractQuery,
     CheckedExpression, CheckedFunction, CheckedParameter, CheckedType, ContractQueryId,
 };
-use super::super::super::postcondition::PostconditionConstantOrigin;
+use super::super::super::postcondition::{ParameterDenotation, PostconditionConstantOrigin};
 use super::super::requires::{ExpandedClauseDatum, ExpandedClauseExpression};
 use super::super::{CheckStop, Checker, ControlCounters, FunctionSignature};
 
@@ -406,9 +406,9 @@ fn expanded_contract_goal(
             ordinal,
             projections,
             ty,
-            exit_state,
+            denotation,
         }) => GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: if *exit_state {
+            ordinal: if *denotation == ParameterDenotation::ExitState {
                 parameter_count
                     .checked_add(*ordinal)
                     .ok_or(SemanticCompilerFailure::CounterOverflow)?

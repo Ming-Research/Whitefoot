@@ -602,7 +602,7 @@ impl Vocabulary {
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
@@ -691,7 +691,7 @@ impl Reasoning<'_, '_, '_> {
             // evaluated value that no later event can change.
             TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
@@ -1044,10 +1044,11 @@ impl Reasoning<'_, '_, '_> {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, image)| {
-                    // [MSR-3] a measure operand denotes the entry datum, and
-                    // no [ENT-5] event kills a datum. Only a non-measure
-                    // operand still reads the live place and can lose it.
-                    (image.datum.measure.is_none()
+                    // [MSR-3] a measure operand and an entry-qualified place
+                    // denote the entry datum, and no [ENT-5] event kills a
+                    // datum. Only an entry image still reads the live place
+                    // and can lose it.
+                    (!image.datum.immutable
                         && states.entry_images[index].is_none()
                         && self
                             .input

@@ -347,8 +347,14 @@ impl Vocabulary {
                         measure: Some(_),
                         ..
                     }
-                    | TermKind::EntryDatum { .. }
-                    | TermKind::MeasureDatum { .. }
+                    | TermKind::EntryDatum {
+                        measure: Some(_),
+                        ..
+                    }
+                    | TermKind::MeasureDatum {
+                        measure: Some(_),
+                        ..
+                    }
             ) {
                 self.measure_terms_seen.push(id);
             }
