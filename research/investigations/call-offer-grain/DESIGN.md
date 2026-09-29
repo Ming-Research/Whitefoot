@@ -489,10 +489,9 @@ the refused edge already makes. The priced variants were not better on any
 measured page, and the unexempted variants remove quadrature's recursive
 offer.
 
-The recommendation is provisional until the unmeasured parts of the criterion
-are measured: the rerun of the other maintained programs with a passing
-control, par-quicksort (after its spelling is repaired), and the
-best-of-seven lowering cost. Its known limit, not exercised by any measured
+The implementation then met every part of the criterion, with the lowering
+cost taken over three runs as the owner directed
+([Implementation results](#implementation-results)). Its known limit, not exercised by any measured
 program: a non-recursive helper whose work is large only through its runtime
 extents, such as a single loop over a large argument, weighs 16 times its
 body statically and loses its offer, which the priced variant would keep; and
