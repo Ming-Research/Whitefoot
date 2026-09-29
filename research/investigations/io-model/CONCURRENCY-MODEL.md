@@ -170,7 +170,7 @@ Section 7 has the checked comparison.
 - Every context that waits for nothing eventually runs (fair scheduling).
 - Optionally, a statement whose guard is true from some point on takes effect
   (weak fairness). This is what the handoff bound in
-  `design/amendments/compiler-waiting-contexts.md` provides.
+  `design/compiler/waiting-contexts.md` provides.
 
 **Not promised:**
 - the absence of deadlock: two contexts that each wait for the other's write,
@@ -503,8 +503,8 @@ The changes below are grouped by where they land.
     meaning excludes", is restated: they would expose interleavings of single
     reads and writes inside what the model makes one atomic step.
   - A decision on the object invariant is added.
-- `compiler/waiting-contexts`: the pending amendment's "which calls start"
-  decision is withdrawn, because only spawned calls start. The handoff bound
+- `compiler/waiting-contexts`: this branch's "which calls start" decision
+  is withdrawn, because only spawned calls start. The handoff bound
   and the join placement stand.
 
 **Compiler and runtime**
