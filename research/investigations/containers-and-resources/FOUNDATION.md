@@ -39,7 +39,7 @@ remain explicit below.
 
 The [active specification](../../../spec/kernel-spec.md) defines accepted
 programs. The conformance report records implementation results; the root
-[verification guide](../../../docs/workflow.md#checks) explains how to run it.
+[verification guide](../../../AGENTS.md#checks) explains how to run it.
 [REASSESSMENT.md](REASSESSMENT.md) records the merged owned-place work.
 The [external study](EXTERNAL-WORKLOADS.md) owns pinned source observations, and
 [representation experiments](../../experiments/container-representation/README.md)

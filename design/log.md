@@ -1,9 +1,9 @@
 # Design tree change log
 
-Newest first. One entry per ruling on the tree, an approved change or a
-refused amendment: a dated title, `Nodes:` naming every node changed or ruled
-on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
-`skill/SKILL.md` owns the form.
+Newest first. One entry per approved change of the tree: a dated title,
+`Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
+`skill/SKILL.md` owns the form. Older entries also record refused amendments,
+a mechanism since retired.
 
 ## 2026-09-29 Owe unrouted postconditions at propagated exits and restate the type-invariant decisions
 

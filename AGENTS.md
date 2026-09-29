@@ -39,9 +39,6 @@ probably not the next work.
 
 ## Authority and reading
 
-The [workflow map](docs/workflow.md) shows the development loop, who decides
-what, where each check runs, and every document's role.
-
 The active specification `spec/kernel-spec.md`, including its normative worked
 example, defines the language and toolchain judgments, and the conformance
 results state what the compiler implements. `design/` holds the decisions with
@@ -59,7 +56,7 @@ and design prose do not define the language.
 A finished task is not evidence: a claim cites the specification, a
 conformance case, a measured result under `research/experiments/`, a design
 under `research/investigations/`, or a design-tree decision where the
-[citation boundaries](docs/workflow.md#citation-boundaries) permit. `archive/`
+[citation boundaries](#citation-boundaries) permit. `archive/`
 keeps superseded material, such as retired research, as frozen historical
 evidence and rationale instead of deleting it; its retired per-batch record
 `archive/done/` is not written to again and not cited. Process wording in any
@@ -69,31 +66,40 @@ evidence, not a workflow step.
 
 ## How work proceeds
 
-Follow the four occasions below. A *material choice* changes accepted
-behavior, a safety or trust condition, a shared interface or representation,
-a significant performance commitment or a standing project rule. Restoring
-specified behavior or editing prose without changing its meaning is routine;
-task size and file count do not decide which a change is.
+A *material choice* changes accepted behavior, a safety or trust condition, a
+shared interface or representation, a significant performance commitment or a
+standing project rule. Restoring specified behavior or editing prose without
+changing its meaning is routine; task size and file count do not decide which
+a change is. Only a material choice between viable alternatives is a design
+decision; this is the project's threshold for the `design-tree` skill's
+decisions.
 
-1. **Start or resume:** read the affected current owners; for a material
+1. **Before starting,** read the affected current owners; for a material
    choice, also the relevant constitutional aims and existing decision
-   grounds. On resumption, verify the actual worktree and PR state.
-2. **Choose:** state why a material choice fits its requirements and evidence;
-   record a discriminating experiment's criterion before using it to choose,
-   and load the `investigation` skill when a choice needs a new measurement,
-   benchmark or trial.
-3. **Update:** when a conclusion or its grounds change, update current guidance
-   and material dependents in the same work. A design revision is an
-   owner-ruled tree change or a pending amendment: load the `design-tree`
-   skill whenever a task makes, proposes or applies a design decision or edits
-   `design/`.
-4. **Finish:** load the `completion-review` skill before marking a PR ready or
-   reporting completion (checks, one independent review, finding routing,
-   publication), and the `owner-handoff` skill whenever you stop for the
-   owner.
+   grounds. On resumption, verify the actual worktree and PR state. Settle
+   the direction with the owner first, as the `design-tree` skill describes.
+2. **While working,** state why each material choice fits its requirements and
+   evidence, and record a discriminating experiment's criterion before using
+   it to choose; `research/README.md` holds the method for attributing a
+   performance loss or proof cost and for agent writer trials. Change the
+   code, the specification and the design tree together on a Draft PR; when a
+   conclusion or its grounds change, update current guidance and material
+   dependents in the same work. Work through to completion, as the skill
+   describes.
+3. **At completion,** validate (see [Checks](#checks)), run the one
+   [review](#review), fix what it finds, and hand the work back as the
+   `design-tree` skill describes. After the skill's parts, the handoff
+   shows every specification change rule by rule, with its before and after
+   behavior and the card that selected it or why it needed none; the
+   validation actually run, its revision and what remains unverified; the
+   review's scope and the findings it fixed; and what the work found along
+   the way. A version number or PR link does not replace this.
+4. **After the owner approves** every decision the work needs, including every
+   design-tree and specification change, write the log entries and mark the PR
+   ready (rule 1 below).
 
-Routine fixes under unchanged design need no decision record. Record reasons
-when choices settle, not by reconstructing them at task completion.
+Record reasons when choices settle, not by reconstructing them at completion.
+Routine fixes under unchanged design need no decision record.
 
 **Fix or record what you notice.** Work in one place exposes defects in
 others: a bug, an awkward interface or architecture, duplicated logic, a file
@@ -117,45 +123,49 @@ reviewer's report is a lead to verify, not evidence. A green result reached by
 weakening a requirement does not answer the original question.
 
 Use a PR as the owner's ongoing review surface from the start, as a Draft
-until the design-tree workflow makes it ready. Push coherent progress to the
-same branch and keep its description and actual validation results current;
+until rule 1 below lets it become ready. Push coherent progress to the same
+branch and keep its description and actual validation results current;
 publish the reviewed result before reporting completion and link it. Do not
 wait for another request to update the PR or leave the reviewable result only
 in the local worktree. Updating a work-branch PR never authorizes a merge into
 `main`.
 
-Before stopping work, explain the task's specification revisions in the
-conversation: which rules changed, their before/after behavior, and why those
-changes were selected. A version number or PR link does not replace this.
+**The design tree in this project.** The `design-tree` skill is the one
+recurring procedure kept as a skill. It is written for any project and lives
+in `design/skill/`; `.agents/skills/` (Codex) and `.claude/skills/` (Claude
+Code) hold only links to it, and its body loads when its description matches
+the task. Here its roles are:
 
-Recurring procedures are skills: `design-tree`, `spec-amendment`,
-`investigation`, `completion-review` and `owner-handoff`. Their bodies live in
-the project, in `docs/skills/` and `design/skill/`; `.agents/skills/` (Codex)
-and `.claude/skills/` (Claude Code) hold only links to them. Each skill's
-description stays in context and its body loads when its step above arrives,
-never at session start.
+- live trees: `design/language.md` and `design/compiler.md` with their
+  subdirectories;
+- change log: `design/log.md`;
+- research record: `research/investigations/` and `research/experiments/`;
+- maintained TODO: `docs/todo.md`;
+- form check: `make design-lint`, part of `make static`;
+- readiness check: `make design-ready`, which also requires an approved
+  `spec/log.md` entry for a changed specification, run by
+  `.github/workflows/design-readiness.yml` on ready PRs and on main.
 
 ## Branch and main boundary
 
 These are the complete approval and merge rules:
 
 1. Work-branch changes need no approval, including plans, repository layout,
-   specifications, conformance evidence, gate wiring, code, tests, and
-   documentation, except that new repository-root entries require owner
-   approval, changes to the live design tree require the owner's ruling under
-   the design-tree skill, and a review finding whose resolution would change a
-   design decision or amendment, a specification rule, or the agreed scope
-   requires the owner's direction. Unapproved design choices remain
-   amendments while implementation continues.
+   the design tree, specifications, conformance evidence, gate wiring, code,
+   tests, and documentation, except that new repository-root entries require
+   owner approval. A PR becomes ready only after the owner has approved every
+   decision it needs, including every design-tree and specification change;
+   the approval is recorded in `design/log.md` and `spec/log.md` only then,
+   and `make design-ready` checks the records.
 2. Every change merged into `main` requires owner approval of the exact
    revision to be merged.
 3. The exact revision merged into `main` must pass all repository tests through
    the canonical `make check` entry point before the merge.
 4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered against
-   the exact revision being merged. There is no separate ledger: the
-   specification's bytes are its identity, the released archives are
-   immutable, and git is the history.
+   the exact revision being merged. The specification's bytes are its
+   identity, the released archives are immutable, `spec/log.md` records the
+   owner's approval of each change, and git is the history.
 
 - **Work branch** is any branch other than `main`; its work, including edits
   to a specification, conformance evidence or these rules, proceeds within
@@ -169,7 +179,7 @@ These are the complete approval and merge rules:
   the full native conformance adapter. Formatting and Rust API documentation
   are authoring commands, performance comparison has its own workflow, and
   research is never a gate dependency. `make check-groups` lists the groups
-  and the [workflow map](docs/workflow.md#checks) says where each runs.
+  and [Checks](#checks) says where each runs.
 - **Conformance evidence** is `tests/conformance` case source and manifest
   content, its runner and adapter, gate-integrity tests, and any collection or
   invocation wiring that can change which cases run or how their results are
@@ -182,14 +192,27 @@ shape, is an approval or merge precondition.
 
 - The active specification `spec/kernel-spec.md` is editable on a work branch;
   released `spec/kernel-spec-vN.md` archives are immutable, and
-  `compiler/build.rs` derives the active identity from its bytes. An amendment
-  lands as one change, the outgoing bytes archived and the title advanced;
-  load the `spec-amendment` skill before editing `spec/kernel-spec.md`.
-  `make check` verifies the archive and title, and the optional hook from
-  `make install-hooks` reports an archive edit earlier. There is no
-  candidate state: a branch carrying an amendment is merge-ready when its gate
-  is green. A spec/compiler discrepancy is a technical defect; implementation
-  convenience never selects language behavior.
+  `compiler/build.rs` derives the active identity from its bytes. A branch's
+  amendment lands as one change:
+  1. Archive once per branch: with the local `main` current, copy the base's
+     active bytes to the archive named by their title token, for a base
+     titled `# Kernel Specification v0.69`
+     `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
+  2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
+     major revision.
+  3. Edit the rules under the bullets below, and record a rule chosen among
+     viable alternatives in the design tree.
+  4. If `main` advanced the version meanwhile, merging it conflicts on the
+     title: keep main's text, reapply this branch's rule changes, archive
+     main's active bytes under main's version and retitle to the next one.
+  5. After the owner approves, add the `spec/log.md` entry naming every rule
+     added, changed or retired.
+
+  `make static` verifies the archive and title, the optional hook from
+  `make install-hooks` reports an archive edit earlier, and
+  `make design-ready` requires the approval entry. A spec/compiler discrepancy
+  is a technical defect; implementation convenience never selects language
+  behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
   conditions as total positive rules or table data, without exception clauses.
@@ -261,24 +284,162 @@ not a reason to pause on every file.
   to either file changes the other in the same change, and `make static`
   refuses a branch that changes only one.
 
+### Document roles
+
+Each document holds what serves its reader; a brief summary or relevant
+technical explanation is useful, duplicating another document's changing
+inventory or mixing in the editing conversation is not. A file needs no new
+status banner or self-description merely to satisfy this list.
+
+- `README.md`: introduction, getting started and navigation, not a compiler
+  inventory, a second specification or task history.
+- `AGENTS.md`: goal and priorities, authority, how work proceeds, the approval
+  and merge rules, integrity and hygiene rules, checks and review; not
+  research narration or a design procedure the `design-tree` skill holds.
+- `design/skill/`: the project-independent design-tree procedure; nothing
+  specific to Whitefoot.
+- `docs/review-checklist.md`: the items a reviewer answers from the diff; not
+  language semantics, task outcomes or a procedure stated in full elsewhere.
+- `docs/constitution.md`: complete statements of purpose, objectives,
+  obligations, prohibitions, tradeoffs and their conditions; not who asked
+  for an edit, conversations, progress, maintenance instructions, abbreviated
+  labels in place of clauses, per-clause usage checklists or a selected
+  mechanism presented as an inevitable consequence of the purpose.
+- `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
+  and examples; not compiler convenience presented as law or editing history.
+  `spec/log.md` holds its approvals.
+- `docs/todo.md`: defects, costs, improvement opportunities and their
+  validation, removed when resolved; not settled decisions, claims of
+  implemented capability or progress logs.
+- `docs/patterns.md`: writer problems, usable forms, examples, applicability
+  and costs; not acceptance rules, universal performance claims or project
+  administration.
+- `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
+  explanatory essays; not a work queue, invented measurements or contributor
+  process inserted into an essay.
+- `docs/articles/`: one idea each for readers outside the project, every
+  program accepted or rejected as shown by the compiler revision the article
+  names; not normative rules, claims no repository file or command
+  reproduces, or project process.
+- `research/` and `governance/spec-evolution/`: questions, alternatives,
+  designs, experiments, results and limitations; not task completion
+  presented as evidence, a proposal presented as an implemented rule, or
+  daily test implementations and inputs kept in research.
+- `design/`: live decisions with their reasons and refused alternatives and
+  the approval log; not inventories, transcripts or progress.
+- `archive/`: superseded material kept frozen; never edited or depended on.
+- The PR description: this change's problem, behavior, grounds, validation,
+  limitations and what it found along the way, kept current with the diff;
+  not a source of project rules.
+
+### Citation boundaries
+
+- Definitions point to their current owner; technical claims point to the
+  specification, source and cases, a relevant design, or reproducible
+  evidence, and the linked passage supports the claim.
+- The constitution, specification, writer patterns and essays stand without
+  the design trees: they do not link to `design/` or use it as authority.
+- Maintainer navigation (README, this file, the research index) may point to
+  the design trees. Research records and PRs may cite decisions as historical
+  rationale, not as language definitions or proof of an empirical claim. A
+  tree node may cite specifications, designs and evidence in its reason.
+- Historical references may name their historical versions; current guidance
+  uses the active specification's stable path. Frozen archives keep their
+  historical content.
+
 ## Compiler rules
 
 The compiler's implementation rules are its design decisions in
 `design/compiler`, each with its reason. Before changing the compiler, read the
-subtree you are changing and its ancestors; a decision the tree does not cover
-is an amendment, never an edit to the tree. Apply the design-tree skill's
-[structural-choice assessment](design/skill/SKILL.md#workflow) when choosing or
-revising compiler code structure, including during implementation.
+subtree you are changing and its ancestors; a decision the tree does not
+cover is added to the tree for the owner's approval, never left only in
+code. Apply the design-tree skill's
+[structural-choice assessment](design/skill/SKILL.md#workflow) when choosing
+or revising compiler code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
-exploratory timing runs only when requested. Use the guarded verification
-targets in the [workflow map](docs/workflow.md#checks), or wrap other local
-heavy builds, suites and benchmarks with
-`perl .github/run-check.pl <label> <command> ...`, including commands from
-other worktrees. Inspect an existing owner's PID instead of starting
-another heavy command. Separate build time from test/program execution,
-investigate a stage that exceeds its observed cost, and preserve the full gate
-before merge.
+exploratory timing runs only when requested. Separate build time from
+test/program execution, investigate a stage that exceeds its observed cost,
+and preserve the full gate before merge.
+
+## Checks
+
+- `make static`, before every push and in `gate.yml` on every push:
+  repository invariants, the specification archives, the README and its
+  translation changed together, prose integrity, guidance references,
+  compiler sources over 4,000 lines named in `docs/todo.md`, and the design
+  tree's form.
+- `make check`, on the revision to merge and in `gate.yml` on Linux and
+  macOS: the static group plus the compiler build, tests, the conformance
+  adapter and the runtime; `make check-groups` lists the groups. It needs
+  `python3`, LLD on Linux (`ld.lld`) and the `time` utility.
+- `make design-ready`, before marking ready and in `design-readiness.yml` on
+  ready PRs and main: approved tree and specification changes.
+- CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
+  `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
+  timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
+  experiments and never a gate.
+- `make install-hooks` optionally reports an edit of a released archive at
+  commit.
+
+Focused commands for a compiler change, before `make static`:
+
+```sh
+make -C compiler format lint
+make -C compiler build        # optimized compiler only
+make -C compiler test-build   # construct test executables without running cases
+perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib <filter>
+```
+
+Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
+as the `make` targets already do, including commands from other worktrees. It
+holds one host-wide lock, prints wall, user and system time with a report
+every 30 seconds, and stops a command after 30 minutes unless
+`WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. Inspect an existing
+owner's PID instead of starting another heavy command, and after an
+uncatchable stop inspect the recorded PID and command before removing a stale
+lock. The `gate` Cargo profile builds the Rust compiler with optimization,
+debug assertions and overflow checks; it does not change how WF source is
+compiled. For a slow compiler test, set `WHITEFOOT_TEST_TIMINGS` to a scratch
+TSV path to record the phases of the shared test helpers.
+
+## Review
+
+One review per task, when the work is complete and before the handoff, and
+whenever the owner asks for one. Start a separate, read-only agent that did
+not implement the change:
+
+- for a change to code, tests, the specification, gate wiring, the design
+  tree or agent guidance, a mid-sized model and every applicable group of
+  [the review checklist](docs/review-checklist.md), whose M group is the
+  `design-tree` skill's design correspondence review;
+- when only research records or other prose changed, a small model and
+  groups A, D, M and V, plus R for a material choice.
+
+Give it this prompt, filled in:
+
+```text
+You are reviewing a Whitefoot change you did not write. Do not edit files.
+Task outcome and constraints: <...>
+Base and head: <...>; validation already run: <commands, results, revision>.
+Read the diff from the base (git diff <base>, plus untracked files, without
+the released archives spec/kernel-spec-v*.md), the changed sections in
+context, and "How to review" in docs/review-checklist.md. Check each group
+whose trigger applies. For M1, apply the design checks and correspondence
+checks of design/skill/SKILL.md to the relevant tree nodes and ancestors.
+Do not rerun green suites. Report Scope (your model, base..head, groups
+checked and skipped), Checks (what you ran) and Findings (item ID, file:line,
+quoted text or missing evidence, reason; quote both sides of a
+contradiction), or "none within scope".
+```
+
+Fix every finding and review again as the `design-tree` skill's workflow
+describes; a fix that changes a specification rule is also shown with the
+specification changes at handoff. Merging main without conflicts in reviewed
+content needs no new review; a resolved conflict is reviewed as changed
+content, those hunks only. Then commit and push, verify that the remote head
+is the reviewed revision, and fill the PR's review section. A failed
+publication is a blocker to report, not a completed update.
 
 ## Communication
 
