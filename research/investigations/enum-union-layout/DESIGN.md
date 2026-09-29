@@ -661,7 +661,15 @@ Against the validation criterion:
    requests 320,000,016 bytes (16 header bytes and 40 per slot) where the
    product layout requested 1,344,000,016 (backend test
    `a_window_of_union_enums_requests_the_union_stride`).
-5. **Time** — not yet measured. The retained Slab and priority-queue
-   comparison harnesses still name library paths the standard library has
-   since moved (`lib/containers/`), so they cannot run unchanged; the
-   validation is recorded as pending in docs/todo.md.
+5. **Time** — met for the containers; the I/O half waived. With the Slab
+   and priority-queue harnesses repaired to `std::collections` (PR #179),
+   two blocks under the one-minute load limit of 2.0 found no cell outside
+   the identical-binary control's noise range: normalized branch/base ratios
+   of 0.986 to 1.006 across the slab paths and 0.972 and 0.979 across the
+   priority paths, against controls of 0.979 to 0.997, with 3 of 421 slab
+   and 1 of 457 priority functions differing by a few instructions, none on
+   a measured hot path (PR #174). Slab insertion is 264 bytes. The named
+   I/O programs under `research/experiments/io-completion-bench/programs/`
+   no longer compile (retired `&uniq` syntax), and on 2026-09-29 the owner
+   waived that half rather than port them, judging the union layout correct
+   on its grounds.
