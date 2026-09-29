@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Deliver value-initializer facts only where the closure cannot derive them
+
+Nodes: compiler/checker-facts, language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts
+
+Owner-approved: 2026-09-29, the owner approved the checker-facts-delivery-roots amendment in the session ("approved", written in Chinese).
+
+Summary: Apply the checker-facts-delivery-roots amendment of PR #175 unchanged. compiler/checker-facts adds that value-initializer delivery materializes only relations the continuation's closure cannot derive, and that a literal carrier's given-value equality enters the edge's ordinary closure incrementally, because a literal relates its value to every term of the function: materializing each consequence tripled the retained proof of the wfgrep program, and a full closure per literal edge slowed its check by 29 percent (research/investigations/writer-lost-facts/DESIGN.md, implementation measurements). Three refused alternatives are recorded: materializing every joined consequence under a raised proof-size ceiling, delivering a literal carrier as its equality alone, and a full closure per literal edge. Nodes also names the two nodes of the entry below, because the newest entry names every node this branch changes.
+
 ## 2026-09-28 Keep header conclusions past loop exits and deliver the give carrier equality
 
 Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention, language/checks-and-proofs/automatic-facts
