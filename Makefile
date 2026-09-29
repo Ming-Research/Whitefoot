@@ -162,8 +162,8 @@ readme-translation:
 	@sh .github/check-readme-translation.sh --self-test
 	@sh .github/check-readme-translation.sh main
 
-# Cited review items, entry-document paths and the two agents' skill links
-# resolve; this reads references only, never the guidance's meaning.
+# Cited review items and entry-document paths resolve; this reads references
+# only, never the guidance's meaning.
 guidance:
 	@$(PY) .github/check-guidance.py --self-test
 	@$(PY) .github/check-guidance.py
@@ -191,7 +191,6 @@ source-size:
 	test "$$checked" -gt 0 || { echo "source size: no compiler sources found" >&2; exit 1; }; \
 	exit $$status
 
-# What a completion review covers: base, depth, groups and excluded paths.
 spec-append-only-staged:
 	@changes="$$(git diff --cached --name-status --diff-filter=MDRCT -- 'spec/kernel-spec-v*.md')" || exit 1; \
 	if test -n "$$changes"; then \

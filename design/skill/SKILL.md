@@ -92,12 +92,14 @@ tree does not authorize a merge; the project's merge rules decide that.
 
 Each entry has a `## <date> <title>` heading, a `Nodes:` line listing every
 node added, changed or retired, an `Owner-approved:` line identifying the
-owner's approval in the owner's words, and a concise `Summary:` paragraph with
-the change and its reasons. Write the entry only after that approval; the
-field records it and never requests or infers it. The newest entry must be
-new on the branch and name every changed node. Cite data and evidence at their
-source in the research record instead of reproducing them. When parallel
-branches add entries, keep both, newest first.
+owner's approval of the handoff in the owner's words, and a concise `Summary:`
+paragraph with the change and its reasons. That approval covers every node
+the entry names, those edited without a card included. Write the entry only
+after that approval; the field records it and never requests or infers it.
+The newest entry must be new on the branch and name every changed node. Cite
+data and evidence at their source in the research record instead of
+reproducing them. When parallel branches add entries, keep both, newest
+first.
 
 ## Owner decisions
 
@@ -124,8 +126,9 @@ handoff's status, not as an entry.
 - **After starting.** Work through to completion. A question that arises is
   sent to the owner with a recommendation and work continues on that
   recommendation; the entry stays open and returns at handoff.
-- **Batch.** Bring review findings and other questions once, at handoff, not
-  one round at a time.
+- **Batch.** The owner rules once, at handoff, on every open entry together:
+  review findings go only there, and a question sent while working returns
+  there. Never bring rulings one round at a time.
 - Re-read this skill before a handoff; a copy loaded early in a long session
   may predate a change to it.
 
@@ -154,8 +157,9 @@ A handoff presents, in this order:
    with the reasons the card gave. A node edit that changes no decision
    needs no card.
 3. The parts the project adds, such as its other approved artifacts, the
-   validation run and what the work found along the way. They cite a card by
-   its ID instead of repeating its reasons.
+   validation run, the review's scope and the findings it fixed, and what the
+   work found along the way. They cite a card by its ID instead of repeating
+   its reasons.
 
 Write each part as bullets under its bold name; a table's narrow columns bury
 reasoning.
@@ -169,8 +173,8 @@ reasoning.
    current design is valid. Fix in-scope gaps and selected improvements;
    record deferred ones in the maintained TODO with impact, uncertainty,
    validation criterion and reopening condition, proportional to the work.
-   List each in the pull request's *Found along the way* section with its
-   disposition.
+   List each in the pull request with its disposition (fixed, deferred or
+   declined) and reason, so the owner sees it.
 3. At completion, run DCR once, or the project's review that includes it.
    Fix every finding, including those that change the tree or another
    approved artifact; a fix that changes a decision becomes a ledger entry,

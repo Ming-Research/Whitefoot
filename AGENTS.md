@@ -70,29 +70,30 @@ A *material choice* changes accepted behavior, a safety or trust condition, a
 shared interface or representation, a significant performance commitment or a
 standing project rule. Restoring specified behavior or editing prose without
 changing its meaning is routine; task size and file count do not decide which
-a change is. A material choice between viable alternatives that the design
-tree should record is a design decision.
+a change is. A material choice between viable alternatives is a design
+decision; this is the project's threshold for the `design-tree` skill's
+decisions.
 
 1. **Before starting,** read the affected current owners; for a material
    choice, also the relevant constitutional aims and existing decision
    grounds. On resumption, verify the actual worktree and PR state. Settle
-   the direction with the owner first, as the `design-tree` skill describes;
-   while a matter that could change the work substantially is unclear, keep
-   discussing and do not start.
+   the direction with the owner first, as the `design-tree` skill describes.
 2. **While working,** state why each material choice fits its requirements and
    evidence, and record a discriminating experiment's criterion before using
-   it to choose. Change the code, the specification and the design tree
-   together on a Draft PR; when a conclusion or its grounds change, update
-   current guidance and material dependents in the same work. Work through to
-   completion: a question for the owner is sent with a recommendation, and
-   work continues on that recommendation.
+   it to choose; `research/README.md` holds the method for attributing a
+   performance loss or proof cost and for agent writer trials. Change the
+   code, the specification and the design tree together on a Draft PR; when a
+   conclusion or its grounds change, update current guidance and material
+   dependents in the same work. Work through to completion, as the skill
+   describes.
 3. **At completion,** validate (see [Checks](#checks)), run the one
    [review](#review), fix what it finds, and hand the work back as the
    `design-tree` skill describes. After its decision cards, the handoff
    shows every specification change rule by rule, with its before and after
-   behavior and the card that selected it or why it needed none, then the
-   validation actually run and what the work found along the way. A version
-   number or PR link does not replace this.
+   behavior and the card that selected it or why it needed none; the
+   validation actually run, its revision and what remains unverified; the
+   review's scope and the findings it fixed; and what the work found along
+   the way. A version number or PR link does not replace this.
 4. **After the owner approves** every decision the work needs, including every
    design-tree and specification change, write the log entries and mark the PR
    ready (rule 1 below).
@@ -287,7 +288,8 @@ not a reason to pause on every file.
 
 Each document holds what serves its reader; a brief summary or relevant
 technical explanation is useful, duplicating another document's changing
-inventory or mixing in the editing conversation is not.
+inventory or mixing in the editing conversation is not. A file needs no new
+status banner or self-description merely to satisfy this list.
 
 - `README.md`: introduction, getting started and navigation, not a compiler
   inventory, a second specification or task history.
@@ -300,28 +302,35 @@ inventory or mixing in the editing conversation is not.
   language semantics, task outcomes or a procedure stated in full elsewhere.
 - `docs/constitution.md`: complete statements of purpose, objectives,
   obligations, prohibitions, tradeoffs and their conditions; not who asked
-  for an edit, conversations, progress or a selected mechanism presented as
-  an inevitable consequence of the purpose.
+  for an edit, conversations, progress, maintenance instructions, abbreviated
+  labels in place of clauses, per-clause usage checklists or a selected
+  mechanism presented as an inevitable consequence of the purpose.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
 - `docs/todo.md`: defects, costs, improvement opportunities and their
-  validation, removed when resolved; not settled decisions or progress logs.
+  validation, removed when resolved; not settled decisions, claims of
+  implemented capability or progress logs.
 - `docs/patterns.md`: writer problems, usable forms, examples, applicability
-  and costs; not acceptance rules or universal performance claims.
+  and costs; not acceptance rules, universal performance claims or project
+  administration.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
-  explanatory essays; not a work queue or invented measurements.
+  explanatory essays; not a work queue, invented measurements or contributor
+  process inserted into an essay.
 - `docs/articles/`: one idea each for readers outside the project, every
   program accepted or rejected as shown by the compiler revision the article
-  names; not normative rules or project process.
+  names; not normative rules, claims no repository file or command
+  reproduces, or project process.
 - `research/` and `governance/spec-evolution/`: questions, alternatives,
   designs, experiments, results and limitations; not task completion
-  presented as evidence or a proposal presented as an implemented rule.
+  presented as evidence, a proposal presented as an implemented rule, or
+  daily test implementations and inputs kept in research.
 - `design/`: live decisions with their reasons and refused alternatives and
   the approval log; not inventories, transcripts or progress.
 - `archive/`: superseded material kept frozen; never edited or depended on.
 - The PR description: this change's problem, behavior, grounds, validation,
-  limitations and what it found along the way; not a source of project rules.
+  limitations and what it found along the way, kept current with the diff;
+  not a source of project rules.
 
 ### Citation boundaries
 
@@ -342,18 +351,16 @@ inventory or mixing in the editing conversation is not.
 
 The compiler's implementation rules are its design decisions in
 `design/compiler`, each with its reason. Before changing the compiler, read the
-subtree you are changing and its ancestors; a decision the tree does not cover
-is an amendment, never an edit to the tree. Apply the design-tree skill's
-[structural-choice assessment](design/skill/SKILL.md#workflow) when choosing or
-revising compiler code structure, including during implementation.
+subtree you are changing and its ancestors; a decision the tree does not
+cover is added to the tree and brought to the owner as a decision card, never
+left only in code. Apply the design-tree skill's
+[structural-choice assessment](design/skill/SKILL.md#workflow) when choosing
+or revising compiler code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
 exploratory timing runs only when requested. Separate build time from
 test/program execution, investigate a stage that exceeds its observed cost,
 and preserve the full gate before merge.
-
-`research/README.md` holds the method for attributing a performance loss or
-proof cost and for agent writer trials.
 
 ## Checks
 
@@ -426,16 +433,13 @@ quoted text or missing evidence, reason; quote both sides of a
 contradiction), or "none within scope".
 ```
 
-Fix every finding, including one that changes the design tree or the
-specification; at handoff a fix that changes a design decision becomes a
-decision card, one that changes a specification rule is shown with the
-specification changes, and one that changes the agreed scope is reported in
-the status. Review again
-only what a fix changed in behavior, a rule or a decision; recheck other fixes
-yourself and say so. Merging main without conflicts in reviewed content needs
-no new review. Then commit and push, verify that the remote head is the
-reviewed revision, and fill the PR's review section. A failed publication is a
-blocker to report, not a completed update.
+Fix every finding and review again as the `design-tree` skill's workflow
+describes; a fix that changes a specification rule is also shown with the
+specification changes at handoff. Merging main without conflicts in reviewed
+content needs no new review; a resolved conflict is reviewed as changed
+content, those hunks only. Then commit and push, verify that the remote head
+is the reviewed revision, and fill the PR's review section. A failed
+publication is a blocker to report, not a completed update.
 
 ## Communication
 

@@ -2355,13 +2355,25 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The design-tree skill's tests also test this project's CI script.**
+  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
+  of its cases, so a project that copies `design/skill/` gets failing tests,
+  although the skill is meant to move to another project unchanged. Move
+  those cases to a `--self-test` of `design-review-base.sh` wired into
+  `make static`, as the other `.github` scripts do, and keep only the lint's
+  own cases in the skill. Validate that each moved case still fails once for
+  its intended reason. Reopen when the skill is extracted or the CI base
+  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
-  when the PR changes no specification. Local `design-lint` instead defaults
-  to the current `origin/main` tip: if it advances past the branch's merge
-  base, new upstream nodes can appear as branch deletions and trigger missing
-  approval-log coverage in `make design-ready`. Both were observed on the
+  when the PR changes no specification. Local `design-lint` and
+  `design-ready` instead default to the current `origin/main` tip: if it
+  advances past the branch's merge base, new upstream nodes can appear as
+  branch deletions and trigger missing approval-log coverage in
+  `make design-ready`, and an upstream specification amendment makes its
+  specification half demand a `spec/log.md` entry the branch does not owe
+  (reasoned from the code, not yet observed). The first two were observed on the
   ownership-surface research branch; explicit checks against its actual review
   base retain the intended obligations. Select and report one pinned review
   base consistently with hosted CI. Validate old local main, advancing remote

@@ -1,9 +1,10 @@
 ## Change
 
 <!-- The problem, the resulting behavior and material tradeoffs, briefly.
-Name every design-tree node and specification rule the PR adds, changes or
-retires, with its selection ground (AGENTS.md rule 4), and the lint's node
-count, depth and net change against the base when the tree changed. -->
+Name every design-tree node the PR adds, changes or retires, with the lint's
+node count, depth and net change against the base. For a change to the
+specification or conformance evidence, state what changed and its selection
+ground (AGENTS.md rule 4). Owner questions belong in the conversation. -->
 
 ## Found along the way
 
@@ -19,4 +20,4 @@ Summarize; do not copy the checklist or full logs. -->
 
 - Scope: _reviewer model and depth; base..head; groups checked and skipped_.
 - Checks: _actual commands and results; full-gate status and tested revision_.
-- Findings: _fixed findings; questions for the owner; unverified items_.
+- Findings: _each finding and how it was fixed; unverified items_.

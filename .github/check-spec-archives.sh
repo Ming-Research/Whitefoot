@@ -14,8 +14,10 @@
 # `--require-approval BASE` is the readiness check: an active specification
 # changed since BASE needs a newest spec/log.md entry that is new since BASE
 # and carries nonempty Rules:, Owner-approved: and Summary: fields, the design
-# tree log's form with Rules: in place of Nodes:. The field is an assertion;
-# the owner reads the log before merging.
+# tree log's form with Rules: in place of Nodes:. A field's value is what
+# follows its name, surrounding spaces removed, as the tree lint reads it. The
+# check cannot tell whether Rules: names every changed rule, and the approval
+# is an assertion; the owner reads the log before merging.
 #
 # `--self-test` builds throwaway repositories and requires each rule to
 # accept its valid case and reject its invalid ones for the intended reason.
@@ -112,7 +114,7 @@ approval() {
     fi
     entry=$(awk 'found && /^## / { exit } /^## / { found = 1 } found' spec/log.md)
     for field in Rules: Owner-approved: Summary:; do
-        printf '%s\n' "$entry" | grep -q "^$field [^ ]" ||
+        printf '%s\n' "$entry" | grep -q "^$field[[:space:]]*[^[:space:]]" ||
             fail "the newest spec/log.md entry lacks a nonempty $field field"
     done
     echo "spec approval: the active specification changed since $short and the newest spec/log.md entry records its approval"
@@ -230,6 +232,14 @@ self_test() {
     amend kernel-spec-v0.2.md v0.3
     log_entry 'Owner-approved:'
     expect reject 'nonempty Owner-approved:' 'readiness with an empty approval' --require-approval
+    branch approval-spaced
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved:   The owner approved v0.3.'
+    expect pass 'records its approval' 'readiness with spaces before the approval' --require-approval
+    branch approval-blank
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved:   '
+    expect reject 'nonempty Owner-approved:' 'readiness with a blank approval' --require-approval
 
     echo "spec archives self-test: $passed cases pass"
 }

@@ -28,7 +28,7 @@ Summary: Establish the test tree.
 
 class TreeGateTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="whitefoot-design-lint-")
+        temporary = tempfile.TemporaryDirectory(prefix="design-lint-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.git("init", "--quiet")
