@@ -874,11 +874,9 @@ impl<'unit> Checker<'_, 'unit> {
                 projections,
                 ty,
             }) if projections.is_empty()
-                || projections
-                    .iter()
-                    .all(|projection| {
-                        matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
-                    }) =>
+                || projections.iter().all(|projection| {
+                    matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
+                }) =>
             {
                 Some(RelationDatum::Result {
                     ordinal: *ordinal,
@@ -1459,8 +1457,7 @@ impl<'unit> DeclarationInventory<'unit> {
         if !operand_matches(&left) || !operand_matches(&right) {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        let is_output =
-            |term: &RelationTerm| term.contains_result() || term.datum.is_exit_state();
+        let is_output = |term: &RelationTerm| term.contains_result() || term.datum.is_exit_state();
         if !is_output(&left) && !is_output(&right) {
             return self.invalid_postcondition_relation(final_expression);
         }
@@ -1738,12 +1735,10 @@ impl<'unit> TypeContext<'unit> {
             // already admits a result of measured type as an operand; the
             // placeholder has to agree with the measure's type and not with
             // the place's.
-            _ if self.declarations.selector_atom_reads_a_measure(atom)? => {
-                CheckedValue::Integer {
-                    ty: super::super::model::IntegerType::U64,
-                    bits: 0,
-                }
-            }
+            _ if self.declarations.selector_atom_reads_a_measure(atom)? => CheckedValue::Integer {
+                ty: super::super::model::IntegerType::U64,
+                bits: 0,
+            },
             // [CALL-4] a fragment-integer place reached from an aggregate
             // result through struct-field and `Box` content steps stands for
             // a value of that field's type.
@@ -1774,7 +1769,11 @@ impl<'unit> TypeContext<'unit> {
         atom: NodeId,
         mut ty: CheckedType,
     ) -> Result<Option<CheckedType>, CheckStop> {
-        let Some(place) = self.declarations.tree.first_child_with(atom, Production::Place)? else {
+        let Some(place) = self
+            .declarations
+            .tree
+            .first_child_with(atom, Production::Place)?
+        else {
             return Ok(None);
         };
         let suffixes = self
@@ -2764,8 +2763,11 @@ impl<'unit> TypeContext<'unit> {
         let routed = record.class == PostconditionSelectorClass::Variant;
         if !routed {
             let mut anchor = None;
-            for (ordinal, (_, declared)) in
-                record.result_binders.iter().zip(&signature.results).enumerate()
+            for (ordinal, (_, declared)) in record
+                .result_binders
+                .iter()
+                .zip(&signature.results)
+                .enumerate()
             {
                 if self.type_supplies_data(declared.ty, symbolic)? {
                     anchor = Some(ordinal);

@@ -1699,8 +1699,7 @@ impl Reasoning<'_, '_, '_> {
             // [ENT-3.S13] an `own` operand, and an entry-qualified measure
             // or place of a written reference parameter; a place of a
             // reference the row only reads keeps its live term.
-            if mode != CheckedMode::Own
-                && !(entry_datum && matches!(mode, CheckedMode::Reference))
+            if mode != CheckedMode::Own && !(entry_datum && matches!(mode, CheckedMode::Reference))
             {
                 continue;
             }

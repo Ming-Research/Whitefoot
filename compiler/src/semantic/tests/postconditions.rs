@@ -3874,7 +3874,8 @@ fn main() -> status: std::process::ExitStatus pure {
 // conversions in relation terms, and the exit state of a written reference
 // parameter's integer field.
 
-const TABLE_PRELUDE: &str = "struct Atom {\n  index: u64;\n}\n\nstruct Table {\n  spans: Box<Slots<u32>>;\n}\n\n";
+const TABLE_PRELUDE: &str =
+    "struct Atom {\n  index: u64;\n}\n\nstruct Table {\n  spans: Box<Slots<u32>>;\n}\n\n";
 
 #[test]
 fn a_struct_result_field_is_read_from_the_returned_construction_operand() {

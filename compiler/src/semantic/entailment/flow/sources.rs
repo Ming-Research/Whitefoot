@@ -695,7 +695,11 @@ impl Reasoning<'_, '_, '_> {
     /// payloads and Box content, found as [`Self::measured_paths`] finds
     /// measured places: a structural walk for acyclic type paths, supplemented
     /// by already registered exact source terms for recursive ones.
-    fn value_paths(&self, source: &ResolvedPlace, ty: CheckedType) -> Vec<(Vec<PlaceStep>, IntegerType)> {
+    fn value_paths(
+        &self,
+        source: &ResolvedPlace,
+        ty: CheckedType,
+    ) -> Vec<(Vec<PlaceStep>, IntegerType)> {
         let mut found = Vec::new();
         if !self
             .input

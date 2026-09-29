@@ -1759,8 +1759,10 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     panic!("Result substitution needs a numeric premise");
                 };
                 assert!(
-                    matches!(retained_term(summary, *from), TermKind::ResultPayload { .. })
-                        || matches!(retained_term(summary, *to), TermKind::ResultPayload { .. })
+                    matches!(
+                        retained_term(summary, *from),
+                        TermKind::ResultPayload { .. }
+                    ) || matches!(retained_term(summary, *to), TermKind::ResultPayload { .. })
                 );
                 let replace = |term| if term == *from { *to } else { term };
                 let expected = match source {

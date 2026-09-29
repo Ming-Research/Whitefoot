@@ -1596,11 +1596,12 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
-            if !matches!(reached, CheckedType::Integer(_) | CheckedType::GenericInt(_))
-                || projections.iter().any(|projection| {
-                    !matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
-                })
-            {
+            if !matches!(
+                reached,
+                CheckedType::Integer(_) | CheckedType::GenericInt(_)
+            ) || projections.iter().any(|projection| {
+                !matches!(projection, GoalProjection::Field(_) | GoalProjection::Deref)
+            }) {
                 return Ok(None);
             }
             return Ok(Some(ExpandedClauseExpression::Datum(

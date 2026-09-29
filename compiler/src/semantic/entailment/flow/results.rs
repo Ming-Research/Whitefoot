@@ -402,7 +402,9 @@ impl Analyzer<'_, '_> {
                 // even when its input is outside the tracked-place vocabulary.
                 // Existing sources publish only the input's admitted image;
                 // no identity is invented for an indirect mutable read.
-                let payload = self.reasoning().payload_root_term(route.payload, &[], None)?;
+                let payload = self
+                    .reasoning()
+                    .payload_root_term(route.payload, &[], None)?;
                 self.vocabulary.refresh_result(&mut result, &state.facts);
                 let (minimum, maximum) = type_range(*source);
                 let event = self
@@ -435,7 +437,9 @@ impl Analyzer<'_, '_> {
             // [ENT-5] a checked integer row's success payload is the exact
             // row's mathematical result, with that row's [ENT-3.S7] facts.
             CheckedExpression::IntegerOperation { .. } => {
-                let payload = self.reasoning().payload_root_term(route.payload, &[], None)?;
+                let payload = self
+                    .reasoning()
+                    .payload_root_term(route.payload, &[], None)?;
                 self.vocabulary.refresh_result(&mut result, &state.facts);
                 self.establish_checked_payload(statement, payload, expression, &mut result.facts);
             }
@@ -815,15 +819,12 @@ mod tests {
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);
-        let from = analyzer
-            .vocabulary
-            .terms
-            .intern(TermKind::ResultPayload {
-                payload: CheckedType::Integer(IntegerType::I32),
-                path: Vec::new(),
-                measure: None,
-                ty: IntegerType::I32,
-            });
+        let from = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
+            payload: CheckedType::Integer(IntegerType::I32),
+            path: Vec::new(),
+            measure: None,
+            ty: IntegerType::I32,
+        });
         let [middle, to] = [0, 1].map(|binding| {
             analyzer.vocabulary.terms.intern(TermKind::Place(
                 ResolvedPlace::binding(BindingId(binding)),
@@ -896,9 +897,10 @@ mod tests {
         let candidates =
             |state: &FactState| state.l0_candidates().into_iter().collect::<HashSet<_>>();
         assert_eq!(candidates(&source), candidates(&source.numeric_snapshot()));
-        let mut transported = analyzer
-            .vocabulary
-            .substitute_result_facts(&statement, &source, &[(from, to)]);
+        let mut transported =
+            analyzer
+                .vocabulary
+                .substitute_result_facts(&statement, &source, &[(from, to)]);
         // Reference the previous full import, independent of closed-core reuse.
         let mut rebuilt = FactState::new();
         for (relation, parent) in source.l0_candidates() {
@@ -956,15 +958,12 @@ mod tests {
             assert!(actual.derives_bound(to, middle, if remove_calls { 5 } else { -1 }));
         }
 
-        let foreign = analyzer
-            .vocabulary
-            .terms
-            .intern(TermKind::ResultPayload {
-                payload: CheckedType::Integer(IntegerType::U8),
-                path: Vec::new(),
-                measure: None,
-                ty: IntegerType::U8,
-            });
+        let foreign = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
+            payload: CheckedType::Integer(IntegerType::U8),
+            path: Vec::new(),
+            measure: None,
+            ty: IntegerType::U8,
+        });
         let mut ordinary = FactState::new();
         ordinary.establish(
             &Relation::Bound {

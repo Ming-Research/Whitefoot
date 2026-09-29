@@ -201,11 +201,9 @@ impl DeclaredSystem {
                 ordinal,
                 projections,
                 ..
-            } => OperandKey::Parameter(
-                *ordinal,
-                projection_key(projections),
-                datum.is_exit_state(),
-            ),
+            } => {
+                OperandKey::Parameter(*ordinal, projection_key(projections), datum.is_exit_state())
+            }
             RelationDatum::NamedConst {
                 declaration,
                 projections,
