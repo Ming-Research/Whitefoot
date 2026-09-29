@@ -1835,19 +1835,24 @@ condition under which it is taken up.
   syntax investigation while the owned rebase meets that contract; reopen
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
-- **Conditional measure preservation needs a precise remaining diagnosis.**
-  A counted-loop control calling a length/capacity-preserving helper in only
-  one arm rejects its backedge facts. Capturing both measures before the
-  branch and restating their equality afterward admits the small control;
-  this is not a blanket inability to preserve conditional measures. The
-  full sparse-map loop still rejects its extent invariant when its
-  length-preserving wrapper is inlined with an explicit extent bridge. Its
-  normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. Reopen with contract-proof work: reduce the remaining
-  refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
-  a proposed rule change before implementation. Keep the admitted wrapper
-  while it supplies the needed proof; validate aliases and false preservation
-  claims as well as checking cost for any improvement.
+- **Conditional measure preservation is a branch-join limit; a rule is
+  proposed.** A counted-loop control calling a length/capacity-preserving
+  helper in only one arm rejects its backedge facts, as do lockstep growth
+  under a branch and a binary search that updates `low` in one arm and `high`
+  in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
+  classifies these as the specification as written, not compiler defects: an
+  invariant's conclusion is an affine theorem only, the pre-kill closure and
+  the join keep only L0 facts, and the join gives each changed binding a
+  fresh atom (INV-1, ENT-5, ENT-6). Its reduced sparse-map loop fails for that
+  reason and is admitted by capturing the extent before the branch; the full
+  loop the [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
+  record as still refused with an explicit extent bridge is written in
+  retired syntax and was not reproduced. The investigation recommends that a
+  proved unit-coefficient invariant also establish its L0 relation, as ENT-3.S4
+  does for a requirement, and separately two midpoint rows for ENT-3.S7, with
+  their probes, census and negatives; its five-sample checking-cost timing
+  was not run and remains before implementation. Keep the admitted wrapper
+  and captures while they supply the proof; reopen on the owner's ruling.
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without

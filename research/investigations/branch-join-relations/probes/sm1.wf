@@ -1,0 +1,43 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Map {
+  cells: Box<Slots<u64>>;
+}
+
+fn canonicalize(cells: &Box<Slots<u64>>, index: u64) -> result: unit writes(cells) contract {
+  requires index < cells^.inner.len;
+  ensures cells^.inner.len == entry(cells)^.inner.len;
+} {
+  set cells^.inner[index] = 1_u64;
+  return unit;
+}
+
+fn rebuild(map: &Map, capacity: u64) -> result: unit writes(map) contract {
+  requires map^.cells.inner.len == capacity;
+} {
+  let count = map^.cells.inner.len;
+  for (
+    index in 0_u64..count,
+    invariant rebuilt_extent: map^.cells.inner.len == capacity
+  ) {
+    let value = map^.cells.inner[index];
+    let deleted = value == 0_u64;
+    let current_extent = map^.cells.inner.len;
+    if deleted {
+      canonicalize(cells: &map^.cells, index: index);
+    }
+    invariant unchanged_extent: map^.cells.inner.len == current_extent;
+    invariant rejoined_extent: map^.cells.inner.len == capacity;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let cells = box_slots_new::<u64>(capacity: 2_u64);
+  place_back(window: &cells.inner, value: 0_u64);
+  place_back(window: &cells.inner, value: 5_u64);
+  let map = Map(cells: move cells);
+  rebuild(map: &map, capacity: 2_u64);
+  return exit_status(code: 0_u8);
+}

@@ -1,7 +1,7 @@
 diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/semantic/entailment/flow/domain.rs
 --- a/compiler/src/semantic/entailment/flow/domain.rs
 +++ b/compiler/src/semantic/entailment/flow/domain.rs
-@@ -896,6 +896,13 @@
+@@ -896,6 +896,29 @@
          for state in &mut promoted {
              self.vocabulary.promote_flow_contradiction(state);
          }
@@ -12,10 +12,26 @@ diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/seman
 +                }
 +            }
 +        }
++        if super::proto::join_ap() {
++            let live: Vec<usize> = (0..promoted.len())
++                .filter(|index| !promoted[*index].facts.all_derivable)
++                .collect();
++            if live.len() > 1 {
++                let snapshot: Vec<ProofFlowState> =
++                    live.iter().map(|index| promoted[*index].clone()).collect();
++                let changed = self.reasoning().changed_join_terms(&snapshot);
++                if !changed.is_empty() {
++                    for index in live {
++                        self.reasoning()
++                            .project_tightest_pair_bounds(&changed, &mut promoted[index]);
++                    }
++                }
++            }
++        }
          let contributing = promoted
              .iter()
              .filter(|state| !state.facts.all_derivable)
-@@ -941,6 +948,64 @@
+@@ -941,6 +964,243 @@
          }
      }
  }
@@ -64,6 +80,185 @@ diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/seman
 +                    right: *right,
 +                    bound,
 +                });
++            }
++        }
++        if projected.is_empty() {
++            return;
++        }
++        let event = self.vocabulary.proof_event(FlowEventKind::S4, None);
++        for relation in projected {
++            state
++                .facts
++                .establish(&relation, &mut self.vocabulary.derivations, event);
++        }
++    }
++}
++
++impl Reasoning<'_, '_, '_> {
++    /// Prototype (a+): the L0 candidates whose image is not identical on
++    /// every input of a join.
++    pub(super) fn changed_join_terms(&mut self, states: &[ProofFlowState]) -> Vec<TermId> {
++        let per_state: Vec<Vec<AffineL0Candidate>> = states
++            .iter()
++            .map(|state| self.affine_l0_candidates(&state.affine))
++            .collect();
++        let mut changed = Vec::new();
++        for candidate in &per_state[0] {
++            if candidate.term == ZERO {
++                continue;
++            }
++            let same = per_state[1..].iter().all(|others| {
++                others
++                    .iter()
++                    .find(|other| other.term == candidate.term)
++                    .is_some_and(|other| other.value == candidate.value)
++            });
++            let everywhere = per_state[1..]
++                .iter()
++                .all(|others| others.iter().any(|other| other.term == candidate.term));
++            if everywhere && !same {
++                changed.push(candidate.term);
++            }
++        }
++        changed
++    }
++
++    /// Prototype (a+): for every ordered pair of L0 candidates with one member
++    /// in `changed`, establish in this input the tightest bound that the
++    /// fixed DIRECT and AUTO families prove for the difference of their
++    /// current images.
++    pub(super) fn project_tightest_pair_bounds(
++        &mut self,
++        changed: &[TermId],
++        state: &mut ProofFlowState,
++    ) {
++        let candidates = self.affine_l0_candidates(&state.affine);
++        let closed = close(
++            &state.facts,
++            &self.vocabulary.terms,
++            &self.vocabulary.goals,
++            &mut self.vocabulary.derivations,
++        );
++        if closed.contradictory() {
++            return;
++        }
++        let mut check = AffineCheckState::new();
++        let l0 = affine_l0_index(&candidates, &closed, &mut check);
++        let Ok(premises) = automatic_affine_premises(&state.affine.facts, &mut check) else {
++            return;
++        };
++        let mut accumulated: Vec<AffineInequality> =
++            premises.iter().map(|premise| premise.inequality.clone()).collect();
++        for first in 0..premises.len() {
++            for second in first..premises.len() {
++                if let Ok(sum) = sum_explicit_inequalities(
++                    &[premises[first].inequality.clone(), premises[second].inequality.clone()],
++                    &mut check,
++                ) {
++                    accumulated.push(sum);
++                }
++            }
++        }
++        accumulated.extend(l0.entries.iter().map(|entry| entry.inequality.clone()));
++        let measures = self.vocabulary.measure_terms_by_atom(&state.affine);
++        let mut intervals: HashMap<AffineTermId, Option<(i128, i128)>> = HashMap::default();
++        let mut projected = Vec::new();
++        for x in &candidates {
++            for y in &candidates {
++                if x.term == y.term || !(changed.contains(&x.term) || changed.contains(&y.term)) {
++                    continue;
++                }
++                let Ok(difference) = x.value.subtract(&y.value, &mut check) else {
++                    continue;
++                };
++                let offset = difference.constant_value();
++                if difference.terms().is_empty() {
++                    projected.push(Relation::Bound { left: x.term, right: y.term, bound: offset });
++                    continue;
++                }
++                let pairs: Vec<(AffineTermId, i128)> = difference
++                    .terms()
++                    .iter()
++                    .map(|coefficient| (coefficient.term(), coefficient.coefficient()))
++                    .collect();
++                let Ok(target) = AffineInequality::from_terms(&pairs, 0, &mut check) else {
++                    continue;
++                };
++                let mut best: Option<i128> = None;
++                let mut direct = |this: &mut Self, residual: &AffineInequality| -> Option<i128> {
++                    if residual.terms().is_empty() {
++                        return Some(0);
++                    }
++                    let from_l0 = l0.entry(residual.terms()).map(|entry| entry.inequality.upper());
++                    for coefficient in residual.terms() {
++                        let atom_id = coefficient.term();
++                        if intervals.contains_key(&atom_id) {
++                            continue;
++                        }
++                        let interval = this.vocabulary.affine_atoms.get(atom_id.index() as usize).map(|atom| {
++                            let (mut minimum, mut maximum) = (atom.minimum, atom.maximum);
++                            let mut terms: Vec<TermId> = state
++                                .affine
++                                .values
++                                .iter()
++                                .filter(|(_, value)| value.unit_term() == Some(atom_id))
++                                .filter_map(|(binding, _)| {
++                                    let ty = this.input.affine_binding_type(*binding)?;
++                                    Some(this.vocabulary.terms.intern(TermKind::Place(
++                                        ResolvedPlace::spelled(PlaceRoot::Binding(*binding), false, Vec::new()),
++                                        ty,
++                                    )))
++                                })
++                                .collect();
++                            if let Some(extra) = measures.get(&atom_id) {
++                                terms.extend(extra.iter().copied());
++                            }
++                            for term in terms {
++                                if let Some(upper) = closed.tight_bound(term, ZERO) {
++                                    maximum = maximum.min(upper);
++                                }
++                                if let Some(lower) = closed.tight_bound(ZERO, term).and_then(i128::checked_neg) {
++                                    minimum = minimum.max(lower);
++                                }
++                            }
++                            (minimum, maximum)
++                        });
++                        intervals.insert(atom_id, interval);
++                    }
++                    let mut local = AffineCheckState::new();
++                    let from_interval = interval_maximum(
++                        residual.terms(),
++                        |term| intervals.get(&term).copied().flatten(),
++                        &mut local,
++                    )
++                    .ok()
++                    .flatten();
++                    match (from_l0, from_interval) {
++                        (Some(a), Some(b)) => Some(a.min(b)),
++                        (a, b) => a.or(b),
++                    }
++                };
++                if let Some(value) = direct(self, &target) {
++                    best = Some(value);
++                }
++                for candidate in &accumulated {
++                    let tightenings = integer_tightenings(candidate, &target, &mut check);
++                    for sum in std::iter::once(candidate).chain(tightenings.iter()) {
++                        let Ok(residual) = AffineInequality::residual_after(&target, sum, &mut check) else {
++                            continue;
++                        };
++                        if let Some(value) = direct(self, &residual)
++                            && let Some(total) = sum.upper().checked_add(value)
++                        {
++                            best = Some(best.map_or(total, |current| current.min(total)));
++                        }
++                    }
++                }
++                if let Some(best) = best
++                    && let Some(bound) = best.checked_add(offset)
++                {
++                    projected.push(Relation::Bound { left: x.term, right: y.term, bound });
++                }
 +            }
 +        }
 +        if projected.is_empty() {
@@ -283,7 +478,7 @@ diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semanti
 diff -ruN a/compiler/src/semantic/entailment/flow.rs b/compiler/src/semantic/entailment/flow.rs
 --- a/compiler/src/semantic/entailment/flow.rs
 +++ b/compiler/src/semantic/entailment/flow.rs
-@@ -26,6 +26,44 @@
+@@ -26,6 +26,51 @@
  //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
  //! canonical [`render`]ing.
  
@@ -304,6 +499,13 @@ diff -ruN a/compiler/src/semantic/entailment/flow.rs b/compiler/src/semantic/ent
 +    pub(crate) fn join_a() -> bool {
 +        static CELL: OnceLock<bool> = OnceLock::new();
 +        flag(&CELL, "WF_JOIN_A")
++    }
++    /// (a+) at every join input, bound every pair of candidates, one of whose
++    /// images differs across the inputs, by the tightest constant AUTO's
++    /// families prove, and establish it in L0 before the L0 join.
++    pub(crate) fn join_ap() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_AP")
 +    }
 +    /// S7: `/` and `ishr` publish `r < a` when a0 >= 1 and the divisor or
 +    /// shift is at least 2 or 1.
