@@ -194,38 +194,61 @@ level 2 saves 1.4%. Neither meets the criterion, so the profile keeps level
 ### Stop a program that never finishes
 
 A budget reads a stage's time after the stage ends; a program that never
-ends leaves nothing to read. While the waiting-context runtime was being
-changed on the spawn branch, four backend unit tests ran programs that
-waited without end: one in `cost_shape` and three in
-`deterministic_target`, all on the scripted deterministic host, which never
-completed a request the change had started waiting on. Those tests ran
-their programs with `Command::output`, which waits without limit, so the
-local gate ran for about half an hour before it was stopped by hand. Stable
-libtest printed that each test had been running for over 60 seconds, and
-never stopped one. The integration suites already ran each program as its
-own process group with both outputs drained and a 60 s deadline
-(`compiler/tests/support/process.rs`).
+ends leaves nothing to read. On the spawn branch
+(`claude/pensive-ramanujan-bfyunw`), a change to the waiting-context runtime
+made four backend unit tests run programs that waited without end: one in
+`cost_shape` and three in `deterministic_target`, all on the scripted
+deterministic host, which never completed a request the change had started
+waiting on. Those tests ran their programs with `Command::output`, which
+waits without limit. The local gate was stopped by hand after almost half an
+hour, short of the command's 30-minute deadline, which would have stopped
+the whole command with the unit suite's summary and failure list unwritten
+and the later groups unrun. Stable libtest printed that each test had been
+running for over 60 seconds, and never stopped one.
 
-The backend unit tests now run every program they compile through that
-owned process with the same deadline (`BoundedOutput` in
-`compiler/src/backend/tests.rs`); their calls of the host C compiler and of
-`awk` are not programs a test compiled and keep waiting as before. The
-deadline stops a program that never finishes, not a slow one: in the unit
-group at revision 3e18aee3d on the local container, 1,871 tests passed in
-56.4 s and none reached libtest's 60-second report, compilation included.
-The test `a_program_past_its_deadline_is_stopped_and_reported` stops a
-30-second sleep under a 200 ms limit and keeps a finished program's status
-and output. Two changes made at that revision, and then reverted, show what
-the checks observe:
+Only the program suites ran each program as an owned process: its own
+process group, both outputs drained, and a 60 s deadline
+(`compiler/tests/support/process.rs`). The backend unit tests, the two
+command-line tool tests that run a built program, and the conformance
+adapter waited without limit. All of them now use that owned process and its
+one `PROGRAM_DEADLINE`: the backend tests through `BoundedOutput` in
+`compiler/src/backend/tests.rs`, the tool's tests through `run_command`, and
+the adapter directly. The adapter reports a case whose program ran past the
+deadline as `Verdict::Stopped`, which the corpus keeps apart from every
+verdict, so the case fails by name. The tests' calls of the host C compiler,
+`grep` and `awk` that do not go through `run_command` run no program a test
+compiled and still wait without limit.
 
-- With the deadline removed from `bounded_output_within`, that test waited
-  30.08 s for the sleep and failed.
-- With `PROGRAM_DEADLINE` set to one millisecond, 3 of the 20 `cost_shape`
-  and `deterministic_target` tests failed with `TimedOut`, among them
-  `the_output_batch_costs_one_host_write_per_full_batch`. The other 17
-  passed: the owned process reads the exit status before the deadline at
-  each poll, 5 ms apart, so a program that had exited by the first poll
-  after its deadline was not stopped.
+No choice among alternatives was measured here, so no criterion was set:
+the limit is the program suites' existing one. It stops a program that has
+run far past any case's time. Run alone, the slowest unit case took 6 s,
+compilation included ([where the time goes](#where-the-time-goes)). At
+revision 9f4370b4a on the local container, the unit group passed 1,870
+tests in 57.0 s and none reached libtest's 60-second report; the corpus
+group passed the 21 CLI tests, and 93 tests in 68.4 s, where only the
+conformance walk, one test that runs every case, reached it. Four changes
+made at 8973802b0, which differs only in the stop message's form, and then
+reverted show what the tests observe:
+
+- With `output_within` given an hour instead of its limit,
+  `owned_children_capture_both_channels_and_enforce_their_deadline` waited
+  30.08 s for a 30-second sleep and failed.
+- With `PROGRAM_DEADLINE` at one millisecond, 1 of the 12 `cost_shape` and
+  `deterministic_target` tests that run a program failed with `TimedOut`
+  (3 in a run of the first version, 3e18aee3d). The others had exited by
+  the first poll, 5 ms after the start, since the owned process reads a
+  program's exit status before its deadline. The same change stopped the
+  corpus group's own runtime compilations, which also use `run_command`,
+  before any case ran.
+- With `run_command` panicking instead of running its command, both CLI
+  tests failed there.
+- With every case's program replaced by a 30-second sleep under a 100 ms
+  limit, the conformance walk failed in 116 s and reported each of the 467
+  cases that run a program as `Stopped`, by name.
+
+The deadline holds only where a test uses the owned process: nothing
+refuses a new test that runs its program with `Command::output`, which
+`docs/todo.md` records.
 
 ## The gate
 
