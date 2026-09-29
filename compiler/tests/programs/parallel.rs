@@ -21,7 +21,7 @@ use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
 #[test]
 fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
     use whitefoot::{
-        CompilerLimits, OverlapLowering, RecursionBudget, SourceInput,
+        CallGrain, CompilerLimits, OverlapLowering, RecursionBudget, SourceInput,
         compile_with_permission_ledger,
     };
 
@@ -39,16 +39,14 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         (OverlapLowering::Off, 0, [None].as_slice()),
         (OverlapLowering::On, 0, [None].as_slice()),
         (
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16,
-            },
+            OverlapLowering::OnWithCallGrain,
             2,
             [Some("1"), Some("2"), Some("4")].as_slice(),
         ),
         (
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::Off,
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
             },
             2,
@@ -66,14 +64,11 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         assert_eq!(
             ledger
                 .iter()
-                .filter(|line| line.contains("scalar leaf limit"))
+                .filter(|line| line.contains("call grain: omitted offer"))
                 .count(),
             omitted_leaves
         );
-        let has_budget = matches!(
-            mode,
-            OverlapLowering::On | OverlapLowering::OnWithoutSmallScalarLeaves { .. }
-        );
+        let has_budget = matches!(mode, OverlapLowering::On | OverlapLowering::OnWithCallGrain);
         assert_eq!(
             module.lines().any(|line| line.starts_with("define ")
                 && line.contains(" double @wf__par_budget_adaptive(")),
@@ -168,7 +163,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                     budget: whitefoot::RecursionBudget::Pinned(
                         std::num::NonZeroU8::new(2).unwrap(),
                     ),
-                    maximum_scalar_leaf_operations: None,
+                    call_grain: whitefoot::CallGrain::Every,
                     sequential_refusal: false,
                 },
             )

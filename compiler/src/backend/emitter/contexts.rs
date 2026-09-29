@@ -161,7 +161,7 @@ impl FunctionEmitter<'_, '_> {
         let frame_type = format!("{{ {} }}", field_types.join(", "));
         // A wrapper is reached only through a start, never by a call inside a
         // budgeted component, so it has no budget-carrying variant.
-        let (callee, budget) = self.callee_target(function, target.name());
+        let (callee, budget) = self.callee_target(function, target.name(), result);
         if budget.is_some() {
             return Err(BackendFailure::InvalidIr);
         }

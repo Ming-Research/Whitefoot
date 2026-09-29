@@ -643,7 +643,7 @@ impl FunctionEmitter<'_, '_> {
         // arguments: one more frame field, stored at the offer and read by the
         // thunk. The field follows the result, which leaves every existing
         // field at the offset it had.
-        let (callee, budget) = self.callee_target(function, target.name());
+        let (callee, budget) = self.callee_target(function, target.name(), result);
         let budget = budget.map(str::to_owned);
         let budget_field = budget.as_ref().map(|_| {
             field_types.push("i64".to_owned());

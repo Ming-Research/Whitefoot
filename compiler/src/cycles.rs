@@ -1,8 +1,9 @@
-//! Shared cycle decomposition for code specialization and the stack ledger.
+//! Shared cycle decomposition for code specialization, the stack ledger and
+//! call-offer grain.
 
 /// Iterative Tarjan decomposition. Edges must index the supplied node table.
 /// Component order is deterministic and places callees before their callers.
-pub(super) fn components(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(crate) fn components(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let count = edges.len();
     let mut order = vec![usize::MAX; count];
     let mut low = vec![0_usize; count];

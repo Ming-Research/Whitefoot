@@ -1290,8 +1290,9 @@ fn frame_bytes(ty: IrType) -> u64 {
 /// allowance. The runtime estimate then substitutes available counted extents
 /// through helper arguments, distinguishing a 17-element row from a
 /// 1024-element row without changing either loop body. Unknown extents keep
-/// this static price; no universal grain plateau is established.
-pub(crate) fn assign_weights(functions: &mut [IrFunction]) {
+/// this static price; no universal grain plateau is established. Each
+/// function's whole static weight is returned for call-offer grain.
+pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
     let costs: Vec<Cost> = functions.iter().map(cost).collect();
     let mut total: Vec<u64> = costs.iter().map(|cost| cost.instructions).collect();
     // Three rounds of substitution, so a chunk's weight sees its callees, their
@@ -1329,6 +1330,7 @@ pub(crate) fn assign_weights(functions: &mut [IrFunction]) {
         }
     }
     super::work::assign(functions, &total);
+    total
 }
 
 /// How much an instruction inside a loop is charged over one outside it.

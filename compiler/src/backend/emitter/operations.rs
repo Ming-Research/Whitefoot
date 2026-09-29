@@ -148,7 +148,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // A call that stays inside a budgeted component carries the caller's
         // remaining levels as the callee variant's trailing parameter, the way
         // a split carries its allowance into the splitter.
-        let (callee, budget) = self.callee_target(function, target.name());
+        let (callee, budget) = self.callee_target(function, target.name(), result);
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }

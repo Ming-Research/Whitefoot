@@ -2325,7 +2325,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     );
     let budgeted = |budget| OverlapLowering::OnWithRecursionBudget {
         budget,
-        maximum_scalar_leaf_operations: None,
+        call_grain: crate::CallGrain::Every,
         sequential_refusal: false,
     };
     let lines = |name: &str, source: &[u8], overlap| {
