@@ -1,0 +1,90 @@
+alias HashMap = std::collections::hash_map::HashMap;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias OrderedKey = std::collections::ordered_map::OrderedKey;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias PriorityOrder = std::collections::priority_queue::PriorityOrder;
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
+alias Span = pkg::protocol::Span;
+
+public const ceiling: u64 = 4294967296_u64;
+
+public struct Rank {
+  doc "A sorted set's member at its score, the key the set's order keeps.";
+  public score: f64;
+  public member: Box<Slots<u8>>;
+}
+
+public struct Sorted {
+  doc "A sorted set: its members in score order, ties by member bytes, and each member's score.";
+  public order: OrderedMap<Rank, unit, ceiling>;
+  public scores: HashMap<Box<Slots<u8>>, f64, ceiling>;
+}
+
+public enum Value {
+  Text(public bytes: Box<Slots<u8>>);
+  Items(public items: Box<Ring<Box<Slots<u8>>>>);
+  Members(public members: HashMap<Box<Slots<u8>>, unit, ceiling>);
+  Fields(public fields: HashMap<Box<Slots<u8>>, Box<Slots<u8>>, ceiling>);
+  Ranked(public ranked: Sorted);
+}
+
+public struct Entry {
+  doc "A key's value and its expiry: nanoseconds from the program's origin, or zero for none.";
+  public value: Value;
+  public expires: u64;
+}
+
+public struct Due {
+  doc "An expiry queued for active removal: the key and the instant it was set to expire at.";
+  public key: Box<Slots<u8>>;
+  public at: u64;
+}
+
+public struct Store {
+  doc "The keyspace every client reaches through atomic statements: its keys, the queued expiries, the append-only file's pending bytes and whether they are kept, the clients connected, whether the server is stopping, and the state SPOP draws from.";
+  public map: HashMap<Box<Slots<u8>>, Entry, ceiling>;
+  public due: PriorityQueue<Due, ceiling>;
+  public log: Box<Slots<u8>>;
+  public logging: Bool;
+  public clients: u64;
+  public stopping: Bool;
+  public random: u64;
+}
+
+public struct Time {
+  doc "The clocks as one command sees them: now, nanoseconds from the program's origin that new expiries count from; unix_ms, calendar milliseconds; check, the instant an expiry is compared against, which is zero while a file is replayed; and whether a file is being replayed.";
+  public now: u64;
+  public unix_ms: u64;
+  public check: u64;
+  public loading: Bool;
+}
+
+public fn rank_compare(env: &KeyEnv, left: &Rank, right: &Rank) -> order: i32 reads(left), reads(right) doc "Orders ranks by score, then by member bytes, as Redis orders a sorted set.";
+
+public binding RankOrder : OrderedKey<Rank, KeyEnv> {
+  compare = rank_compare;
+}
+
+public fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), reads(right) doc "Orders queued expiries by their instant, the earliest first.";
+
+public binding DueOrder : PriorityOrder<Due, KeyEnv> {
+  compare = due_order;
+}
+
+public fn store_new() -> made: Store pure doc "An empty keyspace that keeps no append-only file.";
+
+public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
+
+public fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> more: Bool reads(env), writes(store) doc "Removes up to 256 keys whose expiry has been reached, the earliest first, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
+
+public fn log_count(log: &Box<Slots<u8>>, count: u64, room: u64) -> result: unit writes(log) doc "Makes room for a command of about room bytes and appends the header of a RESP array of count elements.";
+
+public fn log_word(log: &Box<Slots<u8>>, word: &[u8]) -> result: unit reads(word), writes(log) doc "Appends a constant word as a RESP bulk string.";
+
+public fn log_input(log: &Box<Slots<u8>>, input: &[u8], span: Span) -> result: unit reads(input), writes(log) doc "Appends an argument of the input as a RESP bulk string.";
+
+public fn log_stored(log: &Box<Slots<u8>>, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(log) doc "Appends a stored string as a RESP bulk string.";
+
+public fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) doc "Appends a number as a RESP bulk string of its decimal digits.";
+
+public fn log_command(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(log) doc "Appends a command as the client sent it, every argument a RESP bulk string.";

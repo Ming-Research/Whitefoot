@@ -1,0 +1,411 @@
+alias Bytes = pkg::bytes::Bytes;
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias Value = pkg::store::Value;
+alias arg = pkg::protocol::arg;
+alias ceiling = pkg::store::ceiling;
+alias clear_items = pkg::protocol::clear_items;
+alias copy_bytes = pkg::bytes::copy_bytes;
+alias decimal_bytes = pkg::bytes::decimal_bytes;
+alias expired = pkg::store::expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias log_command = pkg::store::log_command;
+alias log_count = pkg::store::log_count;
+alias log_input = pkg::store::log_input;
+alias log_word = pkg::store::log_word;
+alias name_is = pkg::bytes::name_is;
+alias push_item = pkg::protocol::push_item;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_bulk = pkg::protocol::reply_bulk;
+alias reply_bulk_input = pkg::protocol::reply_bulk_input;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_nil = pkg::protocol::reply_nil;
+alias reply_ok = pkg::protocol::reply_ok;
+alias reply_raw = pkg::protocol::reply_raw;
+alias reply_word = pkg::protocol::reply_word;
+alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias stored_integer = pkg::bytes::stored_integer;
+
+const word_set: Array<u8, 3> =[83_u8, 69_u8, 84_u8];
+
+const word_ex: Array<u8, 2> =[69_u8, 88_u8];
+
+const word_px: Array<u8, 2> =[80_u8, 88_u8];
+
+const word_get: Array<u8, 3> =[71_u8, 69_u8, 84_u8];
+
+const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
+
+const reply_empty_array: Array<u8, 4> =[42_u8, 48_u8, 13_u8, 10_u8];
+
+const text_overflow: Array<u8, 41> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 111_u8, 114_u8, 32_u8, 100_u8, 101_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 119_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 111_u8, 118_u8, 101_u8, 114_u8, 102_u8, 108_u8, 111_u8, 119_u8];
+
+const text_full: Array<u8, 17> =[69_u8, 82_u8, 82_u8, 32_u8, 107_u8, 101_u8, 121_u8, 115_u8, 112_u8, 97_u8, 99_u8, 101_u8, 32_u8, 102_u8, 117_u8, 108_u8, 108_u8];
+
+const text_expire_set: Array<u8, 40> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 115_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
+
+const text_config: Array<u8, 25> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 117_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 115_u8, 117_u8, 98_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 32_u8, 39_u8];
+
+const word_save: Array<u8, 4> =[83_u8, 65_u8, 86_u8, 69_u8];
+
+const word_appendonly: Array<u8, 10> =[65_u8, 80_u8, 80_u8, 69_u8, 78_u8, 68_u8, 79_u8, 78_u8, 76_u8, 89_u8];
+
+const reply_config_save: Array<u8, 20> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 52_u8, 13_u8, 10_u8, 115_u8, 97_u8, 118_u8, 101_u8, 13_u8, 10_u8, 36_u8, 48_u8, 13_u8, 10_u8, 13_u8, 10_u8];
+
+const reply_config_append_yes: Array<u8, 30> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 49_u8, 48_u8, 13_u8, 10_u8, 97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 13_u8, 10_u8, 36_u8, 51_u8, 13_u8, 10_u8, 121_u8, 101_u8, 115_u8, 13_u8, 10_u8];
+
+const reply_config_append_no: Array<u8, 29> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 49_u8, 48_u8, 13_u8, 10_u8, 97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 13_u8, 10_u8, 36_u8, 50_u8, 13_u8, 10_u8, 110_u8, 111_u8, 13_u8, 10_u8];
+
+const text_config_set: Array<u8, 61> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 85_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 111_u8, 114_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 83_u8, 69_u8, 84_u8, 32_u8, 45_u8, 32_u8, 39_u8];
+
+const text_quote_end: Array<u8, 3> =[39_u8, 13_u8, 10_u8];
+
+const text_try_config: Array<u8, 21> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 72_u8, 69_u8, 76_u8, 80_u8, 46_u8, 13_u8, 10_u8];
+
+struct Counted {
+  value: i64;
+  now: u64;
+  state: u64;
+}
+
+fn run_ping(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "PING [message]: answers PONG, or the message as a bulk string.";
+  if args^.inner.len == 2_u64 {
+    let message = arg(args: args, index: 1_u64);
+    reply_bulk_input(client: client, input: input, start: message.start, length: message.length);
+    return unit;
+  }
+  reply_word(client: client, word: &reply_pong[0_u64..7_u64]);
+  return unit;
+}
+
+fn run_echo(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "ECHO message: answers the message as a bulk string.";
+  let message = arg(args: args, index: 1_u64);
+  reply_bulk_input(client: client, input: input, start: message.start, length: message.length);
+  return unit;
+}
+
+fn text_value(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes a live string's bytes as a bulk string reply, recording done; records wrong for another kind and expired for an expired entry, writing nothing.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Text(bytes: stored) => {
+      reply_bulk(client: env, stored: stored);
+      set env^.state = state_done;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_get(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "GET key: answers a live string as a bulk string, written into the reply inside the atomic statement that finds it; a key whose expiry has been reached is removed there instead.";
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic state = &store^ {
+    let found = hash_map_lookup::<Bytes, Entry, Client, u64, fn text_value, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn put_text(state: &Store, key: Box<Slots<u8>>, value: Box<Slots<u8>>, expires: u64, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
+  doc "Stores a string under a key, replacing any value it held, and reports whether the keyspace had room.";
+  let text = Value::Text(bytes: move value);
+  let held_entry = Entry(value: move text, expires: expires);
+  let stored = put_entry(state: state, key: move key, held: move held_entry, env: env);
+  return stored;
+}
+
+fn run_set(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "SET key value [EX seconds | PX milliseconds]: stores the value with the expiry the option gives, or none, replacing any value the key held, in one atomic statement that also appends the change to the append-only file's pending bytes. Redis's other options are answered as a syntax error.";
+  let count = args^.inner.len;
+  let ttl_ms = 0_u64;
+  if count == 5_u64 {
+    let option = arg(args: args, index: 3_u64);
+    let in_seconds = name_is(input: input, start: option.start, length: option.length, word: &word_ex[0_u64..2_u64]);
+    let in_milliseconds = name_is(input: input, start: option.start, length: option.length, word: &word_px[0_u64..2_u64]);
+    let known = bor(in_seconds, in_milliseconds);
+    if known {
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    let amount = arg(args: args, index: 4_u64);
+    let number = read_integer(input: input, start: amount.start, length: amount.length);
+    if number.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    let positive = number.value > 0_i64;
+    if positive {
+    } else {
+      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
+      return unit;
+    }
+    let value = cvt.wrap::<i64, u64>(number.value);
+    let beyond = value > 1000000000000_u64;
+    if in_seconds {
+      set beyond = value > 1000000000_u64;
+    }
+    if beyond {
+      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
+      return unit;
+    }
+    set ttl_ms = value;
+    if in_seconds {
+      set ttl_ms = value *wrap 1000_u64;
+    }
+  } else if count != 3_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let key_span = arg(args: args, index: 1_u64);
+  let key = key_at(input: input, args: args, index: 1_u64);
+  let value = key_at(input: input, args: args, index: 2_u64);
+  let expires = 0_u64;
+  if ttl_ms != 0_u64 {
+    let ttl_ns = ttl_ms *wrap 1000000_u64;
+    set expires = time^.now +wrap ttl_ns;
+  }
+  let at_ms = time^.unix_ms +wrap ttl_ms;
+  let queued_key = copy_bytes(input: input, start: key_span.start, length: key_span.length);
+  let stored = False();
+  atomic state = &store^ {
+    set stored = put_text(state: &state^, key: move key, value: move value, expires: expires, env: env);
+    if stored {
+      if expires != 0_u64 {
+        queue_expiry(state: &state^, key: &queued_key, at: expires, env: env);
+      }
+      if state^.logging {
+        let key_value = arg(args: args, index: 2_u64);
+        let room = key_span.length +wrap key_value.length;
+        log_count(log: &state^.log, count: 3_u64, room: room);
+        log_word(log: &state^.log, word: &word_set[0_u64..3_u64]);
+        log_input(log: &state^.log, input: input, span: key_span);
+        log_input(log: &state^.log, input: input, span: key_value);
+        if expires != 0_u64 {
+          log_expire_at(log: &state^.log, input: input, key: key_span, at_ms: at_ms);
+        }
+      }
+    }
+  }
+  if stored {
+    reply_ok(client: client);
+    return unit;
+  }
+  reply_error(client: client, word: &text_full[0_u64..17_u64]);
+  return unit;
+}
+
+fn run_mset(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv) -> result: unit reads(store), reads(input), reads(args), reads(env), writes(client) waits {
+  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one atomic statement; a key named twice keeps its last value.";
+  prepare_keys(input: input, args: args, client: client, first: 1_u64);
+  let stored = True();
+  atomic state = &store^ {
+    loop @pairs {
+      let pending = client^.items.inner.len;
+      if pending >= 2_u64 {
+        let key = take_back(window: &client^.items.inner);
+        let value = take_back(window: &client^.items.inner);
+        let put = put_text(state: &state^, key: move key, value: move value, expires: 0_u64, env: env);
+        if put {
+        } else {
+          set stored = False();
+        }
+      } else {
+        break @pairs;
+      }
+    }
+    if state^.logging {
+      log_command(log: &state^.log, input: input, args: args);
+    }
+  }
+  clear_items(client: client);
+  if stored {
+    reply_ok(client: client);
+    return unit;
+  }
+  reply_error(client: client, word: &text_full[0_u64..17_u64]);
+  return unit;
+}
+
+fn bump_value(env: &Counted, key: &Box<Slots<u8>>, value: &Entry) -> result: u64 writes(env), writes(value) {
+  doc "Adds one to a live stored decimal in place, keeping its expiry. State 1 is done, 3 marks another kind, 5 a string that is not a number, 6 a sum past the range of i64, and 2 an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 2_u64;
+  }
+  match value^.value {
+    Text(bytes: stored) => {
+      let number = stored_integer(stored: stored);
+      if number.state != 1_u64 {
+        set env^.state = 5_u64;
+        return 5_u64;
+      }
+      if number.value == 9223372036854775807_i64 {
+        set env^.state = 6_u64;
+        return 6_u64;
+      }
+      let bumped = number.value +wrap 1_i64;
+      let fresh = decimal_bytes(value: bumped);
+      set stored^ = move fresh;
+      set env^.value = bumped;
+      set env^.state = state_done;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+  }
+}
+
+fn run_incr(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "INCR key: adds one to the stored number, keeping its expiry, or stores 1 without one for an absent or expired key, in one atomic statement.";
+  let key = key_at(input: input, args: args, index: 1_u64);
+  let counted = Counted(value: 0_i64, now: time^.check, state: state_absent);
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Bytes, Entry, Counted, u64, fn bump_value, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &counted);
+    let fresh_needed = False();
+    match edited {
+      Ok(value: outcome) => {
+        if counted.state == state_expired {
+          let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+          set fresh_needed = True();
+        }
+      }
+      Err(error: absent) => {
+        set fresh_needed = True();
+      }
+    }
+    if fresh_needed {
+      let fresh = decimal_bytes(value: 1_i64);
+      let length = key.inner.len;
+      let window = &key.inner[0_u64..length];
+      let owned_key = copy_bytes(input: window, start: 0_u64, length: length);
+      let put = put_text(state: &state^, key: move owned_key, value: move fresh, expires: 0_u64, env: env);
+      if put {
+        set counted.value = 1_i64;
+        set counted.state = state_done;
+      } else {
+        set counted.state = 7_u64;
+      }
+    }
+    if counted.state == state_done {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  if counted.state == state_done {
+    reply_integer(client: client, value: counted.value);
+  } else if counted.state == state_wrong {
+    reply_wrong_type(client: client);
+  } else if counted.state == 6_u64 {
+    reply_error(client: client, word: &text_overflow[0_u64..41_u64]);
+  } else if counted.state == 7_u64 {
+    reply_error(client: client, word: &text_full[0_u64..17_u64]);
+  } else {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+  }
+  return unit;
+}
+
+fn run_config(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "CONFIG GET parameter: answers the parameter and its value for save, which firn never does and reports as empty, and appendonly, yes when firn keeps an append-only file; any other parameter answers an empty array, as a parameter Redis does not know does. CONFIG SET is answered as Redis answers an option it does not know, and any other subcommand as Redis answers an unknown one.";
+  let sub = arg(args: args, index: 1_u64);
+  let getting = name_is(input: input, start: sub.start, length: sub.length, word: &word_get[0_u64..3_u64]);
+  let setting = name_is(input: input, start: sub.start, length: sub.length, word: &word_set[0_u64..3_u64]);
+  let count = args^.inner.len;
+  if getting {
+    if count == 3_u64 {
+      let parameter = arg(args: args, index: 2_u64);
+      let saving = name_is(input: input, start: parameter.start, length: parameter.length, word: &word_save[0_u64..4_u64]);
+      let appending = name_is(input: input, start: parameter.start, length: parameter.length, word: &word_appendonly[0_u64..10_u64]);
+      if saving {
+        reply_word(client: client, word: &reply_config_save[0_u64..20_u64]);
+        return unit;
+      }
+      if appending {
+        let logging = False();
+        atomic state = &store^ {
+          set logging = state^.logging;
+        }
+        if logging {
+          reply_word(client: client, word: &reply_config_append_yes[0_u64..30_u64]);
+          return unit;
+        }
+        reply_word(client: client, word: &reply_config_append_no[0_u64..29_u64]);
+        return unit;
+      }
+    }
+    reply_word(client: client, word: &reply_empty_array[0_u64..4_u64]);
+    return unit;
+  }
+  if setting {
+    let option = arg(args: args, index: 2_u64);
+    reply_word(client: client, word: &text_config_set[0_u64..61_u64]);
+    let shown = imin(option.length, 128_u64);
+    reply_raw(client: client, input: input, start: option.start, length: shown);
+    reply_word(client: client, word: &text_quote_end[0_u64..3_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &text_config[0_u64..25_u64]);
+  let shown = imin(sub.length, 128_u64);
+  reply_raw(client: client, input: input, start: sub.start, length: shown);
+  reply_word(client: client, word: &text_try_config[0_u64..21_u64]);
+  return unit;
+}

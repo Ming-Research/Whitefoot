@@ -1,0 +1,149 @@
+alias Clock = std::time::Clock;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias HandleFactory = std::io::HandleFactory;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias WriteFile = std::fs::WriteFile;
+alias append_once = std::fs::append_once;
+alias client_new = pkg::protocol::client_new;
+alias close_read = std::fs::close_read;
+alias close_write = std::fs::close_write;
+alias execute = pkg::commands::execute;
+alias input_grow = pkg::protocol::input_grow;
+alias input_new = pkg::protocol::input_new;
+alias instant_after = std::time::instant_after;
+alias keep_rest = pkg::protocol::keep_rest;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias open_file = std::fs::open_file;
+alias parse_request = pkg::protocol::parse_request;
+alias read_at = std::fs::read_at;
+alias sleep_until = std::time::sleep_until;
+alias sync_file = std::fs::sync_file;
+
+fn append_all(factory: &HandleFactory, file: &WriteFile, source: &Box<Slots<u8>>) -> result: Bool reads(source), writes(factory), writes(file) waits {
+  doc "Appends every byte the buffer holds to the file, reattempting until the host has taken them all; false reports a refusal or a write that took nothing.";
+  let length = source^.inner.len;
+  let bytes = &source^.inner[0_u64..length];
+  let written = 0_u64;
+  loop @appending {
+    if written >= length {
+      break @appending;
+    }
+    match append_once(factory: factory, file: file, source: bytes, start: written, end: length) {
+      Ok(value: next) => {
+        if next == written {
+          return False();
+        }
+        set written = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits {
+  doc "The append-only file's writer: every 10 milliseconds it exchanges the keyspace's pending bytes for an empty buffer in one atomic statement and appends what it took to the file, syncing the file once a second has passed since the last sync, as appendfsync everysec does. Once the server stops it writes the last bytes, syncs and closes the file.";
+  let spare = box_slots_new::<u8>(capacity: 65536_u64);
+  let last_sync = std::time::now(clock: &clock);
+  loop @writing {
+    let started = std::time::now(clock: &clock);
+    let wake = instant_after(instant: started, nanoseconds: 10000000_u64);
+    sleep_until(deadline: wake);
+    let stop = False();
+    atomic state = &store {
+      set stop = state^.stopping;
+      swap(first: &state^.log, second: &spare);
+    }
+    let appended = append_all(factory: &factory, file: &file, source: &spare);
+    set spare = box_slots_new::<u8>(capacity: 65536_u64);
+    let reading = std::time::now(clock: &clock);
+    let since = nanoseconds_from(earlier: last_sync, later: reading);
+    let second_passed = since >= 1000000000_u64;
+    let sync_now = bor(second_passed, stop);
+    if sync_now {
+      let synced = sync_file(factory: &factory, file: &file);
+      set last_sync = reading;
+    }
+    if stop {
+      break @writing;
+    }
+  }
+  let closed = close_write(factory: &factory, file: move file);
+  return unit;
+}
+
+fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+  requires name_length <= name^.len;
+} {
+  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
+  let applied = 0_u64;
+  match open_file(factory: factory, root: root, name: name, start: 0_u64, end: name_length) {
+    Ok(value: file) => {
+      let env = KeyEnv(seed: 0_u64);
+      let client = client_new(capacity: 16384_u64);
+      let args = box_slots_new::<Span>(capacity: 16_u64);
+      let input = input_new(capacity: 65536_u64);
+      let held = 0_u64;
+      let offset = 0_u64;
+      loop @chunks {
+        if held >= input.inner.len {
+          input_grow(input: &input);
+          if held >= input.inner.len {
+            break @chunks;
+          }
+        }
+        let ended = False();
+        let length = input.inner.len;
+        let window = &input.inner[0_u64..length];
+        match read_at(factory: factory, file: &file, destination: window, file_offset: offset, start: held, end: length) {
+          Ok(value: next) => {
+            let got = next -wrap held;
+            set offset = offset +wrap got;
+            set held = next;
+            if got == 0_u64 {
+              set ended = True();
+            }
+          }
+          Err(error: stop) => {
+            set ended = True();
+          }
+        }
+        if ended {
+          break @chunks;
+        }
+        let consumed = 0_u64;
+        let broken = False();
+        loop @commands {
+          let current = input.inner.len;
+          let bytes = &input.inner[0_u64..current];
+          let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args);
+          if parsed.state == 0_u64 {
+            break @commands;
+          }
+          if parsed.state == 1_u64 {
+            execute(store: store, input: bytes, args: &args, client: &client, env: &env, time: time);
+            set client.at = 0_u64;
+            set applied = applied +wrap 1_u64;
+          } else if parsed.state != 6_u64 {
+            set broken = True();
+            break @commands;
+          }
+          set consumed = parsed.next;
+        }
+        if broken {
+          break @chunks;
+        }
+        set held = keep_rest(input: &input, from: consumed, held: held);
+      }
+      let closed = close_read(factory: factory, file: move file);
+    }
+    Err(error: problem) => {
+    }
+  }
+  return applied;
+}

@@ -1526,7 +1526,13 @@ impl<'program> IrBuilder<'program> {
                 if self.bindings.insert(binder.binding, value).is_some() {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
-                if binder.mode == CheckedMode::Own {
+                // An own binder is promoted into storage when it is addressed.
+                // A borrowed binder that carries its field's address leaves
+                // the addressed set here, so that passing it on after a read
+                // or a write through it passes that address, not a load.
+                if binder.mode == CheckedMode::Own
+                    || matches!(self.value_type(value)?, IrType::Address(_))
+                {
                     self.promote_binding_if_needed(binder.binding)?;
                 }
             }

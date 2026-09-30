@@ -1,0 +1,300 @@
+fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) {
+  doc "Reads one byte, or zero at a position the range does not hold.";
+  if index < input^.len {
+    let value = input^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn bytes_hash(env: &KeyEnv, key: &Box<Slots<u8>>) -> hash: u64 reads(env), reads(key) {
+  doc "FNV-1a over the string's bytes, started from the seed.";
+  let hash = ixor(14695981039346656037_u64, env^.seed);
+  let length = key^.inner.len;
+  for @bytes (index in 0_u64..length) {
+    let byte = key^.inner[index];
+    let wide = cvt::<u8, u64>(byte);
+    let folded = ixor(hash, wide);
+    set hash = folded *wrap 1099511628211_u64;
+  }
+  return hash;
+}
+
+fn bytes_equal(env: &KeyEnv, left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> equal: Bool reads(left), reads(right) {
+  doc "Two strings are equal when their lengths and every byte are.";
+  let length = left^.inner.len;
+  if length != right^.inner.len {
+    return False();
+  }
+  for @bytes (index in 0_u64..length) {
+    let first = left^.inner[index];
+    let second = right^.inner[index];
+    if first != second {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) {
+  doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+  let left_length = left^.inner.len;
+  let right_length = right^.inner.len;
+  let shorter = imin(left_length, right_length);
+  for @bytes (index in 0_u64..shorter) {
+    let first = 0_u8;
+    if index < left_length {
+      set first = left^.inner[index];
+    }
+    let second = 0_u8;
+    if index < right_length {
+      set second = right^.inner[index];
+    }
+    if first < second {
+      return -1_i32;
+    }
+    if first > second {
+      return 1_i32;
+    }
+  }
+  if left_length < right_length {
+    return -1_i32;
+  }
+  if left_length > right_length {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) {
+  doc "Copies the bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. No request carries an argument of 2^62 bytes, the most a string holds; a longer one copies as the empty string.";
+  if length <= 4611686018427387904_u64 {
+    let made = box_slots_new::<u8>(capacity: length);
+    for @copy (offset in 0_u64..length) {
+      let position = start +wrap offset;
+      let byte = byte_at(input: input, index: position);
+      if made.inner.len < made.inner.cap {
+        place_back(window: &made.inner, value: byte);
+      }
+    }
+    return move made;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  return move empty;
+}
+
+fn same_bytes(input: &[u8], start: u64, length: u64, stored: &Box<Slots<u8>>) -> equal: Bool reads(input), reads(stored) {
+  doc "Whether the bytes of the input from a position spell the stored string.";
+  if length != stored^.inner.len {
+    return False();
+  }
+  for @compare (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let kept = stored^.inner[offset];
+    if byte != kept {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure {
+  doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
+  let negative = value < 0_i64;
+  let magnitude = cvt.wrap::<i64, u64>(value);
+  if negative {
+    set magnitude = 0_u64 -wrap magnitude;
+  }
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = magnitude;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let made = box_slots_new::<u8>(capacity: 21_u64);
+  if negative {
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: 45_u8);
+    }
+  }
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: glyph);
+    }
+  }
+  return move made;
+}
+
+fn integer_digits(first: u8, length: u64) -> result: Integer pure {
+  doc "The verdict on a number's first byte before its digits are summed: state 1 when the digits may form a number, 0 when they cannot.";
+  let lead_low = first >= 49_u8;
+  let lead_high = first <= 57_u8;
+  let lead = band(lead_low, lead_high);
+  if lead {
+    return Integer(value: 0_i64, state: 1_u64);
+  }
+  let lone_zero = first == 48_u8;
+  let single = length == 1_u64;
+  let zero = band(lone_zero, single);
+  if zero {
+    return Integer(value: 0_i64, state: 1_u64);
+  }
+  return Integer(value: 0_i64, state: 0_u64);
+}
+
+fn read_digits(input: &[u8], start: u64, length: u64, negative: Bool) -> number: Integer reads(input) {
+  doc "Sums the digits of a number whose sign has been read, refusing a byte that is not a digit and a magnitude past the range of i64.";
+  let magnitude = 0_u64;
+  for @digits (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let face = byte -wrap 48_u8;
+    let wide = cvt::<u8, u64>(face);
+    match magnitude *checked 10_u64 {
+      Ok(value: scaled) => {
+        match scaled +checked wide {
+          Ok(value: summed) => {
+            set magnitude = summed;
+          }
+          Err(error: overflow) => {
+            return Integer(value: 0_i64, state: 0_u64);
+          }
+        }
+      }
+      Err(error: overflow) => {
+        return Integer(value: 0_i64, state: 0_u64);
+      }
+    }
+  }
+  if negative {
+    if magnitude > 9223372036854775808_u64 {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let flipped = 0_u64 -wrap magnitude;
+    let signed = cvt.wrap::<u64, i64>(flipped);
+    return Integer(value: signed, state: 1_u64);
+  }
+  if magnitude > 9223372036854775807_u64 {
+    return Integer(value: 0_i64, state: 0_u64);
+  }
+  let signed = cvt.wrap::<u64, i64>(magnitude);
+  return Integer(value: signed, state: 1_u64);
+}
+
+fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) {
+  doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
+  let empty = length == 0_u64;
+  let long = length > 20_u64;
+  let outside = bor(empty, long);
+  if outside {
+    return Integer(value: 0_i64, state: 0_u64);
+  }
+  let first = byte_at(input: input, index: start);
+  if first == 45_u8 {
+    let digits_start = start +wrap 1_u64;
+    let digits_length = length -wrap 1_u64;
+    if digits_length == 0_u64 {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let lead = byte_at(input: input, index: digits_start);
+    let lead_low = lead >= 49_u8;
+    let lead_high = lead <= 57_u8;
+    let nonzero = band(lead_low, lead_high);
+    if nonzero {
+    } else {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let minus = True();
+    let summed = read_digits(input: input, start: digits_start, length: digits_length, negative: minus);
+    return summed;
+  }
+  let verdict = integer_digits(first: first, length: length);
+  if verdict.state != 1_u64 {
+    return verdict;
+  }
+  let plus = False();
+  let summed = read_digits(input: input, start: start, length: length, negative: plus);
+  return summed;
+}
+
+fn stored_integer(stored: &Box<Slots<u8>>) -> number: Integer reads(stored) {
+  doc "Reads a stored string as read_integer reads bytes of the input.";
+  let length = stored^.inner.len;
+  let window = &stored^.inner[0_u64..length];
+  let number = read_integer(input: window, start: 0_u64, length: length);
+  return number;
+}
+
+fn upper(byte: u8) -> result: u8 pure {
+  doc "A lower-case ASCII letter in upper case, and any other byte unchanged.";
+  let low = byte >= 97_u8;
+  let high = byte <= 122_u8;
+  let letter = band(low, high);
+  if letter {
+    let raised = byte -wrap 32_u8;
+    return raised;
+  }
+  return byte;
+}
+
+fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) {
+  doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes has its top byte set to 255, and a name of no bytes is 0.";
+  let code = 0_u64;
+  let packed = imin(length, 8_u64);
+  for @pack (offset in 0_u64..packed) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let raised = upper(byte: byte);
+    let wide = cvt::<u8, u64>(raised);
+    let bits = offset *wrap 8_u64;
+    let narrow = cvt.wrap::<u64, u32>(bits);
+    let placed = ishl.wrap(wide, narrow);
+    set code = ior(code, placed);
+  }
+  if length > 8_u64 {
+    let top = ishl.wrap(255_u64, 56_u32);
+    set code = ior(code, top);
+  }
+  return code;
+}
+
+fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) {
+  doc "Whether bytes of the input spell an upper-case word, letters in either case.";
+  if length != word^.len {
+    return False();
+  }
+  for @compare (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let raised = upper(byte: byte);
+    let expected = word^[offset];
+    if raised != expected {
+      return False();
+    }
+  }
+  return True();
+}

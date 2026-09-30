@@ -1,0 +1,39 @@
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+
+public struct KeyEnv {
+  doc "What hashing and comparing keys reads: the seed every key hash starts from.";
+  public seed: u64;
+}
+
+public struct Integer {
+  doc "A signed decimal read from bytes: state 1 is a number, 0 is text that is not one.";
+  public value: i64;
+  public state: u64;
+}
+
+public fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) doc "Reads one byte, or zero at a position the range does not hold.";
+
+public fn bytes_hash(env: &KeyEnv, key: &Box<Slots<u8>>) -> hash: u64 reads(env), reads(key) doc "FNV-1a over the string's bytes, started from the seed.";
+
+public fn bytes_equal(env: &KeyEnv, left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> equal: Bool reads(left), reads(right) doc "Two strings are equal when their lengths and every byte are.";
+
+public fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+
+public binding Bytes : HashMapKey<Box<Slots<u8>>, KeyEnv> {
+  hash = bytes_hash;
+  equal = bytes_equal;
+}
+
+public fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) doc "Copies the bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. No request carries an argument of 2^62 bytes, the most a string holds; a longer one copies as the empty string.";
+
+public fn same_bytes(input: &[u8], start: u64, length: u64, stored: &Box<Slots<u8>>) -> equal: Bool reads(input), reads(stored) doc "Whether the bytes of the input from a position spell the stored string.";
+
+public fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
+
+public fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
+
+public fn stored_integer(stored: &Box<Slots<u8>>) -> number: Integer reads(stored) doc "Reads a stored string as read_integer reads bytes of the input.";
+
+public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes has its top byte set to 255, and a name of no bytes is 0.";
+
+public fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) doc "Whether bytes of the input spell an upper-case word, letters in either case.";
