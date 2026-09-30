@@ -109,10 +109,17 @@ slowest there.
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
-- **Keys and values are byte strings of their own length**, each a
-  `Box<Slots<u8>>`, where the subset kept keys in 48-byte arrays and values up
-  to 1,024 bytes. Redis limits neither below 512 MB, and hashing only a key's
-  own bytes is cheaper than hashing 48 positions.
+- **Keys and values are byte strings of their own length**, where the
+  subset kept keys in 48-byte arrays and values up to 1,024 bytes; Redis
+  limits neither below 512 MB, and hashing only a key's own bytes is cheaper
+  than hashing 48 positions. A string of at most 24 bytes is held inside its
+  owner, a longer one in an allocation of its own (`Bytes` in the `bytes`
+  module), one constructor choosing the form from the length so that equal
+  strings always share it; list elements stay in allocations of their own.
+  One allocation per string, the form kept before, was refused: its pointer
+  chases and allocations fall inside the atomic statement, and holding short
+  strings inline reached 1.41 times its rate on `SET` and 2.24 on `MSET`
+  ([measured](#short-strings-inside-the-keyspace-results)).
 - **A key's value is one enum over the five kinds**, `Text`, `Items`,
   `Members`, `Fields` and `Ranked`, beside its expiry, so a command on another
   kind finds the variant and answers `WRONGTYPE`, as Redis does.
@@ -408,3 +415,32 @@ change is kept if *inline* reaches at least 1.15 on two of `SET`, `INCR` and
 `MSET` and at least 0.90 on every test, the run counting if *control* stays
 within 0.88 to 1.12; otherwise it is reverted. The resident memory of each
 server after its `SET` test is recorded beside the rates.
+
+### Short strings inside the keyspace: results
+
+Depth 16, the `inline` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv):
+medians of the five rounds' rates, and medians of each round's ratio to that
+round's *keyed*:
+
+| Test | keyed | inline | inline / keyed | control / keyed |
+|---|---|---|---|---|
+| `SET` | 726,656 | 1,043,115 | 1.41 | 1.10 |
+| `GET` | 888,494 | 1,090,314 | 1.30 | 1.04 |
+| `INCR` | 749,813 | 1,043,115 | 1.48 | 1.05 |
+| `HSET` | 727,096 | 999,334 | 1.42 | 1.00 |
+| `SADD` | 856,776 | 1,090,513 | 1.33 | 1.04 |
+| `ZADD` | 278,940 | 307,519 | 1.10 | 0.98 |
+| `MSET` | 90,728 | 199,720 | 2.24 | 1.02 |
+
+**Kept: the criterion is met.** *inline* reached 1.41 times *keyed* on
+`SET`, 1.48 on `INCR` and 2.24 on `MSET`, and gained on every test, while
+*control* stayed within 0.98 to 1.10. The bucket grew from 88 bytes to 120
+(the stride of the probe loop), and the server's resident memory after the
+`SET` test, holding the 100,000 keys, went from 34.3 MB to 34.7 MB:
+the larger buckets cost about what the separate allocations of keys and
+values did. A profile of *inline* under `SET` puts `hash_map_try_put` at 16%
+and the spinning in `wf__shared_acquire` at 16%, and shows each atomic
+statement taking and releasing a handle of its own on the object
+(`wf__shared_share` and `wf__shared_release`, 4% together), atomic updates
+on the cache line the lock itself lives on.
