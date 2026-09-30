@@ -21,7 +21,8 @@
 use super::super::postcondition::{
     NormalizedRelation, PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
-use crate::semantic::model::{CheckedMeasure, CheckedValue, IntegerType};
+use crate::semantic::entailment::integer_value;
+use crate::semantic::model::{CheckedMeasure, CheckedValue};
 
 /// The abstract term one operand denotes in the declaration-domain closure:
 /// an offset from a named term, where term `0` is the zero term.
@@ -302,17 +303,3 @@ pub(super) fn relations_are_contradictory(templates: &[&RelationTemplate]) -> bo
 // construction operations being ordinary [PRE-1] records whose contracts are
 // judged as every other declaration's are. The source-clause closure above,
 // which is the half [FN-8] still states, is unchanged.
-
-/// The mathematical value of one checked integer constant, whose `bits` hold
-/// the type-width two's-complement pattern [ENT-2].
-const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
-    let value = bits as i128;
-    if ty.signed() {
-        let width = ty.width() as u32;
-        let sign_bit = 1_u64 << (width - 1);
-        if bits & sign_bit != 0 {
-            return value - (1_i128 << width);
-        }
-    }
-    value
-}

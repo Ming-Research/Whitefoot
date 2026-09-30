@@ -9,9 +9,10 @@
 //! rejection instead of an acceptance.
 
 use super::super::entailment::ObligationFamily;
+use super::super::goal::CheckedCallRequirement;
 use super::super::model::{
     CheckedAffineExpressionKind, CheckedAffineRelation, CheckedContainerRoot,
-    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopInvariant,
+    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant,
     CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace, CheckedRangeSource,
     CheckedSetTarget, CheckedStatement, FunctionId,
 };
@@ -33,6 +34,10 @@ fn obligation_records(
     let mut records = Records {
         list: Vec::new(),
         empties_run,
+        function: function.id,
+        loops: Vec::new(),
+        gives: 0,
+        atomic: None,
     };
     // [ENT-2, FN-8] the places a requirement forms owe their subscripts'
     // obligations at body entry.
@@ -95,6 +100,16 @@ fn obligation_records(
 struct Records<'rows> {
     list: Vec<ObligationRecord>,
     empties_run: &'rows dyn Fn(FunctionId) -> bool,
+    /// The function whose records these are: a construction's type
+    /// invariant [TYPE-11] is judged as a requirement it owes itself.
+    function: FunctionId,
+    /// The loops around the statement being walked, innermost last.
+    loops: Vec<CheckedLoopId>,
+    /// How many value initializers [GIVE-1] are around it.
+    gives: usize,
+    /// [TYPE-11] the atomic block around it: its invariants, and the loop
+    /// and value-initializer depths where it began.
+    atomic: Option<(Vec<CheckedCallRequirement>, usize, usize)>,
 }
 
 impl Records<'_> {
@@ -120,6 +135,27 @@ impl Records<'_> {
         );
     }
 
+    /// [TYPE-11] the atomic block's invariants, owed at `site`, an edge
+    /// that leaves the block.
+    fn atomic_exit(&mut self, site: &NodePath) {
+        let Some((invariants, ..)) = &self.atomic else {
+            return;
+        };
+        let records = invariants
+            .iter()
+            .map(|invariant| ObligationRecord {
+                rule: SemanticRule::Type11,
+                site: site.clone(),
+                subject: ObligationSubject::CallRequirement {
+                    callee: self.function,
+                    requires_clause: invariant.requires_clause.clone(),
+                    subject: invariant.subject,
+                },
+            })
+            .collect::<Vec<_>>();
+        self.list.extend(records);
+    }
+
     fn statements(&mut self, statements: &[CheckedStatement]) {
         for statement in statements {
             self.statement(statement);
@@ -131,10 +167,33 @@ impl Records<'_> {
             CheckedStatement::Let { value, .. }
             | CheckedStatement::DestructuringLet { value, .. }
             | CheckedStatement::Evaluate { value, .. }
-            | CheckedStatement::DropExpression { value, .. }
-            | CheckedStatement::Return { value, .. }
-            | CheckedStatement::Give { value, .. } => self.expression(value),
-            CheckedStatement::PropagateLet { scrutinee, .. } => self.expression(scrutinee),
+            | CheckedStatement::DropExpression { value, .. } => self.expression(value),
+            CheckedStatement::Return {
+                node_path, value, ..
+            } => {
+                self.expression(value);
+                self.atomic_exit(node_path);
+            }
+            CheckedStatement::Give {
+                node_path, value, ..
+            } => {
+                self.expression(value);
+                if self
+                    .atomic
+                    .as_ref()
+                    .is_some_and(|(_, _, gives)| self.gives <= *gives)
+                {
+                    self.atomic_exit(node_path);
+                }
+            }
+            CheckedStatement::PropagateLet {
+                node_path,
+                scrutinee,
+                ..
+            } => {
+                self.expression(scrutinee);
+                self.atomic_exit(node_path);
+            }
             CheckedStatement::Set { target, value, .. } => {
                 match target {
                     CheckedSetTarget::Place(_) => {}
@@ -166,22 +225,35 @@ impl Records<'_> {
             }
             CheckedStatement::Match {
                 scrutinee, arms, ..
-            }
-            | CheckedStatement::ValueMatchLet {
-                scrutinee, arms, ..
             } => {
                 self.expression(scrutinee);
                 for arm in arms {
                     self.statements(&arm.body);
                 }
             }
+            CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                self.expression(scrutinee);
+                self.gives += 1;
+                for arm in arms {
+                    self.statements(&arm.body);
+                }
+                self.gives -= 1;
+            }
             CheckedStatement::Loop {
-                invariants, body, ..
+                id,
+                invariants,
+                body,
+                ..
             } => {
                 self.loop_invariants(invariants);
+                self.loops.push(*id);
                 self.statements(body);
+                self.loops.pop();
             }
             CheckedStatement::CountedRange {
+                id,
                 lower,
                 upper,
                 invariants,
@@ -191,9 +263,46 @@ impl Records<'_> {
                 self.expression(lower);
                 self.expression(upper);
                 self.loop_invariants(invariants);
+                self.loops.push(*id);
                 self.statements(body);
+                self.loops.pop();
             }
-            CheckedStatement::Break { .. } => {}
+            // [TYPE-11] a break of a loop around an atomic block leaves it.
+            CheckedStatement::Break {
+                node_path, target, ..
+            } => {
+                if let Some((_, loops, _)) = &self.atomic
+                    && self
+                        .loops
+                        .iter()
+                        .rposition(|loop_id| loop_id == target)
+                        .is_some_and(|position| position < *loops)
+                {
+                    self.atomic_exit(node_path);
+                }
+            }
+            CheckedStatement::Atomic {
+                node_path,
+                target,
+                guard,
+                body,
+                continues,
+                invariants,
+                ..
+            } => {
+                self.expression(target);
+                if let Some(guard) = guard {
+                    self.expression(guard);
+                }
+                let enclosing =
+                    self.atomic
+                        .replace((invariants.clone(), self.loops.len(), self.gives));
+                self.statements(body);
+                if *continues {
+                    self.atomic_exit(node_path);
+                }
+                self.atomic = enclosing;
+            }
         }
     }
 
@@ -254,6 +363,7 @@ impl Records<'_> {
                         ObligationSubject::CallRequirement {
                             callee: *function,
                             requires_clause: requirement.requires_clause.clone(),
+                            subject: requirement.subject,
                         },
                     );
                 }
@@ -365,8 +475,30 @@ impl Records<'_> {
                     self.expression(argument);
                 }
             }
-            CheckedExpression::ConstructStruct { fields, .. }
-            | CheckedExpression::ConstructEnum { fields, .. } => {
+            // [TYPE-11] a construction owes its struct's type invariants
+            // after its operands, as a call owes its requirements.
+            CheckedExpression::ConstructStruct {
+                carrier,
+                fields,
+                invariants,
+                ..
+            } => {
+                for field in fields {
+                    self.expression(field);
+                }
+                for invariant in invariants {
+                    self.push(
+                        SemanticRule::Type11,
+                        carrier.clone(),
+                        ObligationSubject::CallRequirement {
+                            callee: self.function,
+                            requires_clause: invariant.requires_clause.clone(),
+                            subject: invariant.subject,
+                        },
+                    );
+                }
+            }
+            CheckedExpression::ConstructEnum { fields, .. } => {
                 for field in fields {
                     self.expression(field);
                 }

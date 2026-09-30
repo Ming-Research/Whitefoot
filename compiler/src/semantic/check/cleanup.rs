@@ -98,6 +98,23 @@ impl<'unit> TypeContext<'unit> {
                 CheckedStatement::Break { drops, .. } => {
                     self.validate_drop_release_graphs(drops)?;
                 }
+                // [SHARE-1] the statement's end may release the state, as the
+                // release of a handle does.
+                CheckedStatement::Atomic {
+                    target,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => {
+                    self.validate_expression_release_graphs(target)?;
+                    self.release_graph_nodes(target.ty())?;
+                    if let Some(guard) = guard {
+                        self.validate_expression_release_graphs(guard)?;
+                    }
+                    self.validate_release_graphs(body)?;
+                    self.validate_drop_release_graphs(fallthrough_drops)?;
+                }
             }
         }
         Ok(())
@@ -258,7 +275,8 @@ impl<'unit> TypeContext<'unit> {
                         }
                         CheckedNominalKind::Enum { .. }
                         | CheckedNominalKind::Box { .. }
-                        | CheckedNominalKind::Opaque => {
+                        | CheckedNominalKind::Opaque
+                        | CheckedNominalKind::Shared { .. } => {
                             drops.push((path, current));
                         }
                     }

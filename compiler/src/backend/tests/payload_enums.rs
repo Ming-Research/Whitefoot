@@ -543,9 +543,9 @@ fn memory_only_values_are_never_first_class() {
 
 /// A waiting program whose waiting calls take and return union-laid-out
 /// enums (design/compiler/waiting-contexts.md): `build` returns one through
-/// its destination to a direct waiting call, two bound `mustpar` starts
-/// construct one each in the starting frame's slot, which their awaits move
-/// into the bindings [WAIT-2], a third bound start's binding is released
+/// its destination to a direct waiting call, two bound spawns construct
+/// one each in the starting frame's slot, which their awaits move into the
+/// bindings [WAIT-3], a third bound start's binding is released
 /// without being read, and an unbound start takes one by value into its
 /// context's argument block, whose wrapper consumes it. `Piece` is a union
 /// enum nested in `Holder`'s `Nested` variant.
@@ -621,11 +621,11 @@ fn weight(holder: Holder) -> result: u64 pure waits {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let direct = build(kind: 0_u64, seed: 3_u64);
-  let first = mustpar build(kind: 2_u64, seed: 5_u64);
-  let second = mustpar build(kind: 1_u64, seed: 7_u64);
+  let first = spawn build(kind: 2_u64, seed: 5_u64);
+  let second = spawn build(kind: 1_u64, seed: 7_u64);
   let given = build(kind: 0_u64, seed: 9_u64);
-  mustpar weight(holder: move given);
-  let kept = mustpar build(kind: 2_u64, seed: 11_u64);
+  spawn weight(holder: move given);
+  let kept = spawn build(kind: 2_u64, seed: 11_u64);
   let direct_weight = weight(holder: move direct);
   if direct_weight != 7_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -661,6 +661,95 @@ fn union_enums_cross_waiting_calls_and_contexts() {
             module.contains("@wf__context_launch(ptr %wf.ctx.group,"),
             "{overlap:?}: an unbound start"
         );
+        assert_never_first_class(&names, &module, &format!("{overlap:?}"));
+        let output = compile_link_and_run(&observed(&module), Some(ALLOCATION_OBSERVER), &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        let report = String::from_utf8(output.stdout).expect("report");
+        assert!(report.ends_with(" live=0\n"), "{overlap:?}: {report}");
+        assert!(!report.starts_with("allocated=0 "), "{overlap:?}: {report}");
+    }
+}
+
+/// A shared object whose state is a union-laid-out enum [SHARE-1]: `main`
+/// creates it holding a boxed run, reads it through an atomic statement, and
+/// four contexts each replace it with a boxed cell, so every replaced state
+/// and, with the last handle, the final state are released. The shared
+/// object's release helper releases the state in place, never as a loaded
+/// value.
+const SHARED_PROGRAM: &[u8] = br#"enum Holder {
+  Boxed(cell: Box<u64>, stamp: u64);
+  Many(values: Box<Slots<u64>>);
+  Nothing();
+}
+
+fn peek(holder: &Holder) -> result: u64 reads(holder) {
+  match holder^ {
+    Boxed(cell: c, stamp: s) => {
+      return c^.inner +wrap s^;
+    }
+    Many(values: v) => {
+      let count = v^.inner.len;
+      return count +wrap 1000_u64;
+    }
+    Nothing() => {
+      return 7777_u64;
+    }
+  }
+}
+
+fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
+  atomic state = &held {
+    let cell = box_new::<u64>(value: seed);
+    let next = Holder::Boxed(cell: move cell, stamp: 100_u64);
+    set state^ = move next;
+  }
+  return unit;
+}
+
+fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
+  for @start (index in 0_u64..4_u64) {
+    let handle = shared_share::<Holder>(shared: held);
+    spawn fill(held: move handle, seed: index);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let values = box_slots_new::<u64>(capacity: 2_u64);
+  place_back(window: &values.inner, value: 1_u64);
+  let start = Holder::Many(values: move values);
+  let held = shared_new::<Holder>(value: move start);
+  let seen = 0_u64;
+  atomic state = &held {
+    set seen = peek(holder: state);
+  }
+  if seen != 1001_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  fill_all(held: &held);
+  let last = 0_u64;
+  atomic state = &held {
+    set last = peek(holder: state);
+  }
+  if last < 100_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if last > 103_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// A union-laid-out enum lives in a shared object as memory: it is never
+/// first-class, the observations match, and every owner, replaced or final,
+/// is released exactly once.
+#[test]
+fn union_enums_live_in_shared_objects() {
+    let names = memory_only_type_names(SHARED_PROGRAM);
+    assert!(!names.is_empty(), "{names:?}");
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(SHARED_PROGRAM, overlap);
         assert_never_first_class(&names, &module, &format!("{overlap:?}"));
         let output = compile_link_and_run(&observed(&module), Some(ALLOCATION_OBSERVER), &[]);
         assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");

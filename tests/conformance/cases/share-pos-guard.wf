@@ -1,0 +1,17 @@
+fn produce(cell: Shared<u8>) -> result: unit pure waits {
+  atomic value = &cell {
+    set value^ = 9_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  spawn produce(cell: move other);
+  let seen = 0_u8;
+  atomic value = &cell when value^ != 0_u8 {
+    set seen = value^;
+  }
+  return std::process::exit_status(code: seen);
+}

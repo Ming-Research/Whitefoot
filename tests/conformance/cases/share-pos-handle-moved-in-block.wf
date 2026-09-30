@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let boxed = box_new::<u8>(value: 7_u8);
+  let cell = shared_new::<Box<u8>>(value: move boxed);
+  let seen = 0_u8;
+  atomic state = &cell {
+    let gone = move cell;
+    set seen = state^.inner;
+  }
+  return std::process::exit_status(code: seen);
+}

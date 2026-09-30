@@ -163,6 +163,18 @@ fn collect_direct_calls<'checked>(
                 record(upper, callee, calls);
                 collect_direct_calls(body, callee, calls);
             }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                record(target, callee, calls);
+                if let Some(guard) = guard {
+                    record(guard, callee, calls);
+                }
+                collect_direct_calls(body, callee, calls);
+            }
             CheckedStatement::Break { .. } | CheckedStatement::Proof(_) => {}
         }
     }

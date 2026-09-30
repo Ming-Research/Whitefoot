@@ -74,6 +74,18 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 collect_expression(upper, bindings);
                 collect_statements(body, bindings);
             }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                collect_expression(target, bindings);
+                if let Some(guard) = guard {
+                    collect_expression(guard, bindings);
+                }
+                collect_statements(body, bindings);
+            }
             CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => {}
         }
     }
@@ -530,6 +542,7 @@ impl IrBuilder<'_> {
                     | IrNominalKind::Enum { .. }
                     | IrNominalKind::Box { .. }
                     | IrNominalKind::Opaque
+                    | IrNominalKind::Shared { .. }
             )
         {
             return Err(LoweringFailure::InvalidCheckedProgram);

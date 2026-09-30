@@ -27,3 +27,7 @@ pub use emitter::{
 };
 pub use fragments::{FragmentGranularity, SplitFailure, split_module};
 pub use stack_ledger::{Architecture, stack_ledger};
+
+/// Byte offset of a shared object's state from its runtime header; equals
+/// `WF_SHARED_STATE_OFFSET` in `completion/bridge.h`.
+pub(crate) const SHARED_STATE_OFFSET: u64 = 64;

@@ -130,7 +130,7 @@ impl Judging<'_, '_, '_> {
         &mut self,
         callee: super::super::super::model::FunctionId,
         node_path: &crate::NodePath,
-        requires_clause: crate::NodePath,
+        (requires_clause, subject): (crate::NodePath, Option<u32>),
         goal: ConcreteGoal,
         argument_count: usize,
         (context, written): (ProofContext<'_>, &ProofFlowState),
@@ -154,6 +154,7 @@ impl Judging<'_, '_, '_> {
             node_path: node_path.clone(),
             callee,
             requires_clause,
+            subject,
             goal,
             rendered_goal,
             argument_count: u32::try_from(argument_count)
@@ -803,7 +804,7 @@ impl Analyzer<'_, '_> {
                         let (disposition, derivation) = self.judging().judge_call_goal(
                             *function,
                             call,
-                            requirement.requires_clause.clone(),
+                            (requirement.requires_clause.clone(), requirement.subject),
                             goal,
                             arguments.len(),
                             (ProofContext::new(&states.facts, &states.affine), &*states),
@@ -1173,6 +1174,60 @@ impl Analyzer<'_, '_> {
                         && self
                             .judging()
                             .obligations_since_discharged(obligation_start),
+                }
+            }
+            // [TYPE-11] a construction owes its struct's type invariants over
+            // its field operands, judged after them as a call's
+            // requirements are, in the state before the construction.
+            CheckedExpression::ConstructStruct {
+                carrier,
+                fields,
+                invariants,
+                invariant_arguments,
+                ..
+            } if !invariants.is_empty() => {
+                let operands_reached = self.judge_children_reach_parent(fields.iter(), states);
+                let mut goals_ok = operands_reached;
+                if operands_reached {
+                    let admitted_arguments = fields
+                        .iter()
+                        .zip(invariant_arguments)
+                        .map(|(field, captured)| {
+                            matches!(
+                                captured,
+                                GoalExpression::Datum(GoalDatum::EvaluatedValue {
+                                    occurrence: EvaluatedValueOccurrence::CallArgument {
+                                        call: occurrence_call,
+                                        ..
+                                    },
+                                    ..
+                                }) if occurrence_call == carrier
+                            )
+                            .then(|| self.input.admitted_value_goal_expression(field))
+                            .flatten()
+                        })
+                        .collect::<Vec<_>>();
+                    let constructing = self.input.function.id;
+                    for invariant in invariants {
+                        let goal = ConcreteGoal::new(admitted_call_goal_expression(
+                            &invariant.goal.root,
+                            carrier,
+                            &admitted_arguments,
+                        ));
+                        let (disposition, _) = self.judging().judge_call_goal(
+                            constructing,
+                            carrier,
+                            (invariant.requires_clause.clone(), invariant.subject),
+                            goal,
+                            fields.len(),
+                            (ProofContext::new(&states.facts, &states.affine), &*states),
+                        );
+                        goals_ok &= disposition == CallGoalDisposition::Discharged;
+                    }
+                }
+                ExpressionJudgment {
+                    prepared_call: None,
+                    reached: goals_ok,
                 }
             }
             _ => {

@@ -1,0 +1,9 @@
+fn boxed(value: u64) -> result: Box<u64> pure waits {
+  let next = value +wrap 1_u64;
+  return box_new::<u64>(value: next);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  spawn boxed(value: 41_u64);
+  return std::process::exit_status(code: 0_u8);
+}

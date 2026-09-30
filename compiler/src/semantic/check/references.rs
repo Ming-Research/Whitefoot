@@ -744,7 +744,6 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
-        let FunctionContext { check_context, .. } = context;
         let carrier = self
             .types
             .declarations
@@ -760,6 +759,23 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        self.check_place_borrow(context, carrier, node, place_node, bindings, loop_depth)
+    }
+
+    /// The [REF-1, REF-4] judgment of `&place`, for the `place` under
+    /// `place_node`: `carrier` names the formed reference as an expression
+    /// and `site` is the node a rejection of the formation as a whole cites.
+    /// A `borrow_expr` and an `atomic_stmt`'s target [SHARE-2] share it.
+    pub(super) fn check_place_borrow(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        carrier: NodeId,
+        site: NodeId,
+        place_node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<TypedExpression, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
             .declarations
@@ -829,7 +845,7 @@ impl<'unit> Checker<'_, 'unit> {
                     if suffixes.is_empty() {
                         return self.types.declarations.issue_node(
                             SemanticRule::Ref1,
-                            node,
+                            site,
                             SemanticIssueKind::ReferenceToReferenceVariable {
                                 mechanical_fix: REF1_NAME_THE_PATH,
                             },

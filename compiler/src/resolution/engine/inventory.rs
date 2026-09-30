@@ -275,6 +275,9 @@ fn reserved_role<'role>(
         RawRoleKind::Declaration(DeclarationRole::CountedBinder) => {
             ReservedDeclarationRole::ForBinder
         }
+        RawRoleKind::Declaration(DeclarationRole::AtomicBinder) => {
+            ReservedDeclarationRole::AtomicBinder
+        }
         RawRoleKind::Declaration(DeclarationRole::MatchBinder) => {
             ReservedDeclarationRole::MatchBinder
         }

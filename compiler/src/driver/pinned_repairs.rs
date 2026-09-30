@@ -2814,6 +2814,501 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // -------------------------------------------------------------------
+    // [SHARE-2] an atomic statement's target, block and guard. Each repair
+    // keeps the statement and moves what it refuses outside it.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "atomic-target-is-not-a-shared-handle.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: plain);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTargetNotShared\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = shared_new::<u8>(value: 0_u8);
+  let seen = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+    set seen = value^;
+  }
+  return std::process::exit_status(code: seen);
+}
+"#],
+    },
+    RepairPair {
+        name: "waiting-call-inside-an-atomic-statement.wf",
+        rejected: br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    pause(cell: move other);
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome\n",
+        ],
+        repaired: &[br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    set value^ = 1_u8;
+  }
+  pause(cell: move other);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-statement-inside-another.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  atomic outer = &first {
+    atomic inner = &second {
+      set inner^ = outer^;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  let carried = 0_u8;
+  atomic outer = &first {
+    set carried = outer^;
+  }
+  atomic inner = &second {
+    set inner^ = carried;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-guard-writes.wf",
+        rejected: br#"fn claim(value: &u8) -> result: Bool writes(value) {
+  set value^ = 1_u8;
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when claim(value: value) {
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicGuardWrites\n",
+            "\n  mechanical_fix: make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block\n",
+        ],
+        repaired: &[br#"fn unclaimed(value: &u8) -> result: Bool reads(value) {
+  let free = value^ == 0_u8;
+  return free;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when unclaimed(value: value) {
+    set value^ = 1_u8;
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [TYPE-11] a struct's type invariants: their formation, a construction
+    // that does not establish one, and an atomic block that leaves one
+    // unproved.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "type-invariant-on-a-generic-struct.wf",
+        rejected: br#"struct Pair<T> {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "propagation-leaves-a-type-invariant-false.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  let inner = propagate outcome;
+  set t^.next = 0_u64;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-9",
+        sentences: &[
+            "]: UndischargedPostcondition\n",
+            "\n  mechanical_fix: the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  set t^.next = 0_u64;
+  let inner = propagate outcome;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-on-an-opaque-struct.wf",
+        rejected: br#"opaque struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: declare the invariant on a struct that is not `opaque`\n",
+        ],
+        repaired: &[br#"struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariants-share-a-name.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+  invariant ordered(pair): pair.first <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: give each type invariant of the struct its own name\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+  invariant small(pair): pair.first <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-is-not-a-comparison.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant sums(pair): pair.first +defined pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: state the invariant as one comparison between two sides, such as `table.next < table.slots.len`; write two invariants for a conjunction\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-with-two-datums-on-a-side.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant bounded(pair): pair.first + pair.second <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: keep one field or measure of the binder on each side, displaced by a constant, such as `table.next + 1_u64 <= table.slots.len`\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant bounded(pair): pair.first + 1_u64 <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-names-no-field.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant trivial(pair): 1_u64 <= 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: relate at least one field or measure of the binder, such as `table.next`\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant small(pair): pair.first <= 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "construction-refutes-a-type-invariant.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  let table = Table(slots: move slots, next: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: UndischargedTypeInvariant\n",
+            "\n  mechanical_fix: `0_u64 < slots.len` is false for the operands this construction receives: construct the value from operands that satisfy it, or change the statements that fix those operands\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 1_u64);
+  let table = Table(slots: move slots, next: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-block-leaves-a-type-invariant-unproved.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn fresh() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn claim(table: Shared<Table>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic t = &table {
+    let at = t^.next;
+    set got = t^.slots[at];
+    let after = at + 1_u64;
+    set t^.next = after;
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = fresh();
+  let table = shared_new::<Table>(value: move initial);
+  let got = claim(table: move table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: UndischargedTypeInvariant\n",
+            "\n  mechanical_fix: `t^.next < t^.slots.len` is not proved where the block leaves the object's state: restore it before this edge, writing the fields it relates so the block shows it holds, or prove it with an `invariant` whose `use` steps name the facts it follows from\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn fresh() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn claim(table: Shared<Table>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic t = &table {
+    let at = t^.next;
+    set got = t^.slots[at];
+    let after = at + 1_u64;
+    if after == t^.slots.len {
+      set t^.next = 0_u64;
+    } else {
+      set t^.next = after;
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = fresh();
+  let table = shared_new::<Table>(value: move initial);
+  let got = claim(table: move table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
     RepairPair {
         name: "bound-function-exceeds-the-formal-row.wf",
         rejected: br#"interface Disposer {

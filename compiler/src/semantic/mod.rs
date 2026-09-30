@@ -78,8 +78,14 @@ pub enum SemanticRule {
     Mod5,
     /// A public signature naming an unpublished field [MOD-6].
     Mod6,
-    /// `mustpar`: its position and the condition its form states.
-    Par4,
+    /// Spawns: their position and their callee's conditions.
+    Wait3,
+    /// Atomic statements: the target's type, and a guard or block free of
+    /// waiting calls, nested atomic statements and guard writes.
+    Share2,
+    /// Type invariants: their formation over a struct's own fields and the
+    /// publicity of that struct's fields [TYPE-11].
+    Type11,
     /// Exact mode/type agreement.
     Type5,
     /// Constructor/variant owner agreement.
@@ -228,6 +234,7 @@ impl SemanticRule {
             Self::Type6 => "TYPE-6",
             Self::Type9 => "TYPE-9",
             Self::Type10 => "TYPE-10",
+            Self::Type11 => "TYPE-11",
             Self::Type7 => "TYPE-7",
             Self::Set1 => "SET-1",
             Self::Const1 => "CONST-1",
@@ -262,7 +269,8 @@ impl SemanticRule {
             Self::Fn9 => "FN-9",
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
-            Self::Par4 => "PAR-4",
+            Self::Wait3 => "WAIT-3",
+            Self::Share2 => "SHARE-2",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
             Self::Eff2 => "EFF-2",
@@ -302,7 +310,8 @@ impl SemanticRule {
             Self::Gram8 => Self::Gram10,
             Self::Gram10 => Self::Gram11,
             Self::Gram11 => Self::Type2,
-            Self::Type2 => Self::Type5,
+            Self::Type2 => Self::Type11,
+            Self::Type11 => Self::Type5,
             Self::Type5 => Self::Type6,
             Self::Type6 => Self::Type9,
             Self::Type9 => Self::Type10,
@@ -348,8 +357,9 @@ impl SemanticRule {
             Self::Err2 => Self::Err3,
             Self::Err3 => Self::Mod5,
             Self::Mod5 => Self::Mod6,
-            Self::Mod6 => Self::Par4,
-            Self::Par4 => Self::Ent2,
+            Self::Mod6 => Self::Wait3,
+            Self::Wait3 => Self::Share2,
+            Self::Share2 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
@@ -377,58 +387,60 @@ impl SemanticRule {
             Self::Gram10 => 5,
             Self::Gram11 => 6,
             Self::Type2 => 7,
-            Self::Type5 => 8,
-            Self::Type6 => 9,
-            Self::Type9 => 10,
-            Self::Type10 => 11,
-            Self::Type7 => 12,
-            Self::Set1 => 13,
-            Self::Const1 => 14,
-            Self::Const2 => 15,
-            Self::Own1 => 16,
-            Self::Ref1 => 17,
-            Self::Ref2 => 18,
-            Self::Ref3 => 19,
-            Self::Ref4 => 20,
-            Self::Own11 => 21,
-            Self::Liv1 => 22,
-            Self::Prov6 => 23,
-            Self::Win3 => 24,
-            Self::Stor8 => 25,
-            Self::Op1 => 26,
-            Self::Op2 => 27,
-            Self::Op4 => 28,
-            Self::Op5 => 29,
-            Self::Op6 => 30,
-            Self::Op9 => 31,
-            Self::Op10 => 32,
-            Self::Op11 => 33,
-            Self::Op12 => 34,
-            Self::Op14 => 35,
-            Self::Fn1 => 36,
-            Self::Fn2 => 37,
-            Self::Fn3 => 38,
-            Self::Fn4 => 39,
-            Self::Fn5 => 40,
-            Self::Fn6 => 41,
-            Self::Fn8 => 42,
-            Self::Fn9 => 43,
-            Self::Call4 => 44,
-            Self::Fn10 => 45,
-            Self::Wait1 => 46,
-            Self::Eff1 => 47,
-            Self::Eff2 => 48,
-            Self::Eff5 => 49,
-            Self::Err2 => 50,
-            Self::Err3 => 51,
-            Self::Mod5 => 52,
-            Self::Mod6 => 53,
-            Self::Par4 => 54,
-            Self::Ent2 => 55,
-            Self::Msr3 => 56,
-            Self::Call6 => 57,
-            Self::Inv1 => 58,
-            Self::Prf1 => 59,
+            Self::Type11 => 8,
+            Self::Type5 => 9,
+            Self::Type6 => 10,
+            Self::Type9 => 11,
+            Self::Type10 => 12,
+            Self::Type7 => 13,
+            Self::Set1 => 14,
+            Self::Const1 => 15,
+            Self::Const2 => 16,
+            Self::Own1 => 17,
+            Self::Ref1 => 18,
+            Self::Ref2 => 19,
+            Self::Ref3 => 20,
+            Self::Ref4 => 21,
+            Self::Own11 => 22,
+            Self::Liv1 => 23,
+            Self::Prov6 => 24,
+            Self::Win3 => 25,
+            Self::Stor8 => 26,
+            Self::Op1 => 27,
+            Self::Op2 => 28,
+            Self::Op4 => 29,
+            Self::Op5 => 30,
+            Self::Op6 => 31,
+            Self::Op9 => 32,
+            Self::Op10 => 33,
+            Self::Op11 => 34,
+            Self::Op12 => 35,
+            Self::Op14 => 36,
+            Self::Fn1 => 37,
+            Self::Fn2 => 38,
+            Self::Fn3 => 39,
+            Self::Fn4 => 40,
+            Self::Fn5 => 41,
+            Self::Fn6 => 42,
+            Self::Fn8 => 43,
+            Self::Fn9 => 44,
+            Self::Call4 => 45,
+            Self::Fn10 => 46,
+            Self::Wait1 => 47,
+            Self::Eff1 => 48,
+            Self::Eff2 => 49,
+            Self::Eff5 => 50,
+            Self::Err2 => 51,
+            Self::Err3 => 52,
+            Self::Mod5 => 53,
+            Self::Mod6 => 54,
+            Self::Wait3 => 55,
+            Self::Share2 => 56,
+            Self::Ent2 => 57,
+            Self::Msr3 => 58,
+            Self::Call6 => 59,
+            Self::Inv1 => 60,
+            Self::Prf1 => 61,
         }
     }
 }
@@ -992,6 +1004,33 @@ pub enum SemanticIssueKind {
         reason: &'static str,
         mechanical_fix: &'static str,
     },
+    /// A struct's type invariant outside [TYPE-11]'s admission.
+    InvalidTypeInvariant {
+        /// Which admission condition failed.
+        reason: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A construction whose field operands do not establish one of its
+    /// struct's type invariants [TYPE-11].
+    UndischargedTypeInvariant {
+        /// The `type_invariant` the construction owes.
+        type_invariant: SemanticLocation,
+        /// The invariant over the operands, in the constructing body's terms.
+        instantiated_goal: String,
+        /// Whether the operands refute it or leave it unproved.
+        disposition: CallRequirementDisposition,
+        /// The repair [DIAG-1].
+        mechanical_fix: String,
+    },
+    /// A `public` field without `readonly` in a struct that declares a type
+    /// invariant, which code outside the module could write [TYPE-11].
+    TypeInvariantWritableField {
+        /// The field's spelling.
+        field: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// A well-formed source loop invariant failed one of INV-1's two mandatory
     /// induction judgments in the source fact context.
     UndischargedLoopInvariant {
@@ -1036,17 +1075,38 @@ pub enum SemanticIssueKind {
     ReturnMismatch,
     /// A waiting call outside the body of a waiting function [WAIT-1].
     WaitingCallOutsideWaitingFunction {
-        /// The waiting callee as written.
+        /// The waiting callee as written, or `an atomic statement`, which
+        /// counts as a waiting call [SHARE-2].
         callee: String,
         /// Where the call stands: the body of a function that does not wait.
         context: &'static str,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A `mustpar` statement failed its position or its form's condition
-    /// [PAR-4].
-    InvalidMustpar {
-        /// The failed condition, or the denied permission's reason.
+    /// An atomic statement's target is not a place of type `Shared<T>`
+    /// [SHARE-2].
+    AtomicTargetNotShared {
+        /// The target's value, as the reference `&place` forms it.
+        found: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A waiting call or an atomic statement inside an atomic statement's
+    /// guard or block [SHARE-2].
+    WaitInsideAtomic {
+        /// Which construct: a waiting call or an atomic statement.
+        construct: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An atomic statement's guard whose footprint writes a path [SHARE-2].
+    AtomicGuardWrites {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A spawn failed its position or its callee's condition [WAIT-3].
+    InvalidSpawn {
+        /// The failed condition.
         condition: String,
     },
     /// A call-site tail-transfer guarantee failed its named condition.

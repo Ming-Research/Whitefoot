@@ -1,0 +1,45 @@
+struct Queue {
+  items: Ring<u64, 8>;
+  count: u64;
+}
+
+fn put(queue: Shared<Queue>, value: u64) -> result: unit pure waits {
+  atomic q = &queue when q^.items.len < q^.items.cap {
+    if q^.count == q^.items.len {
+      place_back(window: &q^.items, value: value);
+      let count = q^.count;
+      let next = count + 1_u64;
+      set q^.count = next;
+      let now = q^.count;
+      invariant kept: now == q^.items.len;
+    }
+  }
+  return unit;
+}
+
+fn take(queue: Shared<Queue>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic q = &queue when q^.items.len > 0_u64 {
+    if q^.count == q^.items.len {
+      set got = take_front(window: &q^.items);
+      let count = q^.count;
+      let next = count - 1_u64;
+      set q^.count = next;
+      let now = q^.count;
+      invariant kept: now == q^.items.len;
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let empty = ring_new::<u64, 8>();
+  let initial = Queue(items: move empty, count: 0_u64);
+  let queue = shared_new::<Queue>(value: move initial);
+  let producer = shared_share::<Queue>(shared: &queue);
+  put(queue: move producer, value: 7_u64);
+  let consumer = shared_share::<Queue>(shared: &queue);
+  let got = take(queue: move consumer);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}

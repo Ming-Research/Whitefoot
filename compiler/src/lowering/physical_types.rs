@@ -69,6 +69,7 @@ pub(super) fn base_elements(
                     .map(|field| field.ty),
             ),
             CheckedNominalKind::Box { referent, .. } => pending.push(*referent),
+            CheckedNominalKind::Shared { state } => pending.push(*state),
             CheckedNominalKind::Opaque => {}
         }
     }
@@ -281,6 +282,9 @@ impl<'a> PhysicalTypes<'a> {
                 referent: self.ty(referent)?,
                 release: lower_release_class(release),
             },
+            CheckedNominalKind::Shared { state } => IrNominalKind::Shared {
+                state: self.ty(state)?,
+            },
             CheckedNominalKind::Opaque => self.nominals[id.index()].kind.clone(),
         };
         self.nominals[id.index()].kind = lowered;
@@ -415,6 +419,10 @@ impl<'a> PhysicalTypes<'a> {
                             }
                         }
                         (CheckedNominalKind::Opaque, CheckedNominalKind::Opaque) => {}
+                        (
+                            CheckedNominalKind::Shared { state: left },
+                            CheckedNominalKind::Shared { state: right },
+                        ) => pending.push((*left, *right)),
                         _ => return Ok(false),
                     }
                 }

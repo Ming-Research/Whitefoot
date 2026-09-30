@@ -604,7 +604,9 @@ fn holds_union_enum(
                     .flat_map(|variant| variant.fields())
                     .map(|field| field.ty())
                     .collect(),
-                IrNominalKind::Box { .. } | IrNominalKind::Opaque => Vec::new(),
+                IrNominalKind::Box { .. }
+                | IrNominalKind::Shared { .. }
+                | IrNominalKind::Opaque => Vec::new(),
             };
             for field in fields {
                 if holds_union_enum(nominals, elements, field, visiting)? {
@@ -737,7 +739,10 @@ impl<'types> ReturnLeaves<'types> {
                     .get(id.index())
                     .ok_or(TargetLayoutFailure::InvalidIr)?;
                 match nominal.kind() {
-                    IrNominalKind::Box { .. } => self.integer(copies, 1),
+                    // A pointer owner or a shared object's handle.
+                    IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
+                        self.integer(copies, 1)
+                    }
                     // `{ i128, i128 }`: each `i128` takes two words.
                     IrNominalKind::Opaque => self.integer(copies, 4),
                     // `i1` or `i32`.
@@ -1358,6 +1363,33 @@ fn validate_target_obligation(
                 ));
             }
         }
+        // [SHARE-1] an object is the runtime's header and then its state, in
+        // one block the runtime takes from its pool.
+        IrOperation::SharedNew { nominal } => {
+            if result_type != IrType::Nominal(*nominal) {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let IrNominalKind::Shared { state } = program
+                .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            let allocation = layouts
+                .layout(*state)
+                .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
+            if allocation
+                .size
+                .checked_add(crate::backend::SHARED_STATE_OFFSET)
+                .is_none_or(|size| size > layouts.target.runtime_allocation_max())
+                || allocation.align > crate::backend::SHARED_STATE_OFFSET
+            {
+                return Err(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ));
+            }
+        }
         // [OP-13] `box_segments_filled`: its fit is judged with [OP-9]'s
         // language ceilings, so the element's actual layout must lie within
         // them, and the largest block the fit admits, `2^62` bytes of
@@ -1761,7 +1793,10 @@ impl<'types> LayoutComputer<'types> {
             self.nominal.insert(id, layout);
             return Ok(layout);
         }
-        let layout = if matches!(nominal.kind(), IrNominalKind::Box { .. }) {
+        let layout = if matches!(
+            nominal.kind(),
+            IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+        ) {
             POINTER_LAYOUT
         } else if nominal.is_tag_only_enum() {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
@@ -1798,7 +1833,9 @@ impl<'types> LayoutComputer<'types> {
                 // A box has its own pointer layout above, and an opaque
                 // nominal returned with its uniform representation
                 // before this match; none reaches the field walk.
-                IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+                IrNominalKind::Box { .. }
+                | IrNominalKind::Opaque
+                | IrNominalKind::Shared { .. } => {
                     return Err(TargetLayoutFailure::InvalidIr);
                 }
             }

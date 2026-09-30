@@ -146,8 +146,6 @@ pub enum FixedTerminal {
     Return,
     /// `loop`.
     Loop,
-    /// `mustpar`.
-    Mustpar,
     /// `for`.
     For,
     /// `in`.
@@ -168,6 +166,8 @@ pub enum FixedTerminal {
     Break,
     /// `give`.
     Give,
+    /// `atomic`.
+    Atomic,
     /// `match`.
     Match,
     /// `=>`.
@@ -218,6 +218,8 @@ pub enum FixedTerminal {
     GreaterEqual,
     /// `musttail`.
     Musttail,
+    /// `spawn`.
+    Spawn,
     /// `.`.
     Dot,
     /// `^`.
@@ -231,7 +233,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -294,7 +296,6 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
     FixedTerminal::Set,
     FixedTerminal::Return,
     FixedTerminal::Loop,
-    FixedTerminal::Mustpar,
     FixedTerminal::For,
     FixedTerminal::In,
     FixedTerminal::Invariant,
@@ -305,6 +306,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
     FixedTerminal::Minus,
     FixedTerminal::Break,
     FixedTerminal::Give,
+    FixedTerminal::Atomic,
     FixedTerminal::Match,
     FixedTerminal::FatArrow,
     FixedTerminal::PlusWrap,
@@ -330,6 +332,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 103] = [
     FixedTerminal::LessEqual,
     FixedTerminal::GreaterEqual,
     FixedTerminal::Musttail,
+    FixedTerminal::Spawn,
     FixedTerminal::Dot,
     FixedTerminal::Caret,
     FixedTerminal::Pure,
@@ -404,7 +407,7 @@ impl FixedTerminal {
             Self::Set => "set",
             Self::Return => "return",
             Self::Musttail => "musttail",
-            Self::Mustpar => "mustpar",
+            Self::Spawn => "spawn",
             Self::Loop => "loop",
             Self::For => "for",
             Self::In => "in",
@@ -416,6 +419,7 @@ impl FixedTerminal {
             Self::Minus => "-",
             Self::Break => "break",
             Self::Give => "give",
+            Self::Atomic => "atomic",
             Self::Match => "match",
             Self::FatArrow => "=>",
             Self::PlusWrap => "+wrap",
@@ -832,9 +836,8 @@ mod tests {
         // `std` qualifier [MOD-10] first occurs beside `pkg` in that header. The graph
         // productions close [GRAM-2], so `entry` now first occurs there, before
         // the primitive type atoms, and a call's `musttail` first occurs in
-        // [GRAM-5] after the comparison atoms. v0.77's `waits` [WAIT-1]
-        // follows the declaration's `->` and `mustpar` [PAR-4] first occurs on
-        // `for_stmt` [GRAM-4], just before `for`.
+        // [GRAM-5] after the comparison atoms, with `spawn` [WAIT-3] beside
+        // it. v0.77's `waits` [WAIT-1] follows the declaration's `->`.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -856,18 +859,18 @@ mod tests {
         assert_eq!(FixedTerminal::Ampersand as u8, 38);
         assert_eq!(FixedTerminal::Entry as u8, 41);
         assert_eq!(FixedTerminal::DotDot as u8, 54);
-        assert_eq!(FixedTerminal::For as u8, 63);
-        assert_eq!(FixedTerminal::In as u8, 64);
-        assert_eq!(FixedTerminal::Invariant as u8, 65);
-        assert_eq!(FixedTerminal::Use as u8, 66);
-        assert_eq!(FixedTerminal::Times as u8, 67);
+        assert_eq!(FixedTerminal::For as u8, 62);
+        assert_eq!(FixedTerminal::In as u8, 63);
+        assert_eq!(FixedTerminal::Invariant as u8, 64);
+        assert_eq!(FixedTerminal::Use as u8, 65);
+        assert_eq!(FixedTerminal::Times as u8, 66);
         assert_eq!(FixedTerminal::Musttail as u8, 97);
         assert_eq!(FixedTerminal::PercentChecked as u8, 92);
-        assert_eq!(FixedTerminal::Writes as u8, 102);
+        assert_eq!(FixedTerminal::Writes as u8, 103);
         assert_eq!(FixedTerminal::Waits as u8, 23);
-        assert_eq!(FixedTerminal::Mustpar as u8, 62);
-        assert_eq!(TerminalPredicate::Identifier.index(), 103);
-        assert_eq!(TerminalPredicate::Digits.index(), 109);
+        assert_eq!(FixedTerminal::Spawn as u8, 98);
+        assert_eq!(TerminalPredicate::Identifier.index(), 104);
+        assert_eq!(TerminalPredicate::Digits.index(), 110);
     }
 
     /// The inventory holds every predicate, once.

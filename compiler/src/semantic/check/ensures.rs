@@ -1,6 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
+use crate::semantic::entailment::integer_value;
 use std::collections::HashMap;
 
 use crate::FixedTerminal;
@@ -16,7 +17,7 @@ use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId, IntegerType,
+    CheckedValue, FunctionId,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
@@ -62,13 +63,48 @@ struct PostconditionBindingInfo {
 /// the boundary — the entry state `entry(p)` names and the exit state a bare
 /// `p` names in `ensures` — while a by-value parameter and a reference the
 /// row only reads have one.
-fn parameter_has_exit_state(function: &FunctionSignature, parameter: &ParameterSignature) -> bool {
+pub(super) fn parameter_has_exit_state(
+    function: &FunctionSignature,
+    parameter: &ParameterSignature,
+) -> bool {
     parameter.mode.is_reference()
         && function
             .declared_effects
             .writes
             .iter()
             .any(|path| path.root == parameter.declaration)
+}
+
+/// [FN-9] a comparison's direction-normalized relation; no other
+/// operation is a relation.
+pub(super) fn normalized_relation(
+    operation: CheckedIntegerOperation,
+) -> Option<NormalizedRelation> {
+    Some(match operation {
+        CheckedIntegerOperation::Equal => NormalizedRelation::Equal,
+        CheckedIntegerOperation::NotEqual => NormalizedRelation::NotEqual,
+        CheckedIntegerOperation::Less => NormalizedRelation::UpperBound {
+            left: 0,
+            right: 1,
+            strict: true,
+        },
+        CheckedIntegerOperation::LessEqual => NormalizedRelation::UpperBound {
+            left: 0,
+            right: 1,
+            strict: false,
+        },
+        CheckedIntegerOperation::Greater => NormalizedRelation::UpperBound {
+            left: 1,
+            right: 0,
+            strict: true,
+        },
+        CheckedIntegerOperation::GreaterEqual => NormalizedRelation::UpperBound {
+            left: 1,
+            right: 0,
+            strict: false,
+        },
+        _ => return None,
+    })
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -771,7 +807,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// A side carrying two datums, or a datum with any coefficient other than
     /// one, is outside the difference-bound fragment [ENT-4] and yields
     /// `None`, which is the ordinary FN-9 rejection at the clause.
-    fn postcondition_relation_term(
+    pub(super) fn postcondition_relation_term(
         expanded: &ExpandedClauseExpression,
         operand_type: CheckedType,
     ) -> Option<RelationTerm> {
@@ -1105,6 +1141,23 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                     Checker::collect_postcondition_binding_info(body, bindings);
                 }
+                // [SHARE-2] the binding is a reference to the object's state,
+                // read through as a reference match binder is.
+                CheckedStatement::Atomic {
+                    binding,
+                    state,
+                    body,
+                    ..
+                } => {
+                    bindings.insert(
+                        *binding,
+                        PostconditionBindingInfo {
+                            ty: *state,
+                            implicit_deref: true,
+                        },
+                    );
+                    Checker::collect_postcondition_binding_info(body, bindings);
+                }
                 _ => {}
             }
         }
@@ -1158,20 +1211,6 @@ impl<'unit> Checker<'_, 'unit> {
             request: None,
         }))
     }
-}
-
-/// The mathematical value of one checked integer constant, whose `bits` hold
-/// the type-width two's-complement pattern.
-const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
-    let value = bits as i128;
-    if ty.signed() {
-        let width = ty.width() as u32;
-        let sign_bit = 1_u64 << (width - 1);
-        if bits & sign_bit != 0 {
-            return value - (1_i128 << width);
-        }
-    }
-    value
 }
 
 /// The type-width bit pattern of one mathematical value, or `None` when the
@@ -1461,36 +1500,8 @@ impl<'unit> DeclarationInventory<'unit> {
         if !is_output(&left) && !is_output(&right) {
             return self.invalid_postcondition_relation(final_expression);
         }
-        let normalized = match operation {
-            super::super::model::CheckedIntegerOperation::Equal => NormalizedRelation::Equal,
-            super::super::model::CheckedIntegerOperation::NotEqual => NormalizedRelation::NotEqual,
-            super::super::model::CheckedIntegerOperation::Less => NormalizedRelation::UpperBound {
-                left: 0,
-                right: 1,
-                strict: true,
-            },
-            super::super::model::CheckedIntegerOperation::LessEqual => {
-                NormalizedRelation::UpperBound {
-                    left: 0,
-                    right: 1,
-                    strict: false,
-                }
-            }
-            super::super::model::CheckedIntegerOperation::Greater => {
-                NormalizedRelation::UpperBound {
-                    left: 1,
-                    right: 0,
-                    strict: true,
-                }
-            }
-            super::super::model::CheckedIntegerOperation::GreaterEqual => {
-                NormalizedRelation::UpperBound {
-                    left: 1,
-                    right: 0,
-                    strict: false,
-                }
-            }
-            _ => return self.invalid_postcondition_relation(final_expression),
+        let Some(normalized) = normalized_relation(operation) else {
+            return self.invalid_postcondition_relation(final_expression);
         };
         Ok(RelationTemplate {
             operation,
@@ -2557,6 +2568,18 @@ impl<'unit> TypeContext<'unit> {
                         values,
                     });
                 }
+                // [FN-9, ERR-3] an unrouted clause also selects a
+                // propagated error exit, whose returned value is the
+                // propagated outcome and therefore no result datum.
+                CheckedStatement::PropagateLet { node_path, .. } if selector.variant.is_none() => {
+                    if !named.is_empty() {
+                        return self.declarations.invalid_postcondition_return(node_path);
+                    }
+                    selected.push(SelectedPostconditionReturn {
+                        statement: node_path.clone(),
+                        values: vec![None; function.results.len().max(1)],
+                    });
+                }
                 CheckedStatement::Match { arms, .. }
                 | CheckedStatement::ValueMatchLet { arms, .. } => {
                     for arm in arms {
@@ -2571,15 +2594,15 @@ impl<'unit> TypeContext<'unit> {
                     }
                 }
                 CheckedStatement::Loop { body, .. }
-                | CheckedStatement::CountedRange { body, .. } => self
-                    .collect_postcondition_returns(
-                        context,
-                        selector,
-                        named,
-                        body,
-                        binding_info,
-                        selected,
-                    )?,
+                | CheckedStatement::CountedRange { body, .. }
+                | CheckedStatement::Atomic { body, .. } => self.collect_postcondition_returns(
+                    context,
+                    selector,
+                    named,
+                    body,
+                    binding_info,
+                    selected,
+                )?,
                 _ => {}
             }
         }

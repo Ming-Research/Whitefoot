@@ -1,7 +1,8 @@
 //! The bodies of the [PRE-1] records the compiler itself owns.
 //!
 //! Ten construction functions [OP-13], nine window operations [OP-10],
-//! `swap` [OP-11] and `free_empty` [OP-14] are declared body-less exactly as
+//! `swap` [OP-11], `free_empty` [OP-14] and the two shared-object functions
+//! [SHARE-1] are declared body-less exactly as
 //! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
 //! instance, so one monomorphized instance serves every call of that row with
@@ -57,6 +58,8 @@ impl IrBuilder<'_> {
             "split_off" => self.row_split_off(),
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
+            "shared_new" => self.row_shared_new(),
+            "shared_share" => self.row_shared_share(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -128,6 +131,45 @@ impl IrBuilder<'_> {
         };
         let cell = self.define(self.result, IrOperation::BoxNew { nominal, value })?;
         self.return_value(cell)
+    }
+
+    /// `shared_new<T>(value: T) -> Shared<T>`: a new object holding one
+    /// handle, whose state is the moved value [SHARE-1].
+    fn row_shared_new(&mut self) -> Result<(), LoweringFailure> {
+        let [value] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let referent = IrAddressed::of(self.value_type(value)?)
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let object = self.define(self.result, IrOperation::SharedNew { nominal })?;
+        let state = self.define(
+            IrType::Address(referent),
+            IrOperation::SharedState { nominal, object },
+        )?;
+        self.store_addressed(state, value, referent)?;
+        self.return_value(object)
+    }
+
+    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle
+    /// to the object the argument names [SHARE-1].
+    fn row_shared_share(&mut self) -> Result<(), LoweringFailure> {
+        let [shared] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        if self.value_type(shared)? != IrType::Address(IrAddressed::Nominal(nominal)) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let object = self.define(
+            self.result,
+            IrOperation::Load {
+                address: shared,
+                referent: IrAddressed::Nominal(nominal),
+            },
+        )?;
+        let handle = self.define(self.result, IrOperation::SharedRetain { nominal, object })?;
+        self.return_value(handle)
     }
 
     /// `array_filled<T, n>(value: T) -> Array<T, n>`: every slot
@@ -727,6 +769,8 @@ fn ceiling_pair(
                 // One pointer; the content lives in the heap object and
                 // enters no sequence.
                 IrNominalKind::Box { .. } => (Finite(8), 8),
+                // One pointer to the shared object [SHARE-1].
+                IrNominalKind::Shared { .. } => (Finite(8), 8),
                 // Every fieldless opaque struct carries the host handles'
                 // host-supplied representation.
                 IrNominalKind::Opaque => (Finite(32), 16),

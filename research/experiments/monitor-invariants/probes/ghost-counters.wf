@@ -1,0 +1,30 @@
+struct Queue {
+  items: Ring<u64, 8>;
+  produced: u64;
+  consumed: u64;
+}
+
+fn put_step(s: &Queue, len0: u64, produced0: u64, consumed0: u64, value: u64) -> result: unit writes(s.items), writes(s.produced) contract {
+  requires len0 + consumed0 <= produced0;
+  requires len0 + consumed0 >= produced0;
+  requires s^.items.len == len0;
+  requires s^.produced == produced0;
+  requires s^.consumed == consumed0;
+  requires len0 < 8_u64;
+  requires produced0 < 1000000_u64;
+} {
+  place_back(window: &s^.items, value: value);
+  let produced1 = produced0 + 1_u64;
+  set s^.produced = produced1;
+  let len1 = s^.items.len;
+  let now = s^.produced;
+  invariant grew: len1 == len0 + 1_u64;
+  invariant moved: now == produced1;
+  invariant kept_low: len1 + consumed0 <= now;
+  invariant kept_high: len1 + consumed0 >= now;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

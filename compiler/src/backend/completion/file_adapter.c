@@ -234,6 +234,16 @@ static void wf_file_unlink_locked(
  * Nothing is copied out: the record is the submitting frame's and outlives the
  * operation, so the executing thread runs it in place (design §5, §7).
  */
+/* Whether a queued request is left to the helpers: its kind waits on a peer,
+ * or the program runs contexts that may be its peer.  The caller holds the
+ * queue lock, under which `hold_for_contexts` is written. */
+static int wf_file_request_held_locked(
+    const wf_file_adapter *adapter,
+    const wf_file_request *request
+) {
+    return adapter->hold_for_contexts != 0 || wf_file_request_is_peer_bound(request);
+}
+
 static wf_completion_record *wf_file_take_work(
     wf_file_adapter *adapter,
     int from_head
@@ -245,7 +255,7 @@ static wf_completion_record *wf_file_take_work(
         wf_completion_record *before = NULL;
         wf_completion_record *scan = adapter->queue_head;
         while (scan != NULL) {
-            if (!wf_file_request_is_peer_bound(&scan->request)) {
+            if (!wf_file_request_held_locked(adapter, &scan->request)) {
                 previous = before;
                 taken = scan;
                 if (from_head != 0) {
@@ -504,6 +514,7 @@ int wf_file_adapter_init(
     adapter->blocked_helpers = 0;
     adapter->live_helpers = 0;
     adapter->stopping = 0;
+    adapter->hold_for_contexts = 0;
     adapter->helper_capacity = helper_capacity;
     adapter->helper_cap = helper_count;
     atomic_init(&adapter->stat_submissions, 0);
@@ -541,6 +552,16 @@ int wf_file_adapter_init(
             memory_order_release
         );
     }
+    return 0;
+}
+
+int wf_file_adapter_hold_for_contexts(wf_file_adapter *adapter) {
+    if (!wf_file_adapter_initialized(adapter)) {
+        return EINVAL;
+    }
+    wf_completion_wait_lock(&adapter->queue_wait);
+    adapter->hold_for_contexts = 1u;
+    wf_completion_wait_unlock(&adapter->queue_wait);
     return 0;
 }
 
@@ -689,7 +710,7 @@ static int wf_file_enqueue_locked(
     wake = adapter->blocked_helpers != 0;
     wf_file_grow_helpers_locked(
         adapter,
-        wf_file_request_is_peer_bound(&record->request)
+        wf_file_request_held_locked(adapter, &record->request)
     );
     return wake;
 }

@@ -707,8 +707,8 @@ variant_names! {
     LoopInvariantProofObligation { Base, Backedge }
     PostconditionProofDisposition { Refuted, Unproved }
     ReservedDeclarationRole {
-        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, MatchBinder,
-        PlainResultSelector, VariantResultSelector, Field, VariantField,
+        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, AtomicBinder,
+        MatchBinder, PlainResultSelector, VariantResultSelector, Field, VariantField,
     }
     ReservedNameClass { DotlessOperation, ModeWord }
     SourceIssueKind {
@@ -881,13 +881,19 @@ impl Report for SemanticIssueKind {
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
             InvalidInvariant { reason, mechanical_fix };
+            InvalidTypeInvariant { reason, mechanical_fix };
+            TypeInvariantWritableField { field, mechanical_fix };
+            UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
             UndischargedLoopInvariant { name, obligation, required_relation, disposition, mechanical_fix };
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };
             ReturnMismatch;
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
-            InvalidMustpar { condition };
+            AtomicTargetNotShared { found, mechanical_fix };
+            WaitInsideAtomic { construct, mechanical_fix };
+            AtomicGuardWrites { mechanical_fix };
+            InvalidSpawn { condition };
             InvalidMusttail { condition, subject };
             PolymorphicRecursion { cycle, mechanical_fix };
             UnreachableStatement;

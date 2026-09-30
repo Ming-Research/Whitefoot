@@ -2060,6 +2060,10 @@ impl<'unit> TypeContext<'unit> {
                     // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
                     // field lives in the heap object and enters no sequence.
                     CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
+                    // A handle is one pointer to its shared object [SHARE-1].
+                    CheckedNominalKind::Shared { .. } => {
+                        finish(CheckedLayoutMagnitude::Finite(8), 8)
+                    }
                     CheckedNominalKind::Opaque => finish(CheckedLayoutMagnitude::Finite(32), 16),
                     CheckedNominalKind::Struct { fields } => {
                         self.aggregate_layout_ceiling(fields.iter().map(|field| field.ty), visiting)

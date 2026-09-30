@@ -1441,6 +1441,22 @@ impl PlaceMap {
                     self.summary_mut(*binder).ty = Some(CheckedType::Integer(IntegerType::U64));
                     self.collect_block_bindings(body);
                 }
+                // [SHARE-2] the binding is a reference anchored at the
+                // object's state, as a reference parameter is at itself.
+                CheckedStatement::Atomic {
+                    binding,
+                    state,
+                    body,
+                    ..
+                } => {
+                    let summary = self.summary_mut(*binding);
+                    summary.ty = Some(*state);
+                    summary.reference = true;
+                    if summary.reference_paths.is_empty() {
+                        summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
+                    }
+                    self.collect_block_bindings(body);
+                }
                 _ => {}
             }
         }

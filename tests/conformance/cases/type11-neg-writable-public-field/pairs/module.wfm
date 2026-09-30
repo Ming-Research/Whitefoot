@@ -1,0 +1,5 @@
+public struct Pair {
+  public first: u64;
+  public readonly second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}

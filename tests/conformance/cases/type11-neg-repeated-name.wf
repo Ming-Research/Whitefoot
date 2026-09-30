@@ -1,0 +1,10 @@
+struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+  invariant ordered(pair): pair.first <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -425,6 +425,15 @@ fn collect_definitions(
                 definitions.push(Definition::of(*binder, &[lower, upper], editable));
                 collect_definitions(body, give, editable, definitions);
             }
+            CheckedStatement::Atomic {
+                binding,
+                target,
+                body,
+                ..
+            } => {
+                definitions.push(Definition::of(*binding, &[target], editable));
+                collect_definitions(body, give, editable, definitions);
+            }
             CheckedStatement::Evaluate { .. }
             | CheckedStatement::DropExpression { .. }
             | CheckedStatement::Proof(_)
@@ -466,9 +475,9 @@ fn returned_value<'a>(
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().find_map(|arm| returned_value(&arm.body, path))
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            returned_value(body, path)
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => returned_value(body, path),
         _ => None,
     })
 }
@@ -838,6 +847,43 @@ pub(super) fn call_requirement(
     }
 }
 
+/// [TYPE-11] a construction's type invariant over its field operands.
+pub(super) fn construction_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false for the operands this construction receives: construct the value from operands that satisfy it, or change the statements that fix those operands",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved before this construction: establish it over the operands first, with a `requires`, an `if` or an `invariant` over the locals they are read from, and then construct the value",
+            case.text
+        ),
+    }
+}
+
+/// [TYPE-11] a type invariant a `const` initializer's construction owes,
+/// which its written field values decide exactly.
+pub(super) fn constant_construction_invariant(text: &str) -> String {
+    format!(
+        "`{text}` is false for the field values this constant writes: write values that satisfy it, or declare the constant with a struct that states no such invariant"
+    )
+}
+
+/// [TYPE-11] a type invariant of an object's state at an edge that leaves
+/// an atomic block.
+pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false where the block leaves the object's state: restore it before this edge, or leave the block where it holds",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved where the block leaves the object's state: restore it before this edge, writing the fields it relates so the block shows it holds, or prove it with an `invariant` whose `use` steps name the facts it follows from",
+            case.text
+        ),
+    }
+}
+
 /// [FN-9] a normal-result relation at one selected return; `called` says
 /// whether the returned value reads a value a user call returned.
 pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static str {
@@ -850,6 +896,19 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
         }
         (Disposition::Unproved, false) => {
             "the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"
+        }
+    }
+}
+
+/// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
+/// propagated outcome with the state the body has reached there.
+pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str {
+    match disposition {
+        Disposition::Refuted => {
+            "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
+        }
+        Disposition::Unproved => {
+            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition every exit satisfies"
         }
     }
 }

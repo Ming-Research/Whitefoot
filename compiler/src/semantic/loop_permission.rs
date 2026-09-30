@@ -605,6 +605,9 @@ impl<'check> Survey<'check, '_> {
                 self.expression(upper);
             }
             CheckedStatement::Loop { .. } => {}
+            // [SHARE-2] an atomic statement counts as a waiting call, which
+            // condition 5 already refuses by its node.
+            CheckedStatement::Atomic { .. } => self.refuse_form("an atomic statement"),
             // [GRAM-4] an expression statement is one call whose result is
             // discarded, judged exactly as a `let` binding that call is: its
             // row's projection, its operand reads, and its by-value
@@ -1478,7 +1481,8 @@ const fn statement_node(statement: &CheckedStatement) -> Option<&NodePath> {
         | CheckedStatement::Give { node_path, .. }
         | CheckedStatement::CountedRange { node_path, .. }
         | CheckedStatement::Evaluate { node_path, .. }
-        | CheckedStatement::DropExpression { node_path, .. } => Some(node_path),
+        | CheckedStatement::DropExpression { node_path, .. }
+        | CheckedStatement::Atomic { node_path, .. } => Some(node_path),
         CheckedStatement::Proof(proof) => Some(&proof.node_path),
         CheckedStatement::Match { .. }
         | CheckedStatement::Loop { .. }
@@ -1652,6 +1656,7 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
             | CheckedStatement::PropagateLet { binding, .. }
             | CheckedStatement::ValueMatchLet { binding, .. } => out.push(*binding),
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
+            CheckedStatement::Atomic { binding, .. } => out.push(*binding),
             _ => {}
         }
         if let CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } =
@@ -1689,9 +1694,9 @@ fn nested_bodies(statement: &CheckedStatement) -> Vec<&[CheckedStatement]> {
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().map(|arm| arm.body.as_slice()).collect()
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            vec![body.as_slice()]
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => vec![body.as_slice()],
         _ => Vec::new(),
     }
 }

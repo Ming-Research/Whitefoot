@@ -1,4 +1,5 @@
 mod acceptance;
+mod allocation_bounds;
 mod behavior;
 mod cleanup;
 mod control;
@@ -8,7 +9,6 @@ pub(in crate::semantic) mod floats;
 mod generics;
 mod inventory;
 mod linearity;
-mod mustpar;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -17,9 +17,11 @@ mod receipts;
 mod references;
 mod repairs;
 mod requires;
+mod spawn;
 mod support;
 mod tail_calls;
 mod text_literals;
+mod type_invariants;
 mod type_regions;
 mod types;
 
@@ -569,6 +571,8 @@ struct TypeContext<'unit> {
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
     behavior: behavior::BehaviorInventory,
+    /// [TYPE-11] each struct's formed type invariants, in declaration order.
+    type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -584,8 +588,8 @@ struct BodyChecker {
     /// syntax could not settle, handed to the entailment fragment with the
     /// finished body.
     call_separations: Vec<super::model::CheckedCallSeparation>,
-    /// [WAIT-1, PAR-4] the waiting calls and `mustpar` markers of the function
-    /// being checked, published with its finished body.
+    /// [WAIT-1, WAIT-3] the waiting calls and spawns of the function being
+    /// checked, published with its finished body.
     waiting: super::model::CheckedWaiting,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
@@ -609,6 +613,10 @@ struct BodyChecker {
     /// Resolved origins established by this structural function attempt.
     /// Every retry starts fresh; only its complete final walk is published.
     reference_origins: Vec<Vec<ResolvedPlace>>,
+    /// [SHARE-2] how many atomic statements enclose the construct being
+    /// checked: inside one, a waiting call or another atomic statement is
+    /// refused.
+    atomic_depth: u32,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1096,7 +1104,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<CheckedProgramData, CheckStop> {
         self.types.declarations.check_documentation_text()?;
         self.check_musttail_positions()?;
-        self.check_mustpar_positions()?;
+        self.check_spawn_positions()?;
         let items = self.types.declarations.item_declarations()?;
         self.types.collect_behavior_groups(check_context, &items)?;
         self.types
@@ -1106,6 +1114,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.complete_nominals(check_context)?;
         self.collect_deferred_nominal_constants(check_context, &items)?;
         self.collect_function_signatures(check_context, &items)?;
+        self.collect_type_invariants(check_context)?;
+        self.judge_constant_invariants(&items)?;
         self.admit_postcondition_selectors(check_context)?;
         self.validate_generic_templates(check_context)?;
         if self.types.signatures.iter().any(|signature| {
@@ -1283,10 +1293,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
         let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
-        // [PAR-4] a `mustpar` requires the permission the table just judged;
-        // the table itself stays the same whichever markers are written.
-        self.validate_mustpar(&functions, &permission.functions)?;
-        // [WAIT-2] each marked waiting `let` is joined where the table found
+        // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
         for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
             function
@@ -1686,7 +1693,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // judgment below reaches once an operand fixes W. Every other generic
         // row, prelude or source, keeps its symbolic judgment.
         let unsupplied_window_row = self.types.has_unsupplied_window_type_parameter(signature)?;
-        let (requirements, requirement_places) = if let Some(node) = self
+        let (mut requirements, mut requirement_places) = if let Some(node) = self
             .types
             .declarations
             .tree
@@ -1707,6 +1714,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
+        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+            requirements.push(requirement);
+            requirement_places.push(Vec::new());
+        }
 
         let postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -1756,7 +1767,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        self.collect_mustpar_markers(signature)?;
+        self.check_spawned_callees_wait(signature)?;
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
@@ -1818,7 +1829,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             );
         }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            postcondition_selectors
+            let mut postconditions = postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
                 .map(|(selector, relation)| {
@@ -1833,7 +1844,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &checked.statements,
                     )
                 })
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+            postconditions.extend(self.type_invariant_postconditions(
+                FunctionContext {
+                    check_context,
+                    function: signature,
+                },
+                &parameters,
+                &checked.statements,
+            )?);
+            postconditions
         } else {
             postcondition_selectors
                 .into_iter()
@@ -1916,9 +1936,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             CheckedStatement::Match { arms, .. } => arms
                 .iter()
                 .any(|arm| Checker::statements_contain_value_if(&arm.body)),
-            CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-                Checker::statements_contain_value_if(body)
-            }
+            CheckedStatement::Loop { body, .. }
+            | CheckedStatement::CountedRange { body, .. }
+            | CheckedStatement::Atomic { body, .. } => Checker::statements_contain_value_if(body),
             CheckedStatement::Let { .. }
             | CheckedStatement::DestructuringLet { .. }
             | CheckedStatement::PropagateLet { .. }
@@ -2350,6 +2370,22 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_expression_call_requirements(check_context, upper, requirements)?;
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
+                CheckedStatement::Atomic {
+                    target,
+                    guard,
+                    body,
+                    ..
+                } => {
+                    self.install_expression_call_requirements(check_context, target, requirements)?;
+                    if let Some(guard) = guard {
+                        self.install_expression_call_requirements(
+                            check_context,
+                            guard,
+                            requirements,
+                        )?;
+                    }
+                    self.install_statement_call_requirements(check_context, body, requirements)?;
+                }
                 CheckedStatement::Proof(_) => {}
                 CheckedStatement::Break { .. } => {}
             }
@@ -2401,6 +2437,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     .map(|boundary| {
                         Ok(CheckedCallRequirement {
                             requires_clause: boundary.clause.clone(),
+                            subject: boundary.subject,
                             goal: ConcreteGoal::new(self.instantiate_goal_expression(
                                 check_context,
                                 &boundary.template.root,
@@ -2489,191 +2526,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 self.install_expression_call_requirements(check_context, start, requirements)?;
                 self.install_expression_call_requirements(check_context, end, requirements)?;
-            }
-            CheckedExpression::Constant(_)
-            | CheckedExpression::NamedConstant { .. }
-            | CheckedExpression::Binding { .. }
-            | CheckedExpression::ArrayMeasure { .. }
-            | CheckedExpression::BufferMeasure { .. }
-            | CheckedExpression::ContainerMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
-            | CheckedExpression::BorrowAddressed { .. }
-            | CheckedExpression::DerefAddressed { .. }
-            | CheckedExpression::Project { .. } => {}
-        }
-        Ok(())
-    }
-
-    fn install_source_allocation_bounds(
-        functions: &mut [CheckedFunction],
-    ) -> Result<(), CheckStop> {
-        for function in functions {
-            let bounds = function
-                .entailment
-                .obligations
-                .iter()
-                .filter(|outcome| {
-                    outcome.family == super::entailment::ObligationFamily::AllocationFit
-                        && outcome.discharged
-                })
-                .map(|outcome| {
-                    let upper = outcome
-                        .allocation_length_upper_bound
-                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                    Ok((outcome.node_path.clone(), upper))
-                })
-                .collect::<Result<HashMap<_, _>, SemanticCompilerFailure>>()?;
-            if let Some(body) = &mut function.body {
-                Checker::install_statement_allocation_bounds(body, &bounds)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn install_statement_allocation_bounds(
-        statements: &mut [CheckedStatement],
-        bounds: &HashMap<NodePath, u64>,
-    ) -> Result<(), SemanticCompilerFailure> {
-        for statement in statements {
-            match statement {
-                CheckedStatement::Let { value, .. }
-                | CheckedStatement::DestructuringLet { value, .. }
-                | CheckedStatement::Evaluate { value, .. }
-                | CheckedStatement::DropExpression { value, .. }
-                | CheckedStatement::Return { value, .. }
-                | CheckedStatement::Give { value, .. } => {
-                    Checker::install_expression_allocation_bounds(value, bounds)?;
-                }
-                CheckedStatement::PropagateLet { scrutinee, .. } => {
-                    Checker::install_expression_allocation_bounds(scrutinee, bounds)?;
-                }
-                CheckedStatement::Set { target, value, .. } => {
-                    match target {
-                        CheckedSetTarget::Place(_) => {}
-                        CheckedSetTarget::RangeIndex(target) => {
-                            for offset in target.offsets_mut() {
-                                Checker::install_expression_allocation_bounds(offset, bounds)?;
-                            }
-                        }
-                        CheckedSetTarget::Storage(target) => {
-                            for offset in target.offsets_mut() {
-                                Checker::install_expression_allocation_bounds(offset, bounds)?;
-                            }
-                        }
-                    }
-                    Checker::install_expression_allocation_bounds(value, bounds)?;
-                }
-                CheckedStatement::Match {
-                    scrutinee, arms, ..
-                }
-                | CheckedStatement::ValueMatchLet {
-                    scrutinee, arms, ..
-                } => {
-                    Checker::install_expression_allocation_bounds(scrutinee, bounds)?;
-                    for arm in arms {
-                        Checker::install_statement_allocation_bounds(&mut arm.body, bounds)?;
-                    }
-                }
-                CheckedStatement::Loop { body, .. } => {
-                    Checker::install_statement_allocation_bounds(body, bounds)?;
-                }
-                CheckedStatement::CountedRange {
-                    lower, upper, body, ..
-                } => {
-                    Checker::install_expression_allocation_bounds(lower, bounds)?;
-                    Checker::install_expression_allocation_bounds(upper, bounds)?;
-                    Checker::install_statement_allocation_bounds(body, bounds)?;
-                }
-                CheckedStatement::Proof(_) => {}
-                CheckedStatement::Break { .. } => {}
-            }
-        }
-        Ok(())
-    }
-
-    fn install_expression_allocation_bounds(
-        expression: &mut CheckedExpression,
-        bounds: &HashMap<NodePath, u64>,
-    ) -> Result<(), SemanticCompilerFailure> {
-        match expression {
-            CheckedExpression::UserCall {
-                call,
-                arguments,
-                allocation,
-                ..
-            } => {
-                if let Some(allocation) = allocation
-                    && let Some(upper) = bounds.get(call).copied()
-                {
-                    allocation.install_source_length_upper_bound(upper);
-                }
-                for argument in arguments {
-                    Checker::install_expression_allocation_bounds(argument, bounds)?;
-                }
-            }
-            CheckedExpression::IntegerOperation { arguments, .. }
-            | CheckedExpression::FloatOperation { arguments, .. }
-            | CheckedExpression::BooleanOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. }
-            | CheckedExpression::ConstructStruct {
-                fields: arguments, ..
-            }
-            | CheckedExpression::ConstructEnum {
-                fields: arguments, ..
-            } => {
-                for argument in arguments {
-                    Checker::install_expression_allocation_bounds(argument, bounds)?;
-                }
-            }
-            CheckedExpression::NumericConversion { value, .. }
-            | CheckedExpression::Reinterpret { value, .. }
-            | CheckedExpression::BoxDeref { value, .. }
-            | CheckedExpression::ProjectValue { value, .. } => {
-                Checker::install_expression_allocation_bounds(value, bounds)?;
-            }
-            CheckedExpression::BoxTake { .. } => {}
-            CheckedExpression::ReadStorage { root, .. } => {
-                for offset in root.offsets_mut() {
-                    Checker::install_expression_allocation_bounds(offset, bounds)?;
-                }
-            }
-            CheckedExpression::ArrayIndex { offset, .. }
-            | CheckedExpression::BufferIndex { offset, .. } => {
-                Checker::install_expression_allocation_bounds(offset, bounds)?;
-            }
-            CheckedExpression::RangeElementMeasure { place, .. }
-            | CheckedExpression::RangeIndex { place, .. }
-            | CheckedExpression::BorrowRangeIndex { place, .. } => {
-                for offset in place.offsets_mut() {
-                    Checker::install_expression_allocation_bounds(offset, bounds)?;
-                }
-            }
-            CheckedExpression::BorrowSegment { root, segment, .. } => {
-                for offset in root.offsets_mut() {
-                    Checker::install_expression_allocation_bounds(offset, bounds)?;
-                }
-                if let Some(offset) = segment.offset_mut() {
-                    Checker::install_expression_allocation_bounds(offset, bounds)?;
-                }
-            }
-            CheckedExpression::RangeOf {
-                source, start, end, ..
-            } => {
-                match source {
-                    super::model::CheckedRangeSource::Storage(root) => {
-                        for offset in root.offsets_mut() {
-                            Checker::install_expression_allocation_bounds(offset, bounds)?;
-                        }
-                    }
-                    super::model::CheckedRangeSource::Element(place) => {
-                        for offset in place.offsets_mut() {
-                            Checker::install_expression_allocation_bounds(offset, bounds)?;
-                        }
-                    }
-                    super::model::CheckedRangeSource::Range(_) => {}
-                }
-                Checker::install_expression_allocation_bounds(start, bounds)?;
-                Checker::install_expression_allocation_bounds(end, bounds)?;
             }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
@@ -4036,6 +3888,7 @@ impl<'unit> TypeContext<'unit> {
             checked_constants: Default::default(),
             derived_consts: Default::default(),
             behavior: Default::default(),
+            type_invariants: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

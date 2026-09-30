@@ -218,6 +218,15 @@ struct ArmFacts {
     goals: Vec<GoalId>,
 }
 
+/// [TYPE-11] an atomic block's type invariants, owed at each edge leaving
+/// the block: its end, a `return`, a `break` of a loop around it, a `give` to
+/// a value initializer around it, and an error propagation.
+struct AtomicFrame {
+    loop_depth: usize,
+    give_depth: usize,
+    invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+}
+
 /// A value initializer collecting give-edge states for its continuation.
 struct GiveFrame {
     scope_depth: usize,
@@ -1281,6 +1290,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 scopes: Vec::new(),
                 loops: Vec::new(),
                 gives: Vec::new(),
+                atomic: None,
                 product_intervals: HashMap::new(),
                 product_operands: HashMap::new(),
             },
@@ -1676,6 +1686,9 @@ struct Frames {
     scopes: Vec<Vec<BindingId>>,
     loops: Vec<LoopFrame>,
     gives: Vec<GiveFrame>,
+    /// The atomic statement whose block is being walked, if any; atomic
+    /// statements do not nest [SHARE-2].
+    atomic: Option<AtomicFrame>,
     /// The interval [ENT-6]'s interval-product rule proved at each admitted
     /// non-constant multiplication, with that domain's derivation, keyed by
     /// that operation's own node. The domain is judged while the initializer

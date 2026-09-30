@@ -469,7 +469,7 @@ pub(crate) struct ParallelThunks {
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
-    /// The thunks of started contexts [PAR-4], which name the bridge's context
+    /// The thunks of started contexts [WAIT-3], which name the bridge's context
     /// entry points and no compute scheduler symbol.
     context_definitions: Module,
     context_count: u32,
@@ -1141,7 +1141,7 @@ impl FunctionEmitter<'_, '_> {
 
 /// The lane frame one hand-out fills, as its thunk reads it back: the LLVM
 /// struct type, its field types in order, and which fields are not arguments.
-/// A started context's frame has the same shape [PAR-4].
+/// A started context's frame has the same shape [WAIT-3].
 pub(super) struct ThunkFrame<'site> {
     pub(super) ty: &'site str,
     pub(super) field_types: &'site [String],
@@ -1156,7 +1156,7 @@ pub(super) struct ThunkFrame<'site> {
 /// A thunk's reads of its call's arguments out of the frame, in the callee's
 /// ABI: a pointer to the field for an argument passed indirectly, the pair's
 /// two words for a range reference, and the loaded value otherwise. A started
-/// context's thunk reads its frame the same way [PAR-4].
+/// context's thunk reads its frame the same way [WAIT-3].
 pub(super) fn thunk_arguments(
     body: &mut FunctionBody,
     frame_type: &str,

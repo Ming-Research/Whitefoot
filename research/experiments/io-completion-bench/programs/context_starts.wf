@@ -9,13 +9,13 @@ fn tick(value: u64) -> result: u64 pure waits {
 }
 
 fn batch(count: u64) -> result: unit pure waits {
-  doc "Starts one context per position and waits for every one of them as it returns [PAR-4].";
+  doc "Starts one context per position and waits for every one of them as it returns [WAIT-3].";
   let at = 0_u64;
   loop @starting {
     if at >= count {
       break @starting;
     }
-    mustpar tick(value: at);
+    spawn tick(value: at);
     set at = at +wrap 1_u64;
   }
   return unit;
@@ -29,7 +29,7 @@ fn bound(count: u64) -> result: u64 pure waits {
     if at >= count {
       break @joining;
     }
-    let got = mustpar tick(value: at);
+    let got = spawn tick(value: at);
     set total = total +wrap got;
     set at = at +wrap 1_u64;
   }

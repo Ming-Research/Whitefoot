@@ -76,6 +76,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     | IrNominalKind::Enum { .. }
                     | IrNominalKind::Box { .. }
                     | IrNominalKind::Opaque
+                    | IrNominalKind::Shared { .. }
             ),
             IrAddressed::Unit
             | IrAddressed::Bool

@@ -605,46 +605,11 @@ Maintained examples live under
 [tests/programs/parallel](../tests/programs/parallel); their source contracts
 and ordinary sequential behavior remain the authority.
 
-When the parallelism is the point, mark it: `mustpar` on a counted loop or on
-the call of a statement asserts the permission, and a denied permission becomes
-a rejection that names the refused condition instead of a sequential run
-[PAR-4]. The marker grants nothing and is erased before lowering:
-
-```whitefoot
-mustpar for (at in 0_u64..count) {
-  set total = total +wrap at;
-}
-```
-
-To serve independent peers at once, mark each waiting call that serves one.
-Its callee takes only value parameters, so it carries its own connection and
-a factory drawing on the shared budget, and nothing after it can depend on
-it; the program still means its sequential execution, and the compiler runs
-each marked call in a context of its own, which the marking activation waits
-for before it returns [PAR-4, WAIT-2]:
-
-```whitefoot
-let factory = std::io::factory_share(factory: &handles);
-mustpar serve(connection: move connection, factory: move factory);
-```
-
-The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
-connections and serves each one this way.
-
-To gather several answers, bind each marked call. The activation waits for
-each result only before the first statement that uses it, so the calls
-proceed together until then [PAR-4, WAIT-2]:
-
-```whitefoot
-let first = mustpar fetch(factory: move first_factory, address: move first_address, request: 1_u8);
-let second = mustpar fetch(factory: move second_factory, address: move second_address, request: 2_u8);
-let total = first +wrap second;
-```
-
-The maintained [tcp_gather.wf](../tests/programs/tcp_gather.wf) fetches from
-two servers this way. Host operations of different
-contexts, and of independent statements, have no order between them; pass two
-operations through one owner when their order matters [HOST-1].
+To see which permissions hold, read the ledger: `whitefootc --par-ledger`
+prints each permission with the proof it rests on and each denial with its
+refused condition. When a loop's speed is the point, a test can compare the
+ledger, as a benchmark compares a time, so an edit that breaks the loop's
+independence fails there instead of slowing the program.
 
 ## P14. Keep branchless classifier state in `Bool`
 
@@ -817,3 +782,119 @@ fn channel(component: u8) -> result: f32 pure {
 
 A rounded value supplies no proof about its input: comparing it with the
 input after widening does not discharge a later bare `cvt` of that input.
+
+## P17. Share state between contexts through one object
+
+A spawn takes only value parameters [WAIT-3], so two contexts reach one piece
+of state only through a shared object [SHARE-1]. Move the state into it with
+`shared_new`, give each context its own handle made with `shared_share`, and
+change the state only inside an atomic statement, whose block has the object to
+itself [SHARE-2, SHARE-3]:
+
+```whitefoot
+let handle = shared_share::<u64>(shared: &counter);
+spawn bump(counter: move handle);
+
+atomic count = &counter {
+  set count^ = count^ +wrap 1_u64;
+}
+```
+
+Put everything that must happen together in one block: two atomic statements
+in a row are two points, and another context's statement may take effect
+between them. Copy out what the rest of the function needs into a local; the
+binding and every reference formed from it end with the block [REF-2], and so
+does every fact about the state.
+
+The block cannot wait [SHARE-2], so do the waiting outside it: read or receive
+first, then change the object, then send. To wait for the state itself, write
+the condition as a guard; the statement takes effect only where the guard
+holds, and the block may rely on it as a proved fact:
+
+```whitefoot
+atomic items = &queue when items^.len > 0_u64 {
+  set got = take_front(window: items);
+}
+```
+
+The maintained [shared_objects.wf](../tests/programs/shared_objects.wf) counts
+from sixteen contexts and passes values through a guarded queue this way.
+
+## P18. Keep a relation between a struct's fields as its type invariant
+
+When a value is only valid while two of its fields agree, such as a cursor
+that stays below its window's length, declare the relation on the struct
+instead of repeating it as a `requires` and `ensures` pair on every function
+that takes the value [TYPE-11]:
+
+```whitefoot
+struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn advance(t: &Table) -> result: u64 reads(t.slots), writes(t.next) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  let after = at + 1_u64;
+  if after == t^.slots.len {
+    set t^.next = 0_u64;
+  } else {
+    set t^.next = after;
+  }
+  return got;
+}
+```
+
+Every function taking a `Table` or a `&Table` receives the relation at entry,
+which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
+value on: at its returns and its `propagate` error exits when it writes the
+value, at each call passing it, and at `shared_new`. Every construction owes it
+too. Between two field writes of
+one body the relation may be false, since no other code can see the value
+there. A shared object's state keeps it the same way: each atomic block
+receives it at entry and owes it at every edge that leaves the block.
+
+An invariant relates one field or measure on each side, displaced by a
+constant, over the struct's own fields; a relation to another value, such as an
+index into another table, stays a contract. Publish a field only as `public
+readonly`, so that only the declaring module writes it.
+
+## P19. Spawn each activity that must run while others wait
+
+A call runs in its caller's context, in order, unless it is spawned [WAIT-2].
+To serve independent peers at once, spawn each waiting call that serves one.
+Its callee takes only value parameters, so it carries its own connection and a
+factory drawing on the shared budget; it runs concurrently with the function
+that spawned it, which waits for it before it returns [WAIT-3]:
+
+```whitefoot
+let factory = std::io::factory_share(factory: &handles);
+spawn serve(connection: move connection, factory: move factory);
+```
+
+The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
+connections and serves each one this way.
+
+To gather several answers, bind each spawn. The function waits for a result at
+the beginning of the first later statement that names it, so the calls proceed
+together until then [WAIT-3]:
+
+```whitefoot
+let first = spawn fetch(factory: move first_factory, address: move first_address, request: 1_u8);
+let second = spawn fetch(factory: move second_factory, address: move second_address, request: 2_u8);
+let total = first +wrap second;
+```
+
+The maintained [tcp_gather.wf](../tests/programs/tcp_gather.wf) fetches from
+two servers this way. Host operations of different contexts have no order
+between them; pass two operations through one owner when their order matters
+[HOST-1].
+
+A bound spawn is joined at the beginning of the first later statement that
+names its binding or may leave its block, such as an `if` holding a `return`
+or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
+the spawned call's guard true therefore stands before that statement in the
+block, not inside it: inside, it would run only after the join, which waits
+for the guard.

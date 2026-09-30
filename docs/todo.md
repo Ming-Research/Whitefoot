@@ -365,7 +365,12 @@ rarely insert at the same place.
   [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
   value of an unbounded type parameter can only be moved whole; the
   [beyond-memory article](articles/beyond-memory.md) shows it for
-  `ReadFile`. Pin each with a program per
+  `ReadFile`. TYPE-11's TypeInvariantWritableField repair is unpinned too:
+  a `public` field is written only in an interface record, which a
+  single-source pair cannot hold, so pinning it needs a module-form pair;
+  and FN-9's propagated-exit repair is pinned for a refuted relation only,
+  its unproved sentence still unpinned.
+  Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -1217,18 +1222,6 @@ rarely insert at the same place.
   or one shared port whose completions carry their driver. Reopen when a
   server on either route needs more than one core.
 
-- **A context's operation with no readiness form still blocks the thread
-  every context shares.** With other contexts live, a socket receive, send
-  or accept waits in the ring or, with no ring, for its descriptor's
-  readiness. Every other host call a context makes that the ring does not
-  take runs on that thread and blocks it: a read or write of a pipe such as
-  standard input or output, a connect to a remote peer, and on a host with no
-  ring every open, close and directory operation. A context reading a pipe
-  that another context of the same program writes would stop both. Route such
-  operations to the helper pool whenever other contexts are live, with the
-  context parked on its record; validate with two contexts joined by a pipe,
-  on both routes.
-
 - **A readiness wait and a helper's completion are found by scanning.** A
   record published on the thread that runs the contexts wakes its context by
   address, but one a helper thread publishes is found by a pass over every
@@ -1248,6 +1241,26 @@ rarely insert at the same place.
   server there holds only as many silent peers as the pool has helpers. A
   `WSAPoll` readiness wait would give it the Linux readiness route's
   behavior. Reopen when a Windows server has to run without the port.
+
+- **The context echo server's rate at 1024 connections and with 64 KiB
+  messages moved between sessions.** With R1 to R4 as committed,
+  `tcp_contexts.wf` ran at 0.968 of the runtime before them at 1024
+  connections (0.966 and 0.964 in two runs of 15 interleaved passes) and at
+  1.047 with 64 KiB messages; with the stop check fixed, in a later session,
+  it ran at 1.004 at 1024 connections (1.044 and 0.993) and at 0.971 with
+  64 KiB messages, while 64 connections stayed within 1% in both sessions
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
+  Whether the progress changes cost anything at those workloads is open: the
+  later session's two runs at 1024 connections differ by 5.1 points, more
+  than the 3.6 points between the sessions, and the 64 KiB figure moved 7.6
+  points the other way. Settle it by running the same two builds interleaved
+  in three or more sessions; if a loss persists, attribute it with one build
+  per change reverted, the candidates being the `wf__context_pass` call after
+  every host operation its start answered, the reap after every 64
+  resumptions, the per-driver count of host waits and the stop check's change
+  counters. Reopen when a server with more than a few hundred connections or
+  with messages of tens of KiB is measured, or before the next change to the
+  driver loop.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
@@ -1300,6 +1313,72 @@ rarely insert at the same place.
   placements, and adopt whichever makes their time independent of the
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
+
+- **Every atomic statement holds its object alone.** Statements whose
+  blocks only read could share the object, but lowering always acquires for
+  writing
+  (`design/language/waiting/shared-objects.md`, the provisional exclusive
+  acquisition decision). Readers that contend then wait for one another.
+  The runtime's entries take a read request, but lowering makes none, so
+  that path runs in no program; deciding it needs a measured workload where
+  readers contend, compared with
+  a lowering that acquires for reading when the block writes no path rooted
+  at the binding. Reopen when a program's atomic statements that only read
+  are seen to queue.
+
+- **An atomic statement counts its own handle.** Each statement adds one to
+  the object's handle count before it acquires and releases it after it
+  unlocks, two atomic read-modify-writes on a shared cache line that keep the
+  object live whatever the block does with the target place [SHARE-2]. A
+  block that neither moves nor writes the target's root, which is the common
+  case and a fact the checker has, needs neither. Measure the uncontended
+  statement with and without them; reopen when atomic statements show in a
+  profile, as they may in the Redis subset.
+
+- **A shared object takes at least one 512-byte pool block.** The bridge's
+  pool serves blocks from 512 bytes up, so a `Shared<u64>` occupies 512
+  bytes. A program with one keyspace object does not notice; one with an
+  object per client or per key would. A smaller class for objects, or the
+  ordinary allocator, would fix it. Reopen when a program creates many small
+  objects.
+
+- **No test forces a shared object's handoff.** The unlock after two vain
+  wakes hands a parked statement the object (`completion/bridge.c`,
+  `WF_SHARED_HANDOFF`), and only contention on several drivers reaches that
+  branch: `shared_objects.wf` checks its sums, not that a handoff happened,
+  and the counts in `research/investigations/io-model/SHARED.md` came from a
+  hand-made counting build. A broken handoff would fail at random at best. A
+  runtime test that parks a statement, wakes it twice while another context
+  takes the object first, and checks that the third unlock grants it would
+  pin the branch; it needs a way to run the bridge's shared-object entries
+  on hand-made contexts. Reopen when the lock changes again or a handoff
+  defect is suspected.
+
+- **A bound spawn is joined before the whole statement that uses it.**
+  [WAIT-3] joins a bound spawn at the beginning of the first later statement
+  of its block that names the binding or may leave the block, so in
+  `let seen = spawn consume(…); if go { atomic … { … } return seen; }` the
+  call is joined before the `if`, and the atomic statement that would make
+  its guard true never runs. Joining on the path inside the statement instead
+  was refused because later code would merge a joined and an unjoined path
+  (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
+  program needs the use and the enabling statement in one compound statement.
+
+- **At most eight operations run on helper threads at once.** Once a
+  program spawns, every operation the ring does not carry runs on the helper
+  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
+  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
+  in the queue until one returns, so nine contexts whose operations wait on
+  one another through pipes can stop although [WAIT-2] promises that they
+  proceed. On Linux the ring carries reads, opens, closes and a socket's
+  accept, connect, receive and send, so a stream write, a directory's next
+  entry, and the immediate listen and shutdown take a helper there
+  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
+  with no ring every file operation does. Letting the pool
+  grow past the ceiling while every helper is blocked, or carrying stream
+  writes on the ring, would remove it; validate with nine contexts paired
+  through pipes. Reopen when a program runs more than eight such waits at
+  once.
 
 - **A split loop too small to split still costs its query at every call.**
   Snowghost's layout prototype runs `pkg::text::line_break`, whose
@@ -1617,19 +1696,24 @@ rarely insert at the same place.
 - **The I/O research record and two runtime comments describe retired
   states.** `research/investigations/io-model/NETWORK.md` says the hand-out
   of a may-suspend call to a pool stack landed and serves `tcp_fanout.wf`'s
-  peers concurrently, which [PAR-4] contexts replace; `DESIGN.md` still says
+  peers concurrently, which spawned contexts [WAIT-3] replace; `DESIGN.md` still says
   canonical `make check` stops on a v0.37 `CANDIDATE` identity; the
   concurrency catalog's retired PAR-3 text and staged-loop sketch predate the
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` syntax and no longer compile; and `.github/workflows/io-bench.yml`
-  says the gate compiles those programs, which it does not. A reader following
-  any of them is misled about what runs. Mark the research passages
+  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  stops at its first build and the spawn work measured single-context reads
+  with a scratch loop instead
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
+  and `.github/workflows/io-bench.yml` says the gate compiles those programs,
+  which it does not. A reader following any of them is misled about what
+  runs. Mark the research passages
   superseded with a pointer to `WAITS.md`, rewrite the `bridge.h` comment
   against the context scheduler, and either migrate the benchmark programs
   and wire their compilation or delete them with the workflow sentence;
-  reopen with the next edit of any of these files.
+  reopen with the next edit of any of these files or before the next
+  read-path measurement.
 
 - **A reserved spelling used as a name does not say it is reserved.** The
   Snowghost renderer's writers found by trial that `copy`, `is` and `checked`
@@ -1734,18 +1818,18 @@ rarely insert at the same place.
 
 ## Code structure
 
-- **The checker's top module passed 4,000 lines.**
-  `compiler/src/semantic/check.rs` has 4,044 lines after the `Segments`
-  arms of its expression walks. Two coherent blocks sit in it: the call
-  requirement and allocation-bound installers
-  (`install_call_requirements` through `install_expression_allocation_bounds`,
-  about 430 lines) and goal-template instantiation
-  (`instantiate_goal_expression` through `instantiate_goal_const`, about
-  730 lines). Move the instantiation block into its own `check` submodule
-  as an `impl Checker` whose entry points are `pub(super)`. Validate that
-  the move changes no behavior: identical `make check` results and a diff
-  of moved items and visibility only. Split when no open branch has large
-  edits in the file; close when it is under 4,000 lines.
+- **Five parallel substitution walkers over a type invariant.**
+  `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
+  parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
+  `substitute_relation` and `substitute_expanded`, one walker per
+  representation (goal, relation and expanded clause) and subject (a
+  parameter or its referent, a construction's operands, an atomic binder, an
+  exit state or a result). Each is short and has one caller, so a change to
+  the datum shape must be repeated in each. A single substitution keyed by
+  subject over the expanded clause, from which the goal and relation are then
+  formed, would leave one walker; validate by identical verdicts on the
+  `type11-*` cases. Found in the TYPE-11 review; reopen when a new subject or
+  datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
@@ -1842,6 +1926,53 @@ rarely insert at the same place.
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **A proof counter has no type without an overflow obligation.** Minimal
+  witness: a monitor invariant `produced - consumed == count` over a bounded
+  buffer, whose `produced` and `consumed` exist only for the proof and grow
+  without bound, so as `u64` fields each increment owes an overflow proof no
+  program can give. Ghost state, erased mathematical integers the checker
+  reasons about and the lowering never stores, would express it
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 5.3);
+  the owner deferred it while spawn was built. Reopen with the first program
+  whose invariant needs such a counter.
+
+- **Type invariants stop at the direct struct type.** [TYPE-11] makes a
+  struct's invariant a requirement and postcondition of each callable whose
+  parameter or result is written as the struct, a construction's obligation,
+  and an atomic block's entry fact and exit obligation. A value of the struct
+  read from anywhere else, an element of a `Slots<Table, n>`, a field of
+  another struct or a `Box` content, gets no fact, and storing one there owes
+  nothing, so a function that returns an element must re-establish the
+  relation to satisfy its result's postcondition. Instantiating the invariant
+  at each such read is sound only once every store owes it, which the
+  module boundary of `design/language/checks-and-proofs` permits. Three
+  related choices stay open: whether a module-internal helper may take a
+  value whose invariant is broken, as SPARK's internal subprograms may;
+  whether generic structs and enums may carry invariants; and whether an
+  affine invariant (a sum of fields) is admitted through an entry snapshot
+  (`research/experiments/monitor-invariants/`). Reopen with the first program
+  that keeps invariant-bearing structs in a container, needs a repair helper,
+  or needs a sum. The standard library gains nothing from type invariants
+  until generic structs may carry them: every `lib/std` collection is
+  generic and every I/O type `opaque`. Even then little moves: of the
+  priority queue's contract clauses (`lib/std/collections/priority_queue/`,
+  interface and body), only `cap <= ceiling`, four `requires`, is a relation
+  every value keeps; the rest state one
+  operation's precondition (`index < len`, `len > 0`) or its effect
+  (`len == entry(len) + 1`), and the maintained programs repeat a field
+  relation at most twice. Reopen generic invariants when a generic type has
+  a relation every value keeps that several functions restate.
+- **A standard collection restates at every operation that its capacity is
+  unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
+  appears 15 times across the priority queue's interface and body
+  (`lib/std/collections/priority_queue/`), and its like 10 times in the
+  deque's and 8 in the vector's. It is no type
+  invariant, since it relates two states, and the row cannot supply it,
+  since those functions write the whole `storage`. A way to say that a
+  function preserves a measure, or a row that names the part of a window a
+  function writes, would remove most of them. Count the clauses each would
+  remove and the proofs that still hold before choosing. Reopen when a new
+  collection or a change to window operations adds more such clauses.
 - **Remaining value-evidence boundaries.** The
   [investigation](../research/investigations/result-proof-transport/DESIGN.md)
   leaves three related extensions to assess together: borrowed Result
@@ -1944,25 +2075,13 @@ each is resolved by a discussion and a tree change.
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
-- **A loop or a non-call match ends a bound context's run early.** A
-  marked waiting `let` is joined before the first later statement of its
-  block that uses its binding or that the [PAR-1] footprint judgment refuses,
-  and the judgment refuses a loop and a match whose scrutinee is not a call
-  (`research/investigations/io-model/WAITS.md`, "A bound context is joined
-  where its result is first used"). Minimal witness: `let a = mustpar
-  fetch(…); for (i in 0_u64..n) { … } use(a);` joins `a` before the loop
-  even when the loop never names it. A footprint for those forms, the union
-  of their bodies' footprints with their exits, would let the call proceed
-  across them. Reopen when a program's gather has a loop between the call
-  and its use and its rate depends on it.
-
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
   its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
-  `stdout`, so moving it into the first marked `serve` leaves nothing to
+  `stdout`, so moving it into the first spawned `serve` leaves nothing to
   move on the next iteration; a reference parameter is refused because a
-  call executing alongside later statements outlives its statement
-  [WAIT-2]; and the marked call's result is released in its context, so
+  spawned context outlives its statement [WAIT-3]; and a spawn statement's
+  result is released in its context, so
   the starter cannot log on its behalf. A second writer of one standard
   output and the two ends of a channel both fail the sharing rule agreed
   with the owner (`research/investigations/io-model/WAITS.md`, "Sharing
@@ -1970,8 +2089,8 @@ each is resolved by a discussion and a tree change.
   observed. The admitted candidates are a context writing an output of its
   own, a record sink whose observation is the set of records rather than
   their order, and a result that the starter joins where it uses it, which
-  kernel-spec v0.78 admits as `let r = mustpar f(…)` but only for a call
-  whose starter can wait for it, not for an accept loop that never ends.
+  [WAIT-3] admits as `let r = spawn f(…)` but only for a call whose starter
+  can wait for it, not for an accept loop that never ends.
   Reopen when a context-serving program needs to log or report.
 - **ENT-3.S6 names only the bound range's length fact.** S6 establishes
   `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
@@ -1981,6 +2100,22 @@ each is resolved by a discussion and a tree change.
   case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
   REF-4 as the entitlement. Decide whether S6 should say so by naming every
   formation, bound or not; reopen with the next amendment touching S6.
+
+- **An atomic statement over several objects.** `atomic a = &h1, b = &h2`
+  would change two objects at one point, as `MULTI`/`EXEC` across keyspaces
+  or a transfer between two accounts needs. Two handles may name one object,
+  and the checker takes `a` and `b` as disjoint roots, so two writable
+  references could reach one state. It needs either a form whose handles are
+  known distinct or a runtime rule for the aliasing case with a sound static
+  meaning (`research/investigations/io-model/SHARED.md`, "Why a statement").
+  Reopen when a program needs two objects changed together.
+
+- **A shared object's state must have drop, and cannot be taken back.**
+  `Shared<T: drop>` releases its state with its last handle; a `nodrop`
+  state, or a program that wants the value back when it holds the last
+  handle, needs a `shared_into` that returns the state and a way to state
+  that the caller's handle is the last. Reopen when a program keeps a linear
+  value in a shared object.
 
 ## Ownership redesign (candidate x1) follow-ups
 
@@ -2250,6 +2385,20 @@ condition under which it is taken up.
   sides, judge the subscripts, then add a case whose caller publishes over
   two different offsets and must not equate them. Owner (PR #118 ruling,
   2026-09-25): later, by the same principle at each selected return.
+- **Affine premises over a reference parameter's fields do not reach the
+  body.** `requires s^.a + s^.b <= 100_u64` over the fields of `&Accounts`
+  gives the body no premise that bounds `b + n` after `let b = s^.b`, while
+  the same `requires` over value parameters does, and stated over entry
+  values tied to the fields by L0 equalities it does too. A smaller case: an
+  L0 `requires s^.a >= n` does not discharge `s^.a - n` written on the
+  place, but does after `let a = s^.a`.
+
+  `research/experiments/monitor-invariants/` holds both as probes
+  (`bank-field-premise`, `field-premise-direct`). The first is the gap of
+  "Readonly-field terms stop at L0" for a plain field: affine images of
+  place terms need kills that follow their support. A monitor invariant over
+  a sum of fields needs it, or an entry snapshot. Reopen with the object
+  invariant, or when a contract over a structure's fields needs a sum.
 - **Tracked-place offsets with projections are not captured.** ENT-2 admits
   any clause (a) term as an offset, but the compiler captures only literals,
   consts and bare bindings. A measure read such as `table[s.k].len` and a

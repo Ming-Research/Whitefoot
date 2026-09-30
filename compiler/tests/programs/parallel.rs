@@ -399,3 +399,24 @@ fn layout_preserves_both_results_without_benchmark_repetition() {
         assert!(output.stderr.is_empty());
     }
 }
+
+/// [SHARE-1, SHARE-3] sixteen contexts adding to one counter, and producers
+/// and consumers passing values through one guarded queue, reach the sums
+/// every order of their atomic statements gives, on one driver and on four.
+/// Four drivers run the contexts on four threads, so an atomic statement that
+/// did not hold its object alone would lose increments or deliver a value
+/// twice; the program names the first wrong sum in its status.
+#[test]
+fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_objects.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
+    }
+}

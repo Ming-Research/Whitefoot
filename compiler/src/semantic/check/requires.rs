@@ -281,7 +281,7 @@ impl ExpandedClauseExpression {
         datum.with_projection(projection, ty).map(Self::Datum)
     }
 
-    fn into_goal_expression(self) -> Option<GoalExpression> {
+    pub(super) fn into_goal_expression(self) -> Option<GoalExpression> {
         match self {
             Self::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
@@ -491,6 +491,7 @@ impl<'unit> Checker<'_, 'unit> {
             requirements.push(CheckedRequirement {
                 template: GoalTemplate::new(root),
                 clause: self.types.declarations.tree.path(clause)?.clone(),
+                subject: None,
             });
             let mut reached = HashSet::new();
             let mut pending = Vec::new();
@@ -530,7 +531,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// inside a contract block, so that instruction would send the writer
     /// from one hard error to another. A definition or clause instead carries
     /// the contract-specific repair.
-    fn clause_conditional_repair(stop: CheckStop) -> CheckStop {
+    pub(super) fn clause_conditional_repair(stop: CheckStop) -> CheckStop {
         let CheckStop::Issue(mut issue) = stop else {
             return stop;
         };
@@ -1587,7 +1588,15 @@ impl<'unit> TypeContext<'unit> {
                 },
             )));
         }
-        let Some(measure) = self.declarations.trailing_measure_member(&suffixes)? else {
+        let Some(measure) = self.clause_trailing_measure(
+            check_context,
+            &suffixes,
+            datum_type,
+            false,
+            bindings,
+            expanded_bindings,
+        )?
+        else {
             // [CALL-4] a fragment-integer place reached through struct-field
             // and `Box` content steps is a datum as its own value.
             let (projections, reached) = self.clause_member_projections(
@@ -1636,6 +1645,48 @@ impl<'unit> TypeContext<'unit> {
                 },
             )],
         }))
+    }
+    /// [TYPE-10] the measure a clause place's last `psuffix` selects. Its
+    /// spelling only proposes one: the suffix is a measure exactly when the
+    /// place before it has a row for it, as a measured type, a range
+    /// reference's run, or, in a prelude row's own clause, a `Box` whose
+    /// content is measured [OP-14]. Everywhere else it is the ordinary field
+    /// of that name, as it is in an expression.
+    fn clause_trailing_measure(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        suffixes: &[NodeId],
+        base: CheckedType,
+        range_referent: bool,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
+    ) -> Result<Option<CheckedMeasure>, CheckStop> {
+        let Some(measure) = self.declarations.trailing_measure_member(suffixes)? else {
+            return Ok(None);
+        };
+        let (&last, prefix) = suffixes
+            .split_last()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let (ty, range_referent) = if prefix.is_empty() {
+            (base, range_referent)
+        } else {
+            let (_, reached) = self.clause_member_projections(
+                check_context,
+                prefix,
+                base,
+                range_referent,
+                bindings,
+                expanded_bindings,
+            )?;
+            (reached, false)
+        };
+        let measured = range_referent
+            || super::expressions::flat_storage::measured_kind_of(ty).is_some()
+            || (self.declarations.tree.is_prelude_node(last)?
+                && self.box_content(ty)?.is_some_and(|referent| {
+                    super::expressions::flat_storage::measured_kind_of(referent).is_some()
+                }));
+        Ok(measured.then_some(measure))
     }
     /// The projection path one written `psuffix` run selects below a clause
     /// datum of this type.
@@ -1971,7 +2022,14 @@ impl<'unit> TypeContext<'unit> {
         // [OP-15] a measure is read as a member of the measured place and
         // [MSR-1] gives it no storage below itself, so it is the last written
         // suffix and everything before it is the ordinary field path.
-        let measure = self.declarations.trailing_measure_member(suffixes)?;
+        let measure = self.clause_trailing_measure(
+            check_context,
+            suffixes,
+            expression.ty(),
+            range_referent,
+            bindings,
+            expanded_bindings,
+        )?;
         let fields_only = if measure.is_some() {
             &suffixes[..suffixes.len() - 1]
         } else {

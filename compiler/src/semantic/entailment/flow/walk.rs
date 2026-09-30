@@ -137,6 +137,31 @@ impl Judging<'_, '_, '_> {
 }
 
 impl Analyzer<'_, '_> {
+    /// [TYPE-11] the type invariants of the atomic block being walked, owed
+    /// at `site`, an edge that leaves it; judged as a requirement the body
+    /// owes itself there.
+    fn judge_atomic_exit(&mut self, site: &crate::NodePath, state: &ProofFlowState) {
+        let Some(invariants) = self
+            .frames
+            .atomic
+            .as_ref()
+            .map(|frame| frame.invariants.clone())
+        else {
+            return;
+        };
+        let function = self.input.function.id;
+        for invariant in invariants {
+            self.judging().judge_call_goal(
+                function,
+                site,
+                (invariant.requires_clause.clone(), invariant.subject),
+                invariant.goal.clone(),
+                0,
+                (ProofContext::new(&state.facts, &state.affine), state),
+            );
+        }
+    }
+
     pub(super) fn walk_block(
         &mut self,
         statements: &[CheckedStatement],
@@ -655,6 +680,17 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
+                // [TYPE-11] the error edge returns, leaving any atomic block.
+                self.judge_atomic_exit(node_path, state);
+                // [FN-9] and it is a selected return of every unrouted
+                // clause, judged over the state that edge leaves with.
+                self.judging().judge_postcondition_return(
+                    node_path,
+                    state,
+                    None,
+                    judgment.reached,
+                    &[],
+                );
                 self.declare(*binding);
                 if let Some(result) = result {
                     self.reasoning()
@@ -1019,6 +1055,8 @@ impl Analyzer<'_, '_> {
                         .finish_result(value, &judgment, result, state);
                 }
 
+                // [TYPE-11] a return inside an atomic block leaves it.
+                self.judge_atomic_exit(node_path, state);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
@@ -1038,6 +1076,16 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
+                // [TYPE-11] a give to a value initializer around an atomic
+                // block leaves the block.
+                if self
+                    .frames
+                    .atomic
+                    .as_ref()
+                    .is_some_and(|frame| self.frames.gives.len() <= frame.give_depth)
+                {
+                    self.judge_atomic_exit(node_path, state);
+                }
                 if let Some((scope_depth, loop_depth, binding, result_type)) =
                     self.frames.gives.last().map(|frame| {
                         (
@@ -1085,13 +1133,105 @@ impl Analyzer<'_, '_> {
                 }
                 false
             }
-            CheckedStatement::Break { target, drops: _ } => {
+            // [SHARE-2, SHARE-3] the target is read when the statement
+            // begins; the binder then names a state no earlier fact
+            // describes, since the state belongs to no binding and other
+            // contexts' statements change it between atomic statements. The
+            // block runs at the point the statement takes effect, where the
+            // guard is true, so the guard enters it as the true arm of a
+            // Bool condition does; an evaluation that read false left no
+            // fact behind, since the guard writes nothing and the state is
+            // described afresh. The block is an ordinary scope the binder
+            // leaves with it.
+            CheckedStatement::Atomic {
+                node_path,
+                target,
+                binding,
+                guard,
+                body,
+                invariants,
+                ..
+            } => {
+                let _ = self.expression_effects(target, state);
+                let outer_scope_depth = self.frames.scopes.len();
+                self.frames.scopes.push(vec![*binding]);
+                if let Some(guard) = guard {
+                    let judgment = self.expression_effects(guard, state);
+                    if judgment.reached {
+                        let facts = self.reasoning().arm_facts(
+                            guard,
+                            crate::semantic::CheckedEnumType::Bool,
+                            &state.facts,
+                        );
+                        let event =
+                            (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
+                                self.vocabulary
+                                    .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
+                            });
+                        let held = CheckedMatchArm {
+                            tag: 1,
+                            binders: Vec::new(),
+                            covered: Vec::new(),
+                            body: Vec::new(),
+                            fallthrough_drops: Vec::new(),
+                        };
+                        self.judging()
+                            .establish_arm_entry(&held, &facts, &mut state.facts, event);
+                    }
+                }
+                // [TYPE-11] the state's type invariants hold where the block
+                // begins, as the guard does.
+                for invariant in invariants {
+                    let event = self
+                        .vocabulary
+                        .proof_event(FlowEventKind::S1, Some(&invariant.requires_clause));
+                    self.judging().establish_body_goal(
+                        invariant.goal.root.clone(),
+                        &mut state.facts,
+                        event,
+                    );
+                }
+                let enclosing = self.frames.atomic.replace(AtomicFrame {
+                    loop_depth: self.frames.loops.len(),
+                    give_depth: self.frames.gives.len(),
+                    invariants: invariants.clone(),
+                });
+                let mut continues = true;
+                for statement in body {
+                    if !continues {
+                        break;
+                    }
+                    continues = self.walk_statement(statement, state);
+                }
+                if continues {
+                    self.judge_atomic_exit(node_path, state);
+                    self.exit_scopes_to(state, outer_scope_depth);
+                }
+                self.frames.atomic = enclosing;
+                self.frames.scopes.pop();
+                continues
+            }
+            CheckedStatement::Break {
+                node_path,
+                target,
+                drops: _,
+            } => {
                 if let Some(position) = self
                     .frames
                     .loops
                     .iter()
                     .rposition(|frame| frame.id == *target)
                 {
+                    // [TYPE-11] a break of a loop around an atomic block
+                    // leaves the block.
+                    if self
+                        .frames
+                        .atomic
+                        .as_ref()
+                        .is_some_and(|frame| position < frame.loop_depth)
+                    {
+                        self.judge_atomic_exit(node_path, state);
+                    }
                     let depth = self.frames.loops[position].scope_depth;
                     let mut exit = state.clone();
                     self.exit_scopes_to(&mut exit, depth);

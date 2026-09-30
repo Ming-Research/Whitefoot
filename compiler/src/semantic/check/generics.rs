@@ -145,6 +145,18 @@ impl GenericSubstitution {
         &self.regions
     }
 
+    /// The first type argument this substitution binds, in binding order:
+    /// the one argument of a single-parameter prelude nominal such as
+    /// `Shared<T>` [SHARE-1].
+    pub(super) fn first_type_argument(&self) -> Option<CheckedType> {
+        self.bindings
+            .iter()
+            .find_map(|(_, argument)| match argument {
+                GenericArgument::Type(ty) => Some(*ty),
+                GenericArgument::Const(_) | GenericArgument::Function(_) => None,
+            })
+    }
+
     pub(super) fn type_argument(&self, declaration: DeclarationId) -> Option<CheckedType> {
         self.bindings
             .iter()
@@ -1835,6 +1847,9 @@ impl<'unit> TypeContext<'unit> {
                         }
                         CheckedNominalKind::Box { referent, .. } => {
                             self.concrete_type_identity(*referent)?
+                        }
+                        CheckedNominalKind::Shared { state } => {
+                            self.concrete_type_identity(*state)?
                         }
                         CheckedNominalKind::Opaque => {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());

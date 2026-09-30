@@ -1,0 +1,12 @@
+fn claim(value: &u8) -> result: Bool writes(value) {
+  set value^ = 1_u8;
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when claim(value: value) {
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

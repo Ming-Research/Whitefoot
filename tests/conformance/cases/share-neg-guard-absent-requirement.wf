@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let empty = ring_new::<u64, 4>();
+  let queue = shared_new::<Ring<u64, 4>>(value: move empty);
+  let got = 0_u64;
+  atomic items = &queue {
+    set got = take_front(window: items);
+  }
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}

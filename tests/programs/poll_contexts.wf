@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn produce(cell: Shared<u64>) -> result: unit pure waits {
+  doc "Stores one into the cell the starter polls.";
+  atomic value = &cell {
+    set value^ = 1_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Spawns the producer and then polls the cell until it reads the producer's write. Each poll is an atomic statement the object answers at once, so the entry never suspends; it finishes only if a run of such waits lets the ready producer take the driver [WAIT-2].";
+  let cell = shared_new::<u64>(value: 0_u64);
+  let handle = shared_share::<u64>(shared: &cell);
+  spawn produce(cell: move handle);
+  let seen = 0_u64;
+  loop @poll {
+    atomic value = &cell {
+      set seen = value^;
+    }
+    if seen != 0_u64 {
+      break @poll;
+    }
+  }
+  return exit_status(code: 0_u8);
+}

@@ -946,6 +946,12 @@ pub(crate) enum CheckedNominalKind {
     },
     /// An ordinary opaque nominal has no fields or constructor.
     Opaque,
+    /// [SHARE-1] a handle to a shared object whose state has type `state`.
+    /// Like `Opaque` it has no fields or constructor; unlike it, releasing
+    /// one releases a handle, and the last release releases the state.
+    Shared {
+        state: CheckedType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1039,7 +1045,7 @@ pub(crate) fn type_has_copy_capability(
                             .flat_map(|variant| variant.fields.iter().map(|field| field.ty)),
                     ),
                     CheckedNominalKind::Opaque => {}
-                    CheckedNominalKind::Box { .. } => {
+                    CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. } => {
                         return Some(false);
                     }
                 }
@@ -2348,6 +2354,12 @@ pub(crate) enum CheckedExpression {
         carrier: NodePath,
         nominal: NominalId,
         fields: Vec<CheckedExpression>,
+        /// [TYPE-11] each type invariant of the struct over its field
+        /// operands, judged at the construction as a call's requirement is.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the field operands' pre-construction images those goals
+        /// are instantiated over, in declared field order.
+        invariant_arguments: Vec<super::goal::GoalExpression>,
     },
     ConstructEnum {
         carrier: NodePath,
@@ -2690,8 +2702,37 @@ pub(crate) enum CheckedStatement {
         backedge_drops: Vec<CheckedDrop>,
     },
     Break {
+        /// The complete `break_stmt`, the site of the type invariants an
+        /// atomic block it leaves owes there [TYPE-11].
+        node_path: NodePath,
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
+    },
+    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the block
+    /// runs with exclusive access to the state of the shared object the
+    /// target names, at a point where the guard holds [SHARE-3].
+    Atomic {
+        /// The complete `atomic_stmt`, which the waiting-call record names
+        /// [WAIT-1] and which is the statement's own site.
+        node_path: NodePath,
+        /// The reference the target place forms: a `&Shared<T>` whose handle
+        /// the statement reads when it begins.
+        target: Box<CheckedExpression>,
+        /// The binder, a reference variable naming the object's state.
+        binding: BindingId,
+        /// The state type `T`.
+        state: CheckedType,
+        /// The guard, an owned `Bool` whose footprint writes no path.
+        guard: Option<Box<CheckedExpression>>,
+        body: Vec<CheckedStatement>,
+        /// The releases the block's normal end carries for its own bindings.
+        fallthrough_drops: Vec<CheckedDrop>,
+        /// Whether the block can reach its end [FN-1].
+        continues: bool,
+        /// [TYPE-11] each type invariant of the state's struct over the
+        /// binder's referent: a fact at the block's entry and an obligation
+        /// at each edge that leaves the block.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
     },
 }
 
@@ -2818,8 +2859,8 @@ pub(crate) struct CheckedFunction {
     /// Finite optional [PAR-1] range questions planned from the complete
     /// structural footprints before entailment walks their first statements.
     pub(crate) permission_separation_queries: Vec<super::permission::PermissionSeparationQuery>,
-    /// [WAIT-1, PAR-4] whether this function waits, which of its calls wait,
-    /// and what its `mustpar` markers state.
+    /// [WAIT-1, WAIT-3] whether this function waits, which of its calls
+    /// wait, and which of its statements spawn.
     pub(crate) waiting: CheckedWaiting,
     /// Every mandatory obligation of the completed function, which the
     /// analysis answers one by one and acceptance requires discharged.
@@ -2831,12 +2872,11 @@ pub(crate) struct CheckedFunction {
     pub(crate) entailment: super::entailment::FunctionEntailment,
 }
 
-/// [WAIT-1, PAR-4] the waiting facts of one function body, in source order.
+/// [WAIT-1, WAIT-3] the waiting facts of one function body, in source order.
 ///
 /// Permission reads `calls` to deny overlap to a statement that waits, and
-/// the `mustpar` validation reads `independent` against the finished
-/// permission table. Lowering reads `waits`, `context_starts` and
-/// `context_awaits`; nothing else here reaches it.
+/// plans the joins of `context_starts`. Lowering reads `waits`,
+/// `context_starts` and `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
     /// Whether the declaration writes `waits` [WAIT-1].
@@ -2844,43 +2884,26 @@ pub(crate) struct CheckedWaiting {
     /// Every call whose selected callee waits, by call node: through a
     /// function-kind formal, the formal's `waits` decides [WAIT-1].
     pub(crate) calls: Vec<NodePath>,
-    /// Every construct a `mustpar` marks under PAR-4's first two forms, whose
-    /// statement the permission judgment must permit.
-    pub(crate) independent: Vec<CheckedMustpar>,
-    /// Every `expr_stmt` or `let_stmt` PAR-4's third form marks, which this
-    /// compiler runs as a context of its own [WAIT-2].
+    /// Every `expr_stmt` or `let_stmt` whose call is a spawn, which starts a
+    /// context [WAIT-3].
     pub(crate) context_starts: Vec<NodePath>,
-    /// Where each marked `let_stmt` of `context_starts` waits for its context:
-    /// the number of statements after it in its block at which the binding is
-    /// first used or the block may be left, or `None` when no later statement
-    /// of the block is either, so the context is joined at the block's end.
-    /// The permission analysis fills it from the same footprints [PAR-1]
-    /// judges, after the checker, so the join precedes every read, write and
-    /// release of the binding [WAIT-2].
+    /// Where each `let_stmt` of `context_starts` waits for its context: the
+    /// number of statements after it in its block at which the binding is
+    /// first named or the block may be left, or `None` when no later
+    /// statement of the block is either, so the context is joined at the
+    /// block's end, as [WAIT-3] places the join. The permission analysis
+    /// fills it after the checker.
     pub(crate) context_awaits: Vec<CheckedContextAwait>,
 }
 
-/// [WAIT-2] where one bound context start is joined.
+/// [WAIT-3] where one bound context start is joined.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedContextAwait {
-    /// The marked `let_stmt`.
+    /// The started `let_stmt`.
     pub(crate) statement: NodePath,
     /// How many statements after it the join stands before, within its
     /// block; `None` joins at the block's end.
     pub(crate) before: Option<u32>,
-}
-
-/// One `mustpar` whose statement is proved by [PAR-1] or [PAR-2].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedMustpar {
-    /// The marked statement: the `for_stmt`, or the `expr_stmt` or `let_stmt`
-    /// holding the marked call.
-    pub(crate) statement: NodePath,
-    /// The marked node a refusal cites: the `for_stmt` or the `call`.
-    pub(crate) marker: NodePath,
-    /// Whether the marker stands on a `for_stmt` [PAR-2] rather than a call
-    /// [PAR-1].
-    pub(crate) counted_loop: bool,
 }
 
 /// One [OWN-7] separation question the checker could not settle by syntax.
@@ -3286,6 +3309,23 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Break { drops, .. } => {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
+                }
+                CheckedStatement::Atomic {
+                    target,
+                    state,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => {
+                    self.types.push(*state);
+                    self.expression(target);
+                    if let Some(guard) = guard {
+                        self.expression(guard);
+                    }
+                    self.types
+                        .extend(fallthrough_drops.iter().map(|drop| drop.ty));
+                    self.statements(body);
                 }
             }
         }
