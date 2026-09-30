@@ -224,7 +224,8 @@ the pops, the lists' pushes and ranges and `PING_INLINE`, level with it on
 `PING_MBULK` and `SADD`, and behind on the commands that store: `SET`,
 `INCR`, `ZADD` and `MSET` at 0.56 to 0.79 and `HSET` at 0.92. At depth 1 it
 trailed on most commands. A profile of firn under `INCR` (`perf record -g`
-on the server for six seconds of a depth-16 run, as every profile below) put
+on the server for six seconds of a depth-16 run, as every profile below; the
+profiles were read and not kept, so their shares are not among the samples) put
 a quarter of its time in
 `hash_map_edit` and another third in acquiring the keyspace and the kernel's
 wake of a parked acquirer.
@@ -275,8 +276,7 @@ reached 1.00 of *presized* and 1.21 times *old* on `SET`, and 1.13 and 1.87 on
 keyspace's size does not reach. The library now rebuilds a map before an
 insertion once its filled and vacated buckets already number three quarters
 or more of its buckets, counting vacated buckets so that removals cannot fill
-it unseen (the `language/data-model/hash-map-storage` node, awaiting the
-owner's ruling).
+it unseen (the `language/data-model/hash-map-storage` node).
 
 ### Keys that carry their hash, stated before measuring
 
@@ -414,8 +414,11 @@ has been reduced.
 One pass of the suite with the keyed build against Redis and Dragonfly on
 two server CPUs and on one (the `quick look 2` lines of
 [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)).
-Its runs are short, so the benchmark's 250 ms clock step is 8 to 25% of a
-rate, the most at the highest rates, and only large gaps are read from it.
+Its runs are short, 300,000 requests at depth 1 and 1,500,000 at depth 16,
+so the benchmark's 250 ms clock step is a share of a rate that grows with the
+rate: at most 10% at depth 1 and 25% at depth 16 (`PING_MBULK`), 1.3 to 5.6%
+for `MSET` and less for the list ranges, and only gaps larger than a step are
+read from it.
 Here and in the third look the faster competitor is the faster of Redis and
 Dragonfly; Valkey and Garnet run only in the full suite. Against the
 criteria, `MSET` falls short in three of the four settings: 0.87 times the
@@ -501,7 +504,9 @@ depth 16 all but the pushes meet the 1.1 required, `LPUSH` at 1.00 and
 depth 1 on two CPUs firn trails Dragonfly by one clock step, 0.95, on `GET`,
 the pops, `SADD` and `ZPOPMIN` and by 0.91 on `PING_MBULK`; on one CPU it
 trails by 0.87 on `PING_INLINE`, 0.94 on `PING_MBULK` and `LPUSH` and 0.97 on
-`RPUSH`, within about a clock step but below the criterion; `SPOP` trails at
+`RPUSH`, below the criterion by about four clock steps on `PING_INLINE`, two
+on `PING_MBULK` and `LPUSH` and one on `RPUSH` (a step is about 3% of these
+runs of about eight seconds); `SPOP` trails at
 depth 1 on both, 0.87 and 0.84, with a p99 of 1.66 ms on two CPUs against
 0.93.
 

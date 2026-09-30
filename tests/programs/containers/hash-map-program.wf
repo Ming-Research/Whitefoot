@@ -317,7 +317,7 @@ fn hash_map_test_growth_expect(map: &HashMap<u64, u64, 64>, key: u64, env: &Hash
 }
 
 fn hash_map_test_growth() -> result: u64 pure {
-  doc "The growth policy, observed through capacity, length and the vacated count: a map of eight buckets holds six pairs and doubles before the seventh; once removals leave 10 of its 16 buckets vacated and one filled, it rebuilds at the same capacity when an insertion would find three quarters already used, clearing the vacated count; an insertion that reuses a vacated bucket uncounts it; and a map of three buckets fills all three before it grows.";
+  doc "The growth policy, observed through capacity, length and the vacated count: a map of eight buckets holds six pairs and doubles before the seventh; once removals leave 10 of its 16 buckets vacated and one filled, it rebuilds at the same capacity when an insertion would find three quarters already used, clearing the vacated count; an insertion that reuses a vacated bucket uncounts it; a map of three buckets fills all three before it grows; and at the mark of twelve of sixteen buckets, a map with half that mark filled doubles while one with one fewer is rebuilt at the same capacity.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
   let false_value = False();
   let env = HashMapHashEnv(hostile: false_value);
@@ -356,7 +356,29 @@ fn hash_map_test_growth() -> result: u64 pure {
   hash_map_test_growth_put(map: &small, key: 3_u64, env: &env, seen: &seen);
   hash_map_test_growth_shape(map: &small, capacity: 6_u64, length: 4_u64, vacated: 0_u64, seen: &seen);
   hash_map_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);
-  if seen.consumed != 18_u64 {
+  let at_half = hash_map_new::<u64, u64, 64>(capacity: 16_u64);
+  for (key in 0_u64..12_u64) {
+    hash_map_test_growth_put(map: &at_half, key: key, env: &env, seen: &seen);
+  }
+  for (key in 0_u64..6_u64) {
+    hash_map_test_growth_remove(map: &at_half, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &at_half, capacity: 16_u64, length: 6_u64, vacated: 6_u64, seen: &seen);
+  hash_map_test_growth_put(map: &at_half, key: 12_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &at_half, capacity: 32_u64, length: 7_u64, vacated: 0_u64, seen: &seen);
+  hash_map_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);
+  let below_half = hash_map_new::<u64, u64, 64>(capacity: 16_u64);
+  for (key in 0_u64..12_u64) {
+    hash_map_test_growth_put(map: &below_half, key: key, env: &env, seen: &seen);
+  }
+  for (key in 0_u64..7_u64) {
+    hash_map_test_growth_remove(map: &below_half, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 5_u64, vacated: 7_u64, seen: &seen);
+  hash_map_test_growth_put(map: &below_half, key: 12_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 6_u64, vacated: 0_u64, seen: &seen);
+  hash_map_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);
+  if seen.consumed != 44_u64 {
     hash_map_test_fail(seen: &seen);
   }
   return seen.failures;

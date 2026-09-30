@@ -369,7 +369,7 @@ fn run_incr(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
 }
 
 fn run_config(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "CONFIG GET parameter [parameter ...]: answers each of save, which firn never does and reports as empty, and appendonly, yes when firn keeps an append-only file, that a parameter names, spelled as the parameter spells it and appendonly first as Redis orders them; other parameters match nothing, as a parameter Redis does not know does, and patterns are not matched. CONFIG SET with an option and a value is answered as Redis answers an option it does not know, with too few arguments or an unpaired option as Redis answers them, and any other subcommand as Redis answers an unknown one.";
+  doc "CONFIG GET parameter [parameter ...]: answers each of save, which firn never does and reports as empty, and appendonly, yes when firn keeps an append-only file, that a parameter names, spelled as the first parameter naming it spells it, and appendonly first, one of the two orders Redis answers in, since Redis orders them by a hash seeded anew at each start; other parameters match nothing, as a parameter Redis does not know does, and patterns are not matched. CONFIG SET with an option and a value is answered as Redis answers an option it does not know, the option echoed whole, with too few arguments or an unpaired option as Redis answers them, and any other subcommand as Redis answers an unknown one, its name echoed to 128 bytes.";
   let sub = arg(args: args, index: 1_u64);
   let getting = name_is(input: input, start: sub.start, length: sub.length, word: &word_get[0_u64..3_u64]);
   let setting = name_is(input: input, start: sub.start, length: sub.length, word: &word_set[0_u64..3_u64]);
@@ -440,8 +440,7 @@ fn run_config(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
     }
     let option = arg(args: args, index: 2_u64);
     reply_word(client: client, word: &text_config_set[0_u64..61_u64]);
-    let shown = imin(option.length, 128_u64);
-    let echoed = reply_echoed(client: client, input: input, span: option, limit: shown);
+    let echoed = reply_echoed(client: client, input: input, span: option, limit: option.length);
     reply_word(client: client, word: &text_quote_end[0_u64..3_u64]);
     return unit;
   }

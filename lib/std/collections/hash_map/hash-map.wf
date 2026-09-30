@@ -354,47 +354,7 @@ fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap
     let grown = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: target, env: env);
   }
   let attempted = hash_map_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
-  match move attempted {
-    HashMapInserted() => {
-      return HashMapPut<K, V>::HashMapInserted();
-    }
-    HashMapReturned(reason: returned_reason, pair: returned_pair) => {
-      match returned_reason {
-        HashMapReplaced() => {
-          let replacement_reason = HashMapReturnReason::HashMapReplaced();
-          return HashMapPut<K, V>::HashMapReturned(reason: replacement_reason, pair: move returned_pair);
-        }
-        HashMapFull() => {
-          let count = map^.cells.inner.len;
-          if count >= ceiling {
-            let ceiling_reason = HashMapReturnReason::HashMapFull();
-            return HashMapPut<K, V>::HashMapReturned(reason: ceiling_reason, pair: move returned_pair);
-          }
-          let capacity = ceiling;
-          if count == 0_u64 {
-            set capacity = 1_u64;
-          } else if count <= 9223372036854775807_u64 {
-            let doubled = count + count;
-            if doubled <= ceiling {
-              set capacity = doubled;
-            }
-          }
-          let grown = hash_map_reserve::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
-          match grown {
-            Ok(value: success) => {
-              let HashMapPair(key: retry_key, value: retry_value) = move returned_pair;
-              let retried = hash_map_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move retry_key, value: move retry_value, env: env);
-              return move retried;
-            }
-            Err(error: refused) => {
-              let reserve_reason = HashMapReturnReason::HashMapFull();
-              return HashMapPut<K, V>::HashMapReturned(reason: reserve_reason, pair: move returned_pair);
-            }
-          }
-        }
-      }
-    }
-  }
+  return move attempted;
 }
 
 fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) {

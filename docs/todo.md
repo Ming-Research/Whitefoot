@@ -551,6 +551,21 @@ rarely insert at the same place.
   once. Reopen when a program must walk a shared map without holding it for
   the whole walk.
 
+- **A hash map that removes and inserts at its ceiling fills with vacated
+  buckets.** `hash_map_put` never rebuilds a map already at its ceiling
+  (`language/data-model/hash-map-storage`), so a map that churns there, a
+  bounded cache that evicts one key to admit another, keeps every bucket a
+  removal vacated until the program calls `hash_map_rehash`; once no bucket
+  is left vacant, every lookup of an absent key and every insertion probes
+  the whole backing. Rebuilding at the same capacity when few buckets are
+  filled, as below the ceiling, would clear them only for a map kept less
+  than half full and would allocate a second backing at the ceiling; an
+  in-place rehash that permutes the backing, the rebuild the node refuses
+  as the default, clears them without one. Measure a map held at its ceiling
+  under steady removal and insertion, probes per lookup of an absent key
+  over time, with and without an automatic rehash, before choosing. Reopen
+  with a program whose map churns at its ceiling.
+
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
   address-only modular additions are justified by the positive-stride target
@@ -2845,8 +2860,13 @@ condition under which it is taken up.
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
   invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `CONFIG GET` patterns, which firn does not match;
-  sorted-set scores that are not integers below 2^52, which need reading a
+  nanoseconds; `CONFIG GET` patterns, which firn does not match, and
+  `CONFIG SET`, which firn answers as an unknown option for every parameter
+  where Redis sets those it knows; a zero byte in a request's count or
+  length line, where Redis's search for the line's carriage return stops at
+  the zero byte and waits for more input, answering that the count is too big
+  only past 64 KB, while firn answers the malformed line at once; sorted-set
+  scores that are not integers below 2^52, which need reading a
   decimal to the nearest double and printing one with 17 significant digits
   exactly;
   quoted arguments in inline commands; a listening address other than the

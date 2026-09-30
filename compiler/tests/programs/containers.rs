@@ -246,10 +246,11 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     )];
     // Seventeen map backings, ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
-    // The growth case adds five backings: a map of eight buckets, its doubled
-    // and its same-capacity rebuild, and a map of three buckets and its
-    // doubled rebuild.
-    execute_container_program("hash-map", &sources, 33, false);
+    // The growth case adds nine backings: a map of eight buckets, its doubled
+    // and its same-capacity rebuild, a map of three buckets and its doubled
+    // rebuild, and two maps of sixteen buckets, one doubled and one rebuilt at
+    // the same capacity.
+    execute_container_program("hash-map", &sources, 37, false);
 }
 
 #[test]
