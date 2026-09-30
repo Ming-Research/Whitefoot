@@ -354,7 +354,7 @@ fn receive_waiting(log: u64, item: Parcel) -> result: unit pure waits {
 #[test]
 fn terminal_consumption_keeps_waiting_context_starts_and_exit_join() {
     let ordinary = waiting_consumption_source();
-    let started = ordinary.replace("    receive_waiting(", "    mustpar receive_waiting(");
+    let started = ordinary.replace("    receive_waiting(", "    spawn receive_waiting(");
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
         for (source, expected) in [(&ordinary, [1, 0, 0]), (&started, [0, 2, 1])] {
             with_mutated_ir_lowering(source.as_bytes(), overlap, |program| {
@@ -456,8 +456,8 @@ void wf_release_observed(void *owner) {
 
 #[test]
 fn terminal_consumption_waiting_owners_survive_until_context_join() {
-    let source = waiting_consumption_source()
-        .replace("    receive_waiting(", "    mustpar receive_waiting(");
+    let source =
+        waiting_consumption_source().replace("    receive_waiting(", "    spawn receive_waiting(");
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
         let module = emit_lowered(source.as_bytes(), overlap)
             .replace("@free(", "@wf_release_observed(")
