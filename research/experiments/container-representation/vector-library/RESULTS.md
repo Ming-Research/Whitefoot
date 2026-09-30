@@ -7791,3 +7791,82 @@ not select a threshold, a production route or an allocator-internal cause.
 Spare append still needs its own cost qualification before the API is complete.
 No compiler/library/specification revision or other API advances; no cumulative
 production speedup is claimed.
+
+
+#### Spare append after growth exposure: registered API cross-check
+
+Before another growth-route variant, check the spare path of the same public
+append API on the frozen complete-exposure A and malloc/copy B images. Their
+growth comparison does not establish spare-path cost: both images materialize
+the same append instance inside the batch wrapper, and growth lowering can
+change its surrounding loop and register preservation. No other API advances.
+
+Use the existing `api-measure 4194304 7` workload, ordinary preparation,
+all six scalar/wide counts 16/256/4096, both peers, both cohorts and empty-batch
+controls. The work count is the already retained duration-qualified spare
+budget, not selected from candidate timings. Keep the exact binaries, inputs,
+contracts, generator and oracles from the full-growth route comparison.
+Before measurement inspect the actual batch bodies, record A/B loop changes
+and peer call/copy paths, and verify RAW precision using each frozen image's
+existing clock check. Their existing account API checks must preserve zero
+allocation across spare append. No source, compiler or driver change is made.
+
+Run one fixed A1-B1-B2-A2 sequence, retaining all four 504-row outputs and
+direct exits, without retry, filtering, subtraction or budget changes selected
+from peer ratios. Each real sample must meet the existing 1 ms floor; existing
+10% cohort stability rules remain. For each image, a cell qualifies only if
+both launches and both cohorts separate its complete sample range below the
+median-slower peer; report both peers separately. A/B route attribution also
+requires same-direction separated ranges in both cohorts of both adjacent
+pairs, with peer drift `abs(B/A - 1)` at most 10%; overlap stays unresolved.
+A passed spare cell cannot stand in for growth, and neither a failed nor a
+passed screen selects an allocation threshold or a production representation.
+
+Transient output belongs in `.build/spare-route-crosscheck`; retain one
+combined losslessly reconstructible CSV and a compact native/command/result
+record in this Vector home, linked here, until superseded by final append
+qualification. Reuse the published full-growth replay dependencies instead of
+copying their source patches or build inventory. This answers whether the
+measured growth alternatives preserve the spare path and fills its outstanding
+RAW-clock evidence; it is not a whole-container benchmark.
+
+
+#### Spare append cross-check outcome: both frozen images pass the spare target
+
+The [complete combined CSV](ecosystem-append-spare-route-samples.csv) retains
+all 2,016 rows from the fixed A1–B1–B2–A2 sequence: 1,008 real and 1,008
+empty-batch controls. The [compact native/command record](ecosystem-append-spare-route-timing.txt)
+gives exact per-launch/cohort range checks and lossless reconstruction hashes,
+reusing the full-growth route dependencies without another source patch.
+Both positive RAW probes and all four screens exit 0. Every real sample
+exceeds 1 ms (minimum 1.332253 ms), both clocks observe 41 ns, and all
+within-run cohort spreads remain below 10%. No samples or controls are dropped.
+
+**Each image passes all six spare cells** in both launches and both cohorts
+against the median-slower peer, C++ in every group. The table shows
+**ns/append ranges across four cohort medians**, separately for each peer and
+image. These summary ranges do not replace the full sample envelopes used
+for qualification, which are retained in the record.
+
+| Element / count | WF A | WF B | Rust in A | Rust in B | C++ in A | C++ in B | Spare qualification A / B |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 8 B / 16 | 0.468–0.471 | 0.468–0.474 | 0.468–0.474 | 0.472–0.485 | 1.009–1.012 | 1.009–1.021 | Pass / Pass |
+| 8 B / 256 | 0.372–0.373 | 0.372–0.374 | 0.423–0.427 | 0.425–0.433 | 0.931–0.939 | 0.933–0.936 | Pass / Pass |
+| 8 B / 4096 | 0.319–0.323 | 0.318–0.333 | 0.836–0.867 | 0.833–0.895 | 0.926–0.950 | 0.925–0.962 | Pass / Pass |
+| 256 B / 16 | 4.508–4.568 | 4.540–4.574 | 4.545–4.578 | 4.525–4.613 | 7.128–7.155 | 7.101–7.136 | Pass / Pass |
+| 256 B / 256 | 4.277–4.289 | 4.280–4.332 | 4.308–4.322 | 4.309–4.402 | 7.073–7.121 | 7.038–7.086 | Pass / Pass |
+| 256 B / 4096 | 4.262–4.345 | 4.247–4.330 | 4.272–4.302 | 4.289–4.333 | 7.034–7.149 | 7.078–7.161 | Pass / Pass |
+
+A/B route attribution remains unresolved in every spare cell: the required
+same-direction separation is absent across the two pairs. Scalar-4096 has
+one B-slower comparison and three overlaps; the other cells overlap throughout.
+Peer drift stays within 10%, but this establishes no spare-path gain, loss or
+equivalence between A and B.
+
+Native scalar A/B frames are both 80 bytes and use the same eight-instruction
+spare loop. Wide frames are 336/352 bytes; their 224-byte constant saves happen
+once before the loop, with reloads after growth, rather than per appended value.
+The existing account checks preserve zero allocation during spare append.
+This completes the registered spare screen for these frozen research images;
+growth remains unqualified, so append as a whole and the representation remain
+unselected. No other API, compiler or specification change follows.

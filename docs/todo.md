@@ -3582,3 +3582,11 @@ condition under which it is taken up.
   Recheck Vector's spare-append comparisons with the repaired instrument before
   declaring the complete append API qualified. Do not change other families'
   benchmarks during the current Vector-only step.
+  The [frozen growth-route spare cross-check](../research/experiments/container-representation/vector-library/RESULTS.md#spare-append-after-growth-exposure-registered-api-cross-check)
+  supplies that RAW evidence for the two experimental images: all six spare
+  cells pass in both launches and both cohorts of each image, with every real
+  interval above 1 ms and zero allocations during spare append in the account
+  checks. This closes the clock question for those images, not the unfinished
+  growth path
+  or a future production implementation. Recheck the final selected append
+  implementation if its emitted code changes; keep both paths distinct.
