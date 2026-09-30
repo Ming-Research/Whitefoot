@@ -16,8 +16,43 @@ fn clear_first_nominal(part: &[Option<Slots<u64, 1>>]) -> result: u64 writes(par
   return same^.len;
 }
 
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 writes(strip) contract {
+  requires i < strip^.len;
+} {
+  doc "REF-4: a range below an indexed range element forms directly, retaining both the outer OP-4 bound and the inner range bounds.";
+  let part = &strip^[i][1_u64..3_u64];
+  let row = &strip^[i];
+  let bound = &row^[1_u64..3_u64];
+  set part^[1_u64] = 23_u64;
+  if bound^[1_u64] != 23_u64 {
+    return 0_u64;
+  }
+  let left = &strip^[i][0_u64..1_u64];
+  let right = &strip^[i][1_u64..3_u64];
+  copy_len(src: left, dst: right);
+  return strip^[i][1_u64];
+}
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) contract {
+  requires 0_u64 < dst^.len;
+} {
+  let n = src^.len;
+  set dst^[0_u64] = n;
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
   doc "REF-4: &x[lo..hi] forms a range reference under lo <= hi and hi <= x.len, re-slicing &part^[a..b] under a <= b <= part^.len is admitted, and the kind's one measure len is hi - lo.";
+  let row = array_filled::<u64, 4>(value: 9_u64);
+  let rows = array_filled::<Array<u64, 4>, 2>(value: row);
+  let strip = &rows[0_u64..2_u64];
+  let nested_value = nested(strip: strip, i: 1_u64);
+  if nested_value != 1_u64 {
+    return exit_status(code: 5_u8);
+  }
+  if strip^[0_u64][1_u64] != 9_u64 {
+    return exit_status(code: 6_u8);
+  }
   let a = array_filled::<u64, 8>(value: 1_u64);
   let part = &a[2_u64..6_u64];
   let inner = &part^[1_u64..3_u64];

@@ -3390,6 +3390,91 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        name: "range-below-range-element-out-of-bounds.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/ref4-neg-range-below-range-element-bound.wf"),
+        rule: "REF-4",
+        sentences: &[
+            "\n  residual: 5_u64 <= strip^[i].len\n",
+            "\n  disposition: Refuted\n",
+            "\n  mechanical_fix: `5_u64 <= strip^[i].len` is false where this range is formed: choose endpoints that satisfy it\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 reads(strip[i]) contract {
+  requires i < strip^.len;
+} {
+  let part = &strip^[i][1_u64..3_u64];
+  return part^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "range-below-replaced-range-element.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/ref2-neg-range-below-replaced-range-element.wf"),
+        rule: "REF-2",
+        sentences: &[
+            "\n  event: a proper prefix of the reference's path was written\n",
+            "\n  mechanical_fix: form the reference again after that event\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 writes(strip) contract {
+  requires i < strip^.len;
+} {
+  let replacement = array_filled::<u64, 4>(value: 9_u64);
+  set strip^[i] = replacement;
+  let part = &strip^[i][1_u64..3_u64];
+  return part^[0_u64];
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "writable-len-field-counted-endpoint.wf",
+        rejected: br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  for (i in 0_u64..spans[1_u64].len) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "ENT-2",
+        sentences: &[
+            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
+        ],
+        repaired: &[br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  let length = spans[1_u64].len;
+  for (i in 0_u64..length) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
 
 /// Every function a source declares, by the name its `fn` introduces.

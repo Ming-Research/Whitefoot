@@ -112,21 +112,23 @@ rarely insert at the same place.
   at most 1.1 times H1, verdicts unchanged. Reopen when check time limits an
   experiment.
 
-- **A small module check is mostly parsing the prelude again.** Checking a
-  one-function module that names no library module executes 66.9 million
-  instructions, of which parsing takes 24.0 million and finalizing 16.5
-  million, and 97 percent of the bytes parsed are the 24 prelude records
-  (4,425 bytes against the module's 105); the parser's arm selection
-  (`row_score` under `select_arm` in `compiler/src/syntax/parser/diagnostic.rs`)
-  alone takes 13.9 million, since it scans every row of a decision
-  ([library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split),
-  W1 under callgrind). Impact: a fixed cost of every check and composition,
-  now the largest part of a small module check. Change: select a decision's
-  arm through an index by the first token's terminals instead of a scan, and
-  parse the prelude, which the compiler fixes at build time, once per
-  process rather than once per check. Validate with the same callgrind
-  comparison and unchanged parse outcomes over the corpus. Reopen when check
-  time limits an experiment.
+- **Each check still re-parses the fixed prelude.** The earlier
+  [library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split)
+  found 97 percent of a one-function module's parsed bytes in the 24 prelude
+  records (4,425 bytes against the module's 105). Arm selection now indexes
+  rows by the first token's full membership, and terminal-set iteration visits
+  set bits; the
+  [matched macOS comparison](../research/experiments/modular-build-cost/RESULTS.md#parser-row-lookup-cleanup)
+  reduces a small check's paired median by 12.4 percent, but the prelude is
+  still parsed per check. Impact: fixed repeated work in every module check
+  and composition. Change: retain its parsing once per process, relocating
+  source/token identities because prelude records follow writer records,
+  and preserving explicit resource-ceiling accounting. The relocation's
+  representation and benefit remain unmeasured. Validate unchanged verdicts,
+  derivations, locations and diagnostics across different writer bundles and
+  limits, with a matched checking-cost improvement over this indexed baseline.
+  Defer the representation change from the row-lookup cleanup; reopen when
+  check time limits an experiment.
 
 - **Some ENT-3 sources read no measure operand.** S5/S6 copies, S1
   comparisons, S11 counted captures, every S7 operation row and a checked
@@ -2573,18 +2575,6 @@ condition under which it is taken up.
   its formation is the owner's choice. Validate with that call once the
   ruling admits or refuses it. Found by the recheck of PR #141's
   containing-path ruling.
-- **An EFF-5 refusal for runs below different range frames names the
-  runs.** For runs `&left^[0_u64..2_u64]` and
-  `&right^[2_u64..4_u64]` of frames `left = &values^[a..b]` and
-  `right = &values^[c..d]`, the residual quotes the complete paths and
-  the repair asks to prove that one ends at or before the other starts,
-  which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
-  The unproved pair is the frames: proving `b <= c` separates everything
-  below them. Name the first pair of differing range steps and ask for their
-  ordering. Validate with `eff5-neg-ranges-below-different-range-frames-overlap`
-  and the same-endpoint program in the item above, each pinned with a
-  repaired source that is accepted. Found by the recheck of PR #141's
-  containing-path ruling.
 - **OP-11 admits equal-depth slots under one identical array or window
   only.** The checker also admits them under containing paths that differ
   only in index steps: `swap(first: &outer^[i][k], second:
@@ -2596,30 +2586,25 @@ condition under which it is taken up.
   the checker implements or the checker requires one identical array or
   window. Validate with that swap. Found by the recheck of PR #141's
   containing-path ruling.
-- **A range below a subscript of a range reference is not formed.**
-  `&strip^[i][1_u64..3_u64]`, where `strip` is a range reference, is
-  refused as the unsupported capability `ReferenceFormation` by the v0.73
-  and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
-  any step between the reference-access step and the range. The examples
-  here use the current caret spelling; the observations used the baseline
-  `deref` spelling and have not been remeasured on v0.76. REF-4 admits the form, and
-  binding the row first, `let row = &strip^[i];` and then
-  `&row^[1_u64..3_u64]`, is accepted. Validate with the direct form
-  accepted and its separations and REF-2 invalidations matching the bound
-  form. Found by the recheck of PR #141's containing-path ruling.
-- **Member names `len`, `cap` and `head` are classified by spelling in two
-  paths.** Contract clauses and subscripted body places pick the measure
-  route by the member's name before its type is known, so a writer's field
-  named `len` fails: `requires k < s.len` over a struct field is an internal
-  `InvalidResolution`, and `spans[1_u64].len` is a TYPE-5 rejection. The
-  typed member walk already decides this for unsubscripted body places.
-  Select the measure route from the prefix type in `trailing_measure_member`'s
-  callers; validate with a readonly and a writable field named `len` in a
-  clause, below a subscript, and as a counted endpoint.
 - **Vocabulary no declaration can state.** The `len` of a range reference
   (`&[T]` is a kind, not a type) and the four effect-row part names `next`,
   `last`, `filled`, `free` remain specification vocabulary after the
   measures became declared readonly fields. Find a better home for them.
+- **An ordinary field named `len` takes the measure route in an affine
+  factor.** Changing `limits.high` to `limits.len` in
+  `inv1-neg-an-affine-atom-is-not-a-bare-local` changes its rejection from
+  INV-1 to TYPE-5, "an array, buffer, or slice place", although both fields
+  are ordinary `u64` fields and neither is an admitted affine atom. The
+  body, constant and result-clause routes now select fields by prefix type;
+  `check/control/proofs.rs` still selects a measure by spelling. This
+  rejects invalid source under the wrong rule and conceals INV-1's working
+  repair: bind the field value with a preceding `let` and use that binding.
+  Reopen when affine-factor typing or its diagnostics are next changed:
+  classify the prefix before forming a measure, keeping INV-1's narrower
+  atom domain. Validate all three field names with the INV-1 refusal and the
+  let-bound form accepted, while genuine storage measures retain their
+  ordinary subscript obligations. Found while fixing measure-named fields;
+  the remaining route is outside the body and clause changes of that repair.
 - **The storage shape declarations are inelegant.** `Array`, `Slots` and
   `Ring` are prelude opaque structs with readonly fields, but the
   omitted-capacity form, element storage and placement still live in the

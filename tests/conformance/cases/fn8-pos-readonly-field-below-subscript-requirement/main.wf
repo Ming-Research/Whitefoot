@@ -5,11 +5,11 @@ alias kinds = pkg::kinds;
 
 fn child_sum(nodes: &[Node], kids: &[u64], i: u64) -> total: u64 reads(nodes), reads(kids) contract {
   requires i < nodes^.len;
-  requires nodes^[i].count <= kids^.len;
+  requires nodes^[i].len <= kids^.len;
 } {
-  doc "The requirement names the element's readonly count as a clause (b) term; S4 establishes it at entry, and the counted endpoint over the same term discharges every child read.";
+  doc "The requirement names the element's readonly len as a clause (b) term; S4 establishes it at entry, and the lened endpoint over the same term discharges every child read.";
   let acc = 0_u64;
-  for (c in 0_u64..nodes^[i].count) {
+  for (c in 0_u64..nodes^[i].len) {
     let kid = kids^[c];
     set acc = acc +wrap kid;
   }
@@ -18,14 +18,14 @@ fn child_sum(nodes: &[Node], kids: &[u64], i: u64) -> total: u64 reads(nodes), r
 
 fn main() -> status: ExitStatus pure {
   doc "The caller discharges the instantiated requirement from its own guard over the same subscripted readonly field [FN-8].";
-  let leaf = kinds::make_node(first: 0_u64, count: 0_u64, weight: 1_u64);
+  let leaf = kinds::make_node(first: 0_u64, len: 0_u64, weight: 1_u64);
   let arena = array_filled::<Node, 3>(value: leaf);
-  set arena[1_u64] = kinds::make_node(first: 0_u64, count: 2_u64, weight: 5_u64);
+  set arena[1_u64] = kinds::make_node(first: 0_u64, len: 2_u64, weight: 5_u64);
   let kids = array_filled::<u64, 4>(value: 3_u64);
   let nodes = &arena[0_u64..3_u64];
   let children = &kids[0_u64..4_u64];
   let i = 1_u64;
-  if nodes^[i].count <= children^.len {
+  if nodes^[i].len <= children^.len {
     let total = child_sum(nodes: nodes, kids: children, i: i);
     if total == 6_u64 {
       return exit_status(code: 0_u8);

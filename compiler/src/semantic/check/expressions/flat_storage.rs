@@ -373,14 +373,14 @@ impl<'unit> Checker<'_, 'unit> {
             false,
         )?;
         let Some(measured) = measured_kind_of(place.root.ty) else {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                node,
-                SemanticIssueKind::type_mismatch(
-                    "a measured place [MSR-1]",
-                    self.types.checked_type_name(place.root.ty)?,
-                ),
-            );
+            let field = self.extend_storage_place(
+                context,
+                place,
+                &suffixes[suffixes.len() - 1..],
+                bindings,
+                options.loop_depth,
+            )?;
+            return self.check_storage_read(check_context, node, node, field, bindings, options);
         };
         if matches!(
             measure.cell(measured),
@@ -440,7 +440,7 @@ impl<'unit> Checker<'_, 'unit> {
         suffixes: &[NodeId],
         subscript: usize,
         measure: CheckedMeasure,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
         let FunctionContext { check_context, .. } = context;
@@ -486,13 +486,8 @@ impl<'unit> Checker<'_, 'unit> {
                     true,
                 )?;
                 let Some(measured) = measured_kind_of(selected_type) else {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Type5,
-                        use_node,
-                        SemanticIssueKind::type_mismatch(
-                            "a measured place [MSR-1]",
-                            self.types.checked_type_name(selected_type)?,
-                        ),
+                    return self.check_index_use(
+                        context, use_node, place, suffixes, subscript, bindings, options,
                     );
                 };
                 if matches!(measure.cell(measured), MeasureCell::Absent) {
@@ -583,13 +578,20 @@ impl<'unit> Checker<'_, 'unit> {
             options.loop_depth,
         )?;
         let Some(measured) = measured_kind_of(container.root.ty) else {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
+            let field = self.extend_storage_place(
+                context,
+                container,
+                &suffixes[suffixes.len() - 1..],
+                bindings,
+                options.loop_depth,
+            )?;
+            return self.check_storage_read(
+                check_context,
                 use_node,
-                SemanticIssueKind::type_mismatch(
-                    "a measured place [MSR-1]",
-                    self.types.checked_type_name(container.root.ty)?,
-                ),
+                place,
+                field,
+                bindings,
+                options,
             );
         };
         if matches!(measure.cell(measured), MeasureCell::Absent) {
