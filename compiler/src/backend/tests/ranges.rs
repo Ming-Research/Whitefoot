@@ -1325,7 +1325,8 @@ fn nested_range_elements_read_write_and_borrow_the_selected_inner_array() {
   requires inner < 2_u64;
 } {
   let before = rows^[outer][inner];
-  set rows^[outer][inner] = value;
+  let selected = &rows^[outer][inner..2_u64];
+  set selected^[0_u64] = value;
   let cell = &rows^[outer][inner];
   let after = cell^;
   let scaled = before *wrap 100_u64;

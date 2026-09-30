@@ -4,9 +4,117 @@ use super::{
     DecisionKind, GrammarNodeKind, LookaheadPredicate, Production, diagnostic_terminal_order,
     grammar_node, productions,
 };
-use crate::syntax::terminal::{ALL_FIXED_TERMINALS, FixedTerminal, TerminalPredicate};
+use crate::syntax::terminal::{
+    ALL_FIXED_TERMINALS, ALL_TERMINAL_PREDICATES, FixedTerminal, TerminalPredicate,
+};
 
 use super::generated::{DECISIONS, SELECT_ROWS};
+
+/// An independent linear scan of the provenance rows checks every generated
+/// lookup bucket, including absent predicates and the source-end sentinel.
+#[test]
+fn first_predicate_index_preserves_every_original_row_in_order() {
+    for decision in DECISIONS {
+        for predicate in ALL_TERMINAL_PREDICATES
+            .into_iter()
+            .map(LookaheadPredicate::Terminal)
+            .chain([LookaheadPredicate::SourceEnd])
+        {
+            let expected: Vec<_> = decision
+                .rows()
+                .iter()
+                .filter(|row| row.position(0).unwrap().predicate() == predicate)
+                .collect();
+            let actual: Vec<_> = decision.rows_starting_with(predicate).collect();
+            assert_eq!(actual, expected, "{decision:?}, {predicate:?}");
+        }
+    }
+}
+
+/// Compare the indexed selector with the original complete-row judgment on
+/// every two-token combination, every one-token tail, and source end. Real
+/// classification retains `unit`'s simultaneous fixed/literal membership.
+#[test]
+fn indexed_selection_matches_a_linear_scan_for_all_token_pairs() {
+    use crate::syntax::parser::{DecisionSelection, Work, select_arm};
+    use crate::{
+        ACTIVE_KERNEL_SPEC_HASH, ClassifiedToken, CompilerLimits, LexOutcome, SourceBundle,
+        SourceInput, TerminalOutcome, classify_terminals, lex,
+    };
+
+    let mut source = ALL_FIXED_TERMINALS
+        .into_iter()
+        .map(FixedTerminal::spelling)
+        .collect::<Vec<_>>()
+        .join(" ");
+    source.push_str(" name Type @label cvt.wrap 0_u64 \"text\" 17");
+    let limits = CompilerLimits::default();
+    let bundle = SourceBundle::with_limits(
+        &[SourceInput::new("lookahead.wf", source.as_bytes())],
+        limits.source,
+    )
+    .unwrap();
+    let LexOutcome::Complete(lexed) = lex(&bundle, limits.lexer) else {
+        panic!("terminal witnesses must lex");
+    };
+    let TerminalOutcome::Complete(classified) =
+        classify_terminals(&lexed, ACTIVE_KERNEL_SPEC_HASH, limits.terminals)
+    else {
+        panic!("terminal witnesses must classify");
+    };
+    for predicate in ALL_TERMINAL_PREDICATES {
+        assert!(
+            classified
+                .tokens()
+                .iter()
+                .any(|token| token.terminals().contains(predicate))
+        );
+    }
+
+    let check = |tokens: &[ClassifiedToken]| {
+        let accepts = |predicate: LookaheadPredicate, position: usize| match (
+            tokens.get(position),
+            predicate,
+        ) {
+            (Some(token), LookaheadPredicate::Terminal(terminal)) => {
+                token.terminals().contains(terminal)
+            }
+            (None, LookaheadPredicate::SourceEnd) => true,
+            _ => false,
+        };
+        for decision in DECISIONS {
+            let mut expected = None;
+            for row in decision.rows() {
+                if accepts(row.position(0).unwrap().predicate(), 0)
+                    && accepts(row.position(1).unwrap().predicate(), 1)
+                {
+                    match expected {
+                        Some(Ok(arm)) if arm != row.arm() => {
+                            expected = Some(Err(()));
+                            break;
+                        }
+                        Some(_) => {}
+                        None => expected = Some(Ok(row.arm())),
+                    }
+                }
+            }
+            let actual = match select_arm(decision, tokens, 0, &mut Work::new(u64::MAX)) {
+                Ok(DecisionSelection::NoMatch) => None,
+                Ok(DecisionSelection::Arm(arm)) => Some(Ok(arm)),
+                Ok(DecisionSelection::Conflict) => Some(Err(())),
+                Err(_) => panic!("generated decision must select with ample limits"),
+            };
+            assert_eq!(actual, expected, "{decision:?}, {tokens:?}");
+        }
+    };
+    check(&[]);
+    for first in classified.tokens() {
+        check(&[*first]);
+        for second in classified.tokens() {
+            check(&[*first, *second]);
+        }
+    }
+}
 
 /// Pin the complete grammar inventory, including the optional call-site
 /// `musttail` marker [GRAM-5, FN-10]. Its presence adds one decision and one

@@ -3,7 +3,7 @@
 //! This crate contains no parser and grants no syntax or semantic authority.
 //! Cargo derives its arrays from the active specification's normative EBNF.
 
-use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
+use crate::syntax::terminal::{ALL_TERMINAL_PREDICATES, FixedTerminal, TerminalPredicate};
 use crate::{ACTIVE_KERNEL_SPEC_HASH, SpecHash};
 
 mod generated {
@@ -215,6 +215,7 @@ pub struct Decision {
     arm_count: u8,
     row_start: u16,
     row_len: u16,
+    first_index: u16,
 }
 
 impl Decision {
@@ -224,8 +225,8 @@ impl Decision {
         kind: DecisionKind,
         context: DecisionContext,
         arm_count: u8,
-        row_start: u16,
-        row_len: u16,
+        rows: [u16; 2],
+        first_index: u16,
     ) -> Self {
         Self {
             node,
@@ -233,8 +234,9 @@ impl Decision {
             kind,
             context,
             arm_count,
-            row_start,
-            row_len,
+            row_start: rows[0],
+            row_len: rows[1],
+            first_index,
         }
     }
 
@@ -273,6 +275,24 @@ impl Decision {
     pub fn rows(self) -> &'static [SelectRow] {
         let start = self.row_start as usize;
         &generated::SELECT_ROWS[start..start + self.row_len as usize]
+    }
+
+    /// The original rows whose first predicate is exactly `predicate`.
+    /// Buckets preserve source-row order; the diagnostic frontier still reads
+    /// the full row sequence. A token's complete membership selects every
+    /// applicable bucket, including the `unit`/`literal` overlap.
+    pub(crate) fn rows_starting_with(
+        self,
+        predicate: LookaheadPredicate,
+    ) -> impl Iterator<Item = &'static SelectRow> {
+        let index = match predicate {
+            LookaheadPredicate::Terminal(terminal) => usize::from(terminal.index()),
+            LookaheadPredicate::SourceEnd => ALL_TERMINAL_PREDICATES.len(),
+        };
+        let [start, len] = generated::SELECT_FIRST_INDEX[usize::from(self.first_index)][index];
+        generated::SELECT_FIRST_ROWS[usize::from(start)..usize::from(start) + usize::from(len)]
+            .iter()
+            .map(|row| &generated::SELECT_ROWS[usize::from(*row)])
     }
 }
 
@@ -335,7 +355,7 @@ impl SelectAtom {
 }
 
 /// One provenance-retaining row for one source arm.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SelectRow {
     arm: u8,
     first: u16,

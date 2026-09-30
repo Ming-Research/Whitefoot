@@ -196,6 +196,49 @@ and 15,243,647,766 under B (this branch's source, the same program with
 A program that names almost every host module keeps the host cost, as D3
 predicts. The chain's times are W3 and W4 above.
 
+## Small parser cleanup: prospective criterion
+
+The next bounded cleanup keeps the generated grammar and the parser's ordinary
+judgments, indexes SELECT2 rows by their first predicate, and enumerates a token's
+terminal membership by its set bits. The diagnostic frontier retains the full
+source-ordered rows. A formed token may match both `unit` and `literal`; source
+end has its own bucket. Neither optimization supplies a syntax or semantic fact.
+
+Before measuring the candidate, the selection criterion is: every indexed
+bucket equals an independent scan of the original rows; ample-limit source
+verdicts, derivations and diagnostics remain unchanged; and seven alternating
+native comparisons improve the median small-module check by at least 10 percent.
+An identical-image comparison must first stay within three percent at its median,
+and `wfgrep` checking must not
+regress beyond three percent or the identical-image variation, whichever is
+larger. Record compiler construction separately from compiler execution. The
+host here is macOS, so wall time replaces the earlier Linux callgrind observation
+and does not establish the same instruction counts.
+
+This cleanup leaves repeated prelude parsing open. Prelude records follow the
+writer records in a bundle, so retaining their derivations across bundles needs
+source and token identity relocation plus explicit resource-ceiling accounting;
+that is a separate representation change, not this row-lookup optimization.
+
+The [matched macOS result](../../experiments/modular-build-cost/RESULTS.md#parser-row-lookup-cleanup)
+meets this criterion: the small module's median paired cost is 0.8762 of
+baseline, composition is 0.8312, and `wfgrep` is 0.9964 (no measurable change).
+All three identical-image control medians stayed within three percent.
+The generated first-predicate buckets preserve the original rows, and the
+selector's result equals the independent full-row judgment over every formed
+terminal pair, every one-token tail and source end. The full row sequence
+continues to supply the diagnostic frontier. Prelude re-parsing and the
+per-function library costs below remain open.
+
+Three intentionally incorrect implementations each failed their intended
+native Rust test with exit 101: omitting the source-end bucket failed the
+row-preservation comparison at the program's end arm; taking only the first
+token membership failed selection on `unit`; and returning only the first
+set bit failed the complete terminal-set traversal. The original sources
+were restored after each probe. These controls distinguish a missing index
+row, lost overlapping membership and incomplete iteration from the correct
+implementation.
+
 ## The checker's per-function costs after the split
 
 The owner kept `std::process`'s layout and chose to fix the checker's nominal

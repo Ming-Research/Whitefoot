@@ -910,7 +910,10 @@ condition remain in the investigation and TODO.
 The qualification protocol was recorded in the integration revision
 `7ec0a8b81c01fdac1c510d1b0e95486a6850d7ea` before these observations. Its
 source includes main `f5024250fd596b9b41e8e1b69a8366582587d756`, specification
-v0.82 and the current typed-record compatibility changes. The baseline exports
+v0.82 and the typed-record compatibility changes. These observations apply
+only to that revision pair. The later integration of main
+`4459df880b04a7e87f46398969e1382b52637af0` adds parser lookup improvements
+and diagnostic repairs and has not received this cost qualification. The baseline exports
 that main and receives only the same safe runtime SHA implementation and its
 locked dependencies; no product adapter is added to it. The three-file baseline
 patch has SHA-256 digest
@@ -1048,3 +1051,106 @@ output directory independent and verify artifact identity before observation.
 - ThinLTO planning still runs at each link. Module-product timings measure
   compilation and construction, with native output equality checked separately;
   they do not measure the generated programs' runtime performance.
+
+## Parser row lookup cleanup
+
+Measured on 2026-09-30 UTC on macOS 26.6.2, arm64 MacBookPro18,3 (eight
+physical and logical CPUs), Rust 1.98.1, with optimized `gate` binaries.
+The baseline is `7edc86591e12b810665d8e60f71da013c1a7025f`; the candidate is
+`d003cdeee5f818a9ed56304fc39e6f1be0bfb51d`. The candidate adds a generated
+first-predicate index for SELECT2 rows and iterates terminal sets through
+their set bits. This comparison measures their combined effect, not each
+change separately. The
+[prospective criterion](../../investigations/library-modules/DESIGN.md#small-parser-cleanup-prospective-criterion)
+was committed before this run.
+
+| Check | Baseline median ms | Candidate median ms | Median paired candidate / baseline | Same-image median ratio |
+|---|---:|---:|---:|---:|
+| One-function module | 10.591 | 9.410 | 0.8762 | 0.9939 |
+| Two-module composition | 22.366 | 18.591 | 0.8312 | 0.9977 |
+| `wfgrep` | 1408.124 | 1399.948 | 0.9964 | 1.0079 |
+
+The criterion is met: the one-function module's paired median improves by
+12.4 percent, above the required 10 percent, and `wfgrep` does not regress.
+The composition improves by 16.9 percent. No measurable `wfgrep` benefit is
+established. The same-image median ratios are all within three percent;
+the maximum absolute same-image pair variation is 17.5 percent for the
+module, 3.1 percent for composition and 4.2 percent for `wfgrep`. This is
+one shared host and seven pairs, so the result does not establish other
+hosts' costs or reproduce the earlier Linux instruction counts.
+
+### Protocol and reproduction inputs
+
+Build each revision with `make -C compiler build`. Construction is excluded
+from the check times: the matched incremental Cargo builds took 4.47 seconds
+(baseline) and 4.27 seconds (candidate). The measured binary SHA-256 digests
+were `3f1868b4e8134f72c1f5718f4b17f9785ac7b56ce344689badb4f90dbfe250c8`
+and `85bd1ed6f275ab3ea792d18d7ba75c647a778a1bc4cbba21a15549b4a092d349`,
+respectively. Build/profile/platform changes may change those bytes.
+
+Create the following five UTF-8 files under a scratch fixture directory,
+each with a final newline; no library module is named:
+
+```text
+# modules.wfg
+pkg::a: [];
+pkg: [pkg::a];
+
+entry main = pkg::main;
+
+# a/module.wfm
+public fn one() -> result: u64 pure doc "Returns one.";
+
+# a/body.wf
+fn one() -> result: u64 pure {
+  return 1_u64;
+}
+
+# module.wfm
+public fn main() -> result: u64 pure doc "Returns the module result.";
+
+# main.wf
+fn main() -> result: u64 pure {
+  let value = pkg::a::one();
+  return value;
+}
+```
+
+Invoke each compiler with the same working directory (the candidate checkout)
+and these arguments, without a cache or report:
+
+```sh
+<compiler> --graph <fixture>/modules.wfg --check-module pkg::a
+<compiler> --graph <fixture>/modules.wfg --entry main --check
+<compiler> --check tests/programs/wfgrep.wf
+```
+
+Run the measurement under `.github/run-check.pl` to serialize it with other
+heavy commands. For each workload, warm both sides once, then run seven
+pairs, left first on even pairs and right first on odd pairs. Measure an
+entire side with a monotonic wall clock: 25 successive subprocesses for
+the module and composition, one for `wfgrep`, divided by the repetition
+count. Require exit zero and byte-identical stdout/stderr both within a
+batch and across its paired sides. First do all workloads with the baseline
+on both sides and require every median paired ratio within three percent of
+one; only then compare baseline and candidate. The table's paired ratios
+are medians of the seven ratios, not ratios of the two medians. The
+`wfgrep` regression limit is the larger of three percent and its control's
+maximum absolute pair variation (4.2 percent here).
+
+Before timing, both binaries rejected this source with exit one and identical
+JSON diagnostics (`--diagnostic-format json --check <source>`):
+
+```whitefoot
+fn broken() -> result: unit pure {
+  let value = 0_u64
+  return unit;
+}
+```
+
+The [raw samples](parser-lookup-samples.csv) retain 84 timed batches,
+representing 1,428 process invocations; warmups and the rejection comparison
+are excluded. They serve this checking-cost result in the existing modular
+build experiment, and may be removed if a replacement makes this dated
+comparison no longer useful. The one-shot timer stays outside the repository;
+the protocol and complete inputs above define reproduction.

@@ -2928,7 +2928,8 @@ pub(crate) struct CheckedCallSeparation {
     /// The window a position beside one of its parts reads `r.len` of
     /// [WIN-2]: the place both paths reach above the divergence.
     pub(crate) window: Option<super::places::ResolvedPlace>,
-    /// The two substituted paths as the diagnostic renders them.
+    /// The substituted paths as the diagnostic renders them, ending at the
+    /// first differing range frames when their separation is the question.
     pub(crate) left_spelling: String,
     pub(crate) right_spelling: String,
     /// Whether one reference argument supplies both paths [EFF-5], so that

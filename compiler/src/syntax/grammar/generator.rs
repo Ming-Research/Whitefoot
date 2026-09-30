@@ -422,7 +422,7 @@ fn emit(
     let mut out = String::new();
     out.push_str(&format!("// Generated from the grammar in {path}.\n"));
     out.push_str(
-        "use crate::syntax::grammar::{\n    Decision, DecisionContext, DecisionKind, GrammarNode, GrammarNodeId, GrammarNodeKind,\n    LookaheadPredicate, NamePredicate, RuleOwner, SelectAtom, SelectRow,\n};\nuse crate::syntax::terminal::{FixedTerminal, TerminalPredicate};\n\n",
+        "use crate::syntax::grammar::{\n    Decision, DecisionContext, DecisionKind, GrammarNode, GrammarNodeId, GrammarNodeKind,\n    LookaheadPredicate, NamePredicate, RuleOwner, SelectAtom, SelectRow,\n};\nuse crate::syntax::terminal::{ALL_TERMINAL_PREDICATES, FixedTerminal, TerminalPredicate};\n\n",
     );
     out.push_str("/// One normative production of the active specification grammar.\n///\n/// The declaration order is the dense compiler-local index for the current\n/// grammar. Retired productions leave the inventory; these indices are never\n/// serialized. Specification-definition order is carried by `PRODUCTIONS`.\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum Production {\n");
     for name in &enum_names {
@@ -507,9 +507,12 @@ fn emit(
     let mut atom_index: BTreeMap<Tok, usize> = BTreeMap::new();
     let mut rows: Vec<String> = Vec::new();
     let mut records: Vec<String> = Vec::new();
+    let mut first_rows: Vec<usize> = Vec::new();
+    let mut first_ranges: Vec<(usize, Pred, usize, usize)> = Vec::new();
     let mut start = 0_usize;
-    for decision in decisions {
-        for row in &decision.rows {
+    for (index, decision) in decisions.iter().enumerate() {
+        let mut buckets: BTreeMap<Pred, Vec<usize>> = BTreeMap::new();
+        for (offset, row) in decision.rows.iter().enumerate() {
             let mut resolve = |token: Tok| -> usize {
                 *atom_index.entry(token).or_insert_with(|| {
                     atoms.push(token);
@@ -519,9 +522,17 @@ fn emit(
             let first = resolve(row.first);
             let second = resolve(row.second);
             rows.push(format!("SelectRow::new({}, {first}, {second})", row.arm));
+            buckets
+                .entry(row.first.pred)
+                .or_default()
+                .push(start + offset);
+        }
+        for (predicate, bucket) in buckets {
+            first_ranges.push((index, predicate, first_rows.len(), bucket.len()));
+            first_rows.extend(bucket);
         }
         records.push(format!(
-            "Decision::new(GrammarNodeId::new({}), Production::{}, {}, {}, {}, {start}, {})",
+            "Decision::new(GrammarNodeId::new({}), Production::{}, {}, {}, {}, [{start}, {}], {index})",
             decision.node,
             camel(&names[decision.production]),
             decision.kind,
@@ -540,6 +551,27 @@ fn emit(
     static_table(&mut out, "SELECT_ROWS", "SelectRow", &rows, |row| {
         row.clone()
     });
+
+    static_table(&mut out, "SELECT_FIRST_ROWS", "u16", &first_rows, |row| {
+        row.to_string()
+    });
+    out.push_str(&format!(
+        "pub(super) static SELECT_FIRST_INDEX: [[[u16; 2]; ALL_TERMINAL_PREDICATES.len() + 1]; {}] = {{\n    let mut ranges = [[[0; 2]; ALL_TERMINAL_PREDICATES.len() + 1]; {}];\n",
+        decisions.len(), decisions.len()
+    ));
+    for (decision, predicate, start, len) in first_ranges {
+        let index = match predicate {
+            Pred::SourceEnd => "ALL_TERMINAL_PREDICATES.len()".to_string(),
+            Pred::Fixed(name) => {
+                format!("TerminalPredicate::Fixed(FixedTerminal::{name}).index() as usize")
+            }
+            _ => format!("TerminalPredicate::{}.index() as usize", predicate.bare()),
+        };
+        out.push_str(&format!(
+            "    ranges[{decision}][{index}] = [{start}, {len}];\n"
+        ));
+    }
+    out.push_str("    ranges\n};\n\n");
 
     let mut order: Vec<Pred> = Vec::new();
     for pred in &terminal_arena {

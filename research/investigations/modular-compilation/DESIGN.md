@@ -1435,13 +1435,14 @@ and keep MOD-8's interface-only dependency boundary. Lowered products have
 their additional target, physical representation, call-selection and permission
 inputs; a source module verdict alone never authorizes their reuse.
 
-This keeps one checked-model consumer path and permits incremental migration
-through ordinary misses. The alternative, giving every semantic and lowering
-consumer a view over several module-local inventories, would spread compound
-identity lookup through places, proofs, physical specialization and emission
-before any consumer needs that API. Importing costs translation and retained
-storage; the qualification above must show that avoided body/translation work
-justifies it. The candidate does not claim that parsing/resolving the current
+This keeps every checked handle relative to one current composition inventory;
+missing products take the ordinary computation path. The alternative, sharing
+module-owned inventories through their consumers, keeps each handle relative
+to its owning module and makes lookups resolve that owner as well as its local
+ordinal. That may remove reconstruction while adding lookup and view-selection
+cost; neither effect is measured for this alternative. Importing costs
+translation and retained storage, and the qualification above must show that
+avoided body/translation work justifies it. The candidate does not claim that parsing/resolving the current
 composition or global judgment scheduling becomes incremental in this step.
 
 The product encoding is compiler-private and follows the concrete Rust data
@@ -2030,8 +2031,8 @@ The next substantial question is the import boundary chosen in
 checked result can remain shared through composition instead of rebuilding
 its full function metadata in each consumer inventory. Investigate that
 boundary before selecting another implementation. Expected benefit is less
-identity/input reconstruction; cost is a wider change to checked-model and
-composition consumers, with an unproven effect on ordinary lookup cost.
+identity/input reconstruction; the open tradeoff is its effect on ordinary
+lookup cost and memory while every handle keeps an unambiguous inventory owner.
 Any candidate must preserve complete consumed-input equality, speculative
 rollback and current composition/target judgments, and face the same paired
 cost, memory, history and approximately 5% matched-main criteria. This is an
@@ -2051,9 +2052,10 @@ and no new encoder is selected here.
 
 ### Qualification after current-main integration
 
-The earlier qualification remains evidence for its recorded compiler and
-main revisions, not for a compiler carrying the newer specification and
-checked-model changes. Integrate main, extend the exhaustive typed records
+The qualifications remain evidence for their recorded compiler and main
+revisions, not for a compiler carrying newer semantic or parser changes. The
+five-pair integrated-model observations apply to `7ec0a8b` against main
+`f502425`; the subsequent main `4459df88` integration is unmeasured. Integrate main, extend the exhaustive typed records
 and preserve fresh composition checking before revisiting the import boundary.
 In particular, retained waiting/spawn data, Segments operations, implicit
 struct invariants and allocation diagnostic coordinates must follow the

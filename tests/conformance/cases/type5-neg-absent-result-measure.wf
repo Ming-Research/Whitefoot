@@ -1,0 +1,10 @@
+fn make() -> result: Array<u8, 2> pure contract {
+  ensures result.cap == 2_u64;
+} {
+  let made = array_filled::<u8, 2>(value: 0_u8);
+  return made;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
