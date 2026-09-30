@@ -1591,7 +1591,9 @@ benefit is assumed. Small positive-span calls remain a separate competing cost.
 
 #### Prospective guarded aggregate-opening trial
 
-The next isolated factor addresses the empty-transfer mechanism above. It
+This criterion was recorded before construction and timing. The completed
+refusal is recorded below; the original criterion is retained in the evidence
+archive. The registered isolated factor addresses the empty-transfer mechanism above. It
 keeps exactly `open && Slots && is_stored_aggregate`, adds the original
 `len > index` zero-trip guard around the stride-span move, and statically
 omits RunShift's address/extent/copy emission when the existing selected-target
@@ -1607,7 +1609,8 @@ are byte-identical to the preceding screen. Preserve its adverse raw samples
 and candidate image. Scratch preparation is under
 `/private/tmp/whitefoot-slots-guarded-opening-8ac7bw5m`; `IDENTITIES.json`,
 `source-freeze.json` and both the full candidate and incremental delta patches
-pin the proposal before construction. No native or execution result is asserted.
+pin the proposal before construction. Those preparation records asserted no
+native or execution result; subsequent observations are recorded below.
 
 Before execution, require the selected-cleanup baseline module/object to
 reproduce. Empty-suffix paths in fixed/runtime wrappers and both Ordered leaf
@@ -1639,3 +1642,156 @@ gain/loss cell, all adverse medians and both peer/target results. Overlap remain
 inconclusive. A remaining churn loss may expose small positive-transfer or
 caller-layout cost; it does not authorize a tuned size threshold or another
 timing run. This proposal remains pending in the existing amendment.
+
+
+#### Guarded aggregate opening: full matrix still refuses selection
+
+The guarded candidate is refused under the unchanged full-matrix criterion:
+Ordered has three qualified useful losses despite five gains, and neither
+Vector replicate has a qualified useful gain. Removing empty-suffix shift
+calls and zero-stride shift work passes the native screen, but does not
+establish acceptable whole-program cost. The candidate stays archived research
+source; no production lowering, representation or language rule is selected.
+The existing amendment records this proposed disposition without an owner ruling.
+
+The [evidence archive](guarded-aggregate-opening-evidence.tar.gz) retains all
+eight raw CSVs, statuses, original registration, input/image hashes, complete
+cell and peer tables, native inventories, correctness observations and both
+original and repaired readers. Its SHA-256 is
+`de7769b3caada3e0ba019afc9b725e374ccec95cb62e3da037cd5f3f60300b19`.
+`INDEX.json` distinguishes original identities from hashes of redacted public
+records; raw CSV bytes are unchanged. Preparation records retain their original
+then-unexecuted flags. The [candidate replay](guarded-aggregate-opening-candidate.patch),
+SHA-256 `1da31b073190daa51208d989af1496f2e539d7c428db13f0b724ab4b5c80104f`,
+applies with `git apply --unidiff-zero` to the pinned
+`7abd6bb34746b7b983b83103c68ee429b24859bb` source plus the previously recorded
+selected cleanup/test overlay. An isolated replay matches all four measured
+candidate compiler files byte for byte; the patch is not production code.
+
+The frozen baseline CLI is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`;
+the guarded CLI is
+`68ecfbbe1f7a29e0320199a6cc1a1d2d893fc68a0ac21cffd1be3412ac116517`.
+Both families retain unchanged sources, native peers, work and link order.
+This is evidence for that compiler lineage, not a current-main comparison.
+
+The screen reproduces the selected-cleanup baseline module/object. Guarded
+positive aggregate openings retain one complete-stride overlap-safe transfer;
+empty suffixes bypass that transfer and zero-stride shifts emit no transfer or
+shift address/extent. Closing paths, scalar/Box/Ring controls and selected
+cleanup bodies remain unchanged. The complete inventories retain all changed
+callers and competing costs. In particular, scalar Ordered insertion now
+captures an additional 32-byte returned-entry snapshot before the zero-trip
+guard, and its frame grows 1,136→1,168 bytes. Small positive spans still call
+`memmove(32 * (len - index))`, while the baseline uses inline register copies.
+Scalar removal retains a 176-byte frame versus 160 bytes in the baseline,
+although its guarded leaf path removes the prior early stores/reload.
+Vector insert/grow-insert/work frames are 272→304, 304→320 and 688→704 bytes.
+These are native observations, not elapsed-cost allocations.
+
+Construction and correctness are separate from timing. CLI construction takes
+62.13 s and other native-screen construction 11.14 s, with 270 direct zero
+statuses. The library test build takes 103.02 s; its three focused native
+control tests pass. The later 52 native construction and 67 execution commands
+match all expected statuses: 97 zero and 22 intentional failure exits.
+Normal/retained/structural observations, both full ecosystem oracles, owning
+and chronology observations, and byte-equal 294-row Vector / 210-row Ordered
+accounting ledgers pass. Full source/fixture and image identities remain pinned.
+Passing correctness does not remove the adverse timing result.
+
+One continuous outer guard covers all eight fixed commands: Vector baseline
+first→candidate first→candidate second→baseline second, then Ordered baseline
+cohort 0→candidate 0→candidate 1→baseline 1. All direct exits are 0, with empty
+measurement stderr and no per-command overrun. Native execution totals
+637.406 s; the outer guard exits 0 in 638.49 s. All 21,504 rows have exact
+schemas/keys and matched non-time work/checksums; all 656 input pins and 2,394
+source pins are unchanged. Exact-key checks occur after the complete run.
+No timing is repeated, pooled, renumbered, removed or normalized by peer drift.
+
+Vector ranks every recorded sample 0–6, retaining six unranked suffix-zero
+controls. The two invocation pairs remain separate: a useful gain must hold
+in both and a qualified loss in either vetoes selection. Ordered retains
+sample 0 as the registered warmup and ranks samples 1–5. Qualification still
+requires every paired WF sample at least 1 ms, at most 10% cohort median-ratio
+spread (`max/min - 1`), and disjoint ranges in the same direction in both
+cohorts. Overlap remains inconclusive evidence of a difference.
+
+| Useful matrix | Gain | Loss | Overlap | Duration/spread inconclusive |
+|---|---:|---:|---:|---:|
+| Vector first pair | 0 | 0 | 34 | 2 |
+| Vector second pair | 0 | 0 | 33 | 3 |
+| Vector both-pair disposition | 0 | 0 | 33 | 3 |
+| Ordered | 5 | 3 | 21 | 1 |
+
+Every Ordered cell follows. Entries are candidate/baseline cohort median
+ratios, followed by G (qualified gain), L (qualified loss), O (overlap) or
+I (duration/spread inconclusive). The archive retains exact ranges, medians,
+minimum durations, qualification reasons and all Vector cells/replicates.
+
+| Pair bytes | Path | Count 8 | Count 256 | Count 4096 |
+|---:|---|---:|---:|---:|
+| 16 | build-cleanup | 0.9623 / 1.0235 O | 1.1035 / 1.0615 L | 1.0303 / 1.0294 O |
+| 16 | hit-miss | 0.9102 / 0.9328 G | 0.9280 / 0.9592 G | 0.9804 / 0.9987 O |
+| 16 | range-16 | 1.0143 / 1.0112 O | 1.0268 / 0.9800 O | 0.9751 / 1.0000 O |
+| 16 | replace-only | 0.9188 / 0.9941 O | 0.9784 / 0.9753 O | 0.9908 / 1.0119 O |
+| 16 | replace-edit-remove-insert | 1.0721 / 1.0646 L | 1.0297 / 1.0766 L | 0.9986 / 1.0230 O |
+| 264 | build-cleanup | 1.0016 / 1.0100 O | 0.9439 / 0.9442 G | 0.9245 / 0.9372 G |
+| 264 | hit-miss | 0.9995 / 1.0305 O | 1.0662 / 1.3265 I | 0.9700 / 0.9391 G |
+| 264 | range-16 | 1.0038 / 0.9956 O | 0.9869 / 0.9882 O | 1.0169 / 0.9906 O |
+| 264 | replace-only | 1.0083 / 0.9991 O | 0.9903 / 0.9914 O | 1.0044 / 0.9587 O |
+| 264 | replace-edit-remove-insert | 0.9911 / 0.9940 O | 1.0398 / 0.9845 O | 1.0048 / 0.9677 O |
+
+The scalar build-cleanup/256 loss is +10.35%/+6.15%; scalar
+replace-edit-remove-insert/8 is +7.21%/+6.46%; and the same path/256 is
++2.97%/+7.66%, from raw cohort medians. Their WF ranges are respectively
+8.573–9.085→9.416–9.937 / 8.648–8.892→9.134–9.486 ms;
+13.073–13.507→14.013–14.623 / 13.318–13.749→14.131–14.587 ms; and
+43.360–44.043→44.808–45.104 / 43.455–43.727→46.058–47.996 ms.
+All six native peers overlap at build-cleanup/256 and churn/8; at churn/256,
+five overlap and C++ separates favorably while WF regresses. The earlier
+unguarded build-cleanup/8 loss becomes overlap, while churn/8 remains a loss;
+the guarded result adds build-cleanup/256 and churn/256 losses. Prior wide
+build gains at 256/4096 remain gains; the prior wide range-16/8 gain overlaps.
+
+Three of the five gains are hit-miss cells. Both lookup bodies and both
+Ordered trace bodies compare unchanged under the recorded object-body
+normalization. Setup, called insertions, code placement and whole-trace effects
+remain possible contributors. The five gains do not measure isolated
+`memmove` cost. Native drift is retained independently: useful Ordered cohort
+median ratios span source-C 0.944–1.046, direct-C 0.941–1.035, AVL-C
+0.954–1.039, Rust 0.945–1.042, C++ 0.859–1.175 and Abseil 0.924–1.080.
+C++ scalar churn/256 separates favorably; direct-C wide build/8 and C++ wide
+churn/4096 separate adversely. None is subtracted from WF results. The full
+684-row native drift and 588-row same-image Vector drift tables remain in
+the archive, including unfavorable or unstable controls.
+
+Useful standard comparisons and slower-standard target counts are
+pass/deficit/inconclusive; six additional Vector controls remain unranked.
+
+| Invocation | Against Rust | Against C++ | Slower-standard target |
+|---|---:|---:|---:|
+| Vector baseline first | 0/17/19 | 16/2/18 | 16/2/18 |
+| Vector candidate first | 0/17/19 | 18/4/14 | 18/4/14 |
+| Vector baseline second | 0/17/19 | 18/5/13 | 18/5/13 |
+| Vector candidate second | 0/14/22 | 19/2/15 | 19/2/15 |
+| Ordered baseline | 6/21/3 | 5/22/3 | 7/19/4 |
+| Ordered candidate | 7/19/4 | 4/21/5 | 8/17/5 |
+
+The original analysis reader incorrectly required empty stderr from the
+maintained `--targets` reducer, which emits two totals lines. Its preserved
+replacement accepts only those exact lines, with counts derived independently
+from all returned target rows, and rejects unexpected warnings, wrong counts
+and wrong family names. Twelve sensitive checks retain the expected successes
+and failures; raw files, statuses, matrix and selection criteria are unchanged.
+The repaired reader hashes to
+`6b9eb370c83269b6f24d76e26c1e6ad345552d6901ad65b52e206d065ac9c071`;
+the unmodified maintained reducer hashes to
+`f9669548af494ccd27285c78b04fcc0e0ddffaa88a574e5733e593dbd70dfd59`.
+
+CSV replay follows the archive's `REPLAY.md`: set only the copied plan's
+reducer path to its extracted frozen reducer and run `analyze-complete.py`.
+That replay exits 0 and reproduces all five complete comparison CSVs byte for
+byte. Both peers, all useful cells, unranked controls and adverse replicates
+remain visible. The no-loss criterion refuses the guarded policy and the
+slower-standard target remains incomplete; no threshold tuning or additional
+timing follows this refusal.

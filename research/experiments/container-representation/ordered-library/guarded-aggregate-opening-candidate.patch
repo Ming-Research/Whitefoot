@@ -1,0 +1,583 @@
+--- a/compiler/src/backend/emitter/array.rs
++++ b/compiler/src/backend/emitter/array.rs
+@@ -91 +91 @@
+-    fn copy_element_range(
++    pub(super) fn copy_element_range(
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -670,2 +670,2 @@
+-/// The label one shift leaves its block at: the loop is three LLVM blocks, so
+-/// a later phi in the same IR block must name the block the walk fell out of.
++/// The label one shift leaves its block at. A later phi in the same IR block
++/// names this exit for both the contiguous opening and the logical walk.
+@@ -753,4 +753,4 @@
+-    /// The walk runs in the direction that never overwrites a slot it has
+-    /// not yet read, and every slot it touches is reached through the
+-    /// window's own coordinate system, so one walk serves a `Slots` and a
+-    /// wrapped `Ring` alike [WIN-1].
++    /// An opening Slots shift over inline aggregate storage uses one
++    /// overlapping range transfer. Every other shift keeps the common walk,
++    /// whose direction never overwrites a slot it has not yet read and whose
++    /// coordinates serve both Slots and wrapped Ring [WIN-1].
+@@ -780,0 +781,6 @@
++        if open
++            && shape.shape == IrWindowShape::Slots
++            && is_stored_aggregate(self.program, element)?
++        {
++            return self.emit_aggregate_slots_opening(result, run_type, run, index, shape);
++        }
+@@ -848,0 +855,61 @@
++    }
++
++    /// Move a nonempty physical suffix one stride upward. Preserve the
++    /// common walk's zero-trip guard and omit a zero-stride shift entirely.
++    /// Padding is transferred as bytes, without a callback, allocation or
++    /// release. RunInsert places the owner after the one length update.
++    fn emit_aggregate_slots_opening(
++        &mut self,
++        result: IrValueId,
++        run_type: IrType,
++        run: IrValueId,
++        index: IrValueId,
++        shape: RunShape,
++    ) -> Result<(), BackendFailure> {
++        let pre = run_shift_pre_label(result);
++        let done = run_shift_done_label(result);
++        writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(pre);
++        let length = self.run_word(run_type, run, shape.length_field())?;
++        let element = shape.element_type(self.program)?;
++        if !crate::target::element_has_zero_stride(self.target, self.program, element)
++            .map_err(BackendFailure::TargetLayout)?
++        {
++            let index = self.value_name(index);
++            let body = run_shift_body_label(result);
++            let more = self.next_temporary()?;
++            writeln!(self.output, "  %{more} = icmp ugt i64 {length}, {index}\n  br i1 %{more}, label %{body}, label %{done}")
++                .map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(body);
++            let next = self.next_temporary()?;
++            let count = self.next_temporary()?;
++            writeln!(
++                self.output,
++                "  %{next} = add i64 {index}, 1\n  %{count} = sub i64 {length}, {index}"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            // OP-10 bounds the complete source and destination by cap.
++            // Only a positive physical span forms these shift addresses.
++            let source = self.element_pointer(result, shape, run_type, run, &index)?;
++            let destination =
++                self.element_pointer(result, shape, run_type, run, &format!("%{next}"))?;
++            let element_llvm = self.output.type_name(self.program, element)?;
++            self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
++            self.copy_element_range(
++                &element_llvm,
++                &format!("%{source}"),
++                &format!("%{destination}"),
++                &format!("%{count}"),
++            )?;
++        }
++        writeln!(self.output, "  br label %{done}").map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(done);
++        let moved = self.next_temporary()?;
++        writeln!(self.output, "  %{moved} = add i64 {length}, 1")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
++        let length_address =
++            self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
++        writeln!(self.output, "  store i64 %{moved}, ptr {length_address}")
++            .map_err(|_| BackendFailure::TextEmission)?;
++        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+--- a/compiler/src/backend/tests/windows.rs
++++ b/compiler/src/backend/tests/windows.rs
+@@ -43,0 +44,479 @@
++
++/// Eligibility is representation based: only opening Slots shifts over
++/// stored aggregates use a range transfer. Scalar and Box-pointer elements,
++/// every closing shift and both Ring capacities retain their ordinary walk.
++#[test]
++fn aggregate_openings_leave_other_window_shifts_on_the_common_walk() {
++    for element in ["u64", "Box<u64>", "Record"] {
++        for shape in ["Slots", "Ring"] {
++            for capacity in ["", ", 8"] {
++                let (ty, window) = if capacity.is_empty() {
++                    (format!("Box<{shape}<{element}>>"), "values^.inner")
++                } else {
++                    (format!("{shape}<{element}{capacity}>"), "values^")
++                };
++                let owned = if element == "u64" {
++                    "value"
++                } else {
++                    "move value"
++                };
++                let source = format!(
++                    "struct Record {{\n  marker: u8;\n  owner: Box<u64>;\n  tail: u16;\n}}\n\nfn insert(values: &{ty}, index: u64, value: {element}) -> result: unit writes(values) contract {{\n  requires index <= {window}.len;\n  requires {window}.len < {window}.cap;\n}} {{\n  insert_at(window: &{window}, index: index, value: {owned});\n  return unit;\n}}\n\nfn remove(values: &{ty}, index: u64) -> result: {element} writes(values) contract {{\n  requires index < {window}.len;\n}} {{\n  let value = remove_at(window: &{window}, index: index);\n  return {owned};\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
++                );
++                with_ir(source.as_bytes(), |program| {
++                    for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
++                        let llvm = emit_llvm_with_window_address_facts(
++                            program,
++                            TargetLayout::host().expect("supported target"),
++                            facts,
++                        )
++                        .expect("both shift shapes qualify with either fact choice")
++                        .into_string();
++                        for row in ["insert_at", "remove_at"] {
++                            let body = emitted_prelude_row(&llvm, row);
++                            let eligible =
++                                shape == "Slots" && element == "Record" && row == "insert_at";
++                            assert_eq!(!body.contains("run.shift.head."), eligible, "{body}");
++                            if eligible {
++                                let shift = body
++                                    .split_once("\nrun.shift.pre.")
++                                    .expect("opening begins its own block")
++                                    .1
++                                    .split_once("  br label %run.shift.done.")
++                                    .expect("opening reaches its unchanged join")
++                                    .0;
++                                assert_eq!(
++                                    shift.matches("call void @llvm.memmove.").count(),
++                                    1,
++                                    "{body}"
++                                );
++                                assert!(
++                                    shift.contains(" = icmp ugt i64 ")
++                                        && shift.contains("  br i1 %")
++                                        && shift.contains(", label %run.shift.body.")
++                                        && shift.contains(", label %run.shift.done."),
++                                    "an empty suffix bypasses the transfer: {body}"
++                                );
++                                assert!(
++                                    shift.contains(", ptr null, i64 %"),
++                                    "target stride determines the range: {body}"
++                                );
++                                assert!(
++                                    !shift.contains("@malloc") && !shift.contains("@free"),
++                                    "{body}"
++                                );
++                            }
++                        }
++                    }
++                });
++            }
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
++enum OpeningMutation {
++    OmitTransfer,
++    KeepLength,
++    AlwaysTransfer,
++    ObserveTransfer,
++}
++
++/// Mutate just the eligible opening, leaving insertion placement and every
++/// other aggregate copy intact. The host probe observes the actual move size;
++/// faults independently omit movement, omit length change or bypass its guard.
++fn opening_mutation(module: &str, mutation: OpeningMutation) -> String {
++    let mut in_insert = false;
++    let mut in_shift = false;
++    let mut after_shift = false;
++    let mut changed = 0;
++    let mut broken = String::new();
++    for line in module.lines() {
++        if line.starts_with("define ") {
++            in_insert = line.contains("@wf_insert_at$instance$");
++            in_shift = false;
++            after_shift = false;
++        }
++        if in_insert && line.starts_with("run.shift.pre.") {
++            in_shift = true;
++        }
++        if in_insert && line.starts_with("run.shift.done.") {
++            in_shift = false;
++            after_shift = true;
++        }
++        if matches!(mutation, OpeningMutation::ObserveTransfer)
++            && in_shift
++            && line.contains("call void @llvm.memmove.p0.p0.i64(")
++        {
++            broken.push_str(&line.replace("@llvm.memmove.p0.p0.i64(", "@wf_test_opening_move("));
++            broken.push('\n');
++            changed += 1;
++            continue;
++        }
++        if matches!(mutation, OpeningMutation::AlwaysTransfer)
++            && in_shift
++            && line.starts_with("  br i1 ")
++            && let Some((_, targets)) = line.split_once(", label %run.shift.body.")
++            && let Some((suffix, _)) = targets.split_once(", label %run.shift.done.")
++        {
++            broken.push_str(&format!("  br label %run.shift.body.{suffix}\n"));
++            changed += 1;
++            continue;
++        }
++        if matches!(mutation, OpeningMutation::OmitTransfer)
++            && in_shift
++            && line.contains("call void @llvm.memmove.")
++        {
++            changed += 1;
++            continue;
++        }
++        if matches!(mutation, OpeningMutation::KeepLength)
++            && after_shift
++            && line.contains(" = add i64 ")
++            && let Some(prefix) = line.strip_suffix(", 1")
++        {
++            broken.push_str(prefix);
++            broken.push_str(", 0\n");
++            changed += 1;
++            after_shift = false;
++            continue;
++        }
++        broken.push_str(line);
++        broken.push('\n');
++    }
++    assert!(
++        changed > 0,
++        "the selected opening mutation must change its instruction"
++    );
++    if matches!(mutation, OpeningMutation::ObserveTransfer) {
++        broken.push_str("\ndeclare void @wf_test_opening_move(ptr, ptr, i64, i1)\n");
++    }
++    broken
++}
++
++/// Observe both shift directions, both zero-length endpoint shifts and the
++/// padded stride of an owning element. The Ring starts at its last physical
++/// slot, so the identical logical trace crosses the backing boundary.
++#[test]
++fn aggregate_openings_and_unchanged_removals_preserve_padded_owners() {
++    for (constructor, window, first_operation, expected) in [
++        (
++            "slots_new::<Record, 5>()",
++            "values",
++            "place_back",
++            "A1;A2;A3;A4;A5;F5;F2;F4;F1;F3;",
++        ),
++        (
++            "box_slots_new::<Record>(capacity: 5_u64)",
++            "values.inner",
++            "place_back",
++            "A1;A2;A3;A4;A5;A6;F6;F3;F5;F2;F4;F1;",
++        ),
++        (
++            "ring_new::<Record, 5>()",
++            "values",
++            "place_front",
++            "A1;A2;A3;A4;A5;F5;F2;F4;F1;F3;",
++        ),
++        (
++            "box_ring_new::<Record>(capacity: 5_u64)",
++            "values.inner",
++            "place_front",
++            "A1;A2;A3;A4;A5;A6;F6;F3;F5;F2;F4;F1;",
++        ),
++    ] {
++        let source = r#"struct Record {
++  marker: u8;
++  owner: Box<u64>;
++  tail: u16;
++}
++
++fn make(value: u64) -> result: Record pure {
++  let owner = box_new::<u64>(value: value);
++  return Record(marker: 7_u8, owner: move owner, tail: 9_u16);
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let values = CONSTRUCTOR;
++  let initial = WINDOW.len +wrap 11_u64;
++  let first = make(value: initial);
++  FIRST(window: &WINDOW, value: move first);
++  let second_seed = WINDOW[0_u64].owner.inner +wrap 11_u64;
++  let second = make(value: second_seed);
++  place_back(window: &WINDOW, value: move second);
++  let third_seed = WINDOW[1_u64].owner.inner +wrap 11_u64;
++  let third = make(value: third_seed);
++  insert_at(window: &WINDOW, index: 1_u64, value: move third);
++  let fourth_seed = WINDOW[1_u64].owner.inner +wrap 11_u64;
++  let fourth = make(value: fourth_seed);
++  insert_at(window: &WINDOW, index: 0_u64, value: move fourth);
++  let fifth_seed = WINDOW[0_u64].owner.inner +wrap 11_u64;
++  let fifth = make(value: fifth_seed);
++  insert_at(window: &WINDOW, index: 4_u64, value: move fifth);
++  if WINDOW.len != 5_u64 {
++    return std::process::exit_status(code: 8_u8);
++  }
++  let endpoint = remove_at(window: &WINDOW, index: 4_u64);
++  insert_at(window: &WINDOW, index: 4_u64, value: move endpoint);
++  let front = remove_at(window: &WINDOW, index: 0_u64);
++  let middle = remove_at(window: &WINDOW, index: 2_u64);
++  let last = remove_at(window: &WINDOW, index: 2_u64);
++  if WINDOW.len != 2_u64 {
++    return std::process::exit_status(code: 9_u8);
++  }
++  if front.owner.inner != 44_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if middle.owner.inner != 22_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  if last.owner.inner != 55_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  if WINDOW[0_u64].owner.inner != 11_u64 {
++    return std::process::exit_status(code: 4_u8);
++  }
++  if WINDOW[1_u64].owner.inner != 33_u64 {
++    return std::process::exit_status(code: 5_u8);
++  }
++  if WINDOW[1_u64].marker != 7_u8 {
++    return std::process::exit_status(code: 6_u8);
++  }
++  if WINDOW[1_u64].tail != 9_u16 {
++    return std::process::exit_status(code: 7_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#
++        .replace("CONSTRUCTOR", constructor)
++        .replace("WINDOW", window)
++        .replace("FIRST", first_operation);
++        for (overlap, facts) in [
++            (OverlapLowering::Off, WindowAddressFacts::Emit),
++            (OverlapLowering::Off, WindowAddressFacts::Withhold),
++            (OverlapLowering::On, WindowAddressFacts::Emit),
++        ] {
++            let llvm =
++                super::system::with_mutated_ir_lowering(source.as_bytes(), overlap, |program| {
++                    let target = TargetLayout::host().expect("supported target");
++                    let record = program
++                        .nominals()
++                        .iter()
++                        .find(|item| item.name() == "Record")
++                        .expect("the padded owning record");
++                    let layout = validate_static_storage(
++                        target,
++                        program,
++                        &TargetStorageType::source(crate::IrType::Nominal(record.id())),
++                    )
++                    .expect("the complete record fits");
++                    assert_eq!((layout.size(), layout.align()), (24, 8));
++                    let mut llvm = emit_llvm_with_window_address_facts(program, target, facts)
++                        .expect("padded owner shifts qualify with either fact choice")
++                        .into_string();
++                    llvm.push_str(
++                        &crate::driver::launcher::render(program, "main")
++                            .expect("ordinary test launcher")
++                            .render(),
++                    );
++                    llvm
++                });
++            let module = super::owned_places::retain_calls(&llvm)
++                .replace("@malloc(", "@wf_test_allocate(")
++                .replace("@free(", "@wf_test_release(");
++            let allocations = if window == "values" { 5 } else { 6 };
++            let mut observer = super::owned_places::allocation_observer(allocations, 0);
++            let observed = if constructor.contains("slots_new") {
++                observer.push_str(
++                    r#"
++void wf_test_opening_move(void *destination, const void *source, uint64_t bytes, _Bool is_volatile) {
++    if (bytes == 0 || is_volatile) {
++        fputs("unexpected empty opening transfer\n", stderr);
++        exit(86);
++    }
++    memmove(destination, source, (size_t)bytes);
++}
++"#,
++                );
++                opening_mutation(&module, OpeningMutation::ObserveTransfer)
++            } else {
++                module.clone()
++            };
++            let output = compile_link_and_run(&observed, Some(&observer), &[]);
++            assert_eq!(
++                output.status.code(),
++                Some(0),
++                "{constructor} {overlap:?} {facts:?}: {output:?}"
++            );
++            assert_eq!(
++                output.stdout,
++                expected.as_bytes(),
++                "{constructor} {overlap:?} {facts:?}: {output:?}"
++            );
++            assert!(output.stderr.is_empty(), "{output:?}");
++            if constructor.contains("slots_new")
++                && overlap == OverlapLowering::Off
++                && facts == WindowAddressFacts::Emit
++            {
++                let broken = opening_mutation(&module, OpeningMutation::OmitTransfer);
++                let fault = compile_link_and_run(&broken, Some(&observer), &[]);
++                assert!(
++                    !fault.status.success(),
++                    "missing movement must fail: {fault:?}"
++                );
++                let broken = opening_mutation(&module, OpeningMutation::AlwaysTransfer);
++                let broken = opening_mutation(&broken, OpeningMutation::ObserveTransfer);
++                let fault = compile_link_and_run(&broken, Some(&observer), &[]);
++                assert_eq!(fault.status.code(), Some(86), "{fault:?}");
++                assert_eq!(fault.stderr, b"unexpected empty opening transfer\n");
++            }
++        }
++    }
++}
++
++/// Zero-byte aggregate owners retain their logical length even when it
++/// exceeds the signed target index domain. A native caller supplies valid
++/// initialized empty representations, avoiding an enormous construction loop.
++#[test]
++fn aggregate_openings_normalize_zero_stride_addresses_but_keep_logical_length() {
++    let source = br#"struct Empty {
++}
++
++fn insert_fixed(values: &Slots<Empty, 9223372036854775809>, index: u64) -> result: u64 writes(values) contract {
++  requires index <= values^.len;
++  requires values^.len < 9223372036854775809_u64;
++} {
++  let empty = Empty();
++  insert_at(window: values, index: index, value: empty);
++  return values^.len;
++}
++
++fn insert_runtime(values: &Box<Slots<Empty>>, index: u64) -> result: u64 writes(values) contract {
++  requires index <= values^.inner.len;
++  requires values^.inner.len < values^.inner.cap;
++} {
++  let empty = Empty();
++  insert_at(window: &values^.inner, index: index, value: empty);
++  return values^.inner.len;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let host = r#"#include <stdint.h>
++#include <stdlib.h>
++
++extern int wf_fixture_body(int, char **);
++extern uint64_t wf_insert_fixed(uint64_t *, uint64_t);
++struct RuntimeSlots { uint64_t length, capacity; };
++extern uint64_t wf_insert_runtime(struct RuntimeSlots **, uint64_t);
++
++int wf__main_body(int argc, char **argv) {
++    int status = wf_fixture_body(argc, argv);
++    if (status != 0) return status;
++    const uint64_t fixed_length = UINT64_C(1) << 63;
++    for (unsigned endpoint = 0; endpoint < 2; ++endpoint) {
++        uint64_t fixed = fixed_length;
++        uint64_t index = endpoint ? fixed_length : 0;
++        if (wf_insert_fixed(&fixed, index) != fixed_length + 1 || fixed != fixed_length + 1) return 1;
++    }
++    struct RuntimeSlots *runtime = malloc(sizeof *runtime);
++    if (runtime == NULL) abort();
++    const uint64_t runtime_length = UINT64_MAX - 1;
++    for (unsigned endpoint = 0; endpoint < 2; ++endpoint) {
++        runtime->length = runtime_length;
++        runtime->capacity = UINT64_MAX;
++        uint64_t index = endpoint ? runtime_length : 0;
++        if (wf_insert_runtime(&runtime, index) != UINT64_MAX || runtime->length != UINT64_MAX) return 2;
++        if (runtime->capacity != UINT64_MAX) return 3;
++    }
++    free(runtime);
++    return 0;
++}
++"#;
++    for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
++        let llvm = with_ir(source, |program| {
++            let mut module = emit_llvm_with_window_address_facts(
++                program,
++                TargetLayout::host().expect("supported target"),
++                facts,
++            )
++            .expect("zero-stride shifts qualify with either fact choice")
++            .into_string();
++            module.push_str(
++                &crate::driver::launcher::render(program, "main")
++                    .expect("ordinary test launcher")
++                    .render(),
++            );
++            module
++        });
++        let rows: Vec<_> = llvm
++            .split("\ndefine ")
++            .map(|body| body.split("\n}\n").next().expect("definition body"))
++            .filter(|body| {
++                body.lines()
++                    .next()
++                    .is_some_and(|line| line.contains("@wf_insert_at$instance$"))
++                    && body.contains("run.shift.pre.")
++            })
++            .collect();
++        assert_eq!(
++            rows.len(),
++            2,
++            "fixed and runtime capacities must be present"
++        );
++        for body in rows {
++            assert!(!body.contains("run.shift.head."), "{body}");
++            let shift = body
++                .split_once("\nrun.shift.pre.")
++                .expect("opening begins its own block")
++                .1
++                .split_once("\nrun.shift.done.")
++                .expect("opening reaches its unchanged join")
++                .0;
++            assert!(
++                !shift.contains("@llvm.memmove") && !shift.contains(", ptr null, i64 "),
++                "zero stride emits no shift transfer or extent: {body}"
++            );
++            assert!(!shift.contains("run.shift.body."), "{body}");
++            let addresses: Vec<_> = body
++                .lines()
++                .filter(|line| {
++                    line.contains("getelementptr")
++                        && line
++                            .rsplit_once(", ")
++                            .is_some_and(|(_, index)| index.starts_with("i64 "))
++                })
++                .collect();
++            assert!(!addresses.is_empty(), "{body}");
++            assert!(
++                addresses.iter().all(|line| line.ends_with("i64 0")),
++                "{body}"
++            );
++            assert!(
++                body.contains("store i64 %"),
++                "logical length still changes: {body}"
++            );
++        }
++        let body = "define i32 @wf__main_body(";
++        assert_eq!(llvm.matches(body).count(), 1);
++        let mut observed = super::owned_places::retain_calls(&llvm).replacen(
++            body,
++            "define i32 @wf_fixture_body(",
++            1,
++        );
++        observed.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
++        let output = compile_link_and_run(&observed, Some(host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{facts:?}: {output:?}");
++        assert!(output.stdout.is_empty(), "{output:?}");
++        assert!(output.stderr.is_empty(), "{output:?}");
++        let broken = opening_mutation(&observed, OpeningMutation::KeepLength);
++        let fault = compile_link_and_run(&broken, Some(host), &[]);
++        assert_eq!(
++            fault.status.code(),
++            Some(1),
++            "unchanged fixed length must fail: {fault:?}"
++        );
++    }
++}
+--- a/compiler/src/ir.rs
++++ b/compiler/src/ir.rs
+@@ -910,4 +910,4 @@
+-    /// and lowers `len`. On a `Slots` the window is contiguous and the shift
+-    /// is one memmove; on a `Ring` the window may wrap and the shift walks
+-    /// the logical indices in the order that never overwrites an unread
+-    /// slot [WIN-1].
++    /// and lowers `len`. Slots is contiguous; Ring may wrap. Either physical
++    /// lowering preserves every shifted owner without overwriting unread
++    /// slots [WIN-1]. The operation states the logical shift, not a required
++    /// target instruction or call.

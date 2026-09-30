@@ -5042,6 +5042,49 @@ has three gains and two scalar losses. The unchanged-source Vector
 linked record publishes every cell, peer drift, construction/correctness
 evidence and replay identities; the compiler factor remains unintegrated.
 
+### Guarded aggregate opening: both Vector pairs remain unselected
+
+The follow-up factor preserves the common walk's zero-trip guard and omits
+zero-stride shift emission while retaining stored-aggregate Slots eligibility.
+Its [completed full comparison](../ordered-library/RESULTS.md#guarded-aggregate-opening-full-matrix-still-refuses-selection)
+refuses selection: Vector has no qualified useful gain in either independent
+pair, and Ordered has three qualified useful losses despite five gains.
+The compiler candidate remains an archived replay patch, with no production
+integration or language change.
+
+The shared [evidence archive](../ordered-library/guarded-aggregate-opening-evidence.tar.gz)
+retains four separate 4,116-row Vector invocations and four Ordered cohort
+invocations, original criteria, all hashes/statuses and every comparison.
+Vector order is baseline first→candidate first→candidate second→baseline second;
+all samples 0–6 are ranked, without pooling or sample renumbering. Six
+suffix-zero cells remain unranked controls. A useful gain must qualify in
+both invocation pairs; any qualified useful loss vetoes the complete trial.
+
+| Vector disposition | First pair | Second pair | Both-pair disposition |
+|---|---:|---:|---:|
+| Qualified useful gain / loss | 0 / 0 | 0 / 0 | 0 / 0 |
+| Useful overlap | 34 | 33 | 33 |
+| Useful duration/spread inconclusive | 2 | 3 | 3 |
+
+The six suffix-zero controls collapse to three overlaps and three duration/
+spread inconclusive cells; every replicate remains in the raw and paired
+tables. Useful slower-standard target pass/deficit/inconclusive counts are
+16/2/18→18/4/14 in the first pair and 18/5/13→19/2/15 in the second.
+Neither arm passes a useful cell against Rust in either pair. Native peers
+remain unchanged images and their drift is reported separately: useful cohort
+median ratios span reverse-C 0.962–1.041, direct-C 0.944–1.697, swap-take-C
+0.950–1.065, take-swap-C 0.966–1.034, Rust 0.970–1.033 and C++ 0.948–1.047.
+Only first-pair wide growth/16 separates favorably for swap-take-C and
+take-swap-C. Large or unstable control drift is preserved, never subtracted.
+
+The native gate removes empty suffix shift calls, but insert/grow-insert/work
+frames still grow 272→304, 304→320 and 688→704 bytes versus baseline.
+Passing owner, length, guard-bypass and accounting observations does not
+establish acceptable runtime cost. The linked Ordered record reports all
+construction/execution costs, direct statuses, three adverse scalar cells and
+the exact CSV/source replay. This is a frozen compiler-lineage comparison,
+not current-main performance evidence.
+
 ### Branch-first swap removal: local native savings fail the full pair
 
 The ordinary library source factor is rejected: the complete pair has no
