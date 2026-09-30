@@ -515,3 +515,44 @@ and `ZADD` at depth 1 on two CPUs (600,000). *insert* is kept if its median
 ratio to each round's *inline* exceeds *control*'s by at least 0.08 on
 `ZADD` at depth 16 on two CPUs and falls below it by no more than 0.08 on
 any test; otherwise it is reverted.
+
+### List elements inline, and maps that shrink: results
+
+Medians of the five rounds (the `ls` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)):
+*inline*'s rate, and each line's ratio to that round's *inline*. A first run
+stopped in its second round when a server could not bind its port, which lay
+in the kernel's range for outgoing connections; its complete first round is
+kept and rounds 2 to 5 were run again on lower ports.
+
+| Test | inline | lists | shrink | control |
+|---|---|---|---|---|
+| `LPUSH`, one CPU, depth 16 | 868,961 | 1.00 | 0.96 | 1.00 |
+| `RPUSH`, one CPU, depth 16 | 868,810 | 1.04 | 0.96 | 0.96 |
+| `LPOP`, one CPU, depth 16 | 1,051,967 | 1.05 | 0.95 | 0.95 |
+| `RPOP`, one CPU, depth 16 | 999,001 | 1.05 | 0.96 | 1.00 |
+| `LRANGE_100`, one CPU, depth 16 | 319,387 | 0.96 | 1.00 | 1.09 |
+| `SADD`, one CPU, depth 16 | 726,480 | 0.92 | 1.00 | 1.00 |
+| `SPOP`, one CPU, depth 16 | 951,475 | 1.00 | 1.11 | 1.00 |
+| `SPOP`, two CPUs, depth 1 | 109,012 | 1.00 | 1.10 | 0.96 |
+| `SPOP`, one CPU, depth 1 | 79,936 | 0.97 | 1.07 | 1.03 |
+
+`SPOP`'s p99 at depth 1, medians: two CPUs, depth 1 1.93 ms for *inline*,
+0.62 for *shrink* and 1.53 for *control*; one CPU, depth 1 2.22,
+1.28 and 2.19.
+
+**List elements inline: refused.** `RPUSH` gained 0.09 over *control* but
+`LPUSH` nothing, and `LRANGE_100` fell 0.13 below it and `SADD` 0.08: an
+element of 40 bytes instead of an 8-byte pointer makes the ring five times
+larger, which a range walks. The pushes' gap in the third look came from
+running after the suite's other tests: on a fresh server *inline* reached
+868,961 on `LPUSH` on one CPU, against 644,330 there.
+
+**Maps that shrink: refused by the criterion.** `SPOP` gained 0.14 over
+*control* at depth 1 on two CPUs and 0.11 at depth 16 on one, but only 0.04
+at depth 1 on one CPU, short of the 0.08 required, and `LRANGE_100` came
+out 0.09 below a *control* that itself drifted to 1.09. Its tail is what
+changed most: `SPOP`'s p99 at depth 1 fell to 0.32 of *inline*'s on two
+CPUs and to 0.58 on one. The item on shrinking sets in `docs/todo.md` carries
+these results; the criteria this investigation works to judge p99 only at
+depth 16, where `SPOP` already meets them.

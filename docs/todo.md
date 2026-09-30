@@ -2844,8 +2844,14 @@ condition under which it is taken up.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is
-  popped each pop scans many empty buckets; Redis shrinks its table as it
-  empties. Measure `SPOP` after popping 99 of every 100 members of a
-  million-member set; if a pop costs more than a few times one on the full
-  set, shrink the map when it falls below a quarter full, which needs
-  `hash_map_rehash` to reduce capacity or a shrinking reserve in the library.
+  popped each pop scans many empty buckets inside the atomic statement;
+  Redis shrinks its table as it empties. A library hash map that rebuilds at
+  four times its pairs when a removal leaves it under an eighth full was
+  measured and refused by its criterion
+  ([firn](../research/investigations/firn/DESIGN.md#list-elements-inline-and-maps-that-shrink-results)):
+  `SPOP` at depth 1 gained 14% on two CPUs but only 4% on one, while its p99
+  fell to 0.32 and 0.58 of the unshrinking map's. Reopen when a criterion
+  weighs depth-1 tail latency, or when the final suite shows `SPOP` short of
+  its competitors; the change is small (`hash_map_rebuild` accepting fewer
+  buckets than it had while they outnumber the pairs, and a check after each
+  removal) and belongs to the pending hash map storage amendment.
