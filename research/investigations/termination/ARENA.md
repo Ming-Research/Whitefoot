@@ -52,8 +52,8 @@ checker (`runs/probes/`):
 
 | Site | Structure | Form | State |
 |---|---|---|---|
-| comp 17 `build_element` | DOM | Forest, lexicographic rank | complete form, given the Forest measures below |
-| loop 28 `move_all_children` | DOM, relinked freely | Forest | complete form, given a parent-index measure; rejected unless `from_node != to_node` is established |
+| comp 17 `build_element` | DOM | Forest, lexicographic rank | complete if Q18, Q20 and Q21 are admitted |
+| loop 28 `move_all_children` | DOM, relinked freely | Forest, written rank | complete if Q18 and Q21 are admitted; rejected unless `from_node != to_node` is established |
 | loop 347 `match_complex` | DOM, backtracking over a stack of up to 64 frames | none | open: its measure orders a sequence of per-frame positions |
 | loop 85 `attribute_is_duplicate` | hash chains in a links storage | index-relative link | partial: the insertion goes through a generic helper that cannot owe the relation |
 | loop 217 `parent_table` | parent table in index order | index-relative link | partial: the table also stores two sentinels above every index, so it needs a re-encoding |
@@ -62,8 +62,13 @@ checker (`runs/probes/`):
 | loop 234 `expand_cp` | decompositions read from an input file | input validation | complete: a cyclic file is a live input failure, so a bounded expansion with an error is required behavior, not a proof stand-in |
 | comp 8 `decompose` | generated decomposition table | rewrite | complete: the generator emits full decompositions, so the runtime needs no recursion |
 
-The table has four complete rows (17, 28, 234, 8), two partial rows (85,
-217) and three open rows (347, comp 1, 490), so criterion 1 is still not met.
+The rows fall into four groups:
+- complete: 234 and 8;
+- complete once the new machinery in Q18, Q20 and Q21 is admitted: 17 and 28;
+- partial: 85 and 217;
+- open: 347, comp 1 and 490.
+
+Criterion 1 is still not met.
 
 ## Form 1: the Forest storage shape
 
@@ -95,15 +100,17 @@ the specification's record for the primitives, as it is for `len`.
 |---|---|---|
 | `forest_parent(f, n)` | `Some(p)` | `f[p].depth + 1 == f[n].depth`; `f[n].parent_index == p` |
 | `forest_first_child(f, n)` | `Some(c)` | `f[c].parent_index == n`; `f[c].parent_height == f[n].height`; `f[c].before == 0` |
-| `forest_next_sibling(f, n)` | `Some(s)` | `f[s].parent_height == f[n].parent_height`; `f[s].after + 1 == f[n].after` |
+| `forest_next_sibling(f, n)` | `Some(s)` | `f[s].parent_index == f[n].parent_index`; `f[s].parent_height == f[n].parent_height`; `f[s].after + 1 == f[n].after` |
 | `forest_previous_sibling(f, n)` | `Some(s)` | the mirror, over `before` |
 
 Every node also has the standing fact `f[n].height < f[n].parent_height`.
 
-**New machinery.** A fact such as `f[p].depth` uses the accessor's result
-payload `p` as a subscript offset. [ENT-2] admits only a tracked place or a
-constant there, and [FN-9] states a result's measures only for a formal
-place. Publishing measures at a result offset is therefore new (Q21).
+**New machinery.** [ENT-2] admits only a tracked place or a constant as a
+subscript offset, and [FN-9] states a result's measures only for a formal
+place. Two offsets used below are therefore new (Q21):
+- an accessor's result payload, as in `f[p].depth`;
+- a measure of the entry state, as in the link primitive's
+  `entry(f)[child].parent_index`.
 
 **Link primitives.** `forest_append(f, parent, child)` and
 `forest_insert_before` perform the cycle check that the DOM standard
@@ -122,21 +129,32 @@ A cyclic link is refused with an error. On success the primitive ensures:
 Every link primitive writes `f`, so it kills the standing measure facts
 about `f` [MSR-2].
 
-**Comp 17.** `build_element(n)` calls `build_children` on `n`'s first child,
-which calls `build_element` on each child and itself on the next sibling.
+**Comp 17.** In Snowghost (`proto/layout/build.wf`) the component has three
+members, which call each other in a cycle:
+- `build_element(n)` calls `build_context(n)`;
+- `build_context(n)` calls `build_children(parent: n)`;
+- `build_children` walks `parent`'s children in a counted loop, following
+  `next_sibling`, and calls `build_element` on each.
+
 The shared rank is lexicographic:
 
 | Function | Rank |
 |---|---|
-| `build_element(n)` | `(f[n].height, 1, 0)` |
-| `build_children(c)` | `(f[c].parent_height, 0, f[c].after)` |
+| `build_element(n)` | `(f[n].height, 2)` |
+| `build_context(n)` | `(f[n].height, 1)` |
+| `build_children(parent)` | `(f[parent].height, 0)` |
 
 Each edge falls:
-- **element to children.** `parent_height` equals `height`, and the middle
-  component falls from 1 to 0.
-- **children to element.** `height` is below `parent_height`.
-- **children to next sibling.** `parent_height` is unchanged, and `after`
-  falls.
+- **element to context, and context to children.** The height is the same
+  and the second component falls.
+- **children to element.** The sibling loop carries the invariant
+  `f[cursor].parent_height == f[parent].height`, which `forest_first_child`
+  establishes and `forest_next_sibling` preserves. The standing fact
+  `f[cursor].height < f[cursor].parent_height` then gives the fall.
+
+The loop itself is counted, so it terminates without a rank. Its invariant
+is a local invariant over a subscripted Forest measure, which needs Q20 and
+Q21.
 
 **Loop 28 (falsifier).** `move_all_children(from, to)` appends `from`'s
 first child `c` to `to` until `from` has no child.
@@ -144,7 +162,9 @@ first child `c` to `to` until `from` has no child.
 - `forest_append` lowers `children` of that old parent only when it differs
   from `to`.
 - So the rank `f[from].children` falls only after `from != to` is
-  established. The census found that both callers pass distinct nodes, one
+  established.
+- The loop exits through a `match` on the accessor's result, not through a
+  tabled exit test, so the rank is written. The census found that both callers pass distinct nodes, one
   of them a node created just before the call; each caller must state the
   fact.
 
@@ -206,7 +226,9 @@ names one index or is refused:
 | `insert_at`, `remove_at`, `append`, `split_off`, front operations | refused: they move runs of elements between indices or storages |
 | `grow` | refused, unless it is shown to keep every index |
 | `swap` of two elements, or of fields of two elements [OP-11] | refused |
-| constructions that fill every element with one value | refused, or owe the relation for every index, which is a derivation over elements |
+| constructions that fill every element with one value (`array_filled`, `box_array_filled`) or copy a whole array (`slots_from_array`) | refused, or owe the relation for every index, which is a derivation over elements |
+| constructing the owning struct from an already populated storage | refused, for the same reason |
+| the atomic in-place update of an element [OP-12] | an element write: the updating function's `ensures` must state the relation for its result |
 | replacing the whole storage field | refused |
 | a write through a reference to an element, a sub-path or a range [REF-4] | refused: its index is relative to the reference, not to the storage |
 | passing the storage to a generic callee that writes it | refused: a callee generic in its element type cannot state the relation in its postcondition |
@@ -304,10 +326,10 @@ forms and needs a written rank.
 
 **The forms.**
 
-| Continuing when | Breaking when | Operand that must move | Operand that must not rise |
+| Continuing when | Breaking when | Operand that must move | Operand that must not move toward it |
 |---|---|---|---|
 | `a < b` | `a >= b` | `a` rises | `b` |
-| `a > b` | `a <= b` | `a` falls | none; `b` must not fall |
+| `a > b` | `a <= b` | `a` falls | `b` must not rise |
 | `a != b` with a header fact `a <= b` | `a == b` | `a` rises | `b` |
 | `x != 0` or `x > 0` | `x == 0` | `x` falls | none |
 
@@ -333,6 +355,9 @@ affine factor reads a referent that is not a measure").
   reference parameter, and a callee the loop calls (`set_glyph`,
   `decompose_current`) writes it through that reference, so the loop cannot
   carry it as a scalar.
+- Admitting the term makes the rank expressible, not provable. The descent
+  still needs those callees to state their advance in an `ensures`, the
+  sample's separate gap.
 
 **Sample.** Reading the exit tests of the 20 sampled loops (`runs/sample/`),
 19 have a tabled form with a comparison or a Boolean `let` bound to one.
@@ -360,8 +385,9 @@ Loop 74 has no break; it exits by `return`, so it needs a written rank.
   contract clauses already admit. This reopens the refused field atoms in
   loop invariants, whose reopening condition the three `buffer^.index`
   loops meet.
-- **Q21.** Whether an accessor's postcondition may state measures at its
-  result payload as a subscript offset, such as `f[p].depth`.
+- **Q21.** Whether a postcondition may use two new subscript offsets: an
+  accessor's result payload, as in `f[p].depth`, and a measure of the entry
+  state, as in `entry(f)[child].parent_index`.
 - **Q22.** How mutual-recursion ranks handle withheld member summaries and
   function-kind edges.
 
