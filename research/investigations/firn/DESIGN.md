@@ -556,3 +556,25 @@ changed most: `SPOP`'s p99 at depth 1 fell to 0.32 of *inline*'s on two
 CPUs and to 0.58 on one. The item on shrinking sets in `docs/todo.md` carries
 these results; the criteria this investigation works to judge p99 only at
 depth 16, where `SPOP` already meets them.
+
+### One descent for a rank known to be absent: results
+
+Medians of five rounds (the `ins` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)):
+*inline*'s rate, and each line's ratio to that round's *inline*.
+
+| Test | inline | insert | control |
+|---|---|---|---|
+| `ZADD`, two CPUs, depth 16 | 319,846 | 1.04 | 1.00 |
+| `ZPOPMIN`, two CPUs, depth 16 | 1,598,721 | 1.00 | 0.92 |
+| `ZADD`, one CPU, depth 16 | 261,866 | 1.02 | 0.97 |
+| `ZPOPMIN`, one CPU, depth 16 | 1,066,098 | 1.00 | 1.00 |
+| `ZADD`, two CPUs, depth 1 | 119,928 | 1.00 | 0.95 |
+
+**Refused: the criterion is not met.** *insert* gained 0.04 over *control*
+on `ZADD` on two CPUs at depth 16, half the 0.08 required. One descent of
+three leaves the atomic statement's other work, the removal with its
+rebalancing and the score map's lookup and replacement, and the library's
+two-descent put stays as it is. `ordered_map_insert` and its tests were not
+kept; `ordered-map-storage`'s refusal of a single-descent put stands, and
+this measurement does not bear on it.
