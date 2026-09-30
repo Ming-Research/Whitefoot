@@ -44,8 +44,9 @@ typedef union {
     max_align_t alignment;
 } AllocationHeader;
 static size_t requests, live_bytes, peak_bytes, requested_bytes;
-#if defined(ECOSYSTEM)
 static size_t realloc_requests, releases, peak_overlap_upper_bytes;
+#ifndef WF_FULL_SLOTS_REALLOC
+#define WF_FULL_SLOTS_REALLOC 0
 #endif
 #endif
 static volatile uint64_t observed;
@@ -83,6 +84,7 @@ void wf_ecosystem_note_realloc(uint64_t old_bytes, uint64_t new_bytes) {
 #if defined(ECOSYSTEM) && !defined(ACCOUNT_ONLY)
 // Practical timed traces use ordinary allocation without observer work.
 #define wf_cost_allocate(bytes) malloc((size_t)(bytes))
+#define wf_cost_reallocate(pointer, bytes) realloc(pointer, (size_t)(bytes))
 #define wf_cost_release(pointer) free(pointer)
 #else
 NOINLINE void *wf_cost_allocate(uint64_t bytes) {
@@ -96,8 +98,32 @@ NOINLINE void *wf_cost_allocate(uint64_t bytes) {
 #else
     ++requests; requested_bytes += (size_t)bytes; live_bytes += (size_t)bytes;
     if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+    if (live_bytes > peak_overlap_upper_bytes) peak_overlap_upper_bytes = live_bytes;
 #endif
     return header + 1;
+}
+NOINLINE void *wf_cost_reallocate(void *pointer, uint64_t bytes) {
+    if (pointer == NULL) return wf_cost_allocate(bytes);
+    require(bytes <= SIZE_MAX - sizeof(AllocationHeader), "reallocation extent");
+    AllocationHeader *header = (AllocationHeader *)pointer - 1;
+    require(header->value.magic == UINT64_C(0x766563746f726c69), "allocation identity");
+    const size_t old_bytes = header->value.bytes;
+    require(live_bytes >= old_bytes, "live-byte accounting");
+    require(bytes <= SIZE_MAX - live_bytes, "reallocation overlap extent");
+    AllocationHeader *resized = realloc(header, sizeof *header + (size_t)bytes);
+    require(resized != NULL, "host reallocation failure");
+    resized->value.bytes = (size_t)bytes;
+    resized->value.magic = UINT64_C(0x766563746f726c69);
+#if defined(ECOSYSTEM)
+    wf_ecosystem_note_realloc(old_bytes, bytes);
+#else
+    if (live_bytes + bytes > peak_overlap_upper_bytes)
+        peak_overlap_upper_bytes = live_bytes + (size_t)bytes;
+    ++requests; ++realloc_requests; requested_bytes += (size_t)bytes;
+    live_bytes = live_bytes - old_bytes + (size_t)bytes;
+    if (live_bytes > peak_bytes) peak_bytes = live_bytes;
+#endif
+    return resized + 1;
 }
 NOINLINE void wf_cost_release(void *pointer) {
     if (pointer == NULL) return;
@@ -107,7 +133,7 @@ NOINLINE void wf_cost_release(void *pointer) {
 #if defined(ECOSYSTEM)
     wf_ecosystem_note_dealloc(header->value.bytes);
 #else
-    live_bytes -= header->value.bytes;
+    live_bytes -= header->value.bytes; ++releases;
 #endif
     header->value.magic = 0; free(header);
 }
@@ -116,11 +142,38 @@ static void reset_accounting(void) {
 #if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
     require(live_bytes == 0, "allocation left live between traces");
     requests = requested_bytes = peak_bytes = 0;
-#if defined(ECOSYSTEM)
     realloc_requests = releases = peak_overlap_upper_bytes = 0;
 #endif
-#endif
 }
+
+#if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
+static void allocator_check(bool fail_values, bool fail_accounting) {
+    const unsigned char expected[24] = {
+        3, 17, 29, 43, 59, 71, 89, 101, 127, 131, 149, 163,
+        179, 191, 211, 223, 239, 251, 5, 23, 47, 83, 137, 197
+    };
+    reset_accounting();
+    unsigned char *payload = wf_cost_allocate(sizeof expected);
+    memcpy(payload, expected, sizeof expected);
+    payload = wf_cost_reallocate(payload, 80);
+    if (fail_values) payload[0] ^= 1;
+    require((uintptr_t)payload % _Alignof(max_align_t) == 0,
+            "reallocation observer alignment");
+    require(memcmp(payload, expected, sizeof expected) == 0,
+            "reallocation observer preserved bytes");
+    payload = wf_cost_reallocate(payload, 8);
+    require((uintptr_t)payload % _Alignof(max_align_t) == 0
+            && memcmp(payload, expected, 8) == 0,
+            "reallocation observer preserved bytes");
+    wf_cost_release(payload);
+    if (fail_accounting) ++requests;
+    require(requests == 3 && realloc_requests == 2 && releases == 1
+            && requested_bytes == 112 && live_bytes == 0 && peak_bytes == 80
+            && peak_overlap_upper_bytes == 104,
+            "reallocation observer exact ledger");
+    puts("vector allocator observer: preserved bytes, alignment and exact ledger passed");
+}
+#endif
 
 typedef struct { uint64_t words[RECORD_WORDS]; } Record;
 static HELPER uint64_t make_word(uint64_t seed) { return seed; }
@@ -382,6 +435,52 @@ static uint64_t oracle(uint64_t count, uint64_t rounds, uint64_t seed, bool wide
     return checksum;
 }
 
+static void check_accounting(enum Variant variant, bool wide, uint64_t count,
+                             uint64_t rounds, uint64_t path) {
+#if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
+    require(live_bytes == 0, "complete cleanup");
+    require(requests == releases + realloc_requests, "allocation lifecycle balance");
+    require(peak_overlap_upper_bytes >= peak_bytes, "requested-overlap upper bound");
+#if defined(ECOSYSTEM)
+    if (variant >= RUST_VECTOR) return;
+#endif
+    // Source trace: one initial header, then only full-window growth for WF;
+    // the C controls retain allocate/move/free. The expectation flag is fixed
+    // by the compiler being qualified, never selected from observed counters.
+    const bool resizing = variant == WHITEFOOT && WF_FULL_SLOTS_REALLOC;
+    const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+    size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
+    size_t per_reallocs = resizing ? 1 : 0;
+    size_t per_peak = resizing ? per_bytes - 16 : per_bytes;
+    size_t per_overlap = per_bytes;
+    if (path == 1) {
+        per_requests = 1; per_bytes = 16; per_peak = per_overlap = 16;
+        per_reallocs = 0;
+        size_t old_bytes = 16;
+        for (uint64_t capacity = 1;;) {
+            size_t bytes = 16 + capacity * stride;
+            ++per_requests; per_bytes += bytes;
+            if (resizing) ++per_reallocs;
+            per_peak = resizing ? bytes : old_bytes + bytes;
+            per_overlap = old_bytes + bytes;
+            if (capacity >= count + 1) break;
+            old_bytes = bytes;
+            capacity = capacity > CEILING / 2 ? CEILING : capacity * 2;
+        }
+    }
+    size_t traces = path < 2 ? rounds : 1;
+    require(requests == per_requests * traces && requested_bytes == per_bytes * traces
+            && peak_bytes == (traces ? per_peak : 0),
+            "independent allocation count, byte and peak formula");
+    require(realloc_requests == per_reallocs * traces
+            && releases == (per_requests - per_reallocs) * traces
+            && peak_overlap_upper_bytes == (traces ? per_overlap : 0),
+            "independent reallocation, release and overlap formula");
+#else
+    (void)variant; (void)wide; (void)count; (void)rounds; (void)path;
+#endif
+}
+
 #if !defined(ECOSYSTEM) || !defined(ACCOUNT_ONLY)
 static uint64_t nanos(void) {
 #if defined(_WIN32)
@@ -414,19 +513,12 @@ static void check(void) {
                 for (size_t r = 0; r < sizeof rounds / sizeof rounds[0]; ++r)
                     for (size_t s = 0; s < sizeof seeds / sizeof seeds[0]; ++s) {
                         uint64_t expected = oracle(counts[n], rounds[r], seeds[s], wide != 0, path);
-                        size_t wf_requests = 0, wf_peak = 0, wf_bytes = 0;
                         for (unsigned v = 0; v < VARIANT_COUNT; ++v) {
                             reset_accounting();
                             uint64_t actual = run((enum Variant)v, wide != 0, counts[n], rounds[r], seeds[s], path);
                             require(actual == expected, "independent logical-order checksum");
-                            require(live_bytes == 0, "complete cleanup");
-                            if (v == WHITEFOOT) {
-                                wf_requests = requests; wf_peak = peak_bytes; wf_bytes = requested_bytes;
-                            } else {
-                                require(requests == wf_requests, "matched allocation count");
-                                require(peak_bytes == wf_peak, "matched peak backing bytes");
-                                require(requested_bytes == wf_bytes, "matched requested bytes");
-                            }
+                            check_accounting((enum Variant)v, wide != 0,
+                                             counts[n], rounds[r], path);
                         }
                         ++configurations;
                     }
@@ -471,6 +563,9 @@ static void measure(void) {
 int main(int argc, char **argv) {
     require(argc == 2, "usage: vector-costs check|measure");
     if (strcmp(argv[1], "check") == 0) check();
+    else if (strcmp(argv[1], "allocator-check") == 0) allocator_check(false, false);
+    else if (strcmp(argv[1], "allocator-fail-values") == 0) allocator_check(true, false);
+    else if (strcmp(argv[1], "allocator-fail-accounting") == 0) allocator_check(false, true);
     else {
         require(strcmp(argv[1], "measure") == 0, "usage: vector-costs check|measure");
         measure();
@@ -903,38 +998,6 @@ static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large
 
 #endif
 
-static void check_accounting(enum Variant variant, bool wide, uint64_t count,
-                             uint64_t rounds, uint64_t path) {
-#if defined(ACCOUNT_ONLY)
-    require(live_bytes == 0, "complete cleanup");
-    require(requests == releases + realloc_requests, "allocation lifecycle balance");
-    require(peak_overlap_upper_bytes >= peak_bytes, "requested-overlap upper bound");
-    if (variant >= RUST_VECTOR) return;
-    const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
-    size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
-    size_t per_peak = per_bytes;
-    if (path == 1) {
-        per_requests = 1; per_bytes = 16; per_peak = 16;
-        size_t old_bytes = 16;
-        for (uint64_t capacity = 1;;) {
-            size_t bytes = 16 + capacity * stride;
-            ++per_requests; per_bytes += bytes; per_peak = old_bytes + bytes;
-            if (capacity >= count + 1) break;
-            old_bytes = bytes;
-            capacity = capacity > CEILING / 2 ? CEILING : capacity * 2;
-        }
-    }
-    size_t traces = path < 2 ? rounds : 1;
-    require(requests == per_requests * traces && requested_bytes == per_bytes * traces
-            && peak_bytes == (traces ? per_peak : 0),
-            "independent allocation count, byte and peak formula");
-    require(realloc_requests == 0 && peak_overlap_upper_bytes == peak_bytes,
-            "fresh-backing allocation lifecycle");
-#else
-    (void)variant; (void)wide; (void)count; (void)rounds; (void)path;
-#endif
-}
-
 static uint64_t checked_run(enum Variant variant, bool wide, uint64_t count,
                              uint64_t rounds, uint64_t seed, uint64_t path) {
     uint64_t expected = oracle(count, rounds, seed, wide, path);
@@ -1045,6 +1108,9 @@ int main(int argc, char **argv) {
     }
 #if defined(ACCOUNT_ONLY)
     else if (strcmp(argv[1], "account") == 0) { require(argc == 2, "account argument count"); account(); }
+    else if (strcmp(argv[1], "allocator-check") == 0) { require(argc == 2, "allocator-check argument count"); allocator_check(false, false); }
+    else if (strcmp(argv[1], "allocator-fail-values") == 0) { require(argc == 2, "allocator-fail-values argument count"); allocator_check(true, false); }
+    else if (strcmp(argv[1], "allocator-fail-accounting") == 0) { require(argc == 2, "allocator-fail-accounting argument count"); allocator_check(false, true); }
     else if (strcmp(argv[1], "growth-api-account") == 0) { require(argc == 2, "growth-api-account argument count"); growth_check(false, false, true); }
     else if (strcmp(argv[1], "api-fail-allocation") == 0) { require(argc == 2, "api-fail-allocation argument count"); append_check(false, true); }
     else if (strcmp(argv[1], "fail-cleanup") == 0) {

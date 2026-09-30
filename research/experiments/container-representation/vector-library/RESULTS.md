@@ -6146,3 +6146,66 @@ Native code permits Rust realloc; these elapsed rows do not establish its
 in-place frequency. Allocation-account observations remain separate from
 these timed images. Scope stays Vector append's spare/full paths; the next
 API and whole-Vector trace wait for append qualification.
+
+
+#### Full-run realloc discriminator: rejected
+
+The blanket full-Slots realloc candidate fails the fixed append target; it
+is not selected. This is one provisional candidate launch against ordinary
+peers, not a paired before/after qualification. It exits 0 under a 119.70 s
+guard, retaining all 840 unique rows in [raw samples](ecosystem-append-growth-realloc-discriminator-samples.csv).
+[Timing, identities and accounting](ecosystem-append-growth-realloc-discriminator-timing.txt)
+retain the build/check log, launch log and all 30 observer rows. Replay uses
+[the refused compiler patch](full-slots-reallocation.patch), a separate
+`BUILD=.build/full-slots-reallocation`, `WF_FULL_SLOTS_REALLOC=1`, and the
+same `growth-api-measure 67108864 7 8589934592` command. Keep these files while
+this refusal is cited; retire them with a superseding retained record.
+
+The frozen CLI is SHA256
+`dd87ce830d631b75e1e9456134010fd3596e6ed28fcea036f147eaa74ae9d976`;
+timed image `63500dad64d4f54a55f2c2d4be1e9b6e99a2eeab1484b20630b759df259caebf`.
+Construction/growth/spare/account stages exit 0 in 2.81/0.86/0.11/0.11 s
+(outer 4.09 s). Value/state/allocation/clock faults and allocator-byte/ledger
+faults fail as required. Every WF append has one realloc request and no
+separate release inside the operation; complete destruction leaves no live
+backing. Observed images reallocate the allocator's original header, never
+the shifted payload pointer. Their exact source-derived formulas retain
+unchanged C-control allocation expectations; default flag 0 keeps baseline
+compiler replay.
+
+Native append entries keep 32 B frames and the grow helper 64 B. The taken
+full edge calls realloc on the Slots header and avoids explicit prefix
+memmove/free; the helper's partial branch still contains allocation,
+transfer and release. Wide construction remains in its final slot. Timed
+images have no observer hooks; peers and 12 runtime objects match baseline
+bytes. The driver differs only in a cold clock-assertion line-number
+immediate, 395→494; all other operand instructions match.
+
+All real durations exceed 1 ms (minimum 1.305209 ms); maximum cohort-ratio
+spread is 3.307%. All six matched cells' WF medians exceed their slower
+ordinary peer in both cohorts. None passes the disjoint faster-range rule:
+
+| Payload / old capacity | WF ns/op c0 / c1 | Rust ns/op c0 / c1 | C++ ns/op c0 / c1 | Slower-peer sample ranges c0 / c1 |
+|---|---:|---:|---:|---|
+| 8 B / 16 | 40.84 / 40.98 | 36.92 / 36.87 | 25.55 / 25.62 | slower / slower |
+| 8 B / 256 | 109.55 / 108.97 | 104.07 / 103.83 | 93.47 / 93.76 | overlap / overlap |
+| 8 B / 4096 | 3871.80 / 3902.82 | 692.65 / 685.81 | 655.57 / 652.29 | slower / slower |
+| 256 B / 16 | 178.47 / 176.25 | 148.69 / 151.69 | 143.54 / 142.85 | slower / slower |
+| 256 B / 256 | 1449.12 / 1448.47 | 1330.64 / 1320.21 | 1313.97 / 1343.40 | slower / overlap |
+| 256 B / 4096 | 19102.19 / 19037.11 | 163.58 / 164.76 | 15079.54 / 15085.95 | slower / slower |
+
+Ordinary 0/1 growth-policy differences remain, with all samples retained:
+
+| Payload / old capacity | WF ns/op c0 / c1 | Rust ns/op c0 / c1 | C++ ns/op c0 / c1 | Slower-peer sample ranges c0 / c1 |
+|---|---:|---:|---:|---|
+| 8 B / 0 | 29.86 / 29.72 | 11.76 / 11.73 | 10.94 / 11.00 | slower / slower |
+| 8 B / 1 | 18.54 / 18.72 | 32.38 / 32.55 | 19.31 / 19.36 | faster / faster |
+| 256 B / 0 | 39.79 / 39.68 | 22.59 / 22.71 | 15.81 / 15.85 | slower / slower |
+| 256 B / 1 | 53.24 / 53.21 | 53.03 / 52.96 | 43.10 / 43.05 | overlap / overlap |
+
+Scalar4096 is 3871.80–3902.82 ns versus the retained baseline median span
+2212.02–2223.44 ns; wide4096 is 19037.11–19102.19 ns versus 17548.30–17875.39 ns.
+These historical comparisons are provisional and do not isolate a cause.
+Paired qualification was deliberately not run after this fixed-target
+failure. No realloc in-place frequency or allocator/header cause is inferred.
+Append remains open; no other API or whole-Vector timing advances.

@@ -6,6 +6,8 @@ CLANG ?= clang
 BUILD ?= .build
 SOURCES := vector-library.wf
 LIBRARY_INPUTS := $(wildcard $(ROOT)/lib/std/collections/vector/*) $(ROOT)/lib/std/modules.wfg
+# Explicit observed-ledger selection; frozen old-compiler replay stays at 0.
+WF_FULL_SLOTS_REALLOC ?= 0
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -20,6 +22,7 @@ $(BUILD)/vector-library.raw.ll: $(SOURCES) $(LIBRARY_INPUTS) $(WHITEFOOTC) Makef
 
 $(BUILD)/vector-library-normal.ll: $(BUILD)/vector-library.raw.ll Makefile
 	sed -e 's/@malloc(/@wf_cost_allocate(/g' \
+	    -e 's/@realloc(/@wf_cost_reallocate(/g' \
 	    -e 's/@free(/@wf_cost_release(/g' \
 	    -e 's/@main(/@wf_fixture_main(/g' $< > $@
 
@@ -31,17 +34,26 @@ $(BUILD)/vector-library-%.opt.ll: $(BUILD)/vector-library-%.ll
 
 $(BUILD)/control-%.opt.ll: vector-costs.c | $(BUILD)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
-	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror $$flags -S -emit-llvm $< -o $@
+	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC) $$flags -S -emit-llvm $< -o $@
 
 $(BUILD)/vector-costs-%$(EXE): vector-costs.c $(BUILD)/vector-library-%.ll $(NATIVE_OBJECTS)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
-	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wno-override-module $$flags $< $(BUILD)/vector-library-$*.ll $(NATIVE_OBJECTS) $(NATIVE_LINK_FLAGS) -o $@
+	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wno-override-module -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC) $$flags $< $(BUILD)/vector-library-$*.ll $(NATIVE_OBJECTS) $(NATIVE_LINK_FLAGS) -o $@
 
 check: $(addprefix $(BUILD)/vector-costs-,normal$(EXE) retained$(EXE)) \
        $(addprefix $(BUILD)/vector-library-,normal.opt.ll retained.opt.ll) \
        $(addprefix $(BUILD)/control-,normal.opt.ll retained.opt.ll)
 	$(BUILD)/vector-costs-normal$(EXE) check
 	$(BUILD)/vector-costs-retained$(EXE) check
+	$(BUILD)/vector-costs-normal$(EXE) allocator-check
+	@set -eu; for fault in values accounting; do \
+	  log='$(BUILD)/allocator-fail-'$$fault'.txt'; \
+	  if $(BUILD)/vector-costs-normal$(EXE) allocator-fail-$$fault > "$$log" 2>&1; then \
+	    echo "Allocator observer $$fault fault was accepted" >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  case $$fault in values) message='preserved bytes' ;; accounting) message='exact ledger' ;; esac; \
+	  grep -Fx "vector library costs: reallocation observer $$message" "$$log"; \
+	 done
 	@set -eu; normal_calls=`grep -Ec 'call .*@"?wf_(grow_vector_|std[.]collections[.]vector[.]grow_vector_)' $(BUILD)/vector-library-normal.opt.ll || true`; \
 	 retained_calls=`grep -Ec 'call .*@"?wf_(grow_vector_|std[.]collections[.]vector[.]grow_vector_)' $(BUILD)/vector-library-retained.opt.ll || true`; \
 	 test "$$retained_calls" -gt 0; \
@@ -73,6 +85,9 @@ GROWTH_WORK ?= 67108864
 GROWTH_LARGE_WORK ?= $(GROWTH_WORK)
 GROWTH_SAMPLE_FILE ?= $(ECO_BUILD)/append-growth-measurements.csv
 include ../ecosystem.mk
+# Read only by observed code; the existing configuration records the choice
+# so changing it also invalidates a cached account driver.
+ECO_CFLAGS += -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC)
 
 .PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account ecosystem-append-growth-measure
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
@@ -85,7 +100,8 @@ $(ECO_BUILD)/whitefoot-timed.ll: $(BUILD)/vector-library.raw.ll Makefile $(ECO_C
 	sed 's/@main(/@wf_fixture_main(/g' $< > $@
 
 $(ECO_BUILD)/whitefoot-account.ll: $(BUILD)/vector-library.raw.ll Makefile $(ECO_CONFIG)
-	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' \
+	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
 	    -e 's/@main(/@wf_fixture_main(/g' \
 	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
 
@@ -117,6 +133,15 @@ ecosystem-append-check: ecosystem-build
 ecosystem-append-growth-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-check
 	$(ECO_BUILD)/vector-costs-account$(EXE) growth-api-check
+	$(ECO_BUILD)/vector-costs-account$(EXE) allocator-check
+	@set -eu; for fault in values accounting; do \
+	  log='$(ECO_BUILD)/allocator-fail-'$$fault'.txt'; \
+	  if $(ECO_BUILD)/vector-costs-account$(EXE) allocator-fail-$$fault > "$$log" 2>&1; then \
+	    echo "Allocator observer $$fault fault was accepted" >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  case $$fault in values) message='preserved bytes' ;; accounting) message='exact ledger' ;; esac; \
+	  grep -Fx "vector library costs: reallocation observer $$message" "$$log"; \
+	 done
 	@set -eu; log='$(ECO_BUILD)/growth-api-fail-clock.txt'; \
 	  if $(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-fail-clock > "$$log" 2>&1; then \
 	    echo 'Append growth coarse clock was accepted' >&2; exit 1; \
@@ -150,10 +175,10 @@ ecosystem-check: ecosystem-build
 	    echo 'Unreleased allocation was accepted' >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
 	  grep -Fx 'vector library costs: complete cleanup' $(ECO_BUILD)/fail-cleanup.txt
 	@set -eu; \
-	  if grep -Eq '@wf_(cost_allocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/whitefoot-timed.ll; then \
+	  if grep -Eq '@wf_(cost_allocate|cost_reallocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/whitefoot-timed.ll; then \
 	    echo 'Timed Whitefoot includes allocation observer hooks' >&2; exit 1; fi; \
 	  nm -g $(ECO_BUILD)/vector-costs-timed$(EXE) > $(ECO_BUILD)/timed-symbols.txt; \
-	  if grep -Eq 'wf_(cost_allocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/timed-symbols.txt; then \
+	  if grep -Eq 'wf_(cost_allocate|cost_reallocate|cost_release|ecosystem_note_)' $(ECO_BUILD)/timed-symbols.txt; then \
 	    echo 'Timed native image includes allocation observer hooks' >&2; exit 1; fi
 
 ecosystem-account: $(ECO_BUILD)/vector-costs-account$(EXE)
