@@ -73,7 +73,7 @@ public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure
 
 public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
 
-public fn sleep_until(deadline: Instant) -> result: unit waits doc "Completes once the monotonic clock has reached deadline.";
+public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z, which the host may move in either direction between reads.";
 ```

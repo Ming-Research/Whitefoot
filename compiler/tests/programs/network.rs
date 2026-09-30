@@ -666,7 +666,8 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
-  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -681,7 +682,8 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;
@@ -697,9 +699,11 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
 fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) waits {
   let receive_first = True();
   let send_first = False();
-  match std::net::tcp_connect(factory: factory, address: address) {
+  let no_deadline = None<std::time::Instant>();
+  match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
     Ok(value: first) => {
-      match std::net::tcp_connect(factory: factory, address: address) {
+      let no_deadline = None<std::time::Instant>();
+      match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
         Ok(value: second) => {
           let (a, b) = cross(first: move first, second: move second);
           let first_status = close_pair(factory: factory, connection: move a, receive_first: receive_first);
@@ -714,7 +718,8 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
           if exchange_status != 0_u8 {
             return exchange_status;
           }
-          match std::net::tcp_connect(factory: factory, address: address) {
+          let no_deadline = None<std::time::Instant>();
+          match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
             Ok(value: checkpoint) => {
               let checkpoint_status = remaining(connection: &checkpoint);
               let closed = close_pair(factory: factory, connection: move checkpoint, receive_first: receive_first);
@@ -741,7 +746,9 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: handles, stdin: input) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
   std::fs::close_directory(factory: &handles, directory: move cwd);
   let outcome = exercise(factory: &handles, address: &address);

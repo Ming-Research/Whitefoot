@@ -18,7 +18,8 @@ fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) ->
       break @receive;
     }
     let window = &buffer[0_u64..4096_u64];
-    match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 4096_u64) {
+    let no_deadline = None<std::time::Instant>();
+    match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 4096_u64, deadline: no_deadline) {
       Ok(value: n) => {
         set count = count +wrap n;
       }
@@ -43,7 +44,8 @@ fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> r
     }
     let window = &chunk[count..262144_u64];
     let rest = 262144_u64 - count;
-    match write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: rest) {
+    let no_deadline = None<std::time::Instant>();
+    match write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: rest, deadline: no_deadline) {
       Ok(value: n) => {
         set count = count +wrap n;
       }
@@ -60,7 +62,9 @@ fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> r
 
 fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: unit reads(received), reads(sent) waits {
   doc "Spawns the reader of the standard input before the writer of the standard output. When both name one pipe, the reader waits for bytes only the writer's context supplies, so the two finish only if neither blocks the thread the other runs on [WAIT-2].";
-  let Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_err, handles: handles, stdin: input) = move inputs;
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   close_directory(factory: &handles, directory: move cwd);
   let reader_factory = factory_share(factory: &handles);
   let writer_factory = factory_share(factory: &handles);

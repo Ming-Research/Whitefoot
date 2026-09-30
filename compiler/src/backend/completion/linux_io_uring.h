@@ -202,6 +202,15 @@ size_t wf_linux_io_uring_capacity(
  */
 int wf_linux_io_uring_flush(wf_linux_io_uring_adapter *adapter);
 
+/* Asks the kernel to give up the operation a record names, once its deadline
+ * has passed [PRE-2]: an IORING_OP_ASYNC_CANCEL whose own completion names no
+ * record.  The record then completes with -ECANCELED, or with its own result
+ * when that came first.  Returns zero, or the error that stopped the ring. */
+int wf_linux_io_uring_cancel(
+    wf_linux_io_uring_adapter *adapter,
+    struct wf_completion_record *record
+);
+
 /* Refuses with EBUSY until every accepted operation has produced and
  * published its CQE. */
 int wf_linux_io_uring_destroy(wf_linux_io_uring_adapter *adapter);

@@ -48,6 +48,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -105,7 +108,8 @@ fn drain(link: &TcpConnection, scratch: &[u8]) -> result: u8 writes(link.receive
 } {
   doc "Reads one chunk through the receiving direction only, naming that direction as its effect path.";
   let outcome = 0_u8;
-  match receive_next(receive: &link^.receive, destination: scratch, start: 0_u64, end: 32_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match receive_next(receive: &link^.receive, destination: scratch, start: 0_u64, end: 32_u64, deadline: no_deadline) {
     Ok(value: endpoint) => {
     }
     Err(error: read_stop_18) => {
@@ -123,7 +127,9 @@ fn drain(link: &TcpConnection, scratch: &[u8]) -> result: u8 writes(link.receive
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "A helper receiving only through link.receive declares that exact ordinary field effect plus its scratch effects. The untouched send field adds nothing; field row precision does not shorten the whole-connection borrow.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);
   let scratch = slots_new::<u8, 32>();
   for @fill (
@@ -135,7 +141,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   let window = &scratch[0_u64..32_u64];
   let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9103_u16);
-  match tcp_connect(factory: &handles, address: &address) {
+  let no_deadline = None<std::time::Instant>();
+  match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
     Ok(value: link) => {
       let outcome = 0_u8;
       set outcome = drain(link: &link, scratch: window);

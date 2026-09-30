@@ -533,7 +533,9 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);
 ```
 

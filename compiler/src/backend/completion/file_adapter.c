@@ -30,8 +30,11 @@ int wf_file_request_valid(const wf_file_request *request) {
         return request->operation.read.buffer != NULL
             || request->operation.read.count == 0;
     case WF_FILE_WRITE:
+    case WF_FILE_APPEND:
         return request->operation.write.buffer != NULL
             || request->operation.write.count == 0;
+    case WF_FILE_SYNC:
+        return request->operation.close.descriptor >= 0;
     case WF_FILE_PREAD:
         return request->operation.pread.buffer != NULL
             || request->operation.pread.count == 0;
@@ -389,21 +392,84 @@ void wf_file_complete_record(
     wf_completion_record_complete(record);
 }
 
+/* The record the calling thread is executing, which its leaf consults when a
+ * host call is interrupted. */
+static _Thread_local wf_completion_record *wf_file_running;
+
+int wf_file_running_cancelled(void) {
+    return wf_file_running != NULL
+        && atomic_load_explicit(&wf_file_running->deadline, memory_order_acquire)
+            == WF_COMPLETION_DEADLINE_FIRED;
+}
+
+uint64_t wf_file_running_deadline(void) {
+    return wf_file_running == NULL
+        ? 0
+        : atomic_load_explicit(&wf_file_running->deadline, memory_order_acquire);
+}
+
+void wf_file_running_fire(void) {
+    if (wf_file_running != NULL) {
+        atomic_store_explicit(&wf_file_running->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+    }
+}
+
 static void wf_file_run_work(
     wf_file_adapter *adapter,
     wf_completion_record *record,
     int helper
 ) {
-    wf_file_result result = wf_file_execute_timed(adapter, &record->request);
+    wf_file_result result;
+    wf_file_running = record;
+    result = wf_file_execute_timed(adapter, &record->request);
+    wf_file_running = NULL;
     wf_file_finish_execution(adapter, helper);
     wf_file_complete_record(record, &result);
 }
 
+int wf_file_adapter_cancel(wf_file_adapter *adapter, wf_completion_record *record) {
+    wf_completion_record *previous = NULL;
+    wf_completion_record *scan;
+    size_t slot;
+    wf_completion_wait_lock(&adapter->queue_wait);
+    for (scan = adapter->queue_head; scan != NULL; previous = scan, scan = scan->next) {
+        if (scan == record) {
+            wf_file_result result;
+            wf_file_unlink_locked(adapter, previous, record);
+            wf_completion_wait_unlock(&adapter->queue_wait);
+            memset(&result, 0, sizeof(result));
+            result.head.kind = record->request.kind;
+            result.head.value = -1;
+            result.head.error_code = wf_file_cancelled_error();
+            wf_file_complete_record(record, &result);
+            return 0;
+        }
+    }
+    for (slot = 0; slot < adapter->helper_slots; slot++) {
+        if (adapter->executing[slot] == record) {
+            wf_file_thread_interrupt(adapter->executing_thread[slot]);
+            break;
+        }
+    }
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    /* Asked again until it completes: a helper between taking the record and
+     * entering its host call is not interrupted by this one. */
+    return atomic_load_explicit(&record->state, memory_order_acquire) != WF_COMPLETION_DONE;
+}
+
 static void wf_file_helper_main(void *context) {
     wf_file_adapter *adapter = context;
+    size_t slot;
+    wf_completion_wait_lock(&adapter->queue_wait);
+    slot = adapter->helper_slots++;
+    adapter->executing[slot] = NULL;
+    adapter->executing_thread[slot] = wf_file_thread_self();
+    wf_completion_wait_unlock(&adapter->queue_wait);
     for (;;) {
         wf_completion_record *record;
         wf_completion_wait_lock(&adapter->queue_wait);
+        adapter->executing[slot] = NULL;
         while (adapter->queue_head == NULL && adapter->stopping == 0) {
             adapter->blocked_helpers += 1;
             (void)wf_completion_wait_sleep(&adapter->queue_wait, UINT32_MAX);
@@ -432,6 +498,7 @@ static void wf_file_helper_main(void *context) {
                 - 1u,
             memory_order_seq_cst
         );
+        adapter->executing[slot] = record;
         wf_completion_wait_unlock(&adapter->queue_wait);
         wf_file_run_work(adapter, record, 1);
     }

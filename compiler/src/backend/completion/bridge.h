@@ -60,6 +60,46 @@ void wf__completion_file_close_submit(
     void *record
 );
 
+/* One write at the end of a file opened for appending, which waits on the
+ * host's storage and never on another party, so it is a kind of its own
+ * rather than an unpositioned stream write. */
+void wf__completion_file_append_submit(
+    int descriptor,
+    const void *buffer,
+    uint64_t count,
+    void *record
+);
+
+/* Hands every byte written to the file before it to the host's durability
+ * mechanism [PRE-2]. */
+void wf__completion_file_sync_submit(
+    int descriptor,
+    void *record
+);
+
+/* A record no host operation completes: the driver whose context waits on
+ * it completes it once the monotonic clock has reached `deadline`
+ * (`sleep_until` [PRE-2]). */
+void wf__completion_sleep_submit(
+    uint64_t deadline,
+    void *record
+);
+
+/* Bounds the wait for a submitted record by a reading of the monotonic
+ * clock, zero for none.  A body calls it after the submit and before its
+ * context waits; once the clock reaches the deadline the driver ends the
+ * wait by cancelling the operation through its route, and the operation
+ * completes with its own outcome or with a cancellation, which
+ * `wf__completion_deadline_passed` then reports. */
+void wf__completion_deadline(void *record, uint64_t deadline);
+
+/* Whether the record's deadline ended its operation: the driver cancelled
+ * it and it transferred nothing. */
+int wf__completion_deadline_passed(const void *record);
+
+/* The monotonic clock the deadlines are readings of. */
+uint64_t wf__completion_monotonic_ns(void);
+
 /* The platform's directory-enumeration facility through the same native
  * progress normalization as file operations --
  * `__getdirentries64` on Darwin, `getdents64` on Linux.  EINTR and readiness

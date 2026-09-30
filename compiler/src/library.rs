@@ -19,6 +19,10 @@ pub(crate) const GRAPH: &str = include_str!("../../lib/std/modules.wfg");
 /// each module's interface record first [MOD-2].
 pub(crate) const RECORDS: &[(&str, &str)] = &[
     (
+        "std/time/module.wfm",
+        include_str!("../../lib/std/time/module.wfm"),
+    ),
+    (
         "std/io/module.wfm",
         include_str!("../../lib/std/io/module.wfm"),
     ),
@@ -93,11 +97,12 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
 /// is the library's own statement of them, and a test holds this table to
 /// what forming that record gives.
 pub(crate) const MODULES: &[(&str, &[&str])] = &[
-    ("io", &[]),
+    ("time", &[]),
+    ("io", &["time"]),
     ("text", &[]),
     ("fs", &["io", "text"]),
-    ("net", &["io"]),
-    ("process", &["io", "text", "fs"]),
+    ("net", &["io", "time"]),
+    ("process", &["io", "text", "fs", "time"]),
     ("collections::vector", &[]),
     ("collections::deque", &[]),
     ("collections::slab", &[]),
@@ -234,7 +239,7 @@ pub(crate) fn records(
 /// The host modules [PRE-2], by their paths below the standard library: the
 /// modules whose functions have no Whitefoot definition, the build supplying
 /// each from the runtime units.
-pub(crate) const HOST_MODULES: &[&str] = &["io", "text", "fs", "net", "process"];
+pub(crate) const HOST_MODULES: &[&str] = &["time", "io", "text", "fs", "net", "process"];
 
 /// Reports whether a standard library module at `path` is a host module.
 pub(crate) fn is_host_module(path: &[String]) -> bool {

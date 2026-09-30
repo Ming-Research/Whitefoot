@@ -50,6 +50,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -138,6 +141,9 @@ fn socket_class(error: IoError) -> result: u8 pure {
       return 9_u8;
     }
     TimedOut(code: c, origin: o) => {
+      return 9_u8;
+    }
+    DeadlinePassed() => {
       return 9_u8;
     }
     BrokenPipe(code: c, origin: o) => {
@@ -236,7 +242,9 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Connects twice to a loopback port nobody listens on through the same ordinary factory, so a refused connect is shown to leave its capacity available for the next attempt. The argument scratch is one inline Slots window of this frame, reached through one range reference for both the copy in and the read out [TYPE-9, REF-4].";
-  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);
   let digits = slots_new::<u8, 16>();
   for @fill_digits (
@@ -276,7 +284,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   set port = parse_port(digits: window, length: carried);
   let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
   let outcome = 0_u8;
-  match tcp_connect(factory: &handles, address: &address) {
+  let no_deadline = None<std::time::Instant>();
+  match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
     Ok(value: link) => {
       let TcpConnection(receive: close_receive_9, send: close_send_9) = move link;
       close_receive(factory: &handles, receive: move close_receive_9);
@@ -289,7 +298,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       if exhausted {
         set outcome = 5_u8;
       } else {
-        match tcp_connect(factory: &handles, address: &address) {
+        match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
           Ok(value: again) => {
             let TcpConnection(receive: close_receive_10, send: close_send_10) = move again;
             close_receive(factory: &handles, receive: move close_receive_10);

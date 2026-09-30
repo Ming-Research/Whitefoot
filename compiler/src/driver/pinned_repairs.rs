@@ -2205,7 +2205,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
 }
@@ -2246,7 +2248,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   let HandleFactory() = move factory;
   return exit_status(code: 0_u8);
@@ -2263,7 +2267,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
 }
@@ -2278,8 +2284,10 @@ alias DirectoryRead = std::fs::DirectoryRead;
 alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
   return exit_status(code: 0_u8);
 }
@@ -2295,7 +2303,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
   return exit_status(code: 0_u8);
 }
@@ -3527,7 +3537,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   let cell = make(count: n);
@@ -3591,7 +3603,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   let cell = make(count: n);
@@ -3614,7 +3628,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   if n <= 4096_u64 {

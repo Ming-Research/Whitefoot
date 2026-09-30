@@ -688,10 +688,11 @@ fn the_output_batch_costs_one_host_write_per_full_batch() {
         "trace was {trace:?}"
     );
 
-    // Both linear handles close explicitly. Affine output owners have empty drop.
+    // Every linear handle closes explicitly: the file and both halves of the
+    // working directory [PRE-2]. Affine output owners have empty drop.
     assert_eq!(
         trace.matches("wf_test close ").count(),
-        2,
+        3,
         "trace was {trace:?}"
     );
     assert_eq!(
@@ -701,7 +702,7 @@ fn the_output_batch_costs_one_host_write_per_full_batch() {
                 && !line.starts_with("wf_test close fd=42 ")
                 && line.ends_with("outcome=ok"))
             .count(),
-        1
+        2
     );
     assert_eq!(trace.matches("wf_test close fd=42 outcome=ok").count(), 1);
     assert!(!trace.contains("wf_test close fd=1 "));
