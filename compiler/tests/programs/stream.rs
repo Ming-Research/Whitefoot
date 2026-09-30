@@ -111,3 +111,25 @@ fn an_empty_standard_input_reaches_its_end_without_publishing() {
         assert!(output.stdout.is_empty(), "native ring: {native_ring}");
     }
 }
+
+/// [PRE-2] a read of standard input with a deadline ends once the clock has
+/// reached it while the writer is still silent, with nothing read: the byte
+/// the writer sends afterwards is what the next read receives. The shipped
+/// route cancels the ring's read; without a ring a helper holds the read and
+/// is interrupted. The program reports the first check that failed.
+#[test]
+fn a_deadline_ends_a_read_of_a_silent_writer_on_both_routes() {
+    let llvm = compile_program("stdin_deadline.wf");
+    let program = build_program(&llvm);
+    let routes: &[bool] = if cfg!(windows) {
+        &[true]
+    } else {
+        &[true, false]
+    };
+    for &native_ring in routes {
+        let output =
+            program.run_with_late_input(b"z", std::time::Duration::from_millis(400), native_ring);
+        assert_eq!(output.status.code(), Some(0), "native ring: {native_ring}: {output:?}");
+        assert!(output.stderr.is_empty(), "native ring: {native_ring}: {output:?}");
+    }
+}

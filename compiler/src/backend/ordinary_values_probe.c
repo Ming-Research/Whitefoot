@@ -640,7 +640,15 @@ static void append_probe(wf_inputs *inputs) {
     assert(read.tag == 0 && read.ok.value == 5 && memcmp(bytes, "abcde", 5) == 0);
     wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
     check_close(&closed);
-    assert(wf_unlink("appended") == 0);
+    if (wf_unlink("appended") != 0) {
+#if defined(_WIN32)
+        fprintf(stderr, "removing the appended file failed: errno %d, Windows error %lu\n",
+                errno, (unsigned long)GetLastError());
+#else
+        fprintf(stderr, "removing the appended file failed: errno %d\n", errno);
+#endif
+        assert(0);
+    }
 }
 
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every

@@ -398,12 +398,14 @@ static uint64_t wf_deadline_reading(const wf_deadline *deadline) {
     return reading == 0 ? 1 : reading;
 }
 
-/* A start's answer for a submitted operation, its deadline armed when the
- * context is about to wait on it. */
-static int wf_submitted(wf_host_operation *operation, const wf_deadline *deadline) {
-    if (!wf__completion_pending(&operation->record)) return 1;
-    wf__completion_deadline(&operation->record, wf_deadline_reading(deadline));
-    return 2;
+/* Hands the deadline to the submit that follows, and answers for the
+ * submitted operation. */
+static void wf_before_submit(const wf_deadline *deadline) {
+    wf__completion_next_deadline(wf_deadline_reading(deadline));
+}
+
+static int wf_submitted(wf_host_operation *operation) {
+    return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
 static void wf_read_result_value(wf_read_result *result, int64_t amount,
@@ -498,9 +500,10 @@ int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value
     (void)result;
     wf_transition(factory);
     wf_transition(input);
+    wf_before_submit(deadline);
     wf__completion_file_read_submit(wf_descriptor(input),
         wf_window(destination, start), end - start, &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_read_next_finish(wf_read_result *result, wf_value *factory, wf_value *input,
@@ -529,9 +532,10 @@ int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_val
     (void)result;
     wf_transition(factory);
     wf_transition(output);
+    wf_before_submit(deadline);
     wf__completion_file_write_submit(wf_descriptor(output),
         wf_window(source, start), end - start, &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_write_once_finish(wf_write_result *result, wf_value *factory, wf_value *output,
@@ -559,9 +563,10 @@ int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
                                 const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(receive);
+    wf_before_submit(deadline);
     wf__completion_socket_receive_submit(wf_descriptor(receive),
         wf_window(destination, start), end - start, &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_receive_next_finish(wf_read_result *result, wf_value *receive,
@@ -588,9 +593,10 @@ int wf__body_send_once_start(wf_write_result *result, wf_value *send,
                              const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(send);
+    wf_before_submit(deadline);
     wf__completion_socket_send_submit(wf_descriptor(send),
         wf_window(source, start), end - start, &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_send_once_finish(wf_write_result *result, wf_value *send,
@@ -1083,9 +1089,10 @@ int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
         result->tag = 1;
         return 0;
     }
+    wf_before_submit(deadline);
     wf__completion_socket_connect_submit(address->words[0], address->words[1],
                                          (uint32_t)address->words[2], &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
@@ -1125,8 +1132,9 @@ int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
         result->tag = 1;
         return 0;
     }
+    wf_before_submit(deadline);
     wf__completion_socket_accept_submit(wf_descriptor(listener), &operation->record);
-    return wf_submitted(operation, deadline);
+    return wf_submitted(operation);
 }
 
 void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,

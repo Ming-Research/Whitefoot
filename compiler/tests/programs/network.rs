@@ -417,6 +417,36 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// the completion port is exactly such a helper wait, and only the port's
 /// route runs (`docs/todo.md`, "Only Linux with a ring runs several
 /// drivers").
+/// [PRE-2] a deadline ends an accept no client answers and a receive the peer
+/// never feeds, each only once the clock has reached it and with nothing
+/// transferred: a byte sent afterwards arrives whole, and a sleeping context
+/// and a bounded receive of the root both end. The program reports the first
+/// check that failed as its status.
+#[test]
+fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
+    let llvm = compile_program("deadlines.wf");
+    let program = build_program(&llvm);
+    let routes: &[bool] = if cfg!(windows) {
+        &[true]
+    } else {
+        &[true, false]
+    };
+    for &native_ring in routes {
+        let port = free_port();
+        let text = port.to_string();
+        let started = Instant::now();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        // Three deadlines of 50, 50 and 60 milliseconds passed in turn.
+        assert!(
+            started.elapsed() >= Duration::from_millis(160),
+            "native ring: {native_ring}: {:?}",
+            started.elapsed()
+        );
+    }
+}
+
 #[test]
 fn every_connection_is_served_in_its_own_context_on_both_routes() {
     const PEERS: u8 = 12;

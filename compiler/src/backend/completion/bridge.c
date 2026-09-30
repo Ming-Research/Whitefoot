@@ -108,6 +108,9 @@ static _Atomic uint64_t wf_bridge_inline_executions;
 static int wf_bridge_progress(void);
 static void wf_bridge_park(uint64_t observed_epoch, uint32_t timeout_ms);
 static int wf_bridge_cancel(wf_completion_record *record);
+static void wf_bridge_hold_for_contexts(void);
+/* The deadline the next submit on this thread takes into its record. */
+static _Thread_local uint64_t wf_bridge_next_deadline;
 
 /* The bridge's one fail-stop.
  *
@@ -3162,6 +3165,9 @@ static wf_completion_record *wf_bridge_begin(void *record) {
     held = (wf_completion_record *)record;
     memset(held, 0, sizeof(*held));
     wf_completion_record_init(held);
+    /* The deadline its body handed over, which no later submit inherits. */
+    atomic_store_explicit(&held->deadline, wf_bridge_next_deadline, memory_order_relaxed);
+    wf_bridge_next_deadline = 0;
     held->route = WF_COMPLETION_ROUTE_NONE;
     held->opened_descriptor = -1;
     held->open_outcome = WF_FILE_OPEN_SUCCEEDED;
@@ -3194,11 +3200,9 @@ static int wf_bridge_transfer_now(wf_completion_record *record) {
  * wait for its descriptor's readiness instead: other contexts share the
  * thread [WAIT-2], and no ring took the operation.  Its join waits for the
  * descriptor and then makes the operation, which cannot wait by then. */
-static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
-    if (atomic_load_explicit(&wf_context_live, memory_order_relaxed) == 0u
-        || !wf_file_readiness_supported()) {
-        return 0;
-    }
+/* Whether a kind is one the readiness route makes: a socket transfer or an
+ * accept, which a descriptor's readiness answers. */
+static int wf_bridge_readiness_kind(const wf_completion_record *record) {
     switch (record->request.kind) {
         case WF_FILE_SOCKET_RECEIVE:
         case WF_FILE_SOCKET_SEND:
@@ -3209,7 +3213,16 @@ static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
     }
 }
 
+static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
+    if (atomic_load_explicit(&wf_context_live, memory_order_relaxed) == 0u
+        || !wf_file_readiness_supported()) {
+        return 0;
+    }
+    return wf_bridge_readiness_kind(record);
+}
+
 static void wf_bridge_dispatch(wf_completion_record *record) {
+    int bounded = atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
     if (wf_bridge_file_request_is_empty(&record->request)) {
         wf_bridge_complete_empty(record);
         return;
@@ -3217,9 +3230,18 @@ static void wf_bridge_dispatch(wf_completion_record *record) {
     if (wf_bridge_ring_offer(record)) {
         return;
     }
-    if (wf_bridge_waits_for_readiness(record)) {
+    if (wf_bridge_waits_for_readiness(record)
+        || (bounded && wf_bridge_readiness_kind(record) && wf_file_readiness_supported())) {
         record->route = WF_COMPLETION_ROUTE_READINESS;
         return;
+    }
+    if (bounded) {
+        /* An operation with a deadline [PRE-2] is never made on the driver
+         * thread, which is the thread that has to end it: the helpers take
+         * it, as they take every operation once contexts run.  A pinned
+         * count of zero helpers leaves the waiting thread the queue's only
+         * engine, and such an operation then ends when the host answers. */
+        wf_bridge_hold_for_contexts();
     }
     wf_bridge_submit_file(record);
 }
@@ -3675,15 +3697,8 @@ unsigned long wf__sched_helper_ceiling(void) {
 
 /* ---------------------------------------------------- deadline records */
 
-void wf__completion_deadline(void *record, uint64_t deadline) {
-    if (record == NULL) {
-        wf_bridge_fail("a deadline was given no record");
-    }
-    atomic_store_explicit(
-        &((wf_completion_record *)record)->deadline,
-        deadline,
-        memory_order_relaxed
-    );
+void wf__completion_next_deadline(uint64_t deadline) {
+    wf_bridge_next_deadline = deadline;
 }
 
 int wf__completion_deadline_passed(const void *record) {

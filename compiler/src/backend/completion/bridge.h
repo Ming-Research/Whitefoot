@@ -85,13 +85,15 @@ void wf__completion_sleep_submit(
     void *record
 );
 
-/* Bounds the wait for a submitted record by a reading of the monotonic
- * clock, zero for none.  A body calls it after the submit and before its
- * context waits; once the clock reaches the deadline the driver ends the
- * wait by cancelling the operation through its route, and the operation
- * completes with its own outcome or with a cancellation, which
- * `wf__completion_deadline_passed` then reports. */
-void wf__completion_deadline(void *record, uint64_t deadline);
+/* Bounds the wait for the next record this thread submits by a reading of
+ * the monotonic clock, zero for none.  A body calls it just before the
+ * submit, which takes it into the record, so the routing can keep an
+ * operation with a deadline off the thread that must end it; once the clock
+ * reaches the deadline the driver ends the wait by cancelling the operation
+ * through its route, and the operation completes with its own outcome or
+ * with a cancellation, which `wf__completion_deadline_passed` then
+ * reports. */
+void wf__completion_next_deadline(uint64_t deadline);
 
 /* Whether the record's deadline ended its operation: the driver cancelled
  * it and it transferred nothing. */

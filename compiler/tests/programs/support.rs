@@ -590,6 +590,37 @@ impl CompiledProgram {
         output
     }
 
+    /// Runs the program with standard input on a pipe its writer holds open
+    /// and silent for `delay` before it writes `bytes` and closes, so the
+    /// program can wait on a writer that has sent nothing yet.
+    pub fn run_with_late_input(
+        &self,
+        bytes: &[u8],
+        delay: std::time::Duration,
+        native_ring: bool,
+    ) -> Output {
+        let (reader, mut writer) = std::io::pipe().expect("create the input pipe");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        select_route(&mut command, native_ring);
+        let child = ProgramChild::spawn(&mut command).expect("spawn compiled program");
+        let bytes = bytes.to_vec();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            writer.write_all(&bytes)
+        });
+        let output = child.wait_with_output().expect("wait for compiled program");
+        writer
+            .join()
+            .expect("input writer thread")
+            .expect("fill input pipe");
+        output
+    }
+
     /// Runs the program with its standard input and its standard output both
     /// one pipe, so what it writes it can read back, under the given runtime
     /// settings. The program is the pipe's only reader and only writer.
