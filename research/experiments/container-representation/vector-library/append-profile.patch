@@ -1,0 +1,75 @@
+--- full-growth-route/vector-costs-route.c
++++ append-profile/vector-costs-profile.c
+@@ -1010,6 +1010,54 @@
+     require(minimum <= 100, "growth append clock precision");
+ }
+ 
++
++/* Non-ranking profiler driver. Only the child API frames below this marker
++ * belong to append attribution; the marker's own loop is driver overhead. */
++static NOINLINE void growth_profile_append_only(const ApiOperations *api,
++        ApiStorage *owners, const uint64_t *offered, uint64_t *returned,
++        size_t contexts) {
++    for (size_t k = 0; k < contexts; ++k)
++        returned[k] = api->append_one(&owners[k], offered[k]);
++}
++
++static void growth_profile(unsigned variant, bool one_batch, bool fail_values) {
++    const uint64_t initial = 4096;
++    const size_t contexts = 1048576 / (4096 * sizeof(uint64_t) + 256);
++    const ApiOperations *api = &append_api[0][variant];
++    ApiStorage *owners = malloc(contexts * sizeof *owners);
++    uint64_t *offered = malloc(contexts * sizeof *offered);
++    uint64_t *returned = malloc(contexts * sizeof *returned);
++    require(owners && offered && returned, "profile context storage");
++    if (!one_batch) {
++        printf("profile-ready variant=%s capacity=4096 contexts=%zu nonranking=1\n",
++               api->name, contexts);
++        fflush(stdout);
++    }
++    const uint64_t deadline = nanos() + UINT64_C(75000000000);
++    uint64_t cycle = 0;
++    do {
++        const uint64_t seed = 101 + cycle;
++        for (size_t k = 0; k < contexts; ++k) {
++            require(growth_prepare(api, &owners[k], initial, seed + k) == initial,
++                    "profile stable initial capacity");
++            offered[k] = seed + k + initial + (fail_values && k == 0);
++        }
++        growth_profile_append_only(api, owners, offered, returned, contexts);
++        for (size_t k = 0; k < contexts; ++k) {
++            require(growth_inspect_reset(api, &owners[k], initial, seed + k,
++                                        returned[k], false, false) == 2 * initial,
++                    "profile doubled capacity");
++            (void)api->destroy(&owners[k]);
++        }
++        ++cycle;
++    } while (!one_batch && nanos() < deadline);
++    free(returned);
++    free(offered);
++    free(owners);
++    printf("profile-complete variant=%s cycles=%" PRIu64
++           " contexts=%zu nonranking=1\n", api->name, cycle, contexts);
++}
++
+ static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large_work_bytes) {
+     const uint64_t capacities[] = {0, 1, 16, 256, 4096};
+     // Sizing allowance only; it neither models latency nor adjusts a sample.
+@@ -1233,6 +1281,17 @@
+         require(argc == 2, "growth-api-fail-clock argument count");
+         growth_clock_check(true);
+     }
++    else if (strcmp(argv[1], "growth-api-profile") == 0
++             || strcmp(argv[1], "growth-api-profile-check") == 0
++             || strcmp(argv[1], "growth-api-profile-fail-values") == 0) {
++        require(argc == 3, "profile requires one peer name");
++        unsigned variant = 0;
++        while (variant < 3 && strcmp(argv[2], append_api[0][variant].name) != 0)
++            ++variant;
++        require(variant < 3, "profile peer name");
++        growth_profile(variant, strcmp(argv[1], "growth-api-profile") != 0,
++                       strcmp(argv[1], "growth-api-profile-fail-values") == 0);
++    }
+     else if (strcmp(argv[1], "growth-api-measure") == 0) {
+         require(argc == 4 || argc == 5,
+                 "growth-api-measure requires byte budget, samples and optional large-cell budget");

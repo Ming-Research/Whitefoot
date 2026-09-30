@@ -3454,6 +3454,23 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **Native stack sampling loses the append caller across WF frames.** In the
+  [bounded Vector diagnostic](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-growth-attribution-registered-bounded-stack-sample),
+  the macOS sampler recovers the WF append body and its libc descendants but
+  usually omits the known noinline caller marker. The frozen body saves x29
+  and the return address without establishing an x29 frame. This prevents
+  reliable attribution under the registered complete-call-chain criterion;
+  it is not evidence of incorrect program execution or allocator latency.
+  The linked FDE already matches the body stack layout at allocator-call
+  return PCs; missing body metadata is not an established cause. Reopen now
+  with a known frameless native control or alternate unwinder to distinguish
+  target sampling support. A frame-pointer diagnostic changes instructions;
+  verify caller recovery and do not reuse its timing as unchanged-code evidence.
+  A production change needs an ordinary
+  compiler regression and target coverage, not a research-only fixture. Keep
+  ambiguous stacks excluded rather than adjusting the profiler criterion to
+  obtain a favorable share.
+
 - **Nothing refuses a test that runs a compiled program without a
   deadline.** Every current test that runs a program it compiled goes
   through the owned process in `compiler/tests/support/process.rs`, which

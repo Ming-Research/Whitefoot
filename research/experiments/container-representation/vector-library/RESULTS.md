@@ -8134,3 +8134,129 @@ WHITEFOOT_CHECK_TIMEOUT=120 perl .github/run-check.pl append-allocation-binding 
 The transient directory holds `binding-status.json`, `binding.stdout` and
 `binding.stderr`; addresses are launch-specific and are not a regression oracle.
 No ranked timing was taken, and no other API was exercised in this audit.
+
+
+#### Scalar growth attribution: registered bounded stack sample
+
+The next discriminator asks where the frozen full-growth-route B append path
+spends execution time: native allocation, prefix copying, retirement, or the
+container/helper body. It does not rank implementations or select an allocator.
+Use the same frozen WF/Rust/C++ and runtime objects, with only a scratch copy
+of B's driver extended by a diagnostic mode. Preserve scalar capacity 4096,
+31 contexts, the ordinary append ABI, seed `101 + cycle + context`, complete
+preparation, independent post-state/value oracle and destruction. A noinline
+batch marker encloses only the public append calls and result stores; inspect
+its native indirect-call return PC before using it as a sample boundary.
+
+Compile only that copied driver at O3 without LTO, retaining B's object order.
+First run one batch per peer and a deliberately wrong offered value per peer:
+positives must exit 0 and negatives must fail the existing content oracle.
+Freeze the image and input hashes before profiling. Then launch each peer
+once, serialized under the host guard, for a fixed 75-second diagnostic loop.
+After its readiness signal, sample only that owned child with
+`sample PID 60 1 -mayDie -file PROFILE.txt`. No adaptive extension or rerun.
+Each peer has a 120-second guard. Preserve direct child/profiler statuses,
+complete profiles, cycle counts and hashes. These durations are diagnostic
+costs, not performance samples.
+
+Interpret broad category shares only with reliable unwinding through the
+inspected append boundary and at least 1,000 filtered append samples per peer.
+Exclude preparation, validation, destruction and all unrelated stacks. Mark
+ambiguous or truncated stacks separately; do not assign them to allocator or
+container overhead. Failure to meet either prerequisite leaves attribution
+unresolved. Periodic sampling and process suspension can bias the profile,
+so even a qualifying profile cannot establish a nanosecond peer difference or
+a causal speedup. A code change still requires matched before/after evidence.
+
+Transient source, patch, commands, profiles and manifests belong under
+`.build/append-profile`; retain a compact outcome and reproducible driver delta
+here once the observation is complete. No production code, ranked benchmark,
+language rule, other API or growth policy changes in this experiment.
+
+
+The first sandboxed WF sampler could not attach to its owned child and
+produced no profile. Cancel the not-yet-started Rust/C++ attempts; retain this
+failure rather than treating it as an unwind or performance result. A separate
+one-second capability probe outside the tool sandbox successfully sampled an
+owned `sleep` child, without sudo or accessing another process. This establishes
+that the available host invocation can sample an owned process, not that the
+WF stack unwinds correctly.
+
+Before collecting any append samples, revise only the launch environment:
+run the same three fixed peer diagnostics outside the tool sandbox, under the
+same serialized 120-second guards and the same 75/60-second child/sample
+limits. Retain the failed attempt separately and preserve all new outputs
+under `.build/append-profile/host-permission`. No measured result is being
+repeated or selected: the first attempt yielded no samples. Keep the binary,
+input hashes, sample count/unwind requirements, exclusion rules and no-retry
+rule unchanged. Do not use sudo or attach to unrelated processes.
+
+
+#### Scalar growth profile outcome: WF attribution remains unresolved
+
+The [75-line driver delta](append-profile.patch) changes only the frozen B
+diagnostic driver. Its compile/link exits are 0 (0.963/0.125 s); all three
+one-batch positives exit 0 and all three wrong-value controls exit 1 at the
+existing full-values/checksum oracle. All 17 frozen input hashes match.
+The diagnostic executable SHA-256 is
+`0f1b3e8ffa9f371d995efb92b028b056d376a309d13a5dd84d86b9a43000facf`.
+O3 unrolls the marker into 31 indirect calls, with return PCs
+`0x10000f8d4 + 20*k` for k=0..30. The marker establishes x29; the WF append
+body saves x29/LR but does not establish an x29 frame. Setup, oracle and
+cleanup stay outside this marker.
+
+The initial sandbox WF child completed (0), but its sampler returned 255
+without a profile. Rust started before cancellation took effect: its sampler
+also returned 255, its child was terminated (-15), and the outer orchestrator
+returned 130; its guard's terminal exit was not captured. C++ never started
+in that attempt. A host precheck returned 1 for the missing guard END record;
+verified absence of every owned PID resolved termination without inventing an
+exit. The first host launch then returned guard 75 before starting a workload,
+because cancellation left the recorded Rust lock. The lock was preserved and
+removed only after checking its absent PID and matching command. These are
+infrastructure outcomes, not samples. The subsequent host batch stops on any
+nonzero stage and completed exactly once per peer.
+
+[Complete evidence](ecosystem-append-profile.txt) retains the input identities,
+portable commands, stage results, raw profiles and native marker. All three
+host child/sampler/guard exits are 0, with unchanged executable hashes.
+Guard costs are 75.118/75.163/75.173 s for WF/Rust/C++; sampling costs are
+60.197/60.235/60.171 s. Cycle counts and total elapsed times include preparation
+and verification, so neither is an append-speed comparison.
+
+| Peer | Total stack samples | Complete marker-to-append samples | Marker self excluded | Result |
+| --- | ---: | ---: | ---: | --- |
+| WF | 49713 | 2 | 5 | Fails unwind/count prerequisite |
+| Rust | 49653 | 2639 | 1 | Broad shares only |
+| C++ | 49751 | 2597 | 3 | Broad shares only |
+
+WF has 3,498 additional samples in the marker caller's scope without the
+marker frame, 3,488 of them showing WF append. They remain excluded; the
+caller PC alone does not satisfy the registered full-chain criterion. Rust
+excludes two missing-marker samples; C++ excludes three, plus seven marker
+descendants without the public append frame. No WF cost percentages follow.
+
+Count each node exclusively as its inclusive count minus its immediate child
+counts; do not sum inclusive frames. Within the qualified Rust paths, 2,124
+samples are copying (80.49%), 489 are the remaining allocator route including
+realloc-internal retirement (18.53%), 22 are helper self and four unresolved.
+Within the qualified C++ paths, 2,137 are copying (82.29%), 344 allocation,
+101 retirement, ten helper self and five unresolved. C++'s deduplicated helper
+is resolved by its native call return PCs for new/memcpy/delete; symbol-name
+guesses alone do not assign a category. These are conditional sampled shares,
+subject to periodic-sampling and suspension bias. They establish neither peer
+latencies nor the cause of the WF gap.
+
+The linked body already has unwind information: its FDE covers
+`0x10001148c..0x100011578` and records CFA=SP+80, saved LR at CFA-8 and
+saved FP at CFA-16 at the allocator-call return PCs. These match the native
+prologue. Missing body metadata is therefore not an established explanation;
+the local sampler documentation does not specify its unwind policy. A future
+frame-pointer diagnostic would change instructions and could not serve as an
+unchanged-code timing comparison.
+
+The immediate next question is reliable WF stack recovery, recorded in TODO,
+not another allocator or copy-loop variant. No representation, inlining or
+growth policy is selected, and append growth remains unqualified. No ranked
+performance rerun, other API, compiler change or specification amendment was
+made in this diagnostic.
